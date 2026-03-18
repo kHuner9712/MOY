@@ -1,17 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 
+import { getSupabaseServiceEnvOrThrow, hasSupabaseServiceEnv } from "@/lib/env";
 import type { Database } from "@/types/database";
 
 function getAdminEnv(): { url: string; serviceRoleKey: string } {
-  return {
-    url: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""
-  };
+  return getSupabaseServiceEnvOrThrow("supabase_admin_client");
 }
 
 export function hasSupabaseAdminEnv(): boolean {
-  const { url, serviceRoleKey } = getAdminEnv();
-  return Boolean(url && serviceRoleKey);
+  return hasSupabaseServiceEnv();
 }
 
 export function createSupabaseAdminClient() {

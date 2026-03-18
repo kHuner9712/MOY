@@ -1,4 +1,5 @@
-﻿import { createDeepSeekProvider } from "@/lib/ai/providers/deepseek";
+import { createDeepSeekProvider } from "@/lib/ai/providers/deepseek";
+import { getAiRuntimeEnv } from "@/lib/env";
 import type { AiProviderId, AiProviderRequest, AiProviderResponse } from "@/types/ai";
 
 export interface AiProviderAdapter {
@@ -17,13 +18,8 @@ export interface AiProviderAdapter {
   chatCompletion(request: AiProviderRequest): Promise<AiProviderResponse>;
 }
 
-function normalizeProvider(value: string | undefined): AiProviderId {
-  if (value === "openai" || value === "qwen" || value === "zhipu") return value;
-  return "deepseek";
-}
-
 export function getConfiguredAiProviderId(): AiProviderId {
-  return normalizeProvider(process.env.AI_PROVIDER);
+  return getAiRuntimeEnv("ai_provider_selection").provider;
 }
 
 export function getAiProvider(): AiProviderAdapter {
@@ -38,6 +34,5 @@ export function getAiProvider(): AiProviderAdapter {
 }
 
 export function isRuleFallbackEnabled(): boolean {
-  return (process.env.AI_FALLBACK_TO_RULE_ENGINE ?? "true").toLowerCase() !== "false";
+  return getAiRuntimeEnv("ai_fallback_mode").fallbackToRuleEngine;
 }
-

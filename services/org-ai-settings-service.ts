@@ -1,3 +1,4 @@
+import { getAiRuntimeEnv, hasDeepSeekApiKey } from "@/lib/env";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { mapOrgAiSettingsRow } from "@/services/mappers";
 import type { Database } from "@/types/database";
@@ -7,7 +8,7 @@ type DbClient = ServerSupabaseClient;
 type AiSettingsRow = Database["public"]["Tables"]["org_ai_settings"]["Row"];
 
 function isDeepSeekConfigured(): boolean {
-  return !!process.env.DEEPSEEK_API_KEY;
+  return hasDeepSeekApiKey();
 }
 
 export function resolveProviderConfigStatus(provider: string): { provider: string; configured: boolean; reason: string | null } {
@@ -37,13 +38,14 @@ export async function getOrgAiSettings(params: {
   const row = (res.data ?? null) as AiSettingsRow | null;
   if (row) return mapOrgAiSettingsRow(row);
 
+  const aiEnv = getAiRuntimeEnv("org_ai_settings_default");
   const insertRes = await params.supabase
     .from("org_ai_settings")
     .insert({
       org_id: params.orgId,
       provider: "deepseek",
-      model_default: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
-      model_reasoning: process.env.DEEPSEEK_REASONER_MODEL ?? "deepseek-reasoner",
+      model_default: aiEnv.deepseekModel ?? "deepseek-chat",
+      model_reasoning: aiEnv.deepseekReasonerModel ?? "deepseek-reasoner",
       fallback_mode: "provider_then_rules",
       auto_analysis_enabled: true,
       auto_plan_enabled: true,

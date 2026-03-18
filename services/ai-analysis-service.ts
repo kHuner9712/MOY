@@ -2,6 +2,7 @@
 
 import { evaluateAlertRules } from "@/lib/alert-rules";
 import { getAiProvider, isRuleFallbackEnabled } from "@/lib/ai/provider";
+import { getAiRuntimeEnv } from "@/lib/env";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { upsertLeakAlert } from "@/services/alert-workflow-service";
 import { getActivePromptVersion } from "@/services/ai-prompt-service";
@@ -55,7 +56,7 @@ function toIsoOrNull(value: unknown): string | null {
 }
 
 function shouldEnableStrictMode(): boolean {
-  return (process.env.DEEPSEEK_STRICT_BETA_ENABLED ?? "false").toLowerCase() === "true";
+  return getAiRuntimeEnv("ai_analysis_strict_mode").deepseekStrictBetaEnabled;
 }
 
 function logAiEvent(params: {

@@ -1,4 +1,5 @@
-﻿import type { AiProviderRequest, AiProviderResponse, AiToolDefinition } from "@/types/ai";
+import { assertDeepSeekApiKey, getAiRuntimeEnv } from "../../env";
+import type { AiProviderRequest, AiProviderResponse, AiToolDefinition } from "@/types/ai";
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = "deepseek-chat";
@@ -17,39 +18,22 @@ interface DeepSeekConfig {
   temperature: number | null;
 }
 
-function toBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (value === undefined) return fallback;
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "true") return true;
-  if (normalized === "false") return false;
-  return fallback;
-}
-
-function toNumber(value: string | undefined): number | null {
-  if (!value) return null;
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  return n;
-}
-
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
 }
 
 function getConfig(): DeepSeekConfig {
-  const timeoutParsed = Number(process.env.AI_ANALYSIS_TIMEOUT_MS ?? `${DEFAULT_TIMEOUT_MS}`);
-  const maxTokens = toNumber(process.env.DEEPSEEK_MAX_TOKENS);
-  const temperature = toNumber(process.env.DEEPSEEK_TEMPERATURE);
+  const env = getAiRuntimeEnv("deepseek_provider_config");
   return {
-    apiKey: process.env.DEEPSEEK_API_KEY ?? null,
-    baseUrl: normalizeBaseUrl(process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL),
-    model: process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
-    reasonerModel: process.env.DEEPSEEK_REASONER_MODEL ?? DEFAULT_REASONER_MODEL,
-    strictBetaEnabled: toBoolean(process.env.DEEPSEEK_STRICT_BETA_ENABLED, false),
-    jsonModeEnabled: toBoolean(process.env.DEEPSEEK_JSON_MODE_ENABLED, true),
-    timeoutMs: Number.isFinite(timeoutParsed) && timeoutParsed > 0 ? timeoutParsed : DEFAULT_TIMEOUT_MS,
-    maxTokens,
-    temperature
+    apiKey: env.deepseekApiKey,
+    baseUrl: normalizeBaseUrl(env.deepseekBaseUrl ?? DEFAULT_BASE_URL),
+    model: env.deepseekModel ?? DEFAULT_MODEL,
+    reasonerModel: env.deepseekReasonerModel ?? DEFAULT_REASONER_MODEL,
+    strictBetaEnabled: env.deepseekStrictBetaEnabled,
+    jsonModeEnabled: env.deepseekJsonModeEnabled,
+    timeoutMs: env.analysisTimeoutMs > 0 ? env.analysisTimeoutMs : DEFAULT_TIMEOUT_MS,
+    maxTokens: env.deepseekMaxTokens,
+    temperature: env.deepseekTemperature
   };
 }
 
@@ -140,7 +124,7 @@ async function callDeepSeek(params: {
 
   try {
     if (!config.apiKey) {
-      throw new Error("DEEPSEEK_API_KEY is not configured");
+      assertDeepSeekApiKey("deepseek_provider_call");
     }
 
     const response = await fetch(endpoint, {

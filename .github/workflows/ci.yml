@@ -10,9 +10,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  lint_build:
-    name: Lint and Build
+  lint_test_build:
+    name: Lint, Test and Build
     runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      SELF_SALES_ORG_ID: 00000000-0000-0000-0000-000000000000
+      AI_PROVIDER: deepseek
+      DEEPSEEK_API_KEY: ci-placeholder-deepseek-key
+      AI_ANALYSIS_TIMEOUT_MS: 30000
+      AI_FALLBACK_TO_RULE_ENGINE: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +37,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Test
+        run: npm run test
 
       - name: Build
         run: npm run build

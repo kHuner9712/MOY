@@ -9,8 +9,115 @@ import { listLatestCustomerHealthSnapshots, refreshCustomerHealthSnapshots } fro
 import { listRenewalWatchItems, refreshRenewalWatchItems } from "@/services/renewal-watch-service";
 import type { BusinessEvent, ExecutiveCockpitSummary } from "@/types/automation";
 import { automationActionRecommendationResultSchema } from "@/types/ai";
+import type { DealCheckpointStatus, DealPriorityBand, DealRoomStatus } from "@/types/deal";
+import type { TrialConversionStage } from "@/types/commercialization";
+import type { WorkItemStatus } from "@/types/work";
 
 type DbClient = ServerSupabaseClient;
+
+type QueryError = { message: string };
+type TableQueryResult<T> = { data: T[] | null; error: QueryError | null };
+
+type TrialConversionTrackQueryRow = {
+  id: string;
+  current_stage: TrialConversionStage;
+  conversion_readiness_score: number | null;
+  owner_id: string;
+};
+
+type WorkItemQueryRow = {
+  id: string;
+  status: WorkItemStatus;
+  owner_id: string;
+  due_at: string | null;
+};
+
+type DealRoomQueryRow = {
+  id: string;
+  priority_band: DealPriorityBand;
+  room_status: DealRoomStatus;
+  manager_attention_needed: boolean;
+  owner_id: string;
+};
+
+type DealCheckpointQueryRow = {
+  id: string;
+  status: DealCheckpointStatus;
+  deal_room_id: string;
+};
+
+const ACTIVE_WORK_ITEM_STATUSES: WorkItemStatus[] = ["todo", "in_progress", "snoozed"];
+const ACTIVATED_TRIAL_STAGES: TrialConversionStage[] = [
+  "activated",
+  "onboarding_started",
+  "onboarding_completed",
+  "first_value_seen",
+  "active_trial",
+  "conversion_discussion",
+  "verbally_committed",
+  "converted"
+];
+const ONBOARDING_COMPLETED_TRIAL_STAGES: TrialConversionStage[] = [
+  "onboarding_completed",
+  "first_value_seen",
+  "active_trial",
+  "conversion_discussion",
+  "verbally_committed",
+  "converted"
+];
+const FIRST_VALUE_TRIAL_STAGES: TrialConversionStage[] = [
+  "first_value_seen",
+  "active_trial",
+  "conversion_discussion",
+  "verbally_committed",
+  "converted"
+];
+
+async function fetchTrialConversionTracks(params: {
+  supabase: DbClient;
+  orgId: string;
+}): Promise<TableQueryResult<TrialConversionTrackQueryRow>> {
+  const res = await params.supabase
+    .from("trial_conversion_tracks")
+    .select("id,current_stage,conversion_readiness_score,owner_id")
+    .eq("org_id", params.orgId);
+  return res as TableQueryResult<TrialConversionTrackQueryRow>;
+}
+
+async function fetchOpenWorkItems(params: {
+  supabase: DbClient;
+  orgId: string;
+}): Promise<TableQueryResult<WorkItemQueryRow>> {
+  const res = await params.supabase
+    .from("work_items")
+    .select("id,status,owner_id,due_at")
+    .eq("org_id", params.orgId)
+    .in("status", ACTIVE_WORK_ITEM_STATUSES);
+  return res as TableQueryResult<WorkItemQueryRow>;
+}
+
+async function fetchDealRooms(params: {
+  supabase: DbClient;
+  orgId: string;
+}): Promise<TableQueryResult<DealRoomQueryRow>> {
+  const res = await params.supabase
+    .from("deal_rooms")
+    .select("id,priority_band,room_status,manager_attention_needed,owner_id")
+    .eq("org_id", params.orgId);
+  return res as TableQueryResult<DealRoomQueryRow>;
+}
+
+async function fetchBlockedDealCheckpoints(params: {
+  supabase: DbClient;
+  orgId: string;
+}): Promise<TableQueryResult<DealCheckpointQueryRow>> {
+  const res = await params.supabase
+    .from("deal_checkpoints")
+    .select("id,status,deal_room_id")
+    .eq("org_id", params.orgId)
+    .eq("status", "blocked");
+  return res as TableQueryResult<DealCheckpointQueryRow>;
+}
 
 async function getAutomationActionRecommendation(params: {
   supabase: DbClient;
@@ -178,24 +285,22 @@ export async function getExecutiveCockpitSummary(params: {
       ownerId: params.ownerId,
       limit: 300
     }),
-    (params.supabase as any)
-      .from("trial_conversion_tracks")
-      .select("id,current_stage,conversion_readiness_score,owner_id")
-      .eq("org_id", params.orgId),
-    (params.supabase as any)
-      .from("work_items")
-      .select("id,status,owner_id,due_at")
-      .eq("org_id", params.orgId)
-      .in("status", ["todo", "in_progress", "snoozed"]),
-    (params.supabase as any)
-      .from("deal_rooms")
-      .select("id,priority_band,room_status,manager_attention_needed,owner_id")
-      .eq("org_id", params.orgId),
-    (params.supabase as any)
-      .from("deal_checkpoints")
-      .select("id,status,deal_room_id")
-      .eq("org_id", params.orgId)
-      .eq("status", "blocked"),
+    fetchTrialConversionTracks({
+      supabase: params.supabase,
+      orgId: params.orgId
+    }),
+    fetchOpenWorkItems({
+      supabase: params.supabase,
+      orgId: params.orgId
+    }),
+    fetchDealRooms({
+      supabase: params.supabase,
+      orgId: params.orgId
+    }),
+    fetchBlockedDealCheckpoints({
+      supabase: params.supabase,
+      orgId: params.orgId
+    }),
     listAutomationRuleRuns({
       supabase: params.supabase,
       orgId: params.orgId,
@@ -207,19 +312,14 @@ export async function getExecutiveCockpitSummary(params: {
     if (res.error) throw new Error(res.error.message);
   }
 
-  const filteredTracks = params.ownerId
-    ? ((trialTracksRes.data ?? []) as Array<{ owner_id: string }>).filter((item) => item.owner_id === params.ownerId)
-    : ((trialTracksRes.data ?? []) as Array<{ owner_id: string }>);
+  const trialTracks = trialTracksRes.data ?? [];
+  const filteredTracks = params.ownerId ? trialTracks.filter((item) => item.owner_id === params.ownerId) : trialTracks;
 
-  const filteredWork = params.ownerId
-    ? ((workItemsRes.data ?? []) as Array<{ owner_id: string; due_at: string | null }>).filter((item) => item.owner_id === params.ownerId)
-    : ((workItemsRes.data ?? []) as Array<{ owner_id: string; due_at: string | null }>);
+  const workItems = workItemsRes.data ?? [];
+  const filteredWork = params.ownerId ? workItems.filter((item) => item.owner_id === params.ownerId) : workItems;
 
-  const filteredDeals = params.ownerId
-    ? ((dealRoomsRes.data ?? []) as Array<{ owner_id: string; priority_band: string; manager_attention_needed: boolean }>).filter(
-        (item) => item.owner_id === params.ownerId
-      )
-    : ((dealRoomsRes.data ?? []) as Array<{ owner_id: string; priority_band: string; manager_attention_needed: boolean }>);
+  const dealRooms = dealRoomsRes.data ?? [];
+  const filteredDeals = params.ownerId ? dealRooms.filter((item) => item.owner_id === params.ownerId) : dealRooms;
 
   const overdueWork = filteredWork.filter((item) => item.due_at && new Date(item.due_at).getTime() < Date.now()).length;
   const strategicDeals = filteredDeals.filter((item) => ["strategic", "critical"].includes(String(item.priority_band))).length;
@@ -288,10 +388,10 @@ export async function getExecutiveCockpitSummary(params: {
       managerAttentionDeals
     },
     trialHealth: {
-      activated: filteredTracks.filter((item: any) => ["activated", "onboarding_started", "onboarding_completed", "first_value_seen", "active_trial", "conversion_discussion", "verbally_committed", "converted"].includes(item.current_stage)).length,
-      onboardingCompleted: filteredTracks.filter((item: any) => ["onboarding_completed", "first_value_seen", "active_trial", "conversion_discussion", "verbally_committed", "converted"].includes(item.current_stage)).length,
-      firstValue: filteredTracks.filter((item: any) => ["first_value_seen", "active_trial", "conversion_discussion", "verbally_committed", "converted"].includes(item.current_stage)).length,
-      conversionRisk: filteredTracks.filter((item: any) => Number(item.conversion_readiness_score ?? 0) < 55).length
+      activated: filteredTracks.filter((item) => ACTIVATED_TRIAL_STAGES.includes(item.current_stage)).length,
+      onboardingCompleted: filteredTracks.filter((item) => ONBOARDING_COMPLETED_TRIAL_STAGES.includes(item.current_stage)).length,
+      firstValue: filteredTracks.filter((item) => FIRST_VALUE_TRIAL_STAGES.includes(item.current_stage)).length,
+      conversionRisk: filteredTracks.filter((item) => Number(item.conversion_readiness_score ?? 0) < 55).length
     },
     teamExecution: {
       overdueWork,

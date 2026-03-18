@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 
+import { requireSelfSalesOrgIdEnv } from "@/lib/env";
 import { createSupabaseAdminClient, hasSupabaseAdminEnv } from "@/lib/supabase/admin";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { createDealRoom } from "@/services/deal-room-service";
@@ -121,10 +122,7 @@ export async function appendConversionEvent(params: {
 async function ensureSelfSalesOrgId(params: {
   supabase: DbClient;
 }): Promise<string> {
-  const envOrgId = process.env.SELF_SALES_ORG_ID?.trim();
-  if (!envOrgId) {
-    throw new Error("self_sales_org_env_missing");
-  }
+  const envOrgId = requireSelfSalesOrgIdEnv("public_self_sales");
 
   const res = await (params.supabase as any).from("organizations").select("id").eq("id", envOrgId).maybeSingle();
   if (res.error) throw new Error(res.error.message);
@@ -564,6 +562,5 @@ export function buildPublicSubmissionFingerprint(params: {
   const raw = `${params.source}|${email}|${ip}|${ua}`;
   return createHash("sha256").update(raw).digest("hex");
 }
-
 
 
