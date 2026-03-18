@@ -59,6 +59,7 @@ import { runMobileLayerTests } from "./mobile-layer.test.ts";
 import { runTemplateLayerTests } from "./template-layer.test.ts";
 import { runCommercializationLayerTests } from "./commercialization-layer.test.ts";
 import { runAutomationOpsLayerTests } from "./automation-ops-layer.test.ts";
+import { runGoldenPathSmokeTests } from "./golden-path-smoke.test.ts";
 import { pickBestCustomerMatch, scoreCustomerCandidate } from "../services/customer-match-service.ts";
 import {
   communicationExtractionResultSchema,
@@ -1350,6 +1351,7 @@ function main(): void {
   runMobileLayerTests(logPass);
   runCommercializationLayerTests(logPass);
   runAutomationOpsLayerTests(logPass);
+  runGoldenPathSmokeTests(logPass);
   console.log("All tests passed.");
 }
 
