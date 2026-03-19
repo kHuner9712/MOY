@@ -64,8 +64,8 @@ export function AppSidebar({ role, pathname, onNavigate }: AppSidebarProps): JSX
   return (
     <aside className="flex h-full w-64 flex-col border-r bg-white/85 backdrop-blur-sm">
       <div className="border-b px-6 py-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">Tongming Technology</p>
-        <h1 className="mt-2 font-display text-2xl font-bold tracking-wide text-slate-900">MOY MoYan</h1>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">桐鸣科技</p>
+        <h1 className="mt-2 font-display text-2xl font-bold tracking-wide text-slate-900">MOY 墨言</h1>
         <p className="mt-2 text-xs text-muted-foreground">Mate Of You | Sales AI Workspace</p>
       </div>
 

@@ -17,7 +17,7 @@ export default function MarketingHomePage(): JSX.Element {
       <section className="mx-auto max-w-6xl px-4 py-10 md:px-8 md:py-14">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-700">Tongming Technology</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-700">桐鸣科技</p>
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">MOY / 墨言</h1>
             <p className="mt-2 text-sm text-slate-600">Mate Of You · Web AI workspace for SMB sales teams</p>
           </div>
