@@ -66,7 +66,7 @@ export default function LoginPage(): JSX.Element {
       <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top_right,rgba(14,116,144,0.16),transparent_42%),radial-gradient(circle_at_bottom_left,rgba(15,23,42,0.1),transparent_45%)]" />
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col justify-center px-4 py-12 lg:grid lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:gap-10">
         <section className="mb-10 lg:mb-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">桐鸣科技 · Tongming Tech</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">桐鸣科技</p>
           <h1 className="mt-4 font-display text-5xl font-semibold leading-tight text-slate-900">MOY 墨言</h1>
           <p className="mt-3 text-lg font-medium text-slate-700">面向中小企业销售团队的 Web AI 工作台</p>
           <p className="mt-6 max-w-xl text-sm leading-6 text-slate-600">

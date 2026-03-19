@@ -1,6 +1,6 @@
 # MOY (墨言 / Mate Of You) Web AI Workspace
 
-MOY (Mate Of You) is 桐鸣科技 (Tongming Tech)'s B2B AI sales workspace for SMB teams.
+MOY (Mate Of You) is 桐鸣科技's B2B AI sales workspace for SMB teams.
 
 Current stage: **v1.x Stable Release**  
 Core stack: **Next.js + Supabase + DeepSeek**
