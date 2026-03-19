@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { buildFallbackMobileBriefCompactSummary, buildFallbackMobileQuickCaptureRefine } from "../lib/mobile-fallback.ts";
-import { clipMobileList, buildMobilePriorityPreview } from "../lib/mobile-summary.ts";
-import { listLocalMobileDrafts } from "../lib/mobile-local-drafts.ts";
+import { buildFallbackMobileBriefCompactSummary, buildFallbackMobileQuickCaptureRefine } from "../lib/mobile-fallback";
+import { clipMobileList, buildMobilePriorityPreview } from "../lib/mobile-summary";
+import { listLocalMobileDrafts } from "../lib/mobile-local-drafts";
 
 export function runMobileLayerTests(logPass: (name: string) => void): void {
   const quick = buildFallbackMobileQuickCaptureRefine({
@@ -37,7 +37,7 @@ export function runMobileLayerTests(logPass: (name: string) => void): void {
   assert.deepEqual(noWindowDrafts, []);
   logPass("offline draft local utility in non-browser");
 
-  const manifestExists = existsSync(path.resolve(process.cwd(), "app/manifest.ts"));
+  const manifestExists = existsSync(path.resolve(process.cwd(), "app/manifest"));
   const swExists = existsSync(path.resolve(process.cwd(), "public/sw.js"));
   assert.equal(manifestExists, true);
   assert.equal(swExists, true);

@@ -1,25 +1,25 @@
 import assert from "node:assert/strict";
 
-import { buildFallbackDailyPlan } from "../lib/daily-plan-fallback.ts";
+import { buildFallbackDailyPlan } from "../lib/daily-plan-fallback";
 import {
   buildFallbackDealPlaybookMapping,
   buildFallbackDealRoomCommandSummary,
   buildFallbackDecisionSupport,
   buildFallbackInterventionRecommendation,
   buildFallbackThreadSummary
-} from "../lib/deal-command-fallback.ts";
-import { deriveDecisionApprovalLinkage } from "../lib/deal-decision-linkage.ts";
-import { buildBlockedCheckpointLinkage } from "../lib/deal-checkpoint-linkage.ts";
-import { computeBehaviorQualityMetrics, calculateShallowActivityRatio } from "../lib/behavior-quality.ts";
-import { computeOutcomeOverview } from "../lib/closed-loop.ts";
-import { buildFallbackUserCoachingReport } from "../lib/coaching-fallback.ts";
-import { decideCaptureApplyMode } from "../lib/capture-flow.ts";
-import { getAlertDedupeDecision } from "../lib/alert-dedupe.ts";
-import { evaluateAlertRules } from "../lib/alert-rules.ts";
-import { normalizeDeepSeekContent, parseDeepSeekJsonText } from "../lib/ai/providers/deepseek.ts";
-import { buildFallbackOutcomeAssist } from "../lib/outcome-fallback.ts";
-import { buildFallbackOutcomeReview, buildFallbackPersonalEffectivenessUpdate } from "../lib/outcome-review-fallback.ts";
-import { buildFallbackPlaybook } from "../lib/playbook-fallback.ts";
+} from "../lib/deal-command-fallback";
+import { deriveDecisionApprovalLinkage } from "../lib/deal-decision-linkage";
+import { buildBlockedCheckpointLinkage } from "../lib/deal-checkpoint-linkage";
+import { computeBehaviorQualityMetrics, calculateShallowActivityRatio } from "../lib/behavior-quality";
+import { computeOutcomeOverview } from "../lib/closed-loop";
+import { buildFallbackUserCoachingReport } from "../lib/coaching-fallback";
+import { decideCaptureApplyMode } from "../lib/capture-flow";
+import { getAlertDedupeDecision } from "../lib/alert-dedupe";
+import { evaluateAlertRules } from "../lib/alert-rules";
+import { normalizeDeepSeekContent, parseDeepSeekJsonText } from "../lib/ai/providers/deepseek";
+import { buildFallbackOutcomeAssist } from "../lib/outcome-fallback";
+import { buildFallbackOutcomeReview, buildFallbackPersonalEffectivenessUpdate } from "../lib/outcome-review-fallback";
+import { buildFallbackPlaybook } from "../lib/playbook-fallback";
 import {
   buildFallbackDocumentSummary,
   buildFallbackEmailDraft,
@@ -27,50 +27,50 @@ import {
   buildFallbackMeetingAgenda,
   evaluateNoRecentTouchpoint,
   evaluateWaitingReplyNeed
-} from "../lib/external-touchpoint-fallback.ts";
-import { pickAutoCompletableTaskIdsAfterFollowup } from "../lib/work-item-linkage.ts";
-import { buildFallbackTeamRhythmInsight } from "../lib/team-rhythm-fallback.ts";
-import { computeTaskPriority } from "../lib/task-priority.ts";
-import { resolveWorkItemTransition } from "../lib/work-item-state.ts";
-import { buildWorkItemDraftFromAlert } from "../lib/work-item-builder.ts";
-import { deriveMemoryItemStatusFromFeedback } from "../lib/memory-feedback.ts";
-import { buildFallbackMemoryCompileResult } from "../lib/memory-fallback.ts";
-import { buildFallbackActionDraft, buildFallbackFollowupPrepCard, buildFallbackMorningBrief } from "../lib/preparation-fallback.ts";
-import { buildBriefingHubView, mapDraftCoverageByWorkItem, mapPrepCoverageByWorkItem } from "../lib/briefing-hub.ts";
-import { deriveContentDraftStatusFromFeedback, derivePrepCardStatusFromFeedback } from "../lib/preparation-feedback.ts";
-import { isInterventionStatusTransitionAllowed } from "../lib/intervention-request-flow.ts";
-import { buildFallbackReport } from "../lib/report-fallback.ts";
-import { mapFeedbackToAdoptionType } from "../lib/suggestion-adoption.ts";
-import { summarizeDemoSeedSteps } from "../lib/demo-seed-summary.ts";
-import { deriveAiActionAccess, deriveFeatureAccess } from "../lib/feature-access-utils.ts";
+} from "../lib/external-touchpoint-fallback";
+import { pickAutoCompletableTaskIdsAfterFollowup } from "../lib/work-item-linkage";
+import { buildFallbackTeamRhythmInsight } from "../lib/team-rhythm-fallback";
+import { computeTaskPriority } from "../lib/task-priority";
+import { resolveWorkItemTransition } from "../lib/work-item-state";
+import { buildWorkItemDraftFromAlert } from "../lib/work-item-builder";
+import { deriveMemoryItemStatusFromFeedback } from "../lib/memory-feedback";
+import { buildFallbackMemoryCompileResult } from "../lib/memory-fallback";
+import { buildFallbackActionDraft, buildFallbackFollowupPrepCard, buildFallbackMorningBrief } from "../lib/preparation-fallback";
+import { buildBriefingHubView, mapDraftCoverageByWorkItem, mapPrepCoverageByWorkItem } from "../lib/briefing-hub";
+import { deriveContentDraftStatusFromFeedback, derivePrepCardStatusFromFeedback } from "../lib/preparation-feedback";
+import { isInterventionStatusTransitionAllowed } from "../lib/intervention-request-flow";
+import { buildFallbackReport } from "../lib/report-fallback";
+import { mapFeedbackToAdoptionType } from "../lib/suggestion-adoption";
+import { summarizeDemoSeedSteps } from "../lib/demo-seed-summary";
+import { deriveAiActionAccess, deriveFeatureAccess } from "../lib/feature-access-utils";
 import {
   canProcessDocumentsByEntitlement,
   canRunAiByEntitlement,
   hasSeatCapacity
-} from "../lib/plan-entitlement-utils.ts";
+} from "../lib/plan-entitlement-utils";
 import {
   canViewOrgUsage,
   isOrgAdminRole,
   isSeatStatusTransitionAllowed
-} from "../lib/org-membership-utils.ts";
-import { buildFallbackOnboardingRecommendation, buildFallbackUsageHealthSummary } from "../lib/productization-fallback.ts";
-import { runImportLayerTests } from "./import-layer.test.ts";
-import { runMobileLayerTests } from "./mobile-layer.test.ts";
-import { runTemplateLayerTests } from "./template-layer.test.ts";
-import { runCommercializationLayerTests } from "./commercialization-layer.test.ts";
-import { runAutomationOpsLayerTests } from "./automation-ops-layer.test.ts";
-import { runGoldenPathSmokeTests } from "./golden-path-smoke.test.ts";
-import { pickBestCustomerMatch, scoreCustomerCandidate } from "../services/customer-match-service.ts";
+} from "../lib/org-membership-utils";
+import { buildFallbackOnboardingRecommendation, buildFallbackUsageHealthSummary } from "../lib/productization-fallback";
+import { runImportLayerTests } from "./import-layer.test";
+import { runMobileLayerTests } from "./mobile-layer.test";
+import { runTemplateLayerTests } from "./template-layer.test";
+import { runCommercializationLayerTests } from "./commercialization-layer.test";
+import { runAutomationOpsLayerTests } from "./automation-ops-layer.test";
+import { runGoldenPathSmokeTests } from "./golden-path-smoke.test";
+import { pickBestCustomerMatch, scoreCustomerCandidate } from "../services/customer-match-service";
 import {
   communicationExtractionResultSchema,
   followupAnalysisResultSchema,
   leakAlertInferenceResultSchema
-} from "../types/ai.ts";
-import type { Customer } from "../types/customer.ts";
-import type { FollowupRecord } from "../types/followup.ts";
-import type { Opportunity } from "../types/opportunity.ts";
-import type { ContentDraft, MorningBrief, PrepCard } from "../types/preparation.ts";
-import type { EntitlementStatus } from "../types/productization.ts";
+} from "../types/ai";
+import type { Customer } from "../types/customer";
+import type { FollowupRecord } from "../types/followup";
+import type { Opportunity } from "../types/opportunity";
+import type { ContentDraft, MorningBrief, PrepCard } from "../types/preparation";
+import type { EntitlementStatus } from "../types/productization";
 
 function logPass(name: string): void {
   console.log(`PASS ${name}`);

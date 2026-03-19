@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 
-import { evaluateAlertRules } from "../lib/alert-rules.ts";
-import { matchAutomationRuleTargets, getDefaultAutomationRuleSeeds } from "../lib/automation-ops.ts";
-import { decideCaptureApplyMode } from "../lib/capture-flow.ts";
-import { computeOutcomeOverview } from "../lib/closed-loop.ts";
-import { buildFallbackExecutiveBriefSummary } from "../lib/executive-fallback.ts";
-import { computeTaskPriority } from "../lib/task-priority.ts";
-import { buildWorkItemDraftFromAlert } from "../lib/work-item-builder.ts";
-import type { AlertItem } from "../types/alert.ts";
-import type { Customer } from "../types/customer.ts";
-import type { FollowupRecord } from "../types/followup.ts";
-import type { Opportunity } from "../types/opportunity.ts";
+import { evaluateAlertRules } from "../lib/alert-rules";
+import { matchAutomationRuleTargets, getDefaultAutomationRuleSeeds } from "../lib/automation-ops";
+import { decideCaptureApplyMode } from "../lib/capture-flow";
+import { computeOutcomeOverview } from "../lib/closed-loop";
+import { buildFallbackExecutiveBriefSummary } from "../lib/executive-fallback";
+import { computeTaskPriority } from "../lib/task-priority";
+import { buildWorkItemDraftFromAlert } from "../lib/work-item-builder";
+import type { AlertItem } from "../types/alert";
+import type { Customer } from "../types/customer";
+import type { FollowupRecord } from "../types/followup";
+import type { Opportunity } from "../types/opportunity";
 
 export function runGoldenPathSmokeTests(logPass: (name: string) => void): void {
   const now = new Date("2026-03-18T09:00:00.000Z");

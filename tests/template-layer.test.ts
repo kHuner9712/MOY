@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 
-import { BUILTIN_INDUSTRY_TEMPLATE_SEEDS } from "../data/industry-templates.ts";
-import { buildFallbackTemplateApplicationSummary, buildFallbackTemplateFitRecommendation } from "../lib/productization-fallback.ts";
-import { applyTemplateConfig, type TemplateConfigDraft } from "../lib/template-application.ts";
+import { BUILTIN_INDUSTRY_TEMPLATE_SEEDS } from "../data/industry-templates";
+import { buildFallbackTemplateApplicationSummary, buildFallbackTemplateFitRecommendation } from "../lib/productization-fallback";
+import { applyTemplateConfig, type TemplateConfigDraft } from "../lib/template-application";
 
 function buildConfig(overrides: Partial<TemplateConfigDraft> = {}): TemplateConfigDraft {
   return {

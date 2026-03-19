@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 
-import { computeTrialReadinessScores, pickLeadAssignmentRule } from "../lib/commercialization.ts";
+import { computeTrialReadinessScores, pickLeadAssignmentRule } from "../lib/commercialization";
 import {
   buildFallbackGrowthPipelineSummary,
   buildFallbackLeadQualification,
   buildFallbackTrialConversionReview
-} from "../lib/commercialization-fallback.ts";
-import type { LeadAssignmentRule } from "../types/commercialization.ts";
+} from "../lib/commercialization-fallback";
+import type { LeadAssignmentRule } from "../types/commercialization";
 
 export function runCommercializationLayerTests(logPass: (name: string) => void): void {
   const fallbackLead = buildFallbackLeadQualification({

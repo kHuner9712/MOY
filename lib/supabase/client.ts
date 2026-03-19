@@ -12,10 +12,12 @@ let browserClient: BrowserClient | null = null;
 export function createSupabaseBrowserClient(): BrowserClient {
   if (browserClient) return browserClient;
 
-  const { url, anonKey } = getSupabasePublicEnv();
   if (!hasSupabasePublicEnv()) {
-    throw new Error("Missing Supabase env. Please configure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+    throw new Error(
+      "[env:supabase_public_client] Missing required environment variables: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY."
+    );
   }
+  const { url, anonKey } = getSupabasePublicEnv();
 
   browserClient = createBrowserClient<Database>(url, anonKey);
   return browserClient;

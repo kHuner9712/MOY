@@ -2,7 +2,7 @@
 
 MOY (Mate Of You) is Tongming Technology's B2B AI sales workspace for SMB teams.
 
-Current stage: **Phase 16 - Automation Ops & Executive Cockpit Layer**  
+Current stage: **v1.x Stable Release**  
 Core stack: **Next.js + Supabase + DeepSeek**
 
 ---
@@ -21,7 +21,7 @@ This project is a runnable, extensible SaaS MVP with:
 - Mobile/PWA light interaction with offline draft sync
 - Industry templates + scenario packs
 - Commercialization and self-sales flywheel (public site + growth pipeline + trial conversion)
-- **Phase 16 automation ops layer**:
+- **Automation ops layer**:
   - automation rule center
   - business event bus
   - customer health snapshots
@@ -30,7 +30,7 @@ This project is a runnable, extensible SaaS MVP with:
 
 ---
 
-## 2. Phase 16 Highlights
+## 2. Core Features (Latest Updates)
 
 ### A. Automation Rule Center
 
@@ -99,7 +99,7 @@ Retention watch skeleton is persisted in `renewal_watch_items` with:
 
 ### E. Cross-module Hookback
 
-Phase 16 signals are integrated back to:
+Core signals are integrated back to:
 
 - `/today` (operating event hints)
 - `/briefings` (executive brief snapshot for manager scope)
@@ -109,7 +109,7 @@ Phase 16 signals are integrated back to:
 
 ---
 
-## 3. Data Model (Phase 16)
+## 3. Data Model
 
 New migration:
 
@@ -136,7 +136,7 @@ New tables:
 
 ---
 
-## 4. API Additions (Phase 16)
+## 4. Automation & Executive API
 
 Automation:
 
@@ -171,7 +171,7 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 NEXT_PUBLIC_APP_URL=http://localhost:3000
-NEXT_PUBLIC_APP_VERSION=phase-16
+NEXT_PUBLIC_APP_VERSION=v1.0.0
 SELF_SALES_ORG_ID=
 
 AI_PROVIDER=deepseek
@@ -226,6 +226,9 @@ Run migrations in order:
 15. `202603230001_commercialization_self_sales_flywheel_layer.sql`
 16. `202603240001_automation_ops_executive_cockpit_layer.sql`
 17. `202603240002_phase16_5_rc_audit_fixes.sql`
+18. `202603250001_attribution_layer.sql`
+19. `202603250002_notification_layer.sql`
+20. `202603260001_onboarding_enhancement_layer.sql`
 
 Seed demo:
 
@@ -233,6 +236,7 @@ Seed demo:
 npm install
 npm run seed:demo
 ```
+
 
 ---
 
@@ -314,7 +318,7 @@ Retention watch derives from:
 
 ---
 
-## 10. Fallback Behavior (Phase 16)
+## 10. Fallback Behavior
 
 - `executive_brief_summary` failure -> rule-based executive brief fallback
 - `customer_health_summary` failure -> rule-based health summary fallback
@@ -338,11 +342,11 @@ Principle: AI failure never blocks core write path.
   - no full executive cockpit
   - receives scoped health/event summaries through owned entities
 
-All Phase 16 tables are protected by RLS policies in migration.
+All new tables are protected by RLS policies in migration.
 
 ---
 
-## 12. New/Updated Services (Phase 16)
+## 12. Core Services Overview
 
 Added:
 
@@ -362,7 +366,7 @@ Support libs:
 
 ---
 
-## 13. Phase 16 Manual Verification Checklist
+## 13. Manual Verification Checklist
 
 1. Configure env and run all migrations through `202603240001`.
 2. Login as manager/admin and open `/settings/automation`.
@@ -378,13 +382,13 @@ Support libs:
 7. Open `/customers/[id]` and verify health/retention signal panel.
 8. Open `/deals/[id]` and verify ops event + recommended action panel.
 9. Open `/briefings` and `/today` (manager scope) and verify executive signal hookbacks.
-10. Disable DeepSeek key and confirm all Phase 16 fallbacks still produce usable outputs.
+10. Disable DeepSeek key and confirm all fallbacks still produce usable outputs.
 
 ---
 
 ## 14. Tests
 
-Phase 16 tests added in:
+Core functional tests added in:
 
 - `tests/automation-ops-layer.test.ts`
 

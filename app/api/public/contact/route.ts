@@ -76,8 +76,9 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "contact_form_failed";
+    const selfSalesEnvMissing = message.includes("SELF_SALES_ORG_ID") || message.includes("self_sales_org_env_missing");
     const status =
-      message === "lead_submission_too_frequent" ? 429 : message === "self_sales_org_env_missing" || message === "self_sales_org_not_found" ? 503 : 500;
+      message === "lead_submission_too_frequent" ? 429 : selfSalesEnvMissing || message === "self_sales_org_not_found" ? 503 : 500;
     return fail(message, status);
   }
 }

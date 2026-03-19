@@ -7,8 +7,8 @@ import type { Database } from "@/types/database";
 type ServerClient = ReturnType<typeof createServerClient<Database>>;
 
 export function createSupabaseServerClient(): ServerClient | null {
-  const { url, anonKey } = getSupabasePublicEnv();
   if (!hasSupabasePublicEnv()) return null;
+  const { url, anonKey } = getSupabasePublicEnv();
 
   const cookieStore = cookies();
 

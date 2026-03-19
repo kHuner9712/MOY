@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 
-import { findCustomerDuplicateCandidates, mergeCustomerPayload } from "../lib/import-dedupe.ts";
-import { resolveImportExecutionOutcome } from "../lib/import-execution-utils.ts";
-import { buildRuleBasedMappingSuggestions, guessImportField } from "../lib/import-mapping.ts";
+import { findCustomerDuplicateCandidates, mergeCustomerPayload } from "../lib/import-dedupe";
+import { resolveImportExecutionOutcome } from "../lib/import-execution-utils";
+import { buildRuleBasedMappingSuggestions, guessImportField } from "../lib/import-mapping";
 import {
   normalizeCommunicationType,
   normalizeCurrencyAmount,
@@ -10,9 +10,9 @@ import {
   normalizeDateValue,
   normalizeOpportunityStage,
   normalizeRiskLevel
-} from "../lib/import-normalization.ts";
-import { buildImportOwnerMap, resolveImportOwnerId } from "../lib/import-owner-mapping.ts";
-import { buildFallbackImportReviewSummary } from "../lib/import-review-fallback.ts";
+} from "../lib/import-normalization";
+import { buildImportOwnerMap, resolveImportOwnerId } from "../lib/import-owner-mapping";
+import { buildFallbackImportReviewSummary } from "../lib/import-review-fallback";
 
 export function runImportLayerTests(logPass: (name: string) => void): void {
   const customerName = guessImportField("客户名称");

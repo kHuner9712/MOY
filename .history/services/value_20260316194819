@@ -1,0 +1,28 @@
+/**
+ * 价值指标类型定义
+ * 基于现有数据结构，设计一组最小可用的"价值指标"
+ */
+
+export type ValueMetricsPeriod = {
+  periodStart: string;
+  periodEnd: string;
+  // 核心指标
+  missedFollowups: number; // 本周漏跟进减少数
+  riskCustomersAdded: number; // 本周新增风险客户数
+  riskEventsHandled: number; // 本周被识别并处理的风险事件数
+  managerInterventions: number; // 本周经理介入次数
+  aiAdoptionCount: number; // 本周 AI 建议采纳次数
+  timeSavedMinutes: number; // 本周节省的人工整理/提醒/汇总时间（分钟）
+  trend: ValueTrend; // 与上周对比
+  trendDirection: 'up' | 'down' | ' same';
+  trendPercentage: number; // 变化百分比
+}
+
+```
+
+```
+
+### 2. 在 executive 页面增加价值总览区
+
+接下来， 我 `value-metrics-service.ts` 文件， I'll继续阅读相关服务层代码，然后创建价值指标服务：然后更新 todo 状态：
+TodoWrite

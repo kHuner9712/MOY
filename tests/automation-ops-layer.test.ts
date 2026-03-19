@@ -7,13 +7,13 @@ import {
   matchAutomationRuleTargets,
   scoreToHealthBand,
   type RuleMatchTarget
-} from "../lib/automation-ops.ts";
+} from "../lib/automation-ops";
 import {
   buildFallbackAutomationActionRecommendation,
   buildFallbackCustomerHealthSummary,
   buildFallbackExecutiveBriefSummary
-} from "../lib/executive-fallback.ts";
-import { inferRenewalStatus } from "../lib/renewal-watch.ts";
+} from "../lib/executive-fallback";
+import { inferRenewalStatus } from "../lib/renewal-watch";
 
 export function runAutomationOpsLayerTests(logPass: (name: string) => void): void {
   const targets: RuleMatchTarget[] = [

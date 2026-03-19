@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export type AiRunStatus = "queued" | "running" | "completed" | "failed";
-export type AiTriggerSource = "manual" | "followup_submit" | "nightly_scan" | "alert_regen" | "manager_review";
+export type AiTriggerSource = "manual" | "followup_submit" | "nightly_scan" | "alert_regen" | "manager_review" | "import_complete";
 export type AiScenario =
   | "followup_analysis"
   | "customer_health"
@@ -57,7 +57,9 @@ export type AiScenario =
   | "executive_brief_summary"
   | "customer_health_summary"
   | "automation_action_recommendation"
-  | "retention_watch_review";
+  | "retention_watch_review"
+  | "import_business_summary"
+  | "value_metrics_summary";
 export type AiProviderId = "deepseek" | "openai" | "qwen" | "zhipu";
 export type AiPromptProviderScope = "deepseek" | "universal";
 export type AiResultSource = "provider" | "fallback";
@@ -816,3 +818,11 @@ export interface AlertRuleRun {
   error_message: string | null;
   created_at: string;
 }
+
+export const valueMetricsSummaryResultSchema = z.object({
+  headline: z.string().min(1),
+  highlights: z.array(z.string()).default([]),
+  recommendation: z.string().min(1)
+});
+
+export type ValueMetricsSummaryResult = z.infer<typeof valueMetricsSummaryResultSchema>;

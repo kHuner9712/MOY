@@ -93,7 +93,9 @@ const BUILTIN_PROMPTS: Record<
   | "executive_brief_summary"
   | "customer_health_summary"
   | "automation_action_recommendation"
-  | "retention_watch_review",
+  | "retention_watch_review"
+  | "import_business_summary"
+  | "value_metrics_summary",
   PromptTemplate
 > = {
   followup_analysis: {
@@ -1238,6 +1240,28 @@ const BUILTIN_PROMPTS: Record<
         "recommended_retention_moves",
         "recommended_owner_actions"
       ]
+    }
+  },
+  import_business_summary: {
+    name: "Import Business Summary",
+    version: "builtin-v16-deepseek",
+    providerScope: "deepseek",
+    systemPrompt: "You are MOY AI, summarizing imported business data.",
+    developerPrompt: "Scenario: import_business_summary\nGoal: summarize import data.\nOutput language: Chinese.",
+    outputSchema: {
+      type: "object",
+      required: ["health_distribution", "stalled_count", "priority_items", "recommended_rules", "manager_attention_points", "quick_wins"]
+    }
+  },
+  value_metrics_summary: {
+    name: "Value Metrics Summary",
+    version: "builtin-v16-deepseek",
+    providerScope: "deepseek",
+    systemPrompt: "You are MOY AI, summarizing value metrics.",
+    developerPrompt: "Scenario: value_metrics_summary\nGoal: create weekly value digest.\nOutput language: Chinese.",
+    outputSchema: {
+      type: "object",
+      required: ["headline", "highlights", "recommendation"]
     }
   }
 };
