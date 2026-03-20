@@ -11,6 +11,7 @@ import { StatCard } from "@/components/shared/stat-card";
 import { InstallPromptCard } from "@/components/mobile/InstallPromptCard";
 import { OfflineDraftBanner } from "@/components/mobile/OfflineDraftBanner";
 import { SwipeableTaskCard } from "@/components/mobile/SwipeableTaskCard";
+import { SalesDeskQueue } from "@/components/sales-desk/sales-desk-queue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,11 +33,14 @@ import { touchpointClientService } from "@/services/touchpoint-client-service";
 import { workItemClientService } from "@/services/work-item-client-service";
 import { dealRoomClientService } from "@/services/deal-room-client-service";
 import { executiveClientService } from "@/services/executive-client-service";
+import { valueMetricsClientService } from "@/services/value-metrics-client-service";
 import type { TaskActionSuggestionResult } from "@/types/ai";
 import type { BusinessEvent } from "@/types/automation";
 import type { ContentDraft, PrepCard } from "@/types/preparation";
 import type { WorkItem } from "@/types/work";
-import { AlertTriangle, CalendarClock, CircleCheck, ListTodo, Mail, Sparkles } from "lucide-react";
+import type { TodayValueSummary, TodayPriorityAction } from "@/types/value-metrics";
+import { ACTION_TYPE_LABELS, ACTION_TYPE_DESCRIPTIONS } from "@/types/value-metrics";
+import { AlertTriangle, CalendarClock, CircleCheck, ListTodo, Mail, Sparkles, Target, TrendingUp, ShieldAlert } from "lucide-react";
 
 const blockLabel: Record<string, string> = {
   early_morning: "Early Morning",
@@ -90,6 +94,8 @@ export default function TodayPage(): JSX.Element {
   const [localFailedDrafts, setLocalFailedDrafts] = useState(0);
   const [syncingLocalDrafts, setSyncingLocalDrafts] = useState(false);
   const [opsEvents, setOpsEvents] = useState<BusinessEvent[]>([]);
+  const [todayValueSummary, setTodayValueSummary] = useState<TodayValueSummary | null>(null);
+  const [todayValueLoading, setTodayValueLoading] = useState(true);
 
   const workItemMap = useMemo(() => {
     const map = new Map<string, WorkItem>();
@@ -179,6 +185,95 @@ export default function TodayPage(): JSX.Element {
       cancelled = true;
     };
   }, [user?.role, planItemIdsKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadTodayValue = async () => {
+      setTodayValueLoading(true);
+      try {
+        const workItems = planView?.workItems ?? [];
+        const completedTasks = workItems.filter((w) => w.status === "done").length;
+        const aiAssistedTasks = workItems.filter((w) => w.status === "done" && w.aiGenerated === true).length;
+
+        const riskActionsPending = workItems.filter(
+          (w) => w.status !== "done" && (w.priorityBand === "critical" || w.priorityBand === "high")
+        ).length;
+
+        const progressionActionsPending = workItems.filter(
+          (w) => w.status !== "done" && w.workType === "revive_stalled_deal"
+        ).length;
+
+        const priorityActions: TodayPriorityAction[] = workItems
+          .filter((w) => w.status !== "done")
+          .slice(0, 5)
+          .map((w) => {
+            let actionType: TodayPriorityAction["actionType"] = "reduce_risk";
+            let reason = "";
+            let expectedImpact = "";
+
+            if (w.priorityBand === "critical" || w.priorityBand === "high") {
+              actionType = "reduce_risk";
+              reason = w.rationale || "高优先级任务，需要尽快处理";
+              expectedImpact = "降低客户流失风险";
+            } else if (w.workType === "revive_stalled_deal") {
+              actionType = "recover_progression";
+              reason = "客户推进停滞，需要主动跟进";
+              expectedImpact = "恢复客户推进";
+            } else if (w.workType === "resolve_alert") {
+              actionType = "prevent_loss";
+              reason = "存在风险预警需要处理";
+              expectedImpact = "防止客户流失";
+            } else {
+              actionType = "capture_opportunity";
+              reason = w.rationale || "推进销售机会";
+              expectedImpact = "增加成交可能性";
+            }
+
+            return {
+              workItemId: w.id,
+              title: w.title,
+              customerName: undefined,
+              priority: w.priorityBand as TodayPriorityAction["priority"],
+              actionType,
+              reason,
+              expectedImpact,
+              dueAt: w.dueAt ?? undefined
+            };
+          });
+
+        const summary: TodayValueSummary = {
+          completedTasks,
+          aiAssistedTasks,
+          riskActionsPending,
+          progressionActionsPending,
+          estimatedTimeSavedMinutes: aiAssistedTasks * 15,
+          priorityActions
+        };
+
+        if (!cancelled) setTodayValueSummary(summary);
+      } catch {
+        if (!cancelled) {
+          setTodayValueSummary({
+            completedTasks: 0,
+            aiAssistedTasks: 0,
+            riskActionsPending: 0,
+            progressionActionsPending: 0,
+            estimatedTimeSavedMinutes: 0,
+            priorityActions: []
+          });
+        }
+      } finally {
+        if (!cancelled) setTodayValueLoading(false);
+      }
+    };
+
+    if (planView?.workItems) {
+      void loadTodayValue();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [planView?.workItems]);
 
   const refreshLocalDraftCounters = (): void => {
     if (typeof window === "undefined") return;
@@ -526,13 +621,88 @@ export default function TodayPage(): JSX.Element {
           })}
       </section>
 
-      <section className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="mb-4 grid gap-4 xl:grid-cols-4">
         <StatCard title="Today Tasks" value={planView?.plan.totalItems ?? 0} icon={<ListTodo className="h-4 w-4 text-sky-700" />} />
         <StatCard title="Completed" value={doneCount} icon={<CircleCheck className="h-4 w-4 text-emerald-600" />} />
         <StatCard title="Overdue" value={overdueCount} icon={<CalendarClock className="h-4 w-4 text-amber-600" />} />
         <StatCard title="Open Risks" value={riskOpenCount} icon={<AlertTriangle className="h-4 w-4 text-rose-600" />} />
         <StatCard title="Waiting Replies" value={waitingReplyCount} icon={<Mail className="h-4 w-4 text-amber-700" />} />
         <StatCard title="Upcoming Meetings" value={upcomingMeetingCount} icon={<CalendarClock className="h-4 w-4 text-indigo-700" />} />
+      </section>
+
+      <SalesDeskQueue />
+
+      <section className="mb-4">
+        <Card className="border-indigo-100 bg-gradient-to-br from-indigo-50/30 to-white">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Target className="h-5 w-5 text-indigo-600" />
+                今日优先价值动作
+              </CardTitle>
+              {todayValueSummary && (
+                <div className="flex items-center gap-3 text-xs text-slate-500">
+                  <span>已完成 {todayValueSummary.completedTasks} 项</span>
+                  <span>AI 辅助 {todayValueSummary.aiAssistedTasks} 项</span>
+                  <span>节省 {todayValueSummary.estimatedTimeSavedMinutes} 分钟</span>
+                </div>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {todayValueLoading ? (
+              <p className="text-sm text-muted-foreground">正在分析今日优先动作...</p>
+            ) : todayValueSummary && todayValueSummary.priorityActions.length > 0 ? (
+              <div className="space-y-3">
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <Badge variant="outline" className="gap-1">
+                    <ShieldAlert className="h-3 w-3 text-rose-500" />
+                    风险处理: {todayValueSummary.riskActionsPending}
+                  </Badge>
+                  <Badge variant="outline" className="gap-1">
+                    <TrendingUp className="h-3 w-3 text-emerald-500" />
+                    推进恢复: {todayValueSummary.progressionActionsPending}
+                  </Badge>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+                  {todayValueSummary.priorityActions.map((action, index) => (
+                    <div
+                      key={action.workItemId}
+                      className="rounded-lg border border-slate-200 bg-white p-3"
+                    >
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-indigo-600">
+                          #{index + 1} {ACTION_TYPE_LABELS[action.actionType]}
+                        </span>
+                        <Badge
+                          variant={
+                            action.priority === "critical"
+                              ? "destructive"
+                              : action.priority === "high"
+                                ? "default"
+                                : "secondary"
+                          }
+                          className="text-xs"
+                        >
+                          {action.priority}
+                        </Badge>
+                      </div>
+                      <p className="text-sm font-medium text-slate-800">{action.title}</p>
+                      <p className="mt-1 text-xs text-slate-500">{action.reason}</p>
+                      <p className="mt-1 text-xs text-emerald-600">
+                        预期效果: {action.expectedImpact}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                暂无优先动作。生成今日计划后可查看推荐。
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </section>
 
       {user.role === "manager" ? (

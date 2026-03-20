@@ -2,8 +2,8 @@
 
 **MOY 是面向中小企业销售团队的 Web AI 工作系统**，将 AI 能力深度嵌入销售全流程：发现问题 → 触发动作 → 记录处理 → 归因结果 → 展示价值。
 
-- **对外交付版本**：v1.0
-- **内部开发阶段**：Phase 16
+- **对外交付版本**：v1.5
+- **内部开发阶段**：Phase 18
 - **技术栈**：Next.js + TypeScript + Supabase + DeepSeek
 - **推荐阅读**：[README.md](README.md) → [当前架构总览](docs/MOY-Current-Architecture-and-Phase-Overview.md) → [历史阶段文档](docs/archive/phases/)
 
@@ -13,8 +13,8 @@
 
 | Item | Value |
 |------|-------|
-| **Release** | v1.0 |
-| **Dev Phase** | Phase 16 |
+| **Release** | v1.5 |
+| **Dev Phase** | Phase 18 |
 | **Core Modules** | 18 (capture, today, briefings, deals, executive cockpit, etc.) |
 | **Tech Stack** | Next.js 14 + TypeScript + Supabase + DeepSeek |
 | **Database** | 40+ tables, 50+ enums, 20+ migrations |

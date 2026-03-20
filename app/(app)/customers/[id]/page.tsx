@@ -11,6 +11,7 @@ import { IndustryTemplateBanner } from "@/components/shared/industry-template-ba
 import { CustomerAiPanel } from "@/components/customers/customer-ai-panel";
 import { FollowupDrawer } from "@/components/customers/followup-drawer";
 import { FollowupTimeline } from "@/components/customers/followup-timeline";
+import { CustomerUnifiedTimeline } from "@/components/customers/customer-unified-timeline";
 import { useAppData } from "@/components/shared/app-data-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { useOutcomes } from "@/hooks/use-outcomes";
@@ -826,7 +827,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         </Card>
 
         <div className="xl:col-span-2">
-          <FollowupTimeline items={followups} />
+          <CustomerUnifiedTimeline customerId={customer.id} />
         </div>
 
         <CustomerAiPanel

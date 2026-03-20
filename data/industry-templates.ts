@@ -278,6 +278,112 @@ export const BUILTIN_INDUSTRY_TEMPLATE_SEEDS: IndustryTemplateSeed[] = [
         }
       })
     ]
+  },
+  {
+    templateKey: "saas_subscription",
+    displayName: "SaaS 订阅销售",
+    industryFamily: "b2b_software",
+    summary: "面向 SaaS 订阅型产品的销售模式，强调试用转化、续费管理和客户成功。",
+    templatePayload: {
+      ...baseTemplatePayload("saas_demo"),
+      customer_stages: ["lead", "trial", "active", "expansion", "renewal", "churned"],
+      opportunity_stages: ["discovery", "qualification", "trial_started", "trial_completed", "proposal", "negotiation", "closed_won", "closed_lost"],
+      default_alert_rules: { no_followup_timeout: 3, trial_stalled: 2, renewal_risk: 14, usage_decline: 7 },
+      suggested_checkpoints: ["trial_activated", "first_value_achieved", "decision_maker_engaged", "proposal_sent", "contract_signed", "onboarding_complete"],
+      manager_attention_signals: ["trial_without_engagement", "renewal_at_risk", "usage_declining", "expansion_opportunity"],
+      prep_preferences: ["试用成功标准确认", "续费价值回顾", "扩展场景挖掘"],
+      brief_preferences: ["试用转化率", "续费风险", "扩展机会"],
+      recommended_onboarding_path: ["导入客户和订阅数据", "配置试用阶段", "设置续费预警规则", "生成客户健康报告"],
+      suitable_team_types: ["saas销售", "客户成功团队", "订阅业务"]
+    },
+    scenarioPacks: [
+      packItems("objections", "SaaS 常见异议", "订阅销售典型异议", ["价格太贵", "不确定效果", "现有系统够用", "决策周期长"]),
+      packItems("decision_chain", "SaaS 决策链", "典型决策角色", ["业务负责人", "IT负责人", "采购", "财务"]),
+      packItems("quote_strategy", "SaaS 报价策略", "订阅定价策略", ["按席位/用量阶梯定价", "年付折扣", "增值服务包"]),
+      packItems("meeting_goals", "SaaS 会议目标", "试用/续费会议目标", ["确认试用成功标准", "锁定续费时间", "挖掘扩展需求"]),
+      packItems("risk_signals", "SaaS 风险信号", "流失预警信号", ["试用无活跃", "用量持续下降", "续费无响应"]),
+      packItems("manager_interventions", "SaaS 管理介入", "介入时机", ["高价值客户流失风险", "扩展机会停滞"]),
+      packItems("followup_patterns", "SaaS 跟进节奏", "建议节奏", ["试用期间每2天同步", "续费前14天启动", "用量下降即时响应"])
+    ],
+    seededPlaybookTemplates: [
+      playbookSeed({
+        playbookType: "followup_rhythm",
+        title: "试用转化跟进节奏",
+        summary: "试用期间保持高频互动，确保首次价值实现。",
+        payload: {
+          entries: [
+            {
+              entry_title: "试用首周跟进",
+              entry_summary: "确保客户完成首次价值体验。",
+              recommended_actions: ["确认试用目标", "引导完成首个成功场景", "锁定决策时间"],
+              caution_notes: ["避免过早报价"]
+            },
+            {
+              entry_title: "试用末期转化",
+              entry_summary: "推动从试用到付费的决策。",
+              recommended_actions: ["回顾试用成果", "确认续费意向", "处理异议"],
+              caution_notes: ["不要在无准备情况下等待试用结束"]
+            }
+          ]
+        }
+      })
+    ]
+  },
+  {
+    templateKey: "marketing_agency",
+    displayName: "营销/代运营",
+    industryFamily: "consulting_services",
+    summary: "营销代理和代运营服务模式，强调项目交付、效果追踪和客户续约。",
+    templatePayload: {
+      ...baseTemplatePayload("agency_demo"),
+      customer_stages: ["lead", "proposal", "contract_signed", "onboarding", "active", "renewal", "churned"],
+      opportunity_stages: ["discovery", "proposal_sent", "negotiation", "contract_signed", "delivery", "renewal"],
+      default_alert_rules: { no_followup_timeout: 3, delivery_overdue: 2, effect_decline: 7, renewal_risk: 14 },
+      suggested_checkpoints: ["需求确认", "方案通过", "合同签署", "项目启动", "首月交付", "效果复盘", "续约谈判"],
+      manager_attention_signals: ["效果不达标", "客户投诉", "续约风险", "预算调整"],
+      prep_preferences: ["客户目标对齐", "竞品分析", "效果数据准备", "周报/月报模板"],
+      brief_preferences: ["项目进度", "客户满意度", "效果指标", "续约机会"],
+      recommended_onboarding_path: ["导入客户和项目数据", "配置服务阶段", "设置交付提醒规则", "生成客户效果报告"],
+      suitable_team_types: ["营销代理", "代运营团队", "广告投放", "内容营销"]
+    },
+    scenarioPacks: [
+      packItems("objections", "代运营常见异议", "营销服务典型异议", ["效果不确定", "价格贵", "服务周期长", "沟通成本高"]),
+      packItems("decision_chain", "代运营决策链", "典型决策角色", ["市场负责人", "品牌经理", "采购", "财务"]),
+      packItems("quote_strategy", "代运营报价策略", "服务定价策略", ["基础服务费+效果提成", "阶梯报价", "季度/年度合同"]),
+      packItems("meeting_goals", "代运营会议目标", "项目会议目标", ["确认营销目标", "对齐交付节奏", "复盘效果数据"]),
+      packItems("risk_signals", "代运营风险信号", "流失预警信号", ["效果连续不达标", "客户响应变慢", "预算下调"]),
+      packItems("manager_interventions", "代运营管理介入", "介入时机", ["关键客户投诉", "效果连续下滑", "续约谈判"]),
+      packItems("followup_patterns", "代运营跟进节奏", "建议节奏", ["周报同步", "月度复盘", "季度战略对齐"])
+    ],
+    seededPlaybookTemplates: [
+      playbookSeed({
+        playbookType: "meeting_strategy",
+        title: "月度效果复盘会议",
+        summary: "用数据说话，展示价值并推动下一步行动。",
+        payload: {
+          entries: [
+            {
+              entry_title: "数据先行",
+              entry_summary: "用核心指标展示本月成果。",
+              recommended_actions: ["展示关键指标变化", "对比目标完成情况", "分析成功案例"],
+              caution_notes: ["数据要真实可验证"]
+            },
+            {
+              entry_title: "问题与优化",
+              entry_summary: "坦诚问题并提出改进方案。",
+              recommended_actions: ["识别未达标指标", "分析原因", "提出下月优化计划"],
+              caution_notes: ["避免只报喜不报忧"]
+            },
+            {
+              entry_title: "下一步行动",
+              entry_summary: "明确下阶段目标和资源需求。",
+              recommended_actions: ["确认下月目标", "锁定资源投入", "约定下次复盘时间"],
+              caution_notes: ["目标要可量化可追踪"]
+            }
+          ]
+        }
+      })
+    ]
   }
 ];
 
@@ -286,5 +392,7 @@ export const INDUSTRY_TEMPLATE_KEYWORDS: Array<{ family: IndustryFamily; keyword
   { family: "education_training", keywords: ["education", "training", "course", "school", "academy", "trial class"] },
   { family: "manufacturing", keywords: ["manufacturing", "industrial", "factory", "equipment", "sample", "pilot production"] },
   { family: "channel_sales", keywords: ["channel", "distribution", "reseller", "agency", "rebate", "region policy"] },
-  { family: "consulting_services", keywords: ["consulting", "advisory", "service", "project diagnosis", "professional service"] }
+  { family: "consulting_services", keywords: ["consulting", "advisory", "service", "project diagnosis", "professional service"] },
+  { family: "saas_subscription", keywords: ["订阅", "subscription", "试用", "trial", "续费", "renewal", "客户成功", "customer success", "churn", "流失"] },
+  { family: "marketing_agency", keywords: ["营销", "marketing", "代运营", "agency", "广告", "advertising", "投放", "投放优化", "内容营销", "content marketing"] }
 ];

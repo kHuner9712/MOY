@@ -6,6 +6,8 @@ import { useMemo } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { ManagerDashboard } from "@/components/dashboard/manager-dashboard";
 import { SalesDashboard } from "@/components/dashboard/sales-dashboard";
+import { NewCustomerOnboardingBanner } from "@/components/onboarding/new-customer-onboarding-banner";
+import { FirstValueSummaryBlock } from "@/components/onboarding/first-value-summary-block";
 import { IndustryTemplateBanner } from "@/components/shared/industry-template-banner";
 import { useAppData } from "@/components/shared/app-data-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -200,8 +202,18 @@ export default function DashboardPage(): JSX.Element {
       ) : null}
 
       <section className="mb-4">
+        <NewCustomerOnboardingBanner />
+      </section>
+
+      <section className="mb-4">
         <IndustryTemplateBanner />
       </section>
+
+      {isManager ? (
+        <section className="mb-4">
+          <FirstValueSummaryBlock />
+        </section>
+      ) : null}
 
       {isManager && orgSummary && (orgSummary.role === "owner" || orgSummary.role === "admin") ? (
         <section className="mb-4 grid gap-4 xl:grid-cols-2">

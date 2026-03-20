@@ -9,6 +9,7 @@ import {
   updateImportRow
 } from "@/services/import-job-service";
 import { generateImportReviewSummary } from "@/services/import-review-service";
+import { generateImportBusinessSummary, saveImportSummaryToOrgSettings } from "@/services/import-summary-service";
 import { getOrgAiControlStatus } from "@/services/org-ai-settings-service";
 import { getOrgFeatureFlagMap } from "@/services/org-feature-service";
 import { canRunAiByEntitlement, getEntitlementStatus } from "@/services/plan-entitlement-service";
@@ -873,6 +874,41 @@ export async function executeImportJob(params: {
         })
       }
     }).catch(() => null);
+  }
+
+  if (counters.importedRows > 0) {
+    try {
+      const businessSummary = await generateImportBusinessSummary({
+        supabase: params.supabase,
+        orgId: params.orgId,
+        actorUserId: params.actorUserId,
+        importJobId: params.jobId
+      });
+
+      await saveImportSummaryToOrgSettings({
+        supabase: params.supabase,
+        orgId: params.orgId,
+        summary: businessSummary
+      });
+
+      await updateImportJob({
+        supabase: params.supabase,
+        jobId: params.jobId,
+        patch: {
+          detail_snapshot: asImportDetailSnapshot({
+            ...(job.detailSnapshot ?? {}),
+            business_summary: {
+              generated: true,
+              used_fallback: businessSummary.usedFallback,
+              fallback_reason: businessSummary.fallbackReason,
+              generated_at: businessSummary.generatedAt
+            }
+          })
+        }
+      }).catch(() => null);
+    } catch {
+      // Business summary generation is non-blocking
+    }
   }
 
   const latestJob = await getImportJob({

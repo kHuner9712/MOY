@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -20,6 +20,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useNetworkStatus } from "@/hooks/use-network-status";
+import { salesDeskClientService } from "@/services/sales-desk-client-service";
+import type { CommunicationReuseResult } from "@/types/sales-desk";
 import { formatDateTime } from "@/lib/format";
 import {
   listLocalMobileDrafts,
@@ -30,6 +32,7 @@ import {
 import { mobileClientService } from "@/services/mobile-client-service";
 import { customerService } from "@/services/customer-service";
 import type { CaptureExtractResult, CommunicationSourceType } from "@/types/communication";
+import { Sparkles } from "lucide-react";
 
 const modeOptions: Array<{ value: CommunicationSourceType; label: string; hint: string }> = [
   { value: "manual_note", label: "快速纪要", hint: "输入自然语言纪要，自动提取结构化字段" },
@@ -78,6 +81,9 @@ export default function CapturePage(): JSX.Element {
   const [localFailedDrafts, setLocalFailedDrafts] = useState(0);
   const [syncingLocalDrafts, setSyncingLocalDrafts] = useState(false);
   const [refineHint, setRefineHint] = useState<string | null>(null);
+  const [reuseResult, setReuseResult] = useState<CommunicationReuseResult | null>(null);
+  const [generatingReuse, setGeneratingReuse] = useState(false);
+  const [reuseActions, setReuseActions] = useState<Record<string, "idle" | "copied" | "adopted">>({});
 
   const selectedMode = modeOptions.find((item) => item.value === sourceType) ?? modeOptions[0];
   const recentInputs = useMemo(() => {
@@ -213,6 +219,7 @@ export default function CapturePage(): JSX.Element {
   const submitConfirm = async (): Promise<void> => {
     if (!latestResult) return;
     setConfirming(true);
+    setReuseResult(null);
     try {
       const result = await confirmCommunicationInput({
         inputId: latestResult.inputId,
@@ -220,6 +227,26 @@ export default function CapturePage(): JSX.Element {
       });
       setMessage(result.message);
       setLatestResult((prev) => (prev ? { ...prev, requiresConfirmation: false, followupId: result.followupId } : prev));
+
+      if (result.followupId || latestResult.inputId) {
+        setGeneratingReuse(true);
+        try {
+          const reuse = await salesDeskClientService.generateCommunicationReuse({
+            communicationInputId: latestResult.inputId,
+            customerId: customerId === "none" ? undefined : customerId
+          });
+          setReuseResult(reuse);
+          setMessage((prev) =>
+            prev
+              ? `${prev} | 已生成跟进建议`
+              : '已生成跟进建议（AI 草稿，如需调整请查看详情）'
+          );
+        } catch {
+          setMessage((prev) => (prev ? `${prev} | 五处复用生成失败（不影响落库）` : null));
+        } finally {
+          setGeneratingReuse(false);
+        }
+      }
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : "确认落库失败。");
     } finally {
@@ -391,6 +418,95 @@ export default function CapturePage(): JSX.Element {
                       <Button variant="outline" onClick={() => void quickCreateCustomer()} disabled={creatingCustomer}>
                         {creatingCustomer ? "创建中..." : "快速新建客户"}
                       </Button>
+                    </div>
+                  </div>
+                ) : null}
+                {generatingReuse ? (
+                  <div className="mt-3 rounded-md border bg-blue-50 p-4 text-center">
+                    <div className="animate-pulse">
+                      <p className="text-sm text-blue-700">✨ 正在生成五处复用内容...</p>
+                    </div>
+                  </div>
+                ) : reuseResult ? (
+                  <div className="mt-3 space-y-3 rounded-md border bg-blue-50 p-4">
+                    <div className="flex items-center gap-2 border-b border-blue-100 pb-2">
+                      <Sparkles className="h-4 w-4 text-blue-600" />
+                      <p className="text-sm font-medium text-blue-900">一次沟通，五处复用</p>
+                      {reuseResult.usedFallback && (
+                        <Badge variant="secondary" className="text-xs">规则生成</Badge>
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      {reuseResult.customerMessageDraft && (
+                        <div className="rounded-lg bg-white p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-base">💬</span>
+                              <p className="text-xs font-medium text-blue-800">给客户消息</p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(reuseResult.customerMessageDraft ?? "");
+                                setReuseActions(prev => ({ ...prev, customerMessage: "copied" }));
+                                setTimeout(() => setReuseActions(prev => ({ ...prev, customerMessage: "idle" })), 2000);
+                              }}
+                            >
+                              {reuseActions.customerMessage === "copied" ? "已复制 ✓" : "复制"}
+                            </Button>
+                          </div>
+                          <p className="text-sm text-gray-700 leading-relaxed">{reuseResult.customerMessageDraft}</p>
+                        </div>
+                      )}
+                      {reuseResult.internalBrief && (
+                        <div className="rounded-lg bg-white p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-base">📋</span>
+                              <p className="text-xs font-medium text-blue-800">给经理汇报</p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(reuseResult.internalBrief ?? "");
+                                setReuseActions(prev => ({ ...prev, internalBrief: "copied" }));
+                                setTimeout(() => setReuseActions(prev => ({ ...prev, internalBrief: "idle" })), 2000);
+                              }}
+                            >
+                              {reuseActions.internalBrief === "copied" ? "已复制 ✓" : "复制"}
+                            </Button>
+                          </div>
+                          <p className="text-sm text-gray-700 leading-relaxed">{reuseResult.internalBrief}</p>
+                        </div>
+                      )}
+                      {reuseResult.nextStepSuggestion && (
+                        <div className="rounded-lg bg-white p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-base">📌</span>
+                              <p className="text-xs font-medium text-blue-800">下一步动作</p>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                setReuseActions(prev => ({ ...prev, nextStep: "adopted" }));
+                              }}
+                            >
+                              {reuseActions.nextStep === "adopted" ? "已采用 ✓" : "采用"}
+                            </Button>
+                          </div>
+                          <p className="text-sm text-gray-700 leading-relaxed">{reuseResult.nextStepSuggestion}</p>
+                        </div>
+                      )}
+                      {!reuseResult.nextStepSuggestion && !reuseResult.internalBrief && !reuseResult.customerMessageDraft && (
+                        <p className="text-xs text-blue-600">暂无更多建议，可直接进行跟进</p>
+                      )}
                     </div>
                   </div>
                 ) : null}

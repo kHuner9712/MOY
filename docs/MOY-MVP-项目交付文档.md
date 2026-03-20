@@ -5,7 +5,7 @@
 > 本文档记录的是 **Phase 1 (MVP 初始交付)** 的项目状态，不代表当前实现。
 >
 > - 主要对应阶段：Phase 1
-> - 当前阶段：Phase 16 (v1.0)
+> - 当前阶段：Phase 18 (v1.5)
 > - 当前有效总览请参考：[README.md](../README.md)、[MOY-Current-Architecture-and-Phase-Overview.md](./MOY-Current-Architecture-and-Phase-Overview.md)
 >
 > ---

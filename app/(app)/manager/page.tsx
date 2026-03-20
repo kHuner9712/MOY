@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -7,6 +7,7 @@ import { FileText, Mail, Users2 } from "lucide-react";
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { ManagerDashboard } from "@/components/dashboard/manager-dashboard";
+import { ManagerDeskQueue } from "@/components/manager/manager-desk-queue";
 import { SalesDetailTable } from "@/components/manager/sales-detail-table";
 import { useAppData } from "@/components/shared/app-data-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -15,6 +16,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useManagerQuality } from "@/hooks/use-manager-quality";
 import { useManagerOutcomes } from "@/hooks/use-manager-outcomes";
 import { useManagerRhythm } from "@/hooks/use-manager-rhythm";
+import { ManagerInsightsSummary } from "@/components/manager/manager-insights-summary";
+import { ManagerInsightsTrends } from "@/components/manager/manager-insights-trends";
 import { useTouchpoints } from "@/hooks/use-touchpoints";
 import { formatDateTime } from "@/lib/format";
 import { getManagerDashboardData } from "@/lib/metrics";
@@ -138,6 +141,10 @@ export default function ManagerPage(): JSX.Element {
 
       {scanMessage ? <p className="mb-3 text-sm text-muted-foreground">{scanMessage}</p> : null}
 
+      <section className="mb-4">
+        <ManagerDeskQueue />
+      </section>
+
       <section className="mb-4 grid gap-4 xl:grid-cols-3">
         <Card>
           <CardHeader>
@@ -189,20 +196,9 @@ export default function ManagerPage(): JSX.Element {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>结果闭环摘要</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1">
-              <p className="text-2xl font-semibold text-slate-900">{outcomeData?.summary.totalOutcomes ?? 0}</p>
-              <p className="text-xs text-muted-foreground">周期内 outcome 数</p>
-              <p className="text-xs text-muted-foreground">正向推进率：{(((outcomeData?.summary.positiveProgressRate ?? 0) * 100)).toFixed(0)}%</p>
-              <p className="text-xs text-muted-foreground">建议采用率：{(((outcomeData?.summary.adoptionRate ?? 0) * 100)).toFixed(0)}%</p>
-              <Button asChild size="sm" variant="outline" className="mt-2 w-full justify-start">
-                <Link href="/manager/outcomes">打开结果洞察</Link>
-              </Button>
-            </CardContent>
-          </Card>
+          <ManagerInsightsSummary />
+
+          <ManagerInsightsTrends />
 
           <Card>
             <CardHeader>

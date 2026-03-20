@@ -1,4 +1,4 @@
-﻿import type { ServerSupabaseClient } from "@/lib/supabase/types";
+﻿﻿import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import type { AiPromptProviderScope, AiProviderId, AiScenario } from "@/types/ai";
 import type { Database } from "@/types/database";
 

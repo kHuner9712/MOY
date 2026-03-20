@@ -213,7 +213,9 @@ export type IndustryFamily =
   | "education_training"
   | "manufacturing"
   | "channel_sales"
-  | "consulting_services";
+  | "consulting_services"
+  | "saas_subscription"
+  | "marketing_agency";
 
 export type IndustryTemplateStatus = "active" | "draft" | "archived";
 export type OrgTemplateAssignmentStatus = "active" | "pending_preview" | "archived";

@@ -900,6 +900,60 @@ export interface Database {
         };
         Relationships: [];
       };
+      manager_desk_intervention_records: {
+        Row: {
+          id: string;
+          org_id: string;
+          intervention_key: string;
+          resolution_status: string;
+          resolved_by: string | null;
+          resolved_at: string;
+          outcome_note: string | null;
+          customer_id: string | null;
+          opportunity_id: string | null;
+          deal_room_id: string | null;
+          work_item_id: string | null;
+          risk_item_id: string | null;
+          risk_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          org_id: string;
+          intervention_key: string;
+          resolution_status?: string;
+          resolved_by?: string | null;
+          resolved_at?: string;
+          outcome_note?: string | null;
+          customer_id?: string | null;
+          opportunity_id?: string | null;
+          deal_room_id?: string | null;
+          work_item_id?: string | null;
+          risk_item_id?: string | null;
+          risk_reason?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          org_id?: string;
+          intervention_key?: string;
+          resolution_status?: string;
+          resolved_by?: string | null;
+          resolved_at?: string;
+          outcome_note?: string | null;
+          customer_id?: string | null;
+          opportunity_id?: string | null;
+          deal_room_id?: string | null;
+          work_item_id?: string | null;
+          risk_item_id?: string | null;
+          risk_reason?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       work_items: {
         Row: {
           id: string;
@@ -3413,6 +3467,48 @@ export interface Database {
           period_end?: string;
           summary?: string | null;
           content?: Json | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      manager_insights_snapshots: {
+        Row: {
+          id: string;
+          org_id: string;
+          period_start: string;
+          period_end: string;
+          snapshot_type: string;
+          truth_band_distribution: unknown;
+          intervention_stats: unknown;
+          risk_signals: unknown;
+          risk_improvement: unknown;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          org_id: string;
+          period_start: string;
+          period_end: string;
+          snapshot_type?: string;
+          truth_band_distribution?: unknown;
+          intervention_stats?: unknown;
+          risk_signals?: unknown;
+          risk_improvement?: unknown;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          org_id?: string;
+          period_start?: string;
+          period_end?: string;
+          snapshot_type?: string;
+          truth_band_distribution?: unknown;
+          intervention_stats?: unknown;
+          risk_signals?: unknown;
+          risk_improvement?: unknown;
+          notes?: string | null;
           created_at?: string;
         };
         Relationships: [];

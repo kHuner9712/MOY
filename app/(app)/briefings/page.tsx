@@ -9,6 +9,8 @@ import { MobileSectionTabs } from "@/components/mobile/MobileSectionTabs";
 import { QuickActionCard } from "@/components/mobile/QuickActionCard";
 import { IndustryTemplateBanner } from "@/components/shared/industry-template-banner";
 import { PageHeader } from "@/components/shared/page-header";
+import { ValueMetricsCompact } from "@/components/value-metrics/value-overview-block";
+import { AttributionCompactView } from "@/components/attribution/attribution-result-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,8 +21,12 @@ import { formatDateTime } from "@/lib/format";
 import { contentDraftClientService } from "@/services/content-draft-client-service";
 import { executiveClientService } from "@/services/executive-client-service";
 import { prepClientService } from "@/services/prep-client-service";
+import { valueMetricsClientService } from "@/services/value-metrics-client-service";
+import { attributionClientService } from "@/services/attribution-client-service";
 import type { ContentDraft, PrepCardType } from "@/types/preparation";
 import type { ExecutiveBrief } from "@/types/automation";
+import type { ValueMetricsSummary, TrendResult } from "@/types/value-metrics";
+import type { AttributionSummary } from "@/services/attribution-service";
 import { Mail } from "lucide-react";
 
 const cardTypeLabel: Record<PrepCardType, string> = {
@@ -40,6 +46,11 @@ export default function BriefingsPage(): JSX.Element {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [feedbackLoadingId, setFeedbackLoadingId] = useState<string | null>(null);
   const [executiveBriefs, setExecutiveBriefs] = useState<ExecutiveBrief[]>([]);
+  const [valueSummary, setValueSummary] = useState<ValueMetricsSummary | null>(null);
+  const [valueTrend, setValueTrend] = useState<TrendResult>({ direction: 'stable', changePercent: 0, description: '加载中...' });
+  const [valueLoading, setValueLoading] = useState(true);
+  const [attributionSummary, setAttributionSummary] = useState<AttributionSummary | null>(null);
+  const [attributionLoading, setAttributionLoading] = useState(true);
   const { hub: touchpointHub, summary: touchpointSummary } = useTouchpoints({
     ownerId: user?.role === "sales" ? user.id : undefined,
     limit: 80,
@@ -89,6 +100,59 @@ export default function BriefingsPage(): JSX.Element {
       cancelled = true;
     };
   }, [user?.role, message]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadValueMetrics = async () => {
+      setValueLoading(true);
+      try {
+        const result = await valueMetricsClientService.getSummary({});
+        if (!cancelled) {
+          setValueSummary(result.summary);
+        }
+        const metricsResult = await valueMetricsClientService.getWeeklyMetrics({});
+        if (!cancelled) {
+          setValueTrend(metricsResult.current.weeklyTrend);
+        }
+      } catch {
+        if (!cancelled) {
+          setValueSummary({
+            headline: '暂无价值数据',
+            highlights: [],
+            keyNumbers: [],
+            recommendation: '请完成更多跟进任务后查看价值统计'
+          });
+          setValueTrend({ direction: 'stable', changePercent: 0, description: '暂无数据' });
+        }
+      } finally {
+        if (!cancelled) setValueLoading(false);
+      }
+    };
+
+    const loadAttributionData = async () => {
+      setAttributionLoading(true);
+      try {
+        const result = await attributionClientService.getStats({});
+        if (!cancelled) {
+          setAttributionSummary(result.summary);
+        }
+      } catch {
+        if (!cancelled) {
+          setAttributionSummary(null);
+        }
+      } finally {
+        if (!cancelled) setAttributionLoading(false);
+      }
+    };
+
+    if (user) {
+      void loadValueMetrics();
+      void loadAttributionData();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   const submitPrepFeedback = async (prepCardId: string, feedbackType: "useful" | "not_useful" | "adopted" | "inaccurate") => {
     setFeedbackLoadingId(prepCardId);
@@ -194,6 +258,49 @@ export default function BriefingsPage(): JSX.Element {
           </Card>
         </section>
       ) : null}
+
+      <section className="mb-4">
+        <Card className="border-indigo-100 bg-gradient-to-br from-indigo-50/30 to-white">
+          <CardHeader>
+            <CardTitle className="text-base">经营结果摘要</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {valueLoading ? (
+              <p className="text-sm text-muted-foreground">正在加载价值数据...</p>
+            ) : valueSummary ? (
+              <div className="space-y-3">
+                <ValueMetricsCompact summary={valueSummary} trend={valueTrend} />
+                <div className="flex flex-wrap gap-2">
+                  {valueSummary.highlights.slice(0, 3).map((highlight, index) => (
+                    <div key={index} className="rounded-full bg-indigo-100 px-3 py-1 text-xs text-indigo-800">
+                      {highlight}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-sm text-slate-600">
+                  <span className="font-medium">建议下一步：</span>
+                  {valueSummary.recommendation}
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">暂无价值数据</p>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      {attributionSummary && (
+        <section className="mb-4">
+          <Card className="border-emerald-100 bg-gradient-to-br from-emerald-50/30 to-white">
+            <CardHeader>
+              <CardTitle className="text-base">本周价值归因</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <AttributionCompactView summary={attributionSummary} loading={attributionLoading} />
+            </CardContent>
+          </Card>
+        </section>
+      )}
 
       <section className="mb-4">
         <Card>
