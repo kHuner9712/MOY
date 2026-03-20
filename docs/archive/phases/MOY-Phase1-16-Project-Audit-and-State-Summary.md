@@ -1,5 +1,15 @@
 # MOY Phase 1-16 Project Audit & State Summary
 
+> ⚠️ **历史阶段文档 (Historical Phase Document)**
+>
+> 本文档记录的是 **Phase 1-16** 的阶段性审计结果，不代表当前最新实现。
+>
+> - 主要对应阶段：Phase 1 - Phase 16
+> - 当前阶段：Phase 16 (v1.0)
+> - 当前有效总览请参考：[README.md](../../README.md)、[MOY-Current-Architecture-and-Phase-Overview.md](../MOY-Current-Architecture-and-Phase-Overview.md)
+>
+> ---
+
 ## 1. Phase 1-16 Stage Overview
 The MOY project has completed 16 core functionality phases, evolving into a robust B2B AI sales workspace. It features a complete architecture based on Next.js App Router, Supabase, and DeepSeek AI integration. The system encompasses end-to-end sales workflow management, from inbound lead capture to post-sales health tracking and executive insights.
 

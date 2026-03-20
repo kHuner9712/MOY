@@ -1,5 +1,15 @@
 # MOY Phase16 交付说明（Automation Ops & Executive Cockpit）
 
+> ⚠️ **历史阶段文档 (Historical Phase Document)**
+>
+> 本文档记录的是 **Phase 16** 的功能交付说明，是当前 v1.0 的核心组成部分。
+>
+> - 主要对应阶段：Phase 16
+> - 当前对外交付版本：v1.0
+> - 当前有效总览请参考：[README.md](../../README.md)、[MOY-Current-Architecture-and-Phase-Overview.md](../MOY-Current-Architecture-and-Phase-Overview.md)
+>
+> ---
+
 ## 1. 目标
 
 Phase16 将 MOY 从“销售过程系统”升级到“经营自动化 + 管理驾驶舱”，重点交付：

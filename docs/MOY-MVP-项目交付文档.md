@@ -1,6 +1,16 @@
 # MOY MVP 项目交付文档
 
-## 1. 文档目的
+> ⚠️ **历史阶段文档 (Historical Phase Document)**
+>
+> 本文档记录的是 **Phase 1 (MVP 初始交付)** 的项目状态，不代表当前实现。
+>
+> - 主要对应阶段：Phase 1
+> - 当前阶段：Phase 16 (v1.0)
+> - 当前有效总览请参考：[README.md](../README.md)、[MOY-Current-Architecture-and-Phase-Overview.md](./MOY-Current-Architecture-and-Phase-Overview.md)
+>
+> ---
+>
+> ## 1. 文档目的
 本文件用于独立沉淀本次 MVP 交付结果，覆盖：
 
 - 项目目录结构

@@ -1,5 +1,15 @@
 # MOY Phase 16.5 Golden Path Smoke / Regression Checklist
 
+> ⚠️ **历史阶段文档 (Historical Phase Document)**
+>
+> 本文档记录的是 **Phase 16.5** 的烟测试用例，验证了核心业务链路。
+>
+> - 主要对应阶段：Phase 16.5
+> - 当前对外交付版本：v1.0
+> - 当前有效总览请参考：[README.md](../../README.md)、[MOY-Current-Architecture-and-Phase-Overview.md](../MOY-Current-Architecture-and-Phase-Overview.md)
+>
+> ---
+
 ## 1) Selected Golden Path
 
 `Capture input -> rule-based risk hit -> work item creation -> manager/executive visibility -> outcome value proof`

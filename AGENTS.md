@@ -11,6 +11,7 @@
 - **当前阶段**：持续迭代与稳定升级 (v1.x)
 - **技术栈**：Next.js 14 (App Router) + React 18 + TypeScript + Supabase + Tailwind CSS + DeepSeek
 - **项目状态**：已完成大部分主骨架，业务闭环完全连通
+- **测试状态**：97 个单元测试全部通过
 
 ### 已有模块
 
@@ -23,13 +24,38 @@
 | touchpoints       | `/touchpoints`            | 外部触点管理                      |
 | outcomes          | `/outcomes`               | 行动结果记录                      |
 | memory            | `/memory`                 | 用户记忆画像                      |
+| playbooks         | `/playbooks`              | 话术本管理                        |
+| reports           | `/reports`                | 报表中心                          |
+| alerts            | `/alerts`                 | 预警中心                          |
+| growth            | `/growth`                 | 增长管线                          |
+| imports           | `/imports`                | 数据导入中心                      |
 | manager views     | `/manager/*`              | 管理者视角（质量/节奏/转化/结果） |
 | settings          | `/settings/*`             | 组织/团队/AI/自动化/模板/用量     |
-| import center     | `/imports`                | 数据导入中心                      |
 | automation rules  | `/settings/automation`    | 自动化规则中心                    |
 | executive cockpit | `/executive`              | 高管驾驶舱                        |
 | customer health   | `/customers/[id]` (panel) | 客户健康度                        |
 | renewal watch     | `/executive` (section)    | 续费预警                          |
+
+### 技术架构概览
+
+| 层级 | 说明 |
+|------|------|
+| 展示层 | Next.js App Router + React 18 + shadcn/ui |
+| 状态层 | React Hooks + Context |
+| 客户端服务层 | *-client-service.ts |
+| API 层 | Next.js API Routes (80+) |
+| 业务服务层 | *-service.ts (100+) |
+| 数据访问层 | Supabase Client |
+| 数据库 | Supabase PostgreSQL + RLS |
+| AI 引擎 | DeepSeek API + Fallback 机制 |
+
+### 数据库规模
+
+| 类别 | 数量 |
+|------|------|
+| 数据表 | 40+ |
+| Enum 类型 | 50+ |
+| Migration 文件 | 20+ |
 
 ---
 
@@ -412,9 +438,57 @@ types/             # xxx.ts（类型定义）
 hooks/             # use-xxx.ts（React Hooks）
 components/ui/     # 基础 UI 组件
 components/xxx/    # 业务组件
+tests/             # 测试文件 (*.test.ts)
 ```
 
 **注释语言**：中文优先
+
+---
+
+## 类型安全规范
+
+### Supabase 类型转换模式
+
+由于 Supabase JS 客户端的类型推断限制，服务层使用 `as never` 类型断言进行类型转换：
+
+```typescript
+// 这是已知模式，非技术债务
+return (data ?? []).map((row) => mapCustomerRow(row as never));
+```
+
+**要求**：
+- 必须在 `services/mappers.ts` 中定义对应的 map 函数
+- map 函数必须声明正确的输入输出类型
+- 禁止在 map 函数外部使用 `as never`
+
+### 禁止的模式
+
+```typescript
+// 禁止：直接强制类型
+const data: any = fetchData();
+data.map((item: any) => item.name);
+
+// 允许：使用 map 函数
+return (data ?? []).map((row) => mapCustomerRow(row as never));
+```
+
+---
+
+## 数据库类型定义
+
+### 类型文件位置
+
+- 主类型文件：`types/database.ts`（包含所有表、视图、函数、Enum 类型定义）
+- 领域类型文件：`types/*.ts`（业务类型定义）
+- Mapper 文件：`services/mappers.ts`（类型转换函数）
+
+### 类型更新要求
+
+当新增数据库表时，必须同步更新 `types/database.ts`：
+
+1. 在 Tables 部分添加表定义（Row/Insert/Update/Relationships）
+2. 在 Enums 部分添加所需 Enum 类型
+3. 运行 `npm run build` 验证类型正确性
 
 ---
 
@@ -537,6 +611,7 @@ npm run seed:demo
 | API 路由        | `app/api/*/route.ts`                  |
 | 页面            | `app/(app)/*/page.tsx`                |
 | Migration       | `supabase/migrations/*.sql`           |
+| CI 配置         | `.github/workflows/ci.yml`            |
 
 ### 权限角色
 

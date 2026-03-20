@@ -1,9 +1,25 @@
-# MOY (墨言 / Mate Of You) Web AI Workspace
+# MOY (墨言 / Mate Of You)
 
-MOY (Mate Of You) is 桐鸣科技's B2B AI sales workspace for SMB teams.
+**MOY 是面向中小企业销售团队的 Web AI 工作系统**，将 AI 能力深度嵌入销售全流程：发现问题 → 触发动作 → 记录处理 → 归因结果 → 展示价值。
 
-Current stage: **v1.x Stable Release**  
-Core stack: **Next.js + Supabase + DeepSeek**
+- **对外交付版本**：v1.0
+- **内部开发阶段**：Phase 16
+- **技术栈**：Next.js + TypeScript + Supabase + DeepSeek
+- **推荐阅读**：[README.md](README.md) → [当前架构总览](docs/MOY-Current-Architecture-and-Phase-Overview.md) → [历史阶段文档](docs/archive/phases/)
+
+---
+
+### Repository Snapshot
+
+| Item | Value |
+|------|-------|
+| **Release** | v1.0 |
+| **Dev Phase** | Phase 16 |
+| **Core Modules** | 18 (capture, today, briefings, deals, executive cockpit, etc.) |
+| **Tech Stack** | Next.js 14 + TypeScript + Supabase + DeepSeek |
+| **Database** | 40+ tables, 50+ enums, 20+ migrations |
+| **Lint / Test / Build** | ✅ all passing |
+| **Docs Entry** | [docs/MOY-Current-Architecture-and-Phase-Overview.md](docs/MOY-Current-Architecture-and-Phase-Overview.md) |
 
 ---
 
@@ -406,3 +422,24 @@ Run:
 ```bash
 npm run test
 ```
+
+**Current Test Status**: 97 tests, all passing
+
+---
+
+## 15. Quality Gates
+
+All PRs and releases must pass:
+
+```bash
+# Lint check
+npm run lint
+
+# TypeScript check
+npm run build
+
+# Unit tests
+npm run test
+```
+
+---

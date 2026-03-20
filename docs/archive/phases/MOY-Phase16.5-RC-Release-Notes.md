@@ -1,5 +1,15 @@
 # MOY Phase 16.5 Release Candidate Notes
 
+> ⚠️ **历史阶段文档 (Historical Phase Document)**
+>
+> 本文档记录的是 **Phase 16.5** 的发布候选版本，不等同于最终交付版本。
+>
+> - 主要对应阶段：Phase 16.5
+> - 当前对外交付版本：v1.0 (基于 Phase 16)
+> - 当前有效总览请参考：[README.md](../../README.md)、[MOY-Current-Architecture-and-Phase-Overview.md](../MOY-Current-Architecture-and-Phase-Overview.md)
+>
+> ---
+
 发布日期：2026-03-16  
 版本标签：`v0.16.5-rc`
 

@@ -37,7 +37,7 @@ export function runMobileLayerTests(logPass: (name: string) => void): void {
   assert.deepEqual(noWindowDrafts, []);
   logPass("offline draft local utility in non-browser");
 
-  const manifestExists = existsSync(path.resolve(process.cwd(), "app/manifest"));
+  const manifestExists = existsSync(path.resolve(process.cwd(), "app/manifest.ts"));
   const swExists = existsSync(path.resolve(process.cwd(), "public/sw.js"));
   assert.equal(manifestExists, true);
   assert.equal(swExists, true);
