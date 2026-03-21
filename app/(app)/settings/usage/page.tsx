@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
+import { useAuth } from "@/components/auth/auth-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { canViewOrgUsage } from "@/lib/role-capability";
 import { settingsClientService } from "@/services/settings-client-service";
 import type { EntitlementStatus, OrgUsageCounter, UserUsageCounter } from "@/types/productization";
 
@@ -29,6 +31,8 @@ interface UsageState {
 }
 
 export default function UsageSettingsPage(): JSX.Element {
+  const { user } = useAuth();
+  const canAccess = canViewOrgUsage(user);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<UsageState | null>(null);
@@ -53,8 +57,18 @@ export default function UsageSettingsPage(): JSX.Element {
   }
 
   useEffect(() => {
+    if (!canAccess) {
+      setLoading(false);
+      setState(null);
+      return;
+    }
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canAccess]);
+
+  if (!canAccess) {
+    return <div className="text-sm text-muted-foreground">Only owner/admin/manager roles can view organization usage and quota.</div>;
+  }
 
   if (loading || !state) {
     return <div className="text-sm text-muted-foreground">Loading usage dashboard...</div>;

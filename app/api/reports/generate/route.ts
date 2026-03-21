@@ -1,7 +1,7 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 
 import { fail, ok } from "@/lib/api-response";
-import { isManager } from "@/lib/permissions";
+import { canViewManagerWorkspace } from "@/lib/role-capability";
 import { getServerAuthContext } from "@/lib/server-auth";
 import { generateReport } from "@/services/report-generation-service";
 
@@ -22,9 +22,12 @@ export async function POST(request: Request) {
   if (!parsed.success) return fail("Invalid request payload", 400);
 
   const input = parsed.data;
-  const manager = isManager(auth.profile);
+  const canUseTeamScope = canViewManagerWorkspace({
+    role: auth.profile.role,
+    orgRole: auth.membership?.role
+  });
 
-  if (!manager) {
+  if (!canUseTeamScope) {
     if (input.reportType !== "sales_daily" && input.reportType !== "sales_weekly") {
       return fail("Sales can only generate personal sales reports", 403);
     }
@@ -45,7 +48,7 @@ export async function POST(request: Request) {
         periodStart: input.periodStart,
         periodEnd: input.periodEnd,
         targetUserId: input.targetUserId,
-        scopeType: input.scopeType ?? (manager ? "team" : "self")
+        scopeType: input.scopeType ?? (canUseTeamScope ? "team" : "self")
       }
     });
 

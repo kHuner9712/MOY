@@ -1,11 +1,10 @@
 # MOY (墨言 / Mate Of You)
 
-**MOY 是面向中小企业销售团队的 Web AI 工作系统**，将 AI 能力深度嵌入销售全流程：发现问题 → 触发动作 → 记录处理 → 归因结果 → 展示价值。
-
+**MOY 是面向中小企业销售团队的 Web AI 工作系统**，将 AI 能力深度嵌入销售全流程：发现问题 -> 触发动作 -> 记录处理 -> 归因结果 -> 展示价值。
 - **对外交付版本**：v1.5
 - **内部开发阶段**：Phase 18
 - **技术栈**：Next.js + TypeScript + Supabase + DeepSeek
-- **推荐阅读**：[README.md](README.md) → [当前架构总览](docs/MOY-Current-Architecture-and-Phase-Overview.md) → [历史阶段文档](docs/archive/phases/)
+- **推荐阅读**：[README.md](README.md) | [Docs 索引](docs/README.md) | [当前架构总览](docs/MOY-Current-Architecture-and-Phase-Overview.md) | [历史阶段文档](docs/archive/phases/)
 
 ---
 
@@ -18,8 +17,8 @@
 | **Core Modules** | 18 (capture, today, briefings, deals, executive cockpit, etc.) |
 | **Tech Stack** | Next.js 14 + TypeScript + Supabase + DeepSeek |
 | **Database** | 40+ tables, 50+ enums, 20+ migrations |
-| **Lint / Test / Build** | ✅ all passing |
-| **Docs Entry** | [docs/MOY-Current-Architecture-and-Phase-Overview.md](docs/MOY-Current-Architecture-and-Phase-Overview.md) |
+| **Lint / Test / Build** | all passing |
+| **Docs Entry** | [docs/README.md](docs/README.md) |
 
 ---
 
@@ -43,6 +42,7 @@ This project is a runnable, extensible SaaS MVP with:
   - customer health snapshots
   - renewal/retention watch skeleton
   - executive cockpit and executive briefs
+  - runtime explain/debug + config governance operations (`/settings/runtime-debug`, `/settings/org-config`, `/settings/config-ops`, `/settings/config-timeline`)
 
 ---
 
@@ -348,15 +348,23 @@ Principle: AI failure never blocks core write path.
 
 ## 11. Access Control Notes
 
+MOY now uses two aligned role semantics:
+
+- Display role (`types/auth.ts`): `sales | manager` (UI-compatible role)
+- Organization membership role (`types/productization.ts`): `owner | admin | manager | sales | viewer`
+
+Capability checks should consume centralized helpers (`lib/role-capability.ts`) rather than hardcoded role comparisons.
+
 - Owner/Admin:
-  - manage automation rules
-  - full executive cockpit scope
+  - full manager workspace + executive access
+  - can manage templates and enterprise customization
+  - can execute org-admin actions (settings write, automation write, invite/seat/role updates)
 - Manager:
-  - view executive scope
-  - run rules and process events in authorized scope
-- Sales:
-  - no full executive cockpit
-  - receives scoped health/event summaries through owned entities
+  - can access manager workspace, reports team scope, executive cockpit, usage visibility
+  - read-only for template/customization write operations unless also owner/admin
+- Sales/Viewer:
+  - no manager/executive workspace access
+  - personal scope operations only
 
 All new tables are protected by RLS policies in migration.
 
@@ -423,7 +431,7 @@ Run:
 npm run test
 ```
 
-**Current Test Status**: 97 tests, all passing
+**Current Test Status**: `npm run test` (`tests/run-tests.ts`) passing
 
 ---
 
@@ -443,3 +451,4 @@ npm run test
 ```
 
 ---
+

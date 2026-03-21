@@ -10,6 +10,13 @@ import { getOrgFeatureFlagMap } from "@/services/org-feature-service";
 import { getCurrentOrgTemplateContext } from "@/services/industry-template-service";
 import { getOrgSettings, patchOnboardingSteps } from "@/services/org-settings-service";
 import { getEntitlementStatus } from "@/services/plan-entitlement-service";
+import {
+  buildRuntimeConfigExplainSnapshot,
+  buildResolvedOrgRuntimeConfig,
+  buildPromptAugmentationContext,
+  sortOnboardingChecklistByPreferredKeys,
+  summarizeResolvedIndustryTemplateContext
+} from "@/services/template-org-runtime-bridge-service";
 import { mapOnboardingRunRow } from "@/services/mappers";
 import { onboardingRecommendationResultSchema, type AiScenario } from "@/types/ai";
 import type { Database, Json } from "@/types/database";
@@ -75,6 +82,14 @@ export async function buildOnboardingChecklist(params: {
     getOrgAiControlStatus({ supabase: params.supabase, orgId: params.orgId }),
     getOrgFeatureFlagMap({ supabase: params.supabase, orgId: params.orgId })
   ]);
+  const runtimeTemplateContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.orgId
+  });
+  const runtimeHints =
+    !runtimeTemplateContext.fallbackToBase && runtimeTemplateContext.merged
+      ? runtimeTemplateContext.merged.effectiveOnboardingHints
+      : [];
 
   const [memberCountRes, customerCountRes, planCountRes, briefCountRes, roomCountRes, managerCountRes, importCountRes, importedRowsRes, postImportOpsRes, templateCountRes] = await Promise.all([
     params.supabase.from("org_memberships").select("id", { count: "exact", head: true }).eq("org_id", params.orgId).eq("seat_status", "active"),
@@ -118,7 +133,10 @@ export async function buildOnboardingChecklist(params: {
       key: "industry_template",
       title: "Choose and apply industry template",
       completed: Boolean(stepState.industry_template) || hasTemplateApplied,
-      detail: "Select one template to align stages, alerts and playbook seed with your industry motion."
+      detail:
+        runtimeHints.length > 0
+          ? `Select one template to align stages, alerts and playbook seed with your industry motion. Runtime hint: ${runtimeHints[0]}`
+          : "Select one template to align stages, alerts and playbook seed with your industry motion."
     },
     {
       key: "org_profile",
@@ -181,16 +199,23 @@ export async function buildOnboardingChecklist(params: {
       detail: "Use /manager, /manager/rhythm and /manager/outcomes at least once."
     }
   ];
+  const sortedItems =
+    !runtimeTemplateContext.fallbackToBase && runtimeTemplateContext.merged
+      ? sortOnboardingChecklistByPreferredKeys(
+          items,
+          runtimeTemplateContext.orgCustomization.onboardingPreferences.preferredChecklistKeys
+        )
+      : items;
 
-  const completedCount = items.filter((item) => item.completed).length;
-  const totalCount = items.length;
+  const completedCount = sortedItems.filter((item) => item.completed).length;
+  const totalCount = sortedItems.length;
   const progress = totalCount === 0 ? 0 : Math.round((completedCount / totalCount) * 100);
 
   // keep step-state synced for later runs
   await patchOnboardingSteps({
     supabase: params.supabase,
     orgId: params.orgId,
-    steps: Object.fromEntries(items.map((item) => [item.key, item.completed])),
+    steps: Object.fromEntries(sortedItems.map((item) => [item.key, item.completed])),
     completeIfThreshold: true
   }).catch(() => null);
 
@@ -199,7 +224,7 @@ export async function buildOnboardingChecklist(params: {
   }
 
   return {
-    items,
+    items: sortedItems,
     completedCount,
     totalCount,
     progress,
@@ -212,6 +237,7 @@ export async function generateOnboardingRecommendation(params: {
   orgId: string;
   actorUserId: string;
   checklist: OnboardingChecklist;
+  templateKey?: string | null;
 }): Promise<{
   recommendation: OnboardingRecommendationResult;
   usedFallback: boolean;
@@ -222,6 +248,16 @@ export async function generateOnboardingRecommendation(params: {
     getOrgAiControlStatus({ supabase: params.supabase, orgId: params.orgId }),
     getOrgFeatureFlagMap({ supabase: params.supabase, orgId: params.orgId })
   ]);
+  const runtimeTemplateContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    templateKey: params.templateKey ?? null
+  });
+  const runtimeExplain = buildRuntimeConfigExplainSnapshot(runtimeTemplateContext);
+  const promptAugmentation = buildPromptAugmentationContext({
+    scenario: "onboarding_recommendation",
+    context: runtimeTemplateContext
+  });
 
   const scenario: AiScenario = "onboarding_recommendation";
   const provider = getAiProvider();
@@ -246,7 +282,9 @@ export async function generateOnboardingRecommendation(params: {
       org_settings: settings,
       checklist: params.checklist,
       ai_status: aiStatus,
-      feature_flags: featureFlags
+      feature_flags: featureFlags,
+      runtime_template_context: summarizeResolvedIndustryTemplateContext(runtimeTemplateContext),
+      runtime_config_explain: runtimeExplain
     }
   });
 
@@ -264,12 +302,14 @@ export async function generateOnboardingRecommendation(params: {
       scenario,
       model,
       systemPrompt: prompt.systemPrompt,
-      developerPrompt: `${prompt.developerPrompt}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
+      developerPrompt: `${prompt.developerPrompt}${promptAugmentation ? `\n\n${promptAugmentation}` : ""}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
       userPrompt: JSON.stringify({
         org_settings: settings,
         checklist: params.checklist,
         ai_status: aiStatus,
-        feature_flags: featureFlags
+        feature_flags: featureFlags,
+        runtime_template_context: summarizeResolvedIndustryTemplateContext(runtimeTemplateContext),
+        runtime_config_explain: runtimeExplain
       }),
       jsonMode: true,
       strictMode: true
@@ -327,6 +367,12 @@ export async function generateOnboardingRecommendation(params: {
       featureFlags,
       hasAiConfigured: aiStatus.providerConfigured
     });
+    if (!runtimeTemplateContext.fallbackToBase && runtimeTemplateContext.merged) {
+      fallback.nextBestSetupSteps = [
+        ...runtimeTemplateContext.merged.effectiveOnboardingHints.slice(0, 2),
+        ...fallback.nextBestSetupSteps
+      ].filter((item, index, array) => array.indexOf(item) === index);
+    }
 
     await updateAiRunStatus({
       supabase: params.supabase,
@@ -397,7 +443,8 @@ export async function getOnboardingOverview(params: {
     supabase: params.supabase,
     orgId: params.orgId,
     actorUserId: params.actorUserId,
-    checklist: checklistRes
+    checklist: checklistRes,
+    templateKey: templateContext.template?.templateKey ?? null
   });
 
   return {

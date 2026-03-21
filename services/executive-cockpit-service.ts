@@ -7,6 +7,12 @@ import { listAutomationRuleRuns } from "@/services/automation-rule-service";
 import { generateBusinessEventsFromSignals, listBusinessEvents } from "@/services/business-event-service";
 import { listLatestCustomerHealthSnapshots, refreshCustomerHealthSnapshots } from "@/services/customer-health-service";
 import { listRenewalWatchItems, refreshRenewalWatchItems } from "@/services/renewal-watch-service";
+import {
+  applyExecutiveEventPreference,
+  applyManagerActionPreference,
+  buildManagerVisibilityRuntimeContext,
+  buildResolvedOrgRuntimeConfig
+} from "@/services/template-org-runtime-bridge-service";
 import type { BusinessEvent, ExecutiveCockpitSummary } from "@/types/automation";
 import { automationActionRecommendationResultSchema } from "@/types/ai";
 import type { DealCheckpointStatus, DealPriorityBand, DealRoomStatus } from "@/types/deal";
@@ -72,6 +78,19 @@ const FIRST_VALUE_TRIAL_STAGES: TrialConversionStage[] = [
   "verbally_committed",
   "converted"
 ];
+
+async function resolveExecutiveRuntimePreferenceContext(params: {
+  supabase: DbClient;
+  orgId: string;
+}) {
+  const runtimeContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.orgId
+  });
+  return buildManagerVisibilityRuntimeContext({
+    context: runtimeContext
+  });
+}
 
 async function fetchTrialConversionTracks(params: {
   supabase: DbClient;
@@ -265,7 +284,7 @@ export async function getExecutiveCockpitSummary(params: {
     }).catch(() => null);
   }
 
-  const [events, health, renewals, trialTracksRes, workItemsRes, dealRoomsRes, blockedCheckpointsRes, runs] = await Promise.all([
+  const [events, health, renewals, trialTracksRes, workItemsRes, dealRoomsRes, blockedCheckpointsRes, runs, runtimePreferenceContext] = await Promise.all([
     listBusinessEvents({
       supabase: params.supabase,
       orgId: params.orgId,
@@ -305,6 +324,10 @@ export async function getExecutiveCockpitSummary(params: {
       supabase: params.supabase,
       orgId: params.orgId,
       limit: 12
+    }),
+    resolveExecutiveRuntimePreferenceContext({
+      supabase: params.supabase,
+      orgId: params.orgId
     })
   ]);
 
@@ -332,9 +355,13 @@ export async function getExecutiveCockpitSummary(params: {
     { band: "critical", count: health.filter((item) => item.healthBand === "critical").length }
   ];
 
-  const sortedOpenEvents = events
+  const baseSortedOpenEvents = events
     .filter((item) => item.status === "open")
     .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "critical" ? -1 : b.severity === "critical" ? 1 : a.severity === "warning" ? -1 : 1));
+  const sortedOpenEvents = applyExecutiveEventPreference({
+    events: baseSortedOpenEvents,
+    context: runtimePreferenceContext
+  });
 
   const topActions: string[] = [];
   const recommendationCandidates = sortedOpenEvents.slice(0, 5);
@@ -371,8 +398,17 @@ export async function getExecutiveCockpitSummary(params: {
       topActions.push(`${fallback.suggestedAction} (${fallback.whyItMatters})`);
     }
   }
+  const preferredActions = applyManagerActionPreference({
+    actions: topActions,
+    context: runtimePreferenceContext,
+    limit: 2
+  });
 
   const followupTimelinessScore = Math.max(0, Math.min(100, 100 - Math.round((overdueWork / Math.max(filteredWork.length, 1)) * 100)));
+  const recentEvents = applyExecutiveEventPreference({
+    events: events.slice(0, 20),
+    context: runtimePreferenceContext
+  });
 
   const summary: ExecutiveCockpitSummary = {
     openEvents: events.filter((item) => item.status === "open").length,
@@ -399,8 +435,8 @@ export async function getExecutiveCockpitSummary(params: {
       shallowActivityRatio: Number((overdueWork / Math.max(filteredWork.length, 1)).toFixed(2))
     },
     recentRuleRuns: runs,
-    recentEvents: events.slice(0, 20),
-    recommendations: topActions.length > 0 ? topActions : ["No urgent action recommendation right now."]
+    recentEvents,
+    recommendations: preferredActions.length > 0 ? preferredActions : ["No urgent action recommendation right now."]
   };
 
   return summary;

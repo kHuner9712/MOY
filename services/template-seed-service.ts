@@ -1,5 +1,10 @@
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { createPlaybookWithEntries } from "@/services/playbook-service";
+import {
+  buildRuntimePlaybookSeedEntries,
+  summarizeResolvedIndustryTemplateContext,
+  type ResolvedIndustryTemplateRuntimeContext
+} from "@/services/template-org-runtime-bridge-service";
 import type { IndustryTemplate, SeededPlaybookTemplate, TemplateApplyMode } from "@/types/productization";
 
 type DbClient = ServerSupabaseClient;
@@ -21,6 +26,7 @@ export async function seedPlaybooksFromTemplate(params: {
   template: IndustryTemplate;
   seededTemplates: SeededPlaybookTemplate[];
   applyMode: TemplateApplyMode;
+  resolvedRuntimeContext?: ResolvedIndustryTemplateRuntimeContext;
 }): Promise<{
   createdCount: number;
   skippedCount: number;
@@ -29,6 +35,10 @@ export async function seedPlaybooksFromTemplate(params: {
   let createdCount = 0;
   let skippedCount = 0;
   const createdPlaybookIds: string[] = [];
+  const runtimeSeedEntries = params.resolvedRuntimeContext ? buildRuntimePlaybookSeedEntries(params.resolvedRuntimeContext) : [];
+  const runtimeContextSummary = params.resolvedRuntimeContext
+    ? summarizeResolvedIndustryTemplateContext(params.resolvedRuntimeContext)
+    : null;
 
   for (const seed of params.seededTemplates) {
     const existingRes = await params.supabase
@@ -48,6 +58,7 @@ export async function seedPlaybooksFromTemplate(params: {
 
     const payload = asRecord(seed.payload);
     const entriesRaw = Array.isArray(payload.entries) ? payload.entries : [];
+    const mergedEntriesRaw = [...entriesRaw, ...runtimeSeedEntries];
 
     const created = await createPlaybookWithEntries({
       supabase: params.supabase,
@@ -59,16 +70,20 @@ export async function seedPlaybooksFromTemplate(params: {
       summary: seed.summary,
       status: "active",
       confidenceScore: 0.75,
-      applicabilityNotes: `Template seeded from ${params.template.templateKey}`,
+      applicabilityNotes:
+        runtimeSeedEntries.length > 0
+          ? `Template seeded from ${params.template.templateKey} with runtime template/org overlay`
+          : `Template seeded from ${params.template.templateKey}`,
       sourceSnapshot: {
         seeded_from_template: true,
         template_key: params.template.templateKey,
         template_name: params.template.displayName,
         seed_template_id: seed.id,
-        apply_mode: params.applyMode
+        apply_mode: params.applyMode,
+        runtime_template_context: runtimeContextSummary
       },
       generatedBy: params.actorUserId,
-      entries: entriesRaw.map((item, idx) => {
+      entries: mergedEntriesRaw.map((item, idx) => {
         const row = asRecord(item);
         return {
           entryTitle: String(row.entry_title ?? `${seed.title} #${idx + 1}`),
@@ -95,4 +110,3 @@ export async function seedPlaybooksFromTemplate(params: {
     createdPlaybookIds
   };
 }
-

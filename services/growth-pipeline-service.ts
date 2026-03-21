@@ -7,6 +7,11 @@ import { listConversionEvents, listInboundLeads } from "@/services/inbound-lead-
 import { listTrialConversionTracks } from "@/services/trial-conversion-service";
 import { listDemoRequests } from "@/services/demo-request-service";
 import { listTrialRequests } from "@/services/trial-request-service";
+import {
+  buildResolvedOrgRuntimeConfig,
+  buildPromptAugmentationContext,
+  summarizeResolvedIndustryTemplateContext
+} from "@/services/template-org-runtime-bridge-service";
 import { growthPipelineSummaryResultSchema } from "@/types/ai";
 import type {
   ConversionEvent,
@@ -56,6 +61,15 @@ async function runGrowthPipelineSummaryAi(params: {
   usedFallback: boolean;
   fallbackReason: string | null;
 }> {
+  const runtimeTemplateContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.orgId
+  });
+  const promptAugmentation = buildPromptAugmentationContext({
+    scenario: "growth_pipeline_summary",
+    context: runtimeTemplateContext
+  });
+
   const provider = getAiProvider();
   const model = provider.getDefaultModel({ reasoning: false });
   const prompt = await getActivePromptVersion({
@@ -92,7 +106,8 @@ async function runGrowthPipelineSummaryAi(params: {
       trial_activated: params.trialActivated,
       converted_count: params.convertedCount,
       by_source: params.bySource,
-      by_industry: params.byIndustry
+      by_industry: params.byIndustry,
+      runtime_template_context: summarizeResolvedIndustryTemplateContext(runtimeTemplateContext)
     }
   });
 
@@ -119,7 +134,7 @@ async function runGrowthPipelineSummaryAi(params: {
       scenario: "growth_pipeline_summary",
       model,
       systemPrompt: prompt.systemPrompt,
-      developerPrompt: `${prompt.developerPrompt}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
+      developerPrompt: `${prompt.developerPrompt}${promptAugmentation ? `\n\n${promptAugmentation}` : ""}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
       userPrompt: JSON.stringify({
         period_days: params.periodDays,
         lead_count: params.leads.length,
@@ -129,7 +144,8 @@ async function runGrowthPipelineSummaryAi(params: {
         trial_activated: params.trialActivated,
         converted_count: params.convertedCount,
         by_source: params.bySource,
-        by_industry: params.byIndustry
+        by_industry: params.byIndustry,
+        runtime_template_context: summarizeResolvedIndustryTemplateContext(runtimeTemplateContext)
       }),
       jsonMode: true,
       strictMode: true

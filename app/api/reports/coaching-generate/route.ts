@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { fail, ok } from "@/lib/api-response";
-import { isManager } from "@/lib/permissions";
+import { canViewManagerWorkspace } from "@/lib/role-capability";
 import { getServerAuthContext } from "@/lib/server-auth";
 import { generateCoachingReport } from "@/services/coaching-report-service";
 
@@ -20,8 +20,12 @@ export async function POST(request: Request) {
   if (!parsed.success) return fail("Invalid request payload", 400);
 
   const input = parsed.data;
+  const canUseTeamScope = canViewManagerWorkspace({
+    role: auth.profile.role,
+    orgRole: auth.membership?.role
+  });
 
-  if (!isManager(auth.profile)) {
+  if (!canUseTeamScope) {
     if (input.scope !== "user") {
       return fail("Sales can only generate personal coaching report", 403);
     }

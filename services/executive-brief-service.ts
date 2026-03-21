@@ -6,6 +6,15 @@ import { createAiRun, updateAiRunStatus } from "@/services/ai-run-service";
 import { listBusinessEvents } from "@/services/business-event-service";
 import { listLatestCustomerHealthSnapshots } from "@/services/customer-health-service";
 import { listRenewalWatchItems } from "@/services/renewal-watch-service";
+import {
+  applyManagerActionPreference,
+  buildExecutiveBriefAugmentation,
+  buildManagerVisibilityRuntimeContext,
+  buildPromptAugmentationContext,
+  buildRuntimeConfigExplainSnapshot,
+  buildResolvedOrgRuntimeConfig,
+  summarizeResolvedIndustryTemplateContext
+} from "@/services/template-org-runtime-bridge-service";
 import type { ExecutiveBrief, ExecutiveBriefSummaryResult } from "@/types/automation";
 import { executiveBriefSummaryResultSchema } from "@/types/ai";
 
@@ -102,6 +111,21 @@ export async function generateExecutiveBrief(params: {
       limit: 200
     })
   ]);
+  const runtimeTemplateContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.orgId
+  });
+  const runtimePreferenceContext = buildManagerVisibilityRuntimeContext({
+    context: runtimeTemplateContext
+  });
+  const runtimeExplain = buildRuntimeConfigExplainSnapshot(runtimeTemplateContext);
+  const promptAugmentation = buildPromptAugmentationContext({
+    scenario: "executive_brief_summary",
+    context: runtimeTemplateContext
+  });
+  const briefAugmentation = buildExecutiveBriefAugmentation({
+    context: runtimePreferenceContext
+  });
 
   const criticalRisks = events.filter((item) => item.severity === "critical").length;
   const trialStalled = events.filter((item) => item.eventType === "trial_stalled" && item.status !== "resolved").length;
@@ -135,7 +159,14 @@ export async function generateExecutiveBrief(params: {
       customer_id: item.customerId,
       renewal_status: item.renewalStatus,
       recommendation: item.recommendationSummary
-    }))
+    })),
+    runtime_template_context: summarizeResolvedIndustryTemplateContext(runtimeTemplateContext),
+    runtime_config_explain: runtimeExplain,
+    runtime_preference_overlay: {
+      manager_focus_metrics: runtimePreferenceContext.managerFocusMetricPriority,
+      recommended_action_priority: runtimePreferenceContext.recommendedActionPriority,
+      runtime_config_explain: runtimePreferenceContext.runtimeConfigExplain
+    }
   } as Record<string, unknown>;
 
   const provider = getAiProvider();
@@ -179,7 +210,7 @@ export async function generateExecutiveBrief(params: {
       scenario: "executive_brief_summary",
       model,
       systemPrompt: prompt.systemPrompt,
-      developerPrompt: `${prompt.developerPrompt}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
+      developerPrompt: `${prompt.developerPrompt}${promptAugmentation ? `\n\n${promptAugmentation}` : ""}${briefAugmentation ? `\n\n${briefAugmentation}` : ""}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
       userPrompt: JSON.stringify(inputSnapshot),
       jsonMode: true,
       strictMode: true,
@@ -223,6 +254,14 @@ export async function generateExecutiveBrief(params: {
     };
     responseModel = "rule-fallback";
   }
+  result = {
+    ...result,
+    suggestedActions: applyManagerActionPreference({
+      actions: result.suggestedActions,
+      context: runtimePreferenceContext,
+      limit: 2
+    })
+  };
 
   await updateAiRunStatus({
     supabase: params.supabase,

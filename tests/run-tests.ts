@@ -57,9 +57,27 @@ import { buildFallbackOnboardingRecommendation, buildFallbackUsageHealthSummary 
 import { runImportLayerTests } from "./import-layer.test";
 import { runMobileLayerTests } from "./mobile-layer.test";
 import { runTemplateLayerTests } from "./template-layer.test";
+import { runIndustryTemplateFrameworkTests } from "./industry-template-framework.test";
+import { runEnterpriseCustomizationFrameworkTests } from "./enterprise-customization-framework.test";
+import { runTemplateOrgRuntimeBridgeTests } from "./template-org-runtime-bridge.test";
+import { runManagerExecutiveRuntimePreferenceBridgeTests } from "./manager-executive-runtime-preference-bridge.test";
+import { runOrgRuntimeConfigReadPathTests } from "./org-runtime-config-read-path.test";
+import { runRuntimeConfigExplainHardeningTests } from "./runtime-config-explain-hardening.test";
 import { runCommercializationLayerTests } from "./commercialization-layer.test";
 import { runAutomationOpsLayerTests } from "./automation-ops-layer.test";
 import { runGoldenPathSmokeTests } from "./golden-path-smoke.test";
+import { runRolePermissionModelTests } from "./role-permission-model.test";
+import { runOrgOverrideWritePathGovernanceTests } from "./org-override-write-path-governance.test";
+import { runOverrideConcurrencyGuardTests } from "./override-concurrency-guard.test";
+import { runRuntimeExplainDebugPanelTests } from "./runtime-explain-debug-panel.test";
+import { runPersistedAuditVersionSnapshotFoundationTests } from "./persisted-audit-version-snapshot-foundation.test";
+import { runOrgTemplateOverrideRollbackTests } from "./org-template-override-rollback.test";
+import { runOrgConfigRollbackTests } from "./org-config-rollback.test";
+import { runTemplateOverrideEditorUiTests } from "./template-override-editor-ui.test";
+import { runOrgConfigGovernanceExpansionTests } from "./org-config-governance-expansion.test";
+import { runOrgConfigEditorUiTests } from "./org-config-editor-ui.test";
+import { runConfigOperationsHubTests } from "./config-operations-hub.test";
+import { runConfigTimelineDiffViewerTests } from "./config-timeline-diff-viewer.test";
 import { pickBestCustomerMatch, scoreCustomerCandidate } from "../services/customer-match-service";
 import {
   communicationExtractionResultSchema,
@@ -264,6 +282,8 @@ function runDedupeTests(): void {
     }
   });
   assert.equal(unchanged.shouldUpdate, false);
+  assert.equal(unchanged.shouldUpgradeSeverity, false);
+  assert.equal(unchanged.nextSource, "rule");
   logPass("dedupe unchanged decision");
 }
 
@@ -1306,7 +1326,7 @@ function runDemoSeedSummaryTests(): void {
   logPass("demo seed partial success fallback");
 }
 
-function main(): void {
+async function main(): Promise<void> {
   runAlertRuleTests();
   runSchemaTests();
   runDedupeTests();
@@ -1345,8 +1365,26 @@ function main(): void {
   runFeatureAccessLogicTests();
   runEntitlementTests();
   runMembershipFlowTests();
+  runRolePermissionModelTests(logPass);
+  runOrgOverrideWritePathGovernanceTests(logPass);
+  runOverrideConcurrencyGuardTests(logPass);
+  runTemplateOverrideEditorUiTests(logPass);
+  runOrgConfigEditorUiTests(logPass);
+  runRuntimeExplainDebugPanelTests(logPass);
+  await runPersistedAuditVersionSnapshotFoundationTests(logPass);
+  await runOrgTemplateOverrideRollbackTests(logPass);
+  await runOrgConfigRollbackTests(logPass);
+  await runOrgConfigGovernanceExpansionTests(logPass);
+  runConfigOperationsHubTests(logPass);
+  runConfigTimelineDiffViewerTests(logPass);
   runDemoSeedSummaryTests();
   runTemplateLayerTests(logPass);
+  runIndustryTemplateFrameworkTests(logPass);
+  runEnterpriseCustomizationFrameworkTests(logPass);
+  runTemplateOrgRuntimeBridgeTests(logPass);
+  runOrgRuntimeConfigReadPathTests(logPass);
+  runRuntimeConfigExplainHardeningTests(logPass);
+  runManagerExecutiveRuntimePreferenceBridgeTests(logPass);
   runImportLayerTests(logPass);
   runMobileLayerTests(logPass);
   runCommercializationLayerTests(logPass);
@@ -1355,4 +1393,7 @@ function main(): void {
   console.log("All tests passed.");
 }
 
-main();
+void main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

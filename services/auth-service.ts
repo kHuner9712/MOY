@@ -18,6 +18,10 @@ function mapMembershipRoleToUserRole(role: MembershipRow["role"]): UserRole {
   return role === "owner" || role === "admin" || role === "manager" ? "manager" : "sales";
 }
 
+function mapProfileRoleToOrgRole(role: ProfileRow["role"]): MembershipRow["role"] {
+  return role === "manager" ? "manager" : "sales";
+}
+
 function getDemoAccounts(): DemoAccount[] {
   return [
     {
@@ -60,8 +64,13 @@ async function fetchProfileById(userId: string, email: string | undefined): Prom
   const membership = (membershipRes.data ?? null) as Pick<MembershipRow, "role" | "seat_status"> | null;
   if (membership && membership.seat_status !== "active") return null;
   const effectiveRole = membership ? mapMembershipRoleToUserRole(membership.role) : undefined;
+  const orgRole = membership ? membership.role : mapProfileRoleToOrgRole(profile.role);
 
-  return mapProfileToUser(profile, email, effectiveRole);
+  return mapProfileToUser(profile, email, {
+    effectiveRole,
+    orgRole,
+    orgSeatStatus: membership?.seat_status
+  });
 }
 
 export const authService = {

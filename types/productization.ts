@@ -309,6 +309,37 @@ export interface TemplateApplicationRun {
   updatedAt: string;
 }
 
+export type OrgConfigAuditTargetType =
+  | "org_template_override"
+  | "org_template_assignment"
+  | "org_settings"
+  | "org_ai_settings"
+  | "org_feature_flags";
+
+export interface OrgConfigVersionSnapshotSummary {
+  snapshotType: string;
+  targetType: OrgConfigAuditTargetType;
+  targetKey: string | null;
+  payloadSummary: Record<string, unknown>;
+}
+
+export interface OrgConfigAuditLog {
+  id: string;
+  orgId: string;
+  actorUserId: string;
+  targetType: OrgConfigAuditTargetType;
+  targetId: string | null;
+  targetKey: string | null;
+  actionType: string;
+  beforeSummary: Record<string, unknown>;
+  afterSummary: Record<string, unknown>;
+  diagnosticsSummary: Record<string, unknown>;
+  versionNumber: number;
+  versionLabel: string;
+  snapshotSummary: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface SeededPlaybookTemplate {
   id: string;
   templateId: string;

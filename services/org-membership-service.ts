@@ -1,6 +1,10 @@
 import { randomUUID } from "crypto";
 
 import {
+  canAccessExecutive,
+  canManageOrgCustomization,
+  canManageTemplates,
+  canViewManagerWorkspace,
   ORG_ADMIN_ROLES,
   ORG_MANAGER_ROLES,
   canViewOrgUsage,
@@ -20,7 +24,17 @@ type MembershipRow = Database["public"]["Tables"]["org_memberships"]["Row"];
 type InviteRow = Database["public"]["Tables"]["org_invites"]["Row"];
 type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 
-export { ORG_ADMIN_ROLES, ORG_MANAGER_ROLES, canViewOrgUsage, isOrgAdminRole, isSeatStatusTransitionAllowed };
+export {
+  ORG_ADMIN_ROLES,
+  ORG_MANAGER_ROLES,
+  canAccessExecutive,
+  canManageOrgCustomization,
+  canManageTemplates,
+  canViewManagerWorkspace,
+  canViewOrgUsage,
+  isOrgAdminRole,
+  isSeatStatusTransitionAllowed
+};
 
 function mapProfileRoleToMembershipRole(profileRole: ProfileRow["role"]): OrgMemberRole {
   return profileRole === "manager" ? "manager" : "sales";

@@ -1,6 +1,10 @@
 import { getDefaultAutomationRuleSeeds, matchAutomationRuleTargets, type RuleMatchTarget } from "@/lib/automation-ops";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { generateBusinessEventsFromSignals, listBusinessEvents } from "@/services/business-event-service";
+import {
+  buildResolvedOrgRuntimeConfig,
+  resolveAutomationRuleSeedsWithRuntime
+} from "@/services/template-org-runtime-bridge-service";
 import { createInterventionRequest } from "@/services/intervention-request-service";
 import { createWorkItem } from "@/services/work-item-service";
 import type { AutomationRule, AutomationRuleRun } from "@/types/automation";
@@ -83,19 +87,34 @@ async function ensureDefaultAutomationRules(params: {
   if (existingRes.error) throw new Error(existingRes.error.message);
 
   const existingKeys = new Set<string>(((existingRes.data ?? []) as Array<{ rule_key: string }>).map((item) => item.rule_key));
-  const seeds = getDefaultAutomationRuleSeeds().filter((seed) => !existingKeys.has(seed.ruleKey));
-  if (seeds.length === 0) return;
+  const runtimeTemplateContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.orgId
+  });
+  const runtimeSeeds = resolveAutomationRuleSeedsWithRuntime({
+    baseSeeds: getDefaultAutomationRuleSeeds(),
+    context: runtimeTemplateContext
+  }).filter((item) => !existingKeys.has(item.seed.ruleKey));
+  if (runtimeSeeds.length === 0) return;
 
-  const payload = seeds.map((seed) => ({
+  const seedDebug = runtimeSeeds[0]?.resolutionDebug;
+  console.info("[automation.default-seed.runtime]", {
     org_id: params.orgId,
-    rule_key: seed.ruleKey,
-    rule_name: seed.ruleName,
-    rule_scope: seed.ruleScope,
-    trigger_type: seed.triggerType,
-    conditions_json: seed.conditionsJson,
-    action_json: seed.actionJson,
-    severity: seed.severity,
-    is_enabled: true,
+    resolved_mode: seedDebug?.resolvedMode ?? "unknown",
+    threshold_source: seedDebug?.source ?? "unknown",
+    ignored_override_count: seedDebug?.ignoredOverrideCount ?? 0
+  });
+
+  const payload = runtimeSeeds.map((item) => ({
+    org_id: params.orgId,
+    rule_key: item.seed.ruleKey,
+    rule_name: item.seed.ruleName,
+    rule_scope: item.seed.ruleScope,
+    trigger_type: item.seed.triggerType,
+    conditions_json: item.seed.conditionsJson,
+    action_json: item.seed.actionJson,
+    severity: item.seed.severity,
+    is_enabled: item.isEnabled,
     created_by: params.actorUserId
   }));
 
@@ -549,4 +568,3 @@ export async function getAutomationCenterSnapshot(params: {
     openEvents: openEvents.length
   };
 }
-

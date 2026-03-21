@@ -1,4 +1,5 @@
-import type { UserRole } from "@/types/auth";
+import { canAccessExecutive, canManageOrgCustomization, canViewManagerWorkspace, canViewOrgUsage } from "@/lib/role-capability";
+import type { User, UserRole } from "@/types/auth";
 
 export interface NavItem {
   href: string;
@@ -61,6 +62,39 @@ export function canAccessPath(role: UserRole, path: string): boolean {
   if (candidates.length === 0) return false;
   const best = candidates.sort((a, b) => b.href.length - a.href.length)[0];
   return best.roles.includes(role);
+}
+
+interface UserPathAccessRule {
+  pathPrefix: string;
+  check: (user: Pick<User, "role" | "orgRole">) => boolean;
+}
+
+const userPathAccessRules: UserPathAccessRule[] = [
+  { pathPrefix: "/settings/customization", check: canManageOrgCustomization },
+  { pathPrefix: "/settings/templates", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/config-ops", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/config-timeline", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/org-config", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/runtime-debug", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/onboarding", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/automation", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/usage", check: canViewOrgUsage },
+  { pathPrefix: "/settings/team", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/org", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/ai", check: canViewManagerWorkspace },
+  { pathPrefix: "/executive", check: canAccessExecutive },
+  { pathPrefix: "/manager", check: canViewManagerWorkspace }
+];
+
+export function canAccessPathForUser(user: Pick<User, "role" | "orgRole"> | null | undefined, path: string): boolean {
+  if (!user) return false;
+
+  const matched = userPathAccessRules
+    .filter((item) => path.startsWith(item.pathPrefix))
+    .sort((left, right) => right.pathPrefix.length - left.pathPrefix.length)[0];
+  if (matched) return matched.check(user);
+
+  return canAccessPath(user.role, path);
 }
 
 export function getRoleHome(_role: UserRole): string {

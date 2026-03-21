@@ -1,3 +1,5 @@
+import type { OrgMemberRole, OrgSeatStatus } from "@/types/productization";
+
 export type UserRole = "sales" | "manager";
 
 export interface User {
@@ -8,5 +10,7 @@ export interface User {
   title: string;
   email: string;
   team: string;
+  orgRole?: OrgMemberRole;
+  orgSeatStatus?: OrgSeatStatus;
   avatar?: string;
 }

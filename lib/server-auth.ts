@@ -1,10 +1,12 @@
-﻿import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Database } from "@/types/database";
+import type { OrgMemberRole, OrgSeatStatus } from "@/types/productization";
 
 export interface ServerAuthContext {
   supabase: NonNullable<ReturnType<typeof createSupabaseServerClient>>;
   user: { id: string; email?: string };
   profile: Database["public"]["Tables"]["profiles"]["Row"];
+  membership: { role: OrgMemberRole; seatStatus: OrgSeatStatus } | null;
 }
 
 export async function getServerAuthContext(): Promise<ServerAuthContext | null> {
@@ -50,6 +52,12 @@ export async function getServerAuthContext(): Promise<ServerAuthContext | null> 
     profile: {
       ...profile,
       role: effectiveRole
-    }
+    },
+    membership: membership
+      ? {
+          role: membership.role,
+          seatStatus: membership.seat_status
+        }
+      : null
   };
 }

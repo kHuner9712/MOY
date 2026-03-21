@@ -2841,6 +2841,57 @@ export interface Database {
         };
         Relationships: [];
       };
+      org_config_audit_logs: {
+        Row: {
+          id: string;
+          org_id: string;
+          actor_user_id: string;
+          target_type: string;
+          target_id: string | null;
+          target_key: string | null;
+          action_type: string;
+          before_summary: Json;
+          after_summary: Json;
+          diagnostics_summary: Json;
+          version_number: number;
+          version_label: string;
+          snapshot_summary: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          org_id: string;
+          actor_user_id: string;
+          target_type: string;
+          target_id?: string | null;
+          target_key?: string | null;
+          action_type: string;
+          before_summary?: Json;
+          after_summary?: Json;
+          diagnostics_summary?: Json;
+          version_number: number;
+          version_label: string;
+          snapshot_summary?: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          org_id?: string;
+          actor_user_id?: string;
+          target_type?: string;
+          target_id?: string | null;
+          target_key?: string | null;
+          action_type?: string;
+          before_summary?: Json;
+          after_summary?: Json;
+          diagnostics_summary?: Json;
+          version_number?: number;
+          version_label?: string;
+          snapshot_summary?: Json;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       import_jobs: {
         Row: {
           id: string;

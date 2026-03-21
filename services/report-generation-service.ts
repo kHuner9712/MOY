@@ -4,6 +4,13 @@ import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { getActivePromptVersion } from "@/services/ai-prompt-service";
 import { createAiRun, updateAiRunStatus } from "@/services/ai-run-service";
 import { mapGeneratedReportRow } from "@/services/mappers";
+import {
+  applyManagerActionPreference,
+  applyReportFocusOverlay,
+  buildManagerVisibilityRuntimeContext,
+  buildPromptAugmentationContext,
+  buildResolvedOrgRuntimeConfig
+} from "@/services/template-org-runtime-bridge-service";
 import { reportGenerationResultSchema, type AiScenario, type ReportGenerationResult } from "@/types/ai";
 import type { Database } from "@/types/database";
 import type { GeneratedReport, GenerateReportInput, ReportType } from "@/types/report";
@@ -210,6 +217,26 @@ export async function generateReport(params: {
     profile: params.profile,
     input: params.input
   });
+  const runtimeTemplateContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.profile.org_id
+  });
+  const runtimeVisibilityContext = buildManagerVisibilityRuntimeContext({
+    context: runtimeTemplateContext,
+    reportType: params.input.reportType
+  });
+  const runtimePromptAugmentation = buildPromptAugmentationContext({
+    scenario,
+    context: runtimeTemplateContext
+  });
+  const reportSnapshots = applyReportFocusOverlay({
+    reportType: params.input.reportType,
+    metricsSnapshot: snapshots.metricsSnapshot,
+    sourceSnapshot: snapshots.sourceSnapshot,
+    context: runtimeVisibilityContext
+  });
+  const metricsSnapshot = reportSnapshots.metricsSnapshot;
+  const sourceSnapshot = reportSnapshots.sourceSnapshot;
 
   const prompt = await getActivePromptVersion({
     supabase: params.supabase,
@@ -233,8 +260,8 @@ export async function generateReport(params: {
       report_type: params.input.reportType,
       period_start: params.input.periodStart,
       period_end: params.input.periodEnd,
-      metrics_snapshot: snapshots.metricsSnapshot,
-      source_snapshot: snapshots.sourceSnapshot
+      metrics_snapshot: metricsSnapshot,
+      source_snapshot: sourceSnapshot
     }
   });
 
@@ -252,15 +279,15 @@ export async function generateReport(params: {
       scenario,
       model: provider.getDefaultModel({ reasoning: true }),
       systemPrompt: prompt.systemPrompt,
-      developerPrompt: `${prompt.developerPrompt}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
+      developerPrompt: `${prompt.developerPrompt}${runtimePromptAugmentation ? `\n\n${runtimePromptAugmentation}` : ""}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
       userPrompt: JSON.stringify({
         scenario,
         payload: {
           report_type: params.input.reportType,
           period_start: params.input.periodStart,
           period_end: params.input.periodEnd,
-          metrics_snapshot: snapshots.metricsSnapshot,
-          source_snapshot: snapshots.sourceSnapshot
+          metrics_snapshot: metricsSnapshot,
+          source_snapshot: sourceSnapshot
         }
       }),
       jsonMode: true,
@@ -282,8 +309,8 @@ export async function generateReport(params: {
           reportType: params.input.reportType,
           periodStart: params.input.periodStart,
           periodEnd: params.input.periodEnd,
-          metricsSnapshot: snapshots.metricsSnapshot,
-          sourceSnapshot: snapshots.sourceSnapshot
+          metricsSnapshot: metricsSnapshot,
+          sourceSnapshot: sourceSnapshot
         });
         resultSource = "fallback";
         fallbackReason = "report_schema_invalid";
@@ -295,14 +322,22 @@ export async function generateReport(params: {
         reportType: params.input.reportType,
         periodStart: params.input.periodStart,
         periodEnd: params.input.periodEnd,
-        metricsSnapshot: snapshots.metricsSnapshot,
-        sourceSnapshot: snapshots.sourceSnapshot
+        metricsSnapshot: metricsSnapshot,
+        sourceSnapshot: sourceSnapshot
       });
       resultSource = "fallback";
       fallbackReason = response.error;
     } else {
       throw new Error(response.error);
     }
+    parsedResult = {
+      ...parsedResult,
+      recommended_actions: applyManagerActionPreference({
+        actions: parsedResult.recommended_actions,
+        context: runtimeVisibilityContext,
+        limit: 2
+      })
+    };
 
     const { data: updatedReport, error: reportUpdateError } = await params.supabase
       .from("generated_reports")
@@ -311,8 +346,8 @@ export async function generateReport(params: {
         title: parsedResult.title,
         summary: parsedResult.summary,
         content_markdown: parsedResult.content_markdown,
-        metrics_snapshot: snapshots.metricsSnapshot,
-        source_snapshot: snapshots.sourceSnapshot
+        metrics_snapshot: metricsSnapshot,
+        source_snapshot: sourceSnapshot
       })
       .eq("id", reportRow.id)
       .select("*")
@@ -331,8 +366,8 @@ export async function generateReport(params: {
       outputSnapshot: response.rawResponse,
       parsedResult: {
         report: parsedResult,
-        metrics_snapshot: snapshots.metricsSnapshot,
-        source_snapshot: snapshots.sourceSnapshot
+        metrics_snapshot: metricsSnapshot,
+        source_snapshot: sourceSnapshot
       },
       latencyMs: response.latencyMs,
       resultSource,
@@ -371,8 +406,8 @@ export async function generateReport(params: {
       .update({
         status: "failed",
         summary: message,
-        metrics_snapshot: snapshots.metricsSnapshot,
-        source_snapshot: snapshots.sourceSnapshot
+        metrics_snapshot: metricsSnapshot,
+        source_snapshot: sourceSnapshot
       })
       .eq("id", reportRow.id);
 
@@ -441,4 +476,3 @@ export async function getReportById(params: {
   if (!data) return null;
   return mapGeneratedReportRow(data as GeneratedReportRow);
 }
-

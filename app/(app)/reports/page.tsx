@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDateTime } from "@/lib/format";
+import { canViewManagerWorkspace } from "@/lib/role-capability";
 import type { GeneratedReport, ReportType } from "@/types/report";
 
 function todayDateString(): string {
@@ -34,18 +35,19 @@ const reportLabels: Record<ReportType, string> = {
 
 export default function ReportsPage(): JSX.Element {
   const { user } = useAuth();
+  const canViewTeamReports = canViewManagerWorkspace(user);
   const { reports, customers, generateReport, getReportById, loading, error } = useAppData();
-  const coachingScope = user?.role === "manager" ? undefined : ("user" as const);
+  const coachingScope = canViewTeamReports ? undefined : ("user" as const);
   const {
     items: coachingReports,
     generate: generateCoachingReport,
     loading: coachingLoading
   } = useCoachingReports({
     scope: coachingScope,
-    targetUserId: user?.role === "manager" ? undefined : user?.id
+    targetUserId: canViewTeamReports ? undefined : user?.id
   });
 
-  const [reportType, setReportType] = useState<ReportType>(user?.role === "manager" ? "manager_daily" : "sales_daily");
+  const [reportType, setReportType] = useState<ReportType>(canViewTeamReports ? "manager_daily" : "sales_daily");
   const [periodStart, setPeriodStart] = useState(todayDateString());
   const [periodEnd, setPeriodEnd] = useState(todayDateString());
   const [generating, setGenerating] = useState(false);
@@ -55,7 +57,7 @@ export default function ReportsPage(): JSX.Element {
   const [coachingPeriod, setCoachingPeriod] = useState<"weekly" | "monthly">("weekly");
   const [coachingTargetUserId, setCoachingTargetUserId] = useState<string>(user?.id ?? "");
 
-  const availableTypes = user?.role === "manager"
+  const availableTypes = canViewTeamReports
     ? ["sales_daily", "sales_weekly", "manager_daily", "manager_weekly"]
     : ["sales_daily", "sales_weekly"];
 
@@ -69,9 +71,9 @@ export default function ReportsPage(): JSX.Element {
 
   const scopedReports = useMemo(() => {
     if (!user) return [];
-    if (user.role === "manager") return reports;
+    if (canViewTeamReports) return reports;
     return reports.filter((item) => item.targetUserId === user.id || item.generatedBy === user.id);
-  }, [reports, user]);
+  }, [canViewTeamReports, reports, user]);
 
   const filteredReports = useMemo(() => {
     return scopedReports.filter((item) => item.reportType === reportType);
@@ -82,14 +84,14 @@ export default function ReportsPage(): JSX.Element {
       const today = todayDateString();
       setPeriodStart(today);
       setPeriodEnd(today);
-      if (user?.role === "manager") setReportType("manager_daily");
+      if (canViewTeamReports) setReportType("manager_daily");
       else setReportType("sales_daily");
       return;
     }
 
     setPeriodStart(sevenDaysAgoString());
     setPeriodEnd(todayDateString());
-    if (user?.role === "manager") setReportType("manager_weekly");
+    if (canViewTeamReports) setReportType("manager_weekly");
     else setReportType("sales_weekly");
   };
 
@@ -101,8 +103,8 @@ export default function ReportsPage(): JSX.Element {
         reportType,
         periodStart,
         periodEnd,
-        scopeType: user?.role === "manager" ? "team" : "self",
-        targetUserId: user?.role === "manager" ? null : user?.id
+        scopeType: canViewTeamReports ? "team" : "self",
+        targetUserId: canViewTeamReports ? null : user?.id
       });
       setSelectedReport(generated);
       setMessage("报告已生成。你可以在右侧查看详情。");
@@ -127,9 +129,9 @@ export default function ReportsPage(): JSX.Element {
     setMessage(null);
     try {
       const generated = await generateCoachingReport({
-        scope: user?.role === "manager" ? "team" : "user",
+        scope: canViewTeamReports ? "team" : "user",
         periodType: coachingPeriod,
-        targetUserId: user?.role === "manager" ? coachingTargetUserId : user?.id
+        targetUserId: canViewTeamReports ? coachingTargetUserId : user?.id
       });
       setMessage(`辅导报告已生成：${generated.title}`);
     } catch (cause) {
@@ -263,7 +265,7 @@ export default function ReportsPage(): JSX.Element {
               </Button>
             </div>
 
-            {user?.role === "manager" ? (
+            {canViewTeamReports ? (
               <div>
                 <Label>个人辅导目标（可选）</Label>
                 <Select value={coachingTargetUserId} onValueChange={setCoachingTargetUserId}>
@@ -282,7 +284,7 @@ export default function ReportsPage(): JSX.Element {
             ) : null}
 
             <Button onClick={() => void handleGenerateCoaching()} disabled={coachingGenerating}>
-              {coachingGenerating ? "生成中..." : user?.role === "manager" ? "生成团队辅导报告" : "生成我的辅导报告"}
+              {coachingGenerating ? "生成中..." : canViewTeamReports ? "生成团队辅导报告" : "生成我的辅导报告"}
             </Button>
           </CardContent>
         </Card>

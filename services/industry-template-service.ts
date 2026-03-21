@@ -1,5 +1,26 @@
 import { BUILTIN_INDUSTRY_TEMPLATE_SEEDS } from "@/data/industry-templates";
+import {
+  assertNoOverrideDrift,
+  buildExpectedVersionFromConcurrencyBaseline,
+  buildOverrideConcurrencyBaseline,
+  hasOverrideExpectedVersion,
+  type OrgTemplateOverrideConcurrencyBaseline,
+  type OrgTemplateOverrideExpectedVersion
+} from "@/lib/override-concurrency-guard";
+import {
+  buildOrgTemplateOverrideWriteAuditDraft,
+  prepareOrgTemplateOverrideWrite,
+  type OrgTemplateOverrideWriteAuditDraft,
+  type OrgTemplateOverrideWriteDiagnostics
+} from "@/lib/org-override-write-governance";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
+import {
+  buildOrgTemplateOverrideAuditRecord,
+  getLatestOrgTemplateOverrideAuditVersion,
+  persistOrgConfigAuditRecord,
+  type OrgTemplateOverrideRollbackSource,
+  type PersistOrgConfigAuditRecordResult
+} from "@/services/org-config-audit-service";
 import type {
   IndustryTemplate,
   IndustryTemplateContext,
@@ -71,6 +92,18 @@ interface OrgTemplateOverrideRow {
   created_by: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface OrgTemplateOverrideWriteResult {
+  override: OrgTemplateOverride;
+  writeDiagnostics: OrgTemplateOverrideWriteDiagnostics;
+  auditDraft: OrgTemplateOverrideWriteAuditDraft;
+  persistedAudit: PersistOrgConfigAuditRecordResult;
+  concurrency: {
+    expectedVersion: OrgTemplateOverrideExpectedVersion | null;
+    beforeWrite: OrgTemplateOverrideConcurrencyBaseline;
+    afterWrite: OrgTemplateOverrideConcurrencyBaseline;
+  };
 }
 
 function nowIso(): string {
@@ -411,6 +444,30 @@ export async function listOrgTemplateAssignments(params: {
   return ((res.data ?? []) as OrgTemplateAssignmentRow[]).map(mapAssignmentRow);
 }
 
+export async function getOrgTemplateOverrideByType(params: {
+  supabase: DbClient;
+  orgId: string;
+  templateId: string;
+  overrideType: OrgTemplateOverride["overrideType"];
+}): Promise<OrgTemplateOverride | null> {
+  const res = await (params.supabase as any)
+    .from("org_template_overrides")
+    .select("*")
+    .eq("org_id", params.orgId)
+    .eq("template_id", params.templateId)
+    .eq("override_type", params.overrideType)
+    .maybeSingle();
+
+  if (res.error) {
+    if (res.error.message.includes("org_template_overrides") || res.error.message.includes("does not exist")) {
+      return null;
+    }
+    throw new Error(res.error.message);
+  }
+
+  return res.data ? mapOverrideRow(res.data as OrgTemplateOverrideRow) : null;
+}
+
 export async function upsertOrgTemplateOverride(params: {
   supabase: DbClient;
   orgId: string;
@@ -418,7 +475,55 @@ export async function upsertOrgTemplateOverride(params: {
   overrideType: OrgTemplateOverride["overrideType"];
   overridePayload: Record<string, unknown>;
   actorUserId: string;
-}): Promise<OrgTemplateOverride> {
+  auditActionType?: "create" | "update" | "rollback";
+  rollbackSource?: OrgTemplateOverrideRollbackSource | null;
+  expectedVersion?: OrgTemplateOverrideExpectedVersion | null;
+}): Promise<OrgTemplateOverrideWriteResult> {
+  const prepared = prepareOrgTemplateOverrideWrite({
+    overrideType: params.overrideType,
+    overridePayload: params.overridePayload
+  });
+  if (!prepared.writeDiagnostics.acceptedForWrite) {
+    const reason = prepared.writeDiagnostics.reason ?? "unknown";
+    const detail = prepared.writeDiagnostics.diagnostics[0];
+    throw new Error(`template_override_payload_invalid:${reason}${detail ? `:${detail}` : ""}`);
+  }
+
+  const existingRes = await (params.supabase as any)
+    .from("org_template_overrides")
+    .select("*")
+    .eq("org_id", params.orgId)
+    .eq("template_id", params.templateId)
+    .eq("override_type", params.overrideType)
+    .maybeSingle();
+  if (existingRes.error) throw new Error(existingRes.error.message);
+  const existingOverride = existingRes.data ? mapOverrideRow(existingRes.data as OrgTemplateOverrideRow) : null;
+
+  const latestAuditVersion = await getLatestOrgTemplateOverrideAuditVersion({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    templateId: params.templateId,
+    overrideType: params.overrideType
+  });
+  const baselineBeforeWrite = buildOverrideConcurrencyBaseline({
+    templateId: params.templateId,
+    overrideType: params.overrideType,
+    auditAvailability: latestAuditVersion.availability,
+    currentVersionLabel: latestAuditVersion.item?.versionLabel ?? null,
+    currentVersionNumber: latestAuditVersion.item?.versionNumber ?? null,
+    currentOverrideUpdatedAt: existingOverride?.updatedAt ?? null,
+    currentPayload: existingOverride?.overridePayload ?? null
+  });
+  const expectedVersion = hasOverrideExpectedVersion(params.expectedVersion)
+    ? params.expectedVersion ?? null
+    : null;
+  if (expectedVersion) {
+    assertNoOverrideDrift({
+      expectedVersion,
+      currentBaseline: baselineBeforeWrite
+    });
+  }
+
   const res = await (params.supabase as any)
     .from("org_template_overrides")
     .upsert(
@@ -426,7 +531,7 @@ export async function upsertOrgTemplateOverride(params: {
         org_id: params.orgId,
         template_id: params.templateId,
         override_type: params.overrideType,
-        override_payload: params.overridePayload,
+        override_payload: prepared.writeDiagnostics.normalizedPayload,
         created_by: params.actorUserId
       },
       {
@@ -437,5 +542,83 @@ export async function upsertOrgTemplateOverride(params: {
     .single();
 
   if (res.error) throw new Error(res.error.message);
-  return mapOverrideRow(res.data as OrgTemplateOverrideRow);
+  const override = mapOverrideRow(res.data as OrgTemplateOverrideRow);
+  const actionType: "create" | "update" = existingOverride ? "update" : "create";
+  const resolvedAuditActionType = params.auditActionType ?? actionType;
+  const auditDraft = buildOrgTemplateOverrideWriteAuditDraft({
+    orgId: params.orgId,
+    actorUserId: params.actorUserId,
+    templateId: params.templateId,
+    targetId: override.id,
+    overrideType: override.overrideType,
+    beforePayload: existingOverride?.overridePayload ?? null,
+    afterPayload: override.overridePayload,
+    writeDiagnostics: prepared.writeDiagnostics
+  });
+  const persistedAudit = await persistOrgConfigAuditRecord({
+    supabase: params.supabase,
+    recordDraft: buildOrgTemplateOverrideAuditRecord({
+      orgId: params.orgId,
+      actorUserId: params.actorUserId,
+      templateId: params.templateId,
+      targetId: override.id,
+      overrideType: override.overrideType,
+      actionType: resolvedAuditActionType,
+      auditDraft,
+      writeDiagnostics: prepared.writeDiagnostics,
+      rollbackSource: params.rollbackSource ?? null
+    })
+  });
+  const baselineAfterWrite = buildOverrideConcurrencyBaseline({
+    templateId: params.templateId,
+    overrideType: params.overrideType,
+    auditAvailability:
+      persistedAudit.status === "persisted"
+        ? "available"
+        : latestAuditVersion.availability,
+    currentVersionLabel:
+      persistedAudit.status === "persisted"
+        ? persistedAudit.record?.versionLabel ?? null
+        : latestAuditVersion.item?.versionLabel ?? null,
+    currentVersionNumber:
+      persistedAudit.status === "persisted"
+        ? persistedAudit.record?.versionNumber ?? null
+        : latestAuditVersion.item?.versionNumber ?? null,
+    currentOverrideUpdatedAt: override.updatedAt,
+    currentPayload: override.overridePayload
+  });
+
+  console.info("[org.override.write.audit]", {
+    org_id: params.orgId,
+    actor_user_id: params.actorUserId,
+    override_type: override.overrideType,
+    action_type: resolvedAuditActionType,
+    runtime_impact: prepared.writeDiagnostics.runtimeImpactSummary,
+    ignored_by_runtime: prepared.writeDiagnostics.ignoredByRuntime,
+    forbidden_for_runtime: prepared.writeDiagnostics.forbiddenForRuntime,
+    rollback_source_version:
+      resolvedAuditActionType === "rollback" ? params.rollbackSource?.sourceVersionLabel ?? null : null,
+    expected_version_token: expectedVersion?.compareToken ?? null,
+    expected_version_label: expectedVersion?.versionLabel ?? null,
+    expected_version_number: expectedVersion?.versionNumber ?? null,
+    expected_override_updated_at: expectedVersion?.overrideUpdatedAt ?? null,
+    expected_payload_hash: expectedVersion?.payloadHash ?? null,
+    concurrency_before_write: buildExpectedVersionFromConcurrencyBaseline(baselineBeforeWrite),
+    concurrency_after_write: buildExpectedVersionFromConcurrencyBaseline(baselineAfterWrite),
+    persisted_audit_status: persistedAudit.status,
+    persisted_audit_id: persistedAudit.record?.id ?? null,
+    persisted_audit_version: persistedAudit.record?.versionLabel ?? null
+  });
+
+  return {
+    override,
+    writeDiagnostics: prepared.writeDiagnostics,
+    auditDraft,
+    persistedAudit,
+    concurrency: {
+      expectedVersion,
+      beforeWrite: baselineBeforeWrite,
+      afterWrite: baselineAfterWrite
+    }
+  };
 }

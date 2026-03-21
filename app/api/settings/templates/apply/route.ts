@@ -61,10 +61,11 @@ export async function POST(request: Request) {
     const status =
       message === "org_admin_access_required"
         ? 403
+        : message.startsWith("template_override_payload_invalid")
+          ? 400
         : message === "industry_template_not_found"
           ? 404
           : 500;
     return fail(message, status);
   }
 }
-

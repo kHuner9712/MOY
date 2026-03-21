@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { AppShell } from "@/components/layout/app-shell";
-import { canAccessPath } from "@/lib/auth";
+import { canAccessPathForUser } from "@/lib/auth";
 
 export default function WorkbenchLayout({ children }: { children: React.ReactNode }): JSX.Element {
   const { user, loading } = useAuth();
@@ -19,7 +19,7 @@ export default function WorkbenchLayout({ children }: { children: React.ReactNod
       return;
     }
 
-    if (!canAccessPath(user.role, pathname)) {
+    if (!canAccessPathForUser(user, pathname)) {
       router.replace("/dashboard");
     }
   }, [loading, user, router, pathname]);
@@ -28,7 +28,7 @@ export default function WorkbenchLayout({ children }: { children: React.ReactNod
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">正在检查登录状态...</div>;
   }
 
-  if (!canAccessPath(user.role, pathname)) {
+  if (!canAccessPathForUser(user, pathname)) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">正在跳转到可访问页面...</div>;
   }
 

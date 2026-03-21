@@ -3,6 +3,7 @@
 import { useAuth } from "@/components/auth/auth-provider";
 import { useExecutiveActions } from "@/hooks/use-executive-actions";
 import { useExecutiveCockpit } from "@/hooks/use-executive-cockpit";
+import { canAccessExecutive } from "@/lib/role-capability";
 
 import { ExecutiveBriefsPanel } from "./_components/executive-briefs-panel";
 import { ExecutiveEventsPanel } from "./_components/executive-events-panel";
@@ -13,8 +14,8 @@ import { ExecutiveStats } from "./_components/executive-stats";
 
 export default function ExecutiveCockpitPage(): JSX.Element {
   const { user } = useAuth();
-  const isManager = user?.role === "manager";
-  const { summary, events, briefs, loading, error, reload } = useExecutiveCockpit(isManager);
+  const canAccess = canAccessExecutive(user);
+  const { summary, events, briefs, loading, error, reload } = useExecutiveCockpit(canAccess);
   const {
     health,
     healthLoading,
@@ -28,12 +29,12 @@ export default function ExecutiveCockpitPage(): JSX.Element {
     runRefresh,
     generateBrief
   } = useExecutiveActions({
-    enabled: isManager,
+    enabled: canAccess,
     reload
   });
 
-  if (!isManager) {
-    return <div className="text-sm text-muted-foreground">Only manager can access executive cockpit.</div>;
+  if (!canAccess) {
+    return <div className="text-sm text-muted-foreground">Only owner/admin/manager roles can access executive cockpit.</div>;
   }
 
   if (loading || !summary) return <div className="text-sm text-muted-foreground">Loading executive cockpit...</div>;

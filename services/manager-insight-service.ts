@@ -3,6 +3,13 @@ import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { compileBehaviorQualitySnapshot } from "@/services/behavior-quality-service";
 import { getActivePromptVersion } from "@/services/ai-prompt-service";
 import { createAiRun, updateAiRunStatus } from "@/services/ai-run-service";
+import {
+  applyManagerActionPreference,
+  buildManagerVisibilityRuntimeContext,
+  buildPromptAugmentationContext,
+  buildResolvedOrgRuntimeConfig,
+  summarizeResolvedIndustryTemplateContext
+} from "@/services/template-org-runtime-bridge-service";
 import { managerQualityInsightResultSchema, type AiScenario, type ManagerQualityInsightResult } from "@/types/ai";
 import type { QualityPeriodType } from "@/types/quality";
 
@@ -137,6 +144,17 @@ export async function buildManagerQualityInsight(params: {
       highRiskUnhandledCount: item.highRiskUnhandledCount
     };
   });
+  const runtimeTemplateContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.orgId
+  });
+  const runtimeVisibilityContext = buildManagerVisibilityRuntimeContext({
+    context: runtimeTemplateContext
+  });
+  const runtimePromptAugmentation = buildPromptAugmentationContext({
+    scenario: "manager_quality_insight",
+    context: runtimeTemplateContext
+  });
 
   const scenario: AiScenario = "manager_quality_insight";
   const provider = getAiProvider();
@@ -163,7 +181,12 @@ export async function buildManagerQualityInsight(params: {
       period_type: periodType,
       period_start: periodStart,
       period_end: periodEnd,
-      rows
+      rows,
+      runtime_template_context: summarizeResolvedIndustryTemplateContext(runtimeTemplateContext),
+      runtime_preference_overlay: {
+        manager_focus_metrics: runtimeVisibilityContext.managerFocusMetricPriority,
+        recommended_action_priority: runtimeVisibilityContext.recommendedActionPriority
+      }
     }
   });
 
@@ -191,14 +214,19 @@ export async function buildManagerQualityInsight(params: {
       scenario,
       model,
       systemPrompt: prompt.systemPrompt,
-      developerPrompt: `${prompt.developerPrompt}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
+      developerPrompt: `${prompt.developerPrompt}${runtimePromptAugmentation ? `\n\n${runtimePromptAugmentation}` : ""}\n\nOutput schema:\n${JSON.stringify(prompt.outputSchema)}`,
       userPrompt: JSON.stringify({
         scenario,
         payload: {
           period_type: periodType,
           period_start: periodStart,
           period_end: periodEnd,
-          rows
+          rows,
+          runtime_template_context: summarizeResolvedIndustryTemplateContext(runtimeTemplateContext),
+          runtime_preference_overlay: {
+            manager_focus_metrics: runtimeVisibilityContext.managerFocusMetricPriority,
+            recommended_action_priority: runtimeVisibilityContext.recommendedActionPriority
+          }
         }
       }),
       jsonMode: true,
@@ -240,6 +268,19 @@ export async function buildManagerQualityInsight(params: {
     responseModel = "rule-fallback";
     outputSnapshot = { fallback: true, reason: fallbackReason, rows };
   }
+  const focusSuffix =
+    runtimeVisibilityContext.managerFocusMetricPriority.length > 0
+      ? ` Focus metrics: ${runtimeVisibilityContext.managerFocusMetricPriority.slice(0, 3).join(", ")}.`
+      : "";
+  insight = {
+    ...insight,
+    executive_summary: `${insight.executive_summary}${focusSuffix}`,
+    management_actions: applyManagerActionPreference({
+      actions: insight.management_actions,
+      context: runtimeVisibilityContext,
+      limit: 2
+    })
+  };
 
   await updateAiRunStatus({
     supabase: params.supabase,

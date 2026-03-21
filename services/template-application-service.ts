@@ -1,4 +1,6 @@
 import { getAiProvider, isRuleFallbackEnabled } from "@/lib/ai/provider";
+import { buildOrgOverrideWriteDiagnosticsSummary } from "@/lib/org-override-write-governance";
+import { validateOrgTemplateOverride } from "@/lib/template-override-hardening";
 import { buildFallbackTemplateApplicationSummary } from "@/lib/productization-fallback";
 import { applyTemplateConfig, type TemplateConfigDraft } from "@/lib/template-application";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
@@ -7,13 +9,19 @@ import { createAiRun, updateAiRunStatus } from "@/services/ai-run-service";
 import {
   getCurrentOrgTemplateContext,
   getIndustryTemplateDetail,
-  upsertOrgTemplateOverride
+  upsertOrgTemplateOverride,
+  type OrgTemplateOverrideWriteResult
 } from "@/services/industry-template-service";
 import { getOrgAiSettings, updateOrgAiSettings } from "@/services/org-ai-settings-service";
 import { getOrgFeatureFlags, updateOrgFeatureFlag } from "@/services/org-feature-service";
 import { runDemoSeed } from "@/services/demo-seed-service";
 import { getOrgSettings, updateOrgSettings } from "@/services/org-settings-service";
 import { seedPlaybooksFromTemplate } from "@/services/template-seed-service";
+import {
+  applyRuntimeTemplateConfigOverlay,
+  buildResolvedOrgRuntimeConfig,
+  summarizeResolvedIndustryTemplateContext
+} from "@/services/template-org-runtime-bridge-service";
 import { templateApplicationSummaryResultSchema } from "@/types/ai";
 import type {
   OrgTemplateOverride,
@@ -140,14 +148,20 @@ function mergeOverrides(base: TemplateConfigDraft, overrides: OrgTemplateOverrid
   };
 
   for (const override of overrides) {
-    const payload = override.overridePayload;
-    if (override.overrideType === "customer_stages") merged.customerStages = asStringArray(payload.items ?? payload.customer_stages);
-    if (override.overrideType === "opportunity_stages") merged.opportunityStages = asStringArray(payload.items ?? payload.opportunity_stages);
-    if (override.overrideType === "alert_rules") merged.alertRules = { ...merged.alertRules, ...asNumberRecord(payload.rules ?? payload) };
-    if (override.overrideType === "checkpoints") merged.checkpoints = asStringArray(payload.items ?? payload.checkpoints);
-    if (override.overrideType === "prep_preferences") merged.prepPreferences = asStringArray(payload.items ?? payload.prep_preferences);
-    if (override.overrideType === "brief_preferences") merged.briefPreferences = asStringArray(payload.items ?? payload.brief_preferences);
-    if (override.overrideType === "demo_seed_profile") merged.demoSeedProfile = String(payload.value ?? payload.demo_seed_profile ?? merged.demoSeedProfile);
+    const validation = validateOrgTemplateOverride({
+      overrideType: override.overrideType,
+      overridePayload: override.overridePayload
+    });
+    if (!validation.validForWrite) continue;
+
+    const payload = validation.normalizedPayload;
+    if (override.overrideType === "customer_stages") merged.customerStages = asStringArray(payload.items);
+    if (override.overrideType === "opportunity_stages") merged.opportunityStages = asStringArray(payload.items);
+    if (override.overrideType === "alert_rules") merged.alertRules = { ...merged.alertRules, ...asNumberRecord(payload.rules) };
+    if (override.overrideType === "checkpoints") merged.checkpoints = asStringArray(payload.items);
+    if (override.overrideType === "prep_preferences") merged.prepPreferences = asStringArray(payload.items);
+    if (override.overrideType === "brief_preferences") merged.briefPreferences = asStringArray(payload.items);
+    if (override.overrideType === "demo_seed_profile") merged.demoSeedProfile = String(payload.value ?? merged.demoSeedProfile);
   }
 
   return merged;
@@ -389,17 +403,27 @@ export async function previewTemplateApplication(params: {
     supabase: params.supabase,
     template: detail.template
   });
-
+  const runtimeTemplateContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    templateKey: detail.template.templateKey
+  });
   const incomingBase = payloadToConfig(detail.template.templatePayload);
-  const incoming = mergeOverrides(
+  const incomingWithOverrides = mergeOverrides(
     incomingBase,
     context.overrides.filter((item) => item.templateId === detail.template.id || item.templateId === persistentTemplateId)
   );
+  const incoming = applyRuntimeTemplateConfigOverlay(incomingWithOverrides, runtimeTemplateContext);
   const applied = applyTemplateConfig({
     existing: existingConfig,
     incoming,
     strategy: params.applyStrategy
   });
+  if (!runtimeTemplateContext.fallbackToBase && runtimeTemplateContext.merged) {
+    applied.diff.notes.push(
+      `runtime_bridge: template=${runtimeTemplateContext.resolvedTemplateKey} org_customization=${runtimeTemplateContext.appliedOrgCustomizationKey}`
+    );
+  }
 
   const run = await createTemplateApplicationRun({
     supabase: params.supabase,
@@ -482,6 +506,7 @@ export async function applyTemplate(params: {
     summary: string | null;
     partialSuccess: boolean;
   };
+  overrideWriteGovernance: Record<string, unknown> | null;
 }> {
   const [settings, currentContext, detail] = await Promise.all([
     getOrgSettings({ supabase: params.supabase, orgId: params.orgId }),
@@ -494,6 +519,11 @@ export async function applyTemplate(params: {
   const persistentTemplateId = await ensurePersistentTemplateId({
     supabase: params.supabase,
     template: detail.template
+  });
+  const runtimeTemplateContext = await buildResolvedOrgRuntimeConfig({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    templateKey: detail.template.templateKey
   });
 
   const existingConfig: TemplateConfigDraft = {
@@ -509,9 +539,10 @@ export async function applyTemplate(params: {
   };
 
   const mergedOverrides = [...currentContext.overrides];
+  const overrideWriteResults: OrgTemplateOverrideWriteResult[] = [];
   if (params.overrides?.length) {
     for (const item of params.overrides) {
-      const saved = await upsertOrgTemplateOverride({
+      const savedResult = await upsertOrgTemplateOverride({
         supabase: params.supabase,
         orgId: params.orgId,
         templateId: persistentTemplateId,
@@ -519,22 +550,70 @@ export async function applyTemplate(params: {
         overridePayload: item.overridePayload,
         actorUserId: params.actorUserId
       });
-      const idx = mergedOverrides.findIndex((row) => row.overrideType === saved.overrideType && row.templateId === saved.templateId);
+      overrideWriteResults.push(savedResult);
+      const saved = savedResult.override;
+      const idx = mergedOverrides.findIndex(
+        (row) => row.overrideType === saved.overrideType && row.templateId === saved.templateId
+      );
       if (idx >= 0) mergedOverrides[idx] = saved;
       else mergedOverrides.push(saved);
     }
   }
+  const persistedAuditRecords = overrideWriteResults
+    .map((item) => item.persistedAudit.record)
+    .filter((item): item is NonNullable<OrgTemplateOverrideWriteResult["persistedAudit"]["record"]> => Boolean(item));
+  const persistedAuditUnavailableReasons = overrideWriteResults
+    .map((item) => item.persistedAudit.reason)
+    .filter((item): item is string => typeof item === "string" && item.length > 0);
+
+  const overrideWriteGovernanceSummary =
+    overrideWriteResults.length > 0
+      ? {
+          summary: buildOrgOverrideWriteDiagnosticsSummary(
+            overrideWriteResults.map((item) => item.writeDiagnostics)
+          ),
+          diagnostics: overrideWriteResults.map((item) => item.writeDiagnostics),
+          auditDrafts: overrideWriteResults.map((item) => item.auditDraft),
+          persistedAudit: {
+            status:
+              persistedAuditUnavailableReasons.length > 0
+                ? persistedAuditRecords.length > 0
+                  ? "partial_available"
+                  : "not_available"
+                : "available",
+            persistedCount: persistedAuditRecords.length,
+            unavailableCount: persistedAuditUnavailableReasons.length,
+            reasons: Array.from(new Set(persistedAuditUnavailableReasons)),
+            records: persistedAuditRecords.map((item) => ({
+              id: item.id,
+              targetType: item.targetType,
+              targetKey: item.targetKey,
+              actionType: item.actionType,
+              versionNumber: item.versionNumber,
+              versionLabel: item.versionLabel,
+              createdAt: item.createdAt,
+              diagnosticsSummary: item.diagnosticsSummary
+            }))
+          }
+        }
+      : null;
 
   const incomingBase = payloadToConfig(detail.template.templatePayload);
-  const incoming = mergeOverrides(
+  const incomingWithOverrides = mergeOverrides(
     incomingBase,
     mergedOverrides.filter((item) => item.templateId === detail.template.id || item.templateId === persistentTemplateId)
   );
+  const incoming = applyRuntimeTemplateConfigOverlay(incomingWithOverrides, runtimeTemplateContext);
   const applied = applyTemplateConfig({
     existing: existingConfig,
     incoming,
     strategy: params.applyStrategy
   });
+  if (!runtimeTemplateContext.fallbackToBase && runtimeTemplateContext.merged) {
+    applied.diff.notes.push(
+      `runtime_bridge: template=${runtimeTemplateContext.resolvedTemplateKey} org_customization=${runtimeTemplateContext.appliedOrgCustomizationKey}`
+    );
+  }
 
   const run = await createTemplateApplicationRun({
     supabase: params.supabase,
@@ -625,7 +704,8 @@ export async function applyTemplate(params: {
       actorUserId: params.actorUserId,
       template: detail.template,
       seededTemplates: detail.seededPlaybookTemplates,
-      applyMode: params.applyMode
+      applyMode: params.applyMode,
+      resolvedRuntimeContext: runtimeTemplateContext
     });
 
     let demoSeedResult: {
@@ -658,8 +738,11 @@ export async function applyTemplate(params: {
       apply_mode: params.applyMode,
       apply_strategy: params.applyStrategy,
       changed_keys: applied.diff.changedKeys,
+      diff_notes: applied.diff.notes,
       playbook_seed: playbookSeed,
-      demo_seed: demoSeedResult
+      demo_seed: demoSeedResult,
+      override_write_governance: overrideWriteGovernanceSummary,
+      runtime_template_context: summarizeResolvedIndustryTemplateContext(runtimeTemplateContext)
     };
 
     await updateTemplateApplicationRun({
@@ -679,7 +762,8 @@ export async function applyTemplate(params: {
       },
       appliedTemplateKey: detail.template.templateKey,
       playbookSeed,
-      demoSeed: demoSeedResult
+      demoSeed: demoSeedResult,
+      overrideWriteGovernance: overrideWriteGovernanceSummary
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "template_apply_failed";

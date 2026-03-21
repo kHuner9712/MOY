@@ -12,12 +12,15 @@ import type { Playbook, PlaybookEntry, PlaybookFeedback } from "@/types/playbook
 import type { DedupeMatchGroup, ImportAuditEvent, ImportJob, ImportJobColumn, ImportJobRow, ImportTemplate } from "@/types/import";
 import type { MobileDeviceSession, MobileDraftSyncJob, OfflineActionQueueItem } from "@/types/mobile";
 import type {
+  OrgConfigAuditLog,
   OnboardingRun,
   OrgAiSettings,
   OrgFeatureFlag,
   OrgInvite,
+  OrgMemberRole,
   OrgMembership,
   OrgPlanProfile,
+  OrgSeatStatus,
   OrgSettings,
   OrgUsageCounter,
   UserUsageCounter
@@ -77,6 +80,7 @@ type OrgUsageCounterRow = Database["public"]["Tables"]["org_usage_counters"]["Ro
 type UserUsageCounterRow = Database["public"]["Tables"]["user_usage_counters"]["Row"];
 type OrgPlanProfileRow = Database["public"]["Tables"]["org_plan_profiles"]["Row"];
 type OnboardingRunRow = Database["public"]["Tables"]["onboarding_runs"]["Row"];
+type OrgConfigAuditLogRow = Database["public"]["Tables"]["org_config_audit_logs"]["Row"];
 type ImportJobRowDb = Database["public"]["Tables"]["import_jobs"]["Row"];
 type ImportJobColumnRow = Database["public"]["Tables"]["import_job_columns"]["Row"];
 type ImportJobRowRow = Database["public"]["Tables"]["import_job_rows"]["Row"];
@@ -106,16 +110,22 @@ function computeStalledDays(lastFollowupAt: string | null, createdAt: string): n
 export function mapProfileToUser(
   profile: ProfileRow,
   email: string | undefined,
-  effectiveRole?: User["role"]
+  options?: {
+    effectiveRole?: User["role"];
+    orgRole?: OrgMemberRole | null;
+    orgSeatStatus?: OrgSeatStatus | null;
+  }
 ): User {
   return {
     id: profile.id,
     orgId: profile.org_id,
     name: profile.display_name,
-    role: effectiveRole ?? profile.role,
+    role: options?.effectiveRole ?? profile.role,
     title: profile.title ?? "Sales",
     email: email ?? "",
-    team: profile.team_name ?? "Sales Team"
+    team: profile.team_name ?? "Sales Team",
+    orgRole: options?.orgRole ?? undefined,
+    orgSeatStatus: options?.orgSeatStatus ?? undefined
   };
 }
 
@@ -1165,6 +1175,25 @@ export function mapOnboardingRunRow(row: OnboardingRunRow): OnboardingRun {
     detailSnapshot: (row.detail_snapshot as Record<string, unknown> | null) ?? {},
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+export function mapOrgConfigAuditLogRow(row: OrgConfigAuditLogRow): OrgConfigAuditLog {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    actorUserId: row.actor_user_id,
+    targetType: row.target_type as OrgConfigAuditLog["targetType"],
+    targetId: row.target_id,
+    targetKey: row.target_key,
+    actionType: row.action_type,
+    beforeSummary: (row.before_summary as Record<string, unknown> | null) ?? {},
+    afterSummary: (row.after_summary as Record<string, unknown> | null) ?? {},
+    diagnosticsSummary: (row.diagnostics_summary as Record<string, unknown> | null) ?? {},
+    versionNumber: Number(row.version_number ?? 1),
+    versionLabel: row.version_label,
+    snapshotSummary: (row.snapshot_summary as Record<string, unknown> | null) ?? {},
+    createdAt: row.created_at
   };
 }
 
