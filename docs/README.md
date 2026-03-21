@@ -1,89 +1,138 @@
-# Docs Index
+﻿# Docs Index
 
-本索引用于区分当前 active docs 与 archive docs，并为 settings/config/runtime/governance 相关主题提供集中入口。
+本索引用于区分 **active docs** 与 **archive docs**，并提供 MOY 当前配置治理链路的统一导航。
 
-## Active Docs
+> 约定：`archive` 文档仅作历史参考，**不应**作为当前实现的主依据。
 
-### 架构与模型基线
+---
 
-- [`product-architecture-principles-v1.md`](./product-architecture-principles-v1.md)
-- [`sales-primitives-model-v1.md`](./sales-primitives-model-v1.md)
-- [`industry-template-framework-v1.md`](./industry-template-framework-v1.md)
-- [`enterprise-customization-framework-v1.md`](./enterprise-customization-framework-v1.md)
-- [`role-and-permission-model-v1.md`](./role-and-permission-model-v1.md)
-- [`MOY-Current-Architecture-and-Phase-Overview.md`](./MOY-Current-Architecture-and-Phase-Overview.md)
+## 1. Must Read (当前必读)
 
-### Runtime / Governance / Audit / Rollback
+1. [product-architecture-principles-v1.md](./product-architecture-principles-v1.md)
+2. [sales-primitives-model-v1.md](./sales-primitives-model-v1.md)
+3. [industry-template-framework-v1.md](./industry-template-framework-v1.md)
+4. [enterprise-customization-framework-v1.md](./enterprise-customization-framework-v1.md)
+5. [role-and-permission-model-v1.md](./role-and-permission-model-v1.md)
+6. [org-runtime-config-read-path-v1.md](./org-runtime-config-read-path-v1.md)
+7. [runtime-config-explain-and-override-hardening-v1.md](./runtime-config-explain-and-override-hardening-v1.md)
+8. [org-override-write-path-governance-v1.md](./org-override-write-path-governance-v1.md)
+9. [persisted-audit-and-version-snapshot-foundation-v1.md](./persisted-audit-and-version-snapshot-foundation-v1.md)
+10. [org-template-override-rollback-v1.md](./org-template-override-rollback-v1.md)
+11. [org-config-editor-ui-v1.md](./org-config-editor-ui-v1.md)
+12. [org-config-rollback-v1.md](./org-config-rollback-v1.md)
+13. [config-operations-hub-v1.md](./config-operations-hub-v1.md)
+14. [config-timeline-and-diff-viewer-v1.md](./config-timeline-and-diff-viewer-v1.md)
 
-- [`template-and-org-customization-runtime-bridge-v1.md`](./template-and-org-customization-runtime-bridge-v1.md)
-- [`org-runtime-config-read-path-v1.md`](./org-runtime-config-read-path-v1.md)
-- [`manager-executive-runtime-preference-bridge-v1.md`](./manager-executive-runtime-preference-bridge-v1.md)
-- [`runtime-config-explain-and-override-hardening-v1.md`](./runtime-config-explain-and-override-hardening-v1.md)
-- [`runtime-explain-debug-panel-v1.md`](./runtime-explain-debug-panel-v1.md)
-- [`org-override-write-path-governance-v1.md`](./org-override-write-path-governance-v1.md)
-- [`persisted-audit-and-version-snapshot-foundation-v1.md`](./persisted-audit-and-version-snapshot-foundation-v1.md)
-- [`override-concurrency-guard-v1.md`](./override-concurrency-guard-v1.md)
-- [`org-template-override-rollback-v1.md`](./org-template-override-rollback-v1.md)
-- [`org-template-override-editor-ui-v1.md`](./org-template-override-editor-ui-v1.md)
-- [`org-config-governance-expansion-v1.md`](./org-config-governance-expansion-v1.md)
-- [`org-config-editor-ui-v1.md`](./org-config-editor-ui-v1.md)
-- [`org-config-rollback-v1.md`](./org-config-rollback-v1.md)
-- [`config-operations-hub-v1.md`](./config-operations-hub-v1.md)
-- [`config-timeline-and-diff-viewer-v1.md`](./config-timeline-and-diff-viewer-v1.md)
-- [`repository-hygiene-audit-v1.md`](./repository-hygiene-audit-v1.md)
-- [`test-and-docs-consolidation-audit-v1.md`](./test-and-docs-consolidation-audit-v1.md)
-- [`github-publish-summary-v1.md`](./github-publish-summary-v1.md)
+---
 
-### 其他活跃参考
+## 2. Recommended Reading Order
 
-- [`MOY-MVP-项目交付文档.md`](./MOY-MVP-项目交付文档.md)
-- [`MOY-Supabase-Delivery-Notes.md`](./MOY-Supabase-Delivery-Notes.md)
-- [`Roadmap-Notifications-and-Integrations.md`](./Roadmap-Notifications-and-Integrations.md)
-- [`Roadmap-Value-Attribution.md`](./Roadmap-Value-Attribution.md)
+1. 架构与业务基线：`product-architecture-principles` -> `sales-primitives-model`
+2. 模板与企业定制框架：`industry-template-framework` -> `enterprise-customization-framework`
+3. 权限边界：`role-and-permission-model`
+4. runtime 读桥接：`template-and-org-customization-runtime-bridge` -> `manager-executive-runtime-preference-bridge` -> `org-runtime-config-read-path`
+5. 治理链路：`runtime-config-explain-and-override-hardening` -> `org-override-write-path-governance` -> `persisted-audit-and-version-snapshot-foundation`
+6. 恢复链路：`org-template-override-rollback` -> `org-config-rollback`
+7. 入口与运营视角：`runtime-explain-debug-panel` -> `org-template-override-editor-ui` -> `org-config-editor-ui` -> `config-operations-hub` -> `config-timeline-and-diff-viewer`
 
-## Archive Docs
+---
 
-### 已归档目录
+## 3. Active Docs
 
-- [`archive/phases/`](./archive/phases)
+### 3.1 Architecture / Primitives
 
-### 历史阶段文档（保留在根目录，按 archive 语义使用）
+- [product-architecture-principles-v1.md](./product-architecture-principles-v1.md) `status: active`
+- [sales-primitives-model-v1.md](./sales-primitives-model-v1.md) `status: active`
+- [MOY-Current-Architecture-and-Phase-Overview.md](./MOY-Current-Architecture-and-Phase-Overview.md) `status: active`
 
-- [`MOY-v1.1-Sales-Desk.md`](./MOY-v1.1-Sales-Desk.md)
-- [`MOY-v1.2-Manager-Desk.md`](./MOY-v1.2-Manager-Desk.md)
-- [`MOY-v1.3-Manager-Insights.md`](./MOY-v1.3-Manager-Insights.md)
-- [`MOY-v1.4-Snapshots-and-Calibration.md`](./MOY-v1.4-Snapshots-and-Calibration.md)
-- [`MOY-v1.5-Automated-Snapshots.md`](./MOY-v1.5-Automated-Snapshots.md)
+### 3.2 Template / Customization / Permission Baseline
 
-说明：
+- [industry-template-framework-v1.md](./industry-template-framework-v1.md) `status: active`
+- [enterprise-customization-framework-v1.md](./enterprise-customization-framework-v1.md) `status: active`
+- [role-and-permission-model-v1.md](./role-and-permission-model-v1.md) `status: active`
 
-1. 以上 5 份历史阶段文档当前仍被其他文档以相对路径引用，暂不直接移动，先在索引层明确 archive 语义。
-2. 后续若执行路径迁移，需要同步修正文档内相互引用链接。
+### 3.3 Governance Chain (Runtime -> Hardening -> Audit -> Concurrency -> Rollback)
 
-## Cleanup Boundary Note
+- [template-and-org-customization-runtime-bridge-v1.md](./template-and-org-customization-runtime-bridge-v1.md) `status: active`
+- [manager-executive-runtime-preference-bridge-v1.md](./manager-executive-runtime-preference-bridge-v1.md) `status: active`
+- [org-runtime-config-read-path-v1.md](./org-runtime-config-read-path-v1.md) `status: active`
+- [runtime-config-explain-and-override-hardening-v1.md](./runtime-config-explain-and-override-hardening-v1.md) `status: active`
+- [runtime-explain-debug-panel-v1.md](./runtime-explain-debug-panel-v1.md) `status: active`
+- [org-override-write-path-governance-v1.md](./org-override-write-path-governance-v1.md) `status: active`
+- [persisted-audit-and-version-snapshot-foundation-v1.md](./persisted-audit-and-version-snapshot-foundation-v1.md) `status: active`
+- [override-concurrency-guard-v1.md](./override-concurrency-guard-v1.md) `status: active`
+- [org-template-override-rollback-v1.md](./org-template-override-rollback-v1.md) `status: active`
 
-当前仓库存在“未跟踪但被代码引用”的文件，本轮仅做低风险索引收敛，不直接清理这些文件。
+### 3.4 Settings Surfaces
 
-示例（非完整列表）：
+- [org-template-override-editor-ui-v1.md](./org-template-override-editor-ui-v1.md) `status: active`
+- [org-config-governance-expansion-v1.md](./org-config-governance-expansion-v1.md) `status: active`
+- [org-config-editor-ui-v1.md](./org-config-editor-ui-v1.md) `status: active`
+- [org-config-rollback-v1.md](./org-config-rollback-v1.md) `status: active`
 
-- `data/industry-template-seeds-v1.ts`
-- `data/org-customization-seeds-v1.ts`
+### 3.5 Operations Surfaces
 
-## Testing Consolidation Status (v2)
+- [config-operations-hub-v1.md](./config-operations-hub-v1.md) `status: active`
+- [config-timeline-and-diff-viewer-v1.md](./config-timeline-and-diff-viewer-v1.md) `status: active`
+- [github-publish-summary-v1.md](./github-publish-summary-v1.md) `status: active`
+- [docs-alignment-summary-v1.md](./docs-alignment-summary-v1.md) `status: active`
 
-### 已并入 `tests/run-tests.ts`（原文件已归档）
+### 3.6 Hygiene / Audit References
+
+- [repository-hygiene-audit-v1.md](./repository-hygiene-audit-v1.md) `status: active`
+- [test-and-docs-consolidation-audit-v1.md](./test-and-docs-consolidation-audit-v1.md) `status: active`
+
+### 3.7 其他活跃参考
+
+- [MOY-MVP-项目交付文档.md](./MOY-MVP-项目交付文档.md)
+- [MOY-Supabase-Delivery-Notes.md](./MOY-Supabase-Delivery-Notes.md)
+- [Roadmap-Notifications-and-Integrations.md](./Roadmap-Notifications-and-Integrations.md)
+- [Roadmap-Value-Attribution.md](./Roadmap-Value-Attribution.md)
+
+---
+
+## 4. Archive Docs
+
+### 4.1 归档目录
+
+- [archive/phases/](./archive/phases/) `status: archive`
+
+### 4.2 历史阶段文档（根目录保留，按 archive 语义使用）
+
+- [MOY-v1.1-Sales-Desk.md](./MOY-v1.1-Sales-Desk.md) `status: archive`
+- [MOY-v1.2-Manager-Desk.md](./MOY-v1.2-Manager-Desk.md) `status: archive`
+- [MOY-v1.3-Manager-Insights.md](./MOY-v1.3-Manager-Insights.md) `status: archive`
+- [MOY-v1.4-Snapshots-and-Calibration.md](./MOY-v1.4-Snapshots-and-Calibration.md) `status: archive`
+- [MOY-v1.5-Automated-Snapshots.md](./MOY-v1.5-Automated-Snapshots.md) `status: archive`
+
+说明：以上历史文档仍有相互引用，当前先保持路径不变，仅在索引层明确 archive 边界。
+
+---
+
+## 5. Settings / Config / Runtime 页面入口（实现面）
+
+- `/settings/templates`：Template Override Editor（写入治理、冲突保护、回滚）
+- `/settings/org-config`：Org Config Editor（org_settings/org_ai_settings/org_feature_flags）
+- `/settings/runtime-debug`：Runtime Explain Debug
+- `/settings/config-ops`：Config Operations Hub
+- `/settings/config-timeline`：Config Timeline & Diff Viewer
+
+---
+
+## 6. Testing Structure Status
+
+### 6.1 主入口
+
+- `npm run test` -> `tests/run-tests.ts`
+
+### 6.2 已并入主入口（归档副本保留）
 
 - `tests/archive/merged/ai-schema.test.ts`
 - `tests/archive/merged/alert-dedupe.test.ts`
 - `tests/archive/merged/alert-rules.test.ts`
 - `tests/archive/merged/provider-parse.test.ts`
 
-说明：
-
-1. 以上测试语义已由主入口覆盖，`run-tests.ts` 采用当前仓库的 `assert + logPass` 风格统一执行。
-2. 本轮保留归档副本，便于历史追溯，不在主测试目录重复执行。
-
-### 已归档历史测试（未接入主入口）
+### 6.3 已归档历史测试
 
 - `tests/archive/legacy/attribution.test.ts`
 - `tests/archive/legacy/manager-desk.test.ts`
@@ -91,10 +140,17 @@
 - `tests/archive/legacy/manager-insights-snapshot.test.ts`
 - `tests/archive/legacy/sales-desk.test.ts`
 
-### 保持独立（keep_separate）
+### 6.4 keep_separate
 
 - `tests/value-metrics.test.ts`
 
-说明：
+---
 
-1. 该文件以类型/常量契约校验为主，当前保留独立形态，避免在本轮引入额外测试入口调整。
+## 7. Cleanup Boundary Note
+
+当前仓库仍存在“未跟踪但被代码引用”的文件；在完成引用治理前，暂不做激进清理。
+
+示例：
+
+- `data/industry-template-seeds-v1.ts`
+- `data/org-customization-seeds-v1.ts`
