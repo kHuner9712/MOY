@@ -22,6 +22,7 @@
 12. [org-config-rollback-v1.md](./org-config-rollback-v1.md)
 13. [config-operations-hub-v1.md](./config-operations-hub-v1.md)
 14. [config-timeline-and-diff-viewer-v1.md](./config-timeline-and-diff-viewer-v1.md)
+15. [moy-commercial-readiness-checklist-v1.md](./moy-commercial-readiness-checklist-v1.md)
 
 ---
 
@@ -82,7 +83,11 @@
 - [repository-hygiene-audit-v1.md](./repository-hygiene-audit-v1.md) `status: active`
 - [test-and-docs-consolidation-audit-v1.md](./test-and-docs-consolidation-audit-v1.md) `status: active`
 
-### 3.7 其他活跃参考
+### 3.7 Commercial Readiness Standard
+
+- [moy-commercial-readiness-checklist-v1.md](./moy-commercial-readiness-checklist-v1.md) `status: active`
+
+### 3.8 其他活跃参考
 
 - [MOY-MVP-项目交付文档.md](./MOY-MVP-项目交付文档.md)
 - [MOY-Supabase-Delivery-Notes.md](./MOY-Supabase-Delivery-Notes.md)

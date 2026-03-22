@@ -64,7 +64,11 @@ import { runManagerExecutiveRuntimePreferenceBridgeTests } from "./manager-execu
 import { runOrgRuntimeConfigReadPathTests } from "./org-runtime-config-read-path.test";
 import { runRuntimeConfigExplainHardeningTests } from "./runtime-config-explain-hardening.test";
 import { runCommercializationLayerTests } from "./commercialization-layer.test";
+import { runCommercialEntrySystemTests } from "./commercial-entry-system.test";
+import { runCommercialReadinessGateTests } from "./commercial-readiness-gate.test";
 import { runAutomationOpsLayerTests } from "./automation-ops-layer.test";
+import { runGoldenPathClosedLoopTraceTests } from "./golden-path-closed-loop-trace.test";
+import { runWorkItemActionHubTests } from "./work-item-action-hub.test";
 import { runGoldenPathSmokeTests } from "./golden-path-smoke.test";
 import { runRolePermissionModelTests } from "./role-permission-model.test";
 import { runOrgOverrideWritePathGovernanceTests } from "./org-override-write-path-governance.test";
@@ -1388,7 +1392,11 @@ async function main(): Promise<void> {
   runImportLayerTests(logPass);
   runMobileLayerTests(logPass);
   runCommercializationLayerTests(logPass);
+  runCommercialEntrySystemTests(logPass);
+  runCommercialReadinessGateTests(logPass);
   runAutomationOpsLayerTests(logPass);
+  runWorkItemActionHubTests(logPass);
+  runGoldenPathClosedLoopTraceTests(logPass);
   runGoldenPathSmokeTests(logPass);
   console.log("All tests passed.");
 }

@@ -3,7 +3,7 @@
 import { fail, ok } from "@/lib/api-response";
 import { getServerAuthContext } from "@/lib/server-auth";
 import { getAutomationCenterSnapshot, setAutomationRuleEnabled, upsertAutomationRule } from "@/services/automation-rule-service";
-import { assertOrgAdminAccess, assertOrgManagerAccess } from "@/services/org-membership-service";
+import { assertOrgAdminAccess, assertOrgManagerAccess, isOrgAdminRole } from "@/services/org-membership-service";
 
 const upsertSchema = z.object({
   ruleId: z.string().uuid().optional(),
@@ -35,7 +35,7 @@ export async function GET() {
   if (!auth) return fail("Please login first", 401);
 
   try {
-    await assertOrgManagerAccess({
+    const membership = await assertOrgManagerAccess({
       supabase: auth.supabase,
       orgId: auth.profile.org_id,
       userId: auth.profile.id
@@ -46,7 +46,15 @@ export async function GET() {
       orgId: auth.profile.org_id,
       actorUserId: auth.profile.id
     });
-    return ok(data);
+    const canManageRules = isOrgAdminRole(membership.role);
+    return ok({
+      ...data,
+      access: {
+        role: membership.role,
+        canManageRules,
+        canRunRules: canManageRules
+      }
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "get_automation_settings_failed";
     const status = message === "org_manager_access_required" ? 403 : 500;

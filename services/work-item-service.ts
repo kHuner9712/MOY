@@ -4,7 +4,7 @@ import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { mapAlertRow, mapTaskExecutionLogRow, mapWorkItemRow } from "@/services/mappers";
 import type { AlertItem } from "@/types/alert";
 import type { Database, Json } from "@/types/database";
-import type { TaskExecutionLog, WorkItem, WorkItemStatus } from "@/types/work";
+import type { TaskExecutionLog, WorkItem, WorkItemStatus, WorkItemTraceContext, WorkItemTriggerOrigin } from "@/types/work";
 
 type DbClient = ServerSupabaseClient;
 type WorkItemRow = Database["public"]["Tables"]["work_items"]["Row"];
@@ -20,8 +20,248 @@ interface CustomerLite {
   company_name: string;
 }
 
+interface BusinessEventTraceRow {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  event_payload: Record<string, unknown> | null;
+}
+
+interface AlertTraceRow {
+  id: string;
+  customer_id: string | null;
+  opportunity_id: string | null;
+  source: string;
+  rule_type: string;
+}
+
+interface InterventionTraceRow {
+  id: string;
+  deal_room_id: string | null;
+  request_type: string;
+}
+
+interface WorkItemStatusRow {
+  id: string;
+  status: WorkItemStatus;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function readPayloadRef(payload: Record<string, unknown>, key: string): string | null {
+  return readString(payload[key]);
+}
+
+export function isWorkItemActiveStatus(status: WorkItemStatus): boolean {
+  return status === "todo" || status === "in_progress" || status === "snoozed";
+}
+
+export function findReusableWorkItemIdByStatus(rows: WorkItemStatusRow[]): string | null {
+  for (const row of rows) {
+    if (isWorkItemActiveStatus(row.status)) return row.id;
+  }
+  return null;
+}
+
+export function deriveWorkItemTriggerOrigin(params: {
+  sourceType: WorkItem["sourceType"];
+  sourceRefType: string | null;
+  aiGenerated: boolean;
+}): WorkItemTriggerOrigin {
+  if (params.sourceRefType === "business_event") return "rule";
+  if (params.sourceType === "manager_assigned") return "manager";
+  if (params.sourceType === "manual") return "manual";
+  if (params.aiGenerated) return "ai";
+  return "system";
+}
+
+export function buildWorkItemTraceContext(params: {
+  item: WorkItem;
+  businessEvent?: BusinessEventTraceRow | null;
+  alert?: AlertTraceRow | null;
+  intervention?: InterventionTraceRow | null;
+}): WorkItemTraceContext {
+  const payload = asRecord(params.businessEvent?.event_payload);
+  const linkedBusinessEventId = params.item.sourceRefType === "business_event" ? params.item.sourceRefId : null;
+  const linkedAlertId = params.item.sourceRefType === "alert" ? params.item.sourceRefId : null;
+  const linkedInterventionRequestId =
+    params.item.sourceRefType === "intervention_request" ? params.item.sourceRefId : null;
+  const linkedDealRoomId =
+    params.intervention?.deal_room_id ??
+    readPayloadRef(payload, "deal_room_id") ??
+    null;
+  const linkedCustomerId =
+    params.item.customerId ??
+    params.alert?.customer_id ??
+    readPayloadRef(payload, "customer_id") ??
+    null;
+  const linkedOpportunityId =
+    params.item.opportunityId ??
+    params.alert?.opportunity_id ??
+    readPayloadRef(payload, "opportunity_id") ??
+    null;
+
+  let triggerEntityType: string | null = null;
+  let triggerEntityId: string | null = null;
+  if (params.businessEvent) {
+    triggerEntityType = params.businessEvent.entity_type;
+    triggerEntityId = params.businessEvent.entity_id;
+  } else if (params.intervention?.deal_room_id) {
+    triggerEntityType = "deal_room";
+    triggerEntityId = params.intervention.deal_room_id;
+  } else if (params.alert?.customer_id) {
+    triggerEntityType = "customer";
+    triggerEntityId = params.alert.customer_id;
+  } else if (params.alert?.opportunity_id) {
+    triggerEntityType = "opportunity";
+    triggerEntityId = params.alert.opportunity_id;
+  } else if (params.item.sourceRefType && params.item.sourceRefId) {
+    triggerEntityType = params.item.sourceRefType;
+    triggerEntityId = params.item.sourceRefId;
+  } else if (params.item.customerId) {
+    triggerEntityType = "customer";
+    triggerEntityId = params.item.customerId;
+  } else if (params.item.opportunityId) {
+    triggerEntityType = "opportunity";
+    triggerEntityId = params.item.opportunityId;
+  }
+
+  return {
+    sourceType: params.item.sourceType,
+    sourceRefType: params.item.sourceRefType,
+    sourceRefId: params.item.sourceRefId,
+    triggerOrigin: deriveWorkItemTriggerOrigin({
+      sourceType: params.item.sourceType,
+      sourceRefType: params.item.sourceRefType,
+      aiGenerated: params.item.aiGenerated
+    }),
+    triggerEntityType,
+    triggerEntityId,
+    linkedCustomerId,
+    linkedOpportunityId,
+    linkedDealRoomId,
+    linkedBusinessEventId,
+    linkedAlertId,
+    linkedInterventionRequestId
+  };
+}
+
+async function attachWorkItemTraceContext(params: {
+  supabase: DbClient;
+  orgId: string;
+  items: WorkItem[];
+}): Promise<WorkItem[]> {
+  if (params.items.length === 0) return [];
+
+  const eventIds = Array.from(
+    new Set(
+      params.items
+        .filter((item) => item.sourceRefType === "business_event" && item.sourceRefId)
+        .map((item) => item.sourceRefId as string)
+    )
+  );
+  const alertIds = Array.from(
+    new Set(
+      params.items
+        .filter((item) => item.sourceRefType === "alert" && item.sourceRefId)
+        .map((item) => item.sourceRefId as string)
+    )
+  );
+  const interventionIds = Array.from(
+    new Set(
+      params.items
+        .filter((item) => item.sourceRefType === "intervention_request" && item.sourceRefId)
+        .map((item) => item.sourceRefId as string)
+    )
+  );
+
+  const [eventRes, alertRes, interventionRes] = await Promise.all([
+    eventIds.length
+      ? (params.supabase as any)
+          .from("business_events")
+          .select("id, entity_type, entity_id, event_payload")
+          .eq("org_id", params.orgId)
+          .in("id", eventIds)
+      : Promise.resolve({ data: [], error: null }),
+    alertIds.length
+      ? (params.supabase as any)
+          .from("alerts")
+          .select("id, customer_id, opportunity_id, source, rule_type")
+          .eq("org_id", params.orgId)
+          .in("id", alertIds)
+      : Promise.resolve({ data: [], error: null }),
+    interventionIds.length
+      ? (params.supabase as any)
+          .from("intervention_requests")
+          .select("id, deal_room_id, request_type")
+          .eq("org_id", params.orgId)
+          .in("id", interventionIds)
+      : Promise.resolve({ data: [], error: null })
+  ]);
+
+  if (eventRes.error) throw new Error(eventRes.error.message);
+  if (alertRes.error) throw new Error(alertRes.error.message);
+  if (interventionRes.error) throw new Error(interventionRes.error.message);
+
+  const eventMap = new Map<string, BusinessEventTraceRow>(
+    ((eventRes.data ?? []) as BusinessEventTraceRow[]).map((row) => [row.id, row])
+  );
+  const alertMap = new Map<string, AlertTraceRow>(
+    ((alertRes.data ?? []) as AlertTraceRow[]).map((row) => [row.id, row])
+  );
+  const interventionMap = new Map<string, InterventionTraceRow>(
+    ((interventionRes.data ?? []) as InterventionTraceRow[]).map((row) => [row.id, row])
+  );
+
+  return params.items.map((item) => {
+    const traceContext = buildWorkItemTraceContext({
+      item,
+      businessEvent: item.sourceRefType === "business_event" && item.sourceRefId ? eventMap.get(item.sourceRefId) ?? null : null,
+      alert: item.sourceRefType === "alert" && item.sourceRefId ? alertMap.get(item.sourceRefId) ?? null : null,
+      intervention:
+        item.sourceRefType === "intervention_request" && item.sourceRefId ? interventionMap.get(item.sourceRefId) ?? null : null
+    });
+    return {
+      ...item,
+      traceContext
+    };
+  });
+}
+
+async function getExistingActiveWorkItemBySourceRef(params: {
+  supabase: DbClient;
+  orgId: string;
+  sourceRefType: string;
+  sourceRefId: string;
+}): Promise<WorkItem | null> {
+  const { data, error } = await params.supabase
+    .from("work_items")
+    .select("id, status")
+    .eq("org_id", params.orgId)
+    .eq("source_ref_type", params.sourceRefType)
+    .eq("source_ref_id", params.sourceRefId)
+    .order("updated_at", { ascending: false });
+  if (error) throw new Error(error.message);
+
+  const reusableId = findReusableWorkItemIdByStatus((data ?? []) as WorkItemStatusRow[]);
+  if (!reusableId) return null;
+
+  return getWorkItemById({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    workItemId: reusableId
+  });
 }
 
 async function writeExecutionLog(params: {
@@ -74,7 +314,12 @@ export async function listWorkItems(params: {
   if (error) throw new Error(error.message);
 
   const rows = (data ?? []) as Array<WorkItemRow & { owner?: ProfileLite | null; customer?: CustomerLite | null }>;
-  return rows.map((item) => mapWorkItemRow(item));
+  const items = rows.map((item) => mapWorkItemRow(item));
+  return attachWorkItemTraceContext({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    items
+  });
 }
 
 export async function getWorkItemById(params: {
@@ -92,7 +337,13 @@ export async function getWorkItemById(params: {
   if (error) throw new Error(error.message);
   if (!data) return null;
 
-  return mapWorkItemRow(data as WorkItemRow & { owner?: ProfileLite | null; customer?: CustomerLite | null });
+  const item = mapWorkItemRow(data as WorkItemRow & { owner?: ProfileLite | null; customer?: CustomerLite | null });
+  const [enriched] = await attachWorkItemTraceContext({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    items: [item]
+  });
+  return enriched ?? item;
 }
 
 export async function createWorkItem(params: {
@@ -156,7 +407,74 @@ export async function createWorkItem(params: {
     afterSnapshot: mapped
   });
 
-  return mapped;
+  const [enriched] = await attachWorkItemTraceContext({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    items: [mapped]
+  });
+  return enriched ?? mapped;
+}
+
+export async function createOrReuseWorkItemBySourceRef(params: {
+  supabase: DbClient;
+  orgId: string;
+  ownerId: string;
+  customerId?: string | null;
+  opportunityId?: string | null;
+  sourceType: Database["public"]["Enums"]["work_item_source_type"];
+  workType: Database["public"]["Enums"]["work_item_type"];
+  title: string;
+  description: string;
+  rationale: string;
+  priorityScore: number;
+  priorityBand: Database["public"]["Enums"]["work_priority_band"];
+  scheduledFor?: string | null;
+  dueAt?: string | null;
+  sourceRefType: string;
+  sourceRefId: string;
+  aiGenerated?: boolean;
+  aiRunId?: string | null;
+  createdBy: string;
+}): Promise<{ workItem: WorkItem; created: boolean }> {
+  const existing = await getExistingActiveWorkItemBySourceRef({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    sourceRefType: params.sourceRefType,
+    sourceRefId: params.sourceRefId
+  });
+  if (existing) {
+    return {
+      workItem: existing,
+      created: false
+    };
+  }
+
+  const workItem = await createWorkItem({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    ownerId: params.ownerId,
+    customerId: params.customerId ?? null,
+    opportunityId: params.opportunityId ?? null,
+    sourceType: params.sourceType,
+    workType: params.workType,
+    title: params.title,
+    description: params.description,
+    rationale: params.rationale,
+    priorityScore: params.priorityScore,
+    priorityBand: params.priorityBand,
+    scheduledFor: params.scheduledFor ?? null,
+    dueAt: params.dueAt ?? null,
+    sourceRefType: params.sourceRefType,
+    sourceRefId: params.sourceRefId,
+    aiGenerated: params.aiGenerated ?? false,
+    aiRunId: params.aiRunId ?? null,
+    createdBy: params.createdBy
+  });
+
+  return {
+    workItem,
+    created: true
+  };
 }
 
 export async function createWorkItemFromAlert(params: {
@@ -165,33 +483,6 @@ export async function createWorkItemFromAlert(params: {
   alertId: string;
   actorUserId: string;
 }): Promise<{ workItem: WorkItem; created: boolean; alert: AlertItem }> {
-  const existing = await params.supabase
-    .from("work_items")
-    .select("*, owner:profiles!work_items_owner_id_fkey(id, display_name), customer:customers!work_items_customer_id_fkey(id, company_name)")
-    .eq("org_id", params.orgId)
-    .eq("source_ref_type", "alert")
-    .eq("source_ref_id", params.alertId)
-    .in("status", ["todo", "in_progress", "snoozed"])
-    .limit(1)
-    .maybeSingle();
-
-  if (existing.error) throw new Error(existing.error.message);
-  if (existing.data) {
-    const mapped = mapWorkItemRow(existing.data as WorkItemRow & { owner?: ProfileLite | null; customer?: CustomerLite | null });
-    const { data: alertRaw, error: alertError } = await params.supabase
-      .from("alerts")
-      .select("*, owner:profiles!alerts_owner_id_fkey(id, display_name), customer:customers!alerts_customer_id_fkey(id, company_name)")
-      .eq("org_id", params.orgId)
-      .eq("id", params.alertId)
-      .single();
-    if (alertError) throw new Error(alertError.message);
-    return {
-      workItem: mapped,
-      created: false,
-      alert: mapAlertRow(alertRaw as never)
-    };
-  }
-
   const { data: alertRaw, error: alertError } = await params.supabase
     .from("alerts")
     .select("*, owner:profiles!alerts_owner_id_fkey(id, display_name), customer:customers!alerts_customer_id_fkey(id, company_name)")
@@ -207,7 +498,7 @@ export async function createWorkItemFromAlert(params: {
   const priorityBand = alert.level === "critical" ? "critical" : alert.level === "warning" ? "high" : "medium";
   const priorityScore = alert.level === "critical" ? 92 : alert.level === "warning" ? 74 : 52;
 
-  const workItem = await createWorkItem({
+  const created = await createOrReuseWorkItemBySourceRef({
     supabase: params.supabase,
     orgId: params.orgId,
     ownerId,
@@ -227,7 +518,11 @@ export async function createWorkItemFromAlert(params: {
     createdBy: params.actorUserId
   });
 
-  return { workItem, created: true, alert };
+  return {
+    workItem: created.workItem,
+    created: created.created,
+    alert
+  };
 }
 
 export async function updateWorkItemStatus(params: {
@@ -292,7 +587,12 @@ export async function updateWorkItemStatus(params: {
     afterSnapshot: after
   });
 
-  return after;
+  const [enriched] = await attachWorkItemTraceContext({
+    supabase: params.supabase,
+    orgId: params.orgId,
+    items: [after]
+  });
+  return enriched ?? after;
 }
 
 export async function completeWorkItemsBySourceRef(params: {

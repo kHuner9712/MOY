@@ -1,5 +1,10 @@
 import { createHash, randomUUID } from "crypto";
 
+import {
+  buildLeadPipelineHandoffSnapshot,
+  buildLeadQualificationSnapshot,
+  extractPublicCommercialEntryTraceId
+} from "@/lib/commercial-entry";
 import { requireSelfSalesOrgIdEnv } from "@/lib/env";
 import { createSupabaseAdminClient, hasSupabaseAdminEnv } from "@/lib/supabase/admin";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
@@ -227,7 +232,25 @@ export async function createInboundLead(params: {
     useCaseHint: params.useCaseHint ?? null
   });
 
-  const status: InboundLeadStatus = qualification.result.fitScore >= 60 ? "qualified" : "new";
+  const status: InboundLeadStatus =
+    qualification.result.fitScore >= 60 ? "qualified" : qualification.result.fitScore < 35 ? "unqualified" : "new";
+  const requestedPipelineDraft = Boolean(params.createPipelineDraft);
+  const pipelineAttemptAllowed = requestedPipelineDraft && status !== "unqualified";
+  const qualificationSnapshot = buildLeadQualificationSnapshot({
+    qualificationRunId: qualification.runId,
+    qualification: qualification.result,
+    qualificationUsedFallback: qualification.usedFallback,
+    qualificationFallbackReason: qualification.fallbackReason,
+    assignmentOwnerId: assignment.ownerId,
+    assignmentOwnerName: assignment.ownerName,
+    matchedRuleId: assignment.matchedRuleId
+  });
+  const pipelineHandoffSnapshot = buildLeadPipelineHandoffSnapshot({
+    requested: requestedPipelineDraft,
+    attempted: false,
+    pipelineCreated: false,
+    skippedReason: requestedPipelineDraft && status === "unqualified" ? "lead_unqualified" : null
+  });
 
   const insertRes = await (params.supabase as any)
     .from("inbound_leads")
@@ -248,17 +271,16 @@ export async function createInboundLead(params: {
       notes: params.notes ?? null,
       payload_snapshot: {
         ...(params.payloadSnapshot ?? {}),
-        qualification_run_id: qualification.runId,
-        qualification_fit_score: qualification.result.fitScore,
-        qualification_risk_flags: qualification.result.riskFlags,
-        matched_rule_id: assignment.matchedRuleId
+        ...qualificationSnapshot,
+        pipeline_handoff: pipelineHandoffSnapshot
       }
     })
     .select("*")
     .single();
 
   if (insertRes.error) throw new Error(insertRes.error.message);
-  const lead = mapInboundLeadRow(insertRes.data as InboundLeadRow);
+  let lead = mapInboundLeadRow(insertRes.data as InboundLeadRow);
+  const entryTraceId = extractPublicCommercialEntryTraceId(lead.payloadSnapshot);
 
   await appendConversionEvent({
     supabase: params.supabase,
@@ -268,12 +290,18 @@ export async function createInboundLead(params: {
     eventSummary: `Inbound lead created from ${lead.leadSource}.`,
     eventPayload: {
       qualification_fit_score: qualification.result.fitScore,
-      assigned_owner_id: assignment.ownerId
+      qualification_assessment: qualification.result.qualificationAssessment,
+      qualification_suggested_owner_type: qualification.result.suggestedOwnerType,
+      qualification_used_fallback: qualification.usedFallback,
+      assigned_owner_id: assignment.ownerId,
+      matched_rule_id: assignment.matchedRuleId,
+      entry_trace_id: entryTraceId,
+      pipeline_handoff_status: pipelineHandoffSnapshot.status
     }
   });
 
   let pipelineCreated = false;
-  if (params.createPipelineDraft && lead.status !== "unqualified") {
+  if (pipelineAttemptAllowed) {
     const converted = await convertLeadToSalesPipeline({
       supabase: params.supabase,
       orgId: params.orgId,
@@ -282,6 +310,32 @@ export async function createInboundLead(params: {
       allowExisting: true
     });
     pipelineCreated = converted.converted;
+
+    const finalizedPipelineHandoff = buildLeadPipelineHandoffSnapshot({
+      requested: requestedPipelineDraft,
+      attempted: true,
+      pipelineCreated: converted.converted,
+      customerId: converted.customerId,
+      opportunityId: converted.opportunityId,
+      dealRoomId: converted.dealRoomId,
+      skippedReason: null
+    });
+    const payloadSnapshot = {
+      ...lead.payloadSnapshot,
+      pipeline_handoff: finalizedPipelineHandoff
+    };
+
+    const updateRes = await (params.supabase as any)
+      .from("inbound_leads")
+      .update({
+        payload_snapshot: payloadSnapshot
+      })
+      .eq("org_id", params.orgId)
+      .eq("id", lead.id)
+      .select("*")
+      .single();
+    if (updateRes.error) throw new Error(updateRes.error.message);
+    lead = mapInboundLeadRow(updateRes.data as InboundLeadRow);
   }
 
   return {
@@ -562,5 +616,3 @@ export function buildPublicSubmissionFingerprint(params: {
   const raw = `${params.source}|${email}|${ip}|${ua}`;
   return createHash("sha256").update(raw).digest("hex");
 }
-
-

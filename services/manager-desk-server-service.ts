@@ -6,7 +6,7 @@
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { listDealRooms } from "@/services/deal-room-service";
 import { executiveClientService } from "@/services/executive-client-service";
-import { createWorkItem } from "@/services/work-item-service";
+import { createOrReuseWorkItemBySourceRef } from "@/services/work-item-service";
 import { updateWorkItemStatus } from "@/services/work-item-service";
 import type { Customer } from "@/types/customer";
 import type { DealRoom } from "@/types/deal";
@@ -226,21 +226,7 @@ export class ManagerDeskServerService {
     const sourceRefType = "manager_desk_intervention";
     const sourceRefId = intervention.id;
 
-    const existing = await supabase
-      .from("work_items")
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("source_ref_type", sourceRefType)
-      .eq("source_ref_id", sourceRefId)
-      .in("status", ["todo", "in_progress", "snoozed"])
-      .limit(1)
-      .maybeSingle();
-
-    if (existing?.data) {
-      return { workItemId: existing.data.id as string, created: false };
-    }
-
-    const workItem = await createWorkItem({
+    const created = await createOrReuseWorkItemBySourceRef({
       supabase,
       orgId,
       ownerId: intervention.ownerId,
@@ -260,7 +246,10 @@ export class ManagerDeskServerService {
       createdBy: actorUserId
     });
 
-    return { workItemId: workItem.id, created: true };
+    return {
+      workItemId: created.workItem.id,
+      created: created.created
+    };
   }
 
   async resolveIntervention(params: {

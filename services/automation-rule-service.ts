@@ -6,7 +6,7 @@ import {
   resolveAutomationRuleSeedsWithRuntime
 } from "@/services/template-org-runtime-bridge-service";
 import { createInterventionRequest } from "@/services/intervention-request-service";
-import { createWorkItem } from "@/services/work-item-service";
+import { createOrReuseWorkItemBySourceRef } from "@/services/work-item-service";
 import type { AutomationRule, AutomationRuleRun } from "@/types/automation";
 
 type DbClient = ServerSupabaseClient;
@@ -294,37 +294,26 @@ async function maybeCreateActionByRuleMatch(params: {
   const ownerId = (params.target.ownerId ?? params.actorUserId) as string;
 
   if (actionJson.createWorkItem === true) {
-    const existing = await (params.supabase as any)
-      .from("work_items")
-      .select("id")
-      .eq("org_id", params.orgId)
-      .eq("source_ref_type", "business_event")
-      .eq("source_ref_id", params.eventId)
-      .in("status", ["todo", "in_progress", "snoozed"])
-      .limit(1)
-      .maybeSingle();
-    if (existing.error) throw new Error(existing.error.message);
-
-    if (!existing.data) {
-      await createWorkItem({
-        supabase: params.supabase,
-        orgId: params.orgId,
-        ownerId,
-        customerId: params.target.customerId ?? null,
-        opportunityId: params.target.entityType === "opportunity" ? params.target.entityId : null,
-        sourceType: actionJson.createManagerCheckin === true ? "manager_assigned" : "ai_suggested",
-        workType: (actionJson.workType as any) ?? "review_customer",
-        title: `[Ops] ${params.rule.ruleName}`,
-        description: params.target.summary,
-        rationale: params.target.recommendedAction,
-        priorityScore: params.rule.severity === "critical" ? 92 : params.rule.severity === "warning" ? 76 : 58,
-        priorityBand: params.rule.severity === "critical" ? "critical" : params.rule.severity === "warning" ? "high" : "medium",
-        dueAt: new Date(Date.now() + (params.rule.severity === "critical" ? 24 : 48) * 60 * 60 * 1000).toISOString(),
-        sourceRefType: "business_event",
-        sourceRefId: params.eventId,
-        aiGenerated: true,
-        createdBy: params.actorUserId
-      });
+    const created = await createOrReuseWorkItemBySourceRef({
+      supabase: params.supabase,
+      orgId: params.orgId,
+      ownerId,
+      customerId: params.target.customerId ?? null,
+      opportunityId: params.target.entityType === "opportunity" ? params.target.entityId : null,
+      sourceType: actionJson.createManagerCheckin === true ? "manager_assigned" : "ai_suggested",
+      workType: (actionJson.workType as any) ?? "review_customer",
+      title: `[Ops] ${params.rule.ruleName}`,
+      description: params.target.summary,
+      rationale: params.target.recommendedAction,
+      priorityScore: params.rule.severity === "critical" ? 92 : params.rule.severity === "warning" ? 76 : 58,
+      priorityBand: params.rule.severity === "critical" ? "critical" : params.rule.severity === "warning" ? "high" : "medium",
+      dueAt: new Date(Date.now() + (params.rule.severity === "critical" ? 24 : 48) * 60 * 60 * 1000).toISOString(),
+      sourceRefType: "business_event",
+      sourceRefId: params.eventId,
+      aiGenerated: false,
+      createdBy: params.actorUserId
+    });
+    if (created.created) {
       actionCount += 1;
     }
   }

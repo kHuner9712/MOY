@@ -1,6 +1,6 @@
 ﻿# MOY (墨言 / Mate Of You)
 
-MOY 是面向中小企业销售团队的 **Web AI 工作台 / 销售推进系统**，不是通用聊天工具。
+MOY 是面向中小企业销售团队的 **商业级销售执行系统（Sales Execution System）**，不是通用聊天工具。
 
 它的核心目标是把销售推进链路跑通并可治理：
 **沟通录入 -> 客户分析 -> 跟进建议 -> 漏单预警 -> 管理可见 -> 配置治理与恢复**。
@@ -9,7 +9,7 @@ MOY 是面向中小企业销售团队的 **Web AI 工作台 / 销售推进系统
 
 ## 1. 项目定位与当前阶段
 
-- **产品定位**：销售执行与管理协同工作台（B2B，组织级部署）
+- **产品定位**：销售执行与管理协同系统（B2B，组织级部署）
 - **技术栈**：Next.js 14 + TypeScript + Supabase + DeepSeek
 - **当前阶段**：从“可运行”进入“可治理、可恢复、可运营”的平台化阶段
 - **关键方向**：模板化、企业定制、权限治理、配置可解释、审计留痕、并发保护、回滚闭环
@@ -23,6 +23,7 @@ MOY 是面向中小企业销售团队的 **Web AI 工作台 / 销售推进系统
 - 销售执行链路：`/capture`、`/today`、`/deals`、`/touchpoints`、`/outcomes`、`/memory`
 - 管理可见性：`/manager/*`、`/reports`、`/executive`
 - 运营与预警：`/alerts`、`/growth`、`/briefings`
+- 商业化入口：`/request-demo`、`/start-trial`（来源追踪、资格评估、owner 分配、下游请求与执行动作）
 
 ### 2.2 模板与企业配置平台能力
 
@@ -60,11 +61,14 @@ MOY 是面向中小企业销售团队的 **Web AI 工作台 / 销售推进系统
 
 ### 3.2 核心 Active Docs（建议先读）
 
+- [docs/moy-commercial-system-blueprint-v1.md](docs/moy-commercial-system-blueprint-v1.md)
+- [docs/commercial-entry-system-v1.md](docs/commercial-entry-system-v1.md)
 - [docs/product-architecture-principles-v1.md](docs/product-architecture-principles-v1.md)
 - [docs/sales-primitives-model-v1.md](docs/sales-primitives-model-v1.md)
 - [docs/industry-template-framework-v1.md](docs/industry-template-framework-v1.md)
 - [docs/enterprise-customization-framework-v1.md](docs/enterprise-customization-framework-v1.md)
 - [docs/role-and-permission-model-v1.md](docs/role-and-permission-model-v1.md)
+- [docs/role-capability-control-plane-v1.md](docs/role-capability-control-plane-v1.md)
 - [docs/template-and-org-customization-runtime-bridge-v1.md](docs/template-and-org-customization-runtime-bridge-v1.md)
 - [docs/org-runtime-config-read-path-v1.md](docs/org-runtime-config-read-path-v1.md)
 - [docs/runtime-config-explain-and-override-hardening-v1.md](docs/runtime-config-explain-and-override-hardening-v1.md)

@@ -1,5 +1,6 @@
 ﻿import { getBusinessEventDedupeKey, isBusinessEventStatusTransitionAllowed, type RuleMatchTarget } from "@/lib/automation-ops";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
+import type { CommunicationExtractionResult } from "@/types/ai";
 import type {
   BusinessEvent,
   BusinessEventEntityType,
@@ -9,6 +10,20 @@ import type {
 } from "@/types/automation";
 
 type DbClient = ServerSupabaseClient;
+
+export type CaptureBusinessEventLifecycle = "capture_auto_confirmed" | "capture_manual_confirmed";
+
+export interface CaptureBusinessEventSignal {
+  customerId: string;
+  ownerId: string | null;
+  communicationInputId: string;
+  followupId: string;
+  extraction: Pick<
+    CommunicationExtractionResult,
+    "summary" | "buying_signals" | "key_objections" | "uncertainty_notes" | "should_trigger_alert_review"
+  >;
+  lifecycle: CaptureBusinessEventLifecycle;
+}
 
 interface BusinessEventRow {
   id: string;
@@ -49,6 +64,109 @@ function severityRank(level: BusinessEventSeverity): number {
   if (level === "critical") return 3;
   if (level === "warning") return 2;
   return 1;
+}
+
+function trimStringArray(values: string[] | null | undefined): string[] {
+  if (!Array.isArray(values)) return [];
+  const normalized = values.map((item) => item.trim()).filter((item) => item.length > 0);
+  return Array.from(new Set(normalized));
+}
+
+function shortenText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function buildCaptureBaseEvidence(params: {
+  communicationInputId: string;
+  followupId: string;
+  lifecycle: CaptureBusinessEventLifecycle;
+}): string[] {
+  return [
+    "source=communication_capture",
+    `communication_input_id=${params.communicationInputId}`,
+    `followup_id=${params.followupId}`,
+    `lifecycle=${params.lifecycle}`
+  ];
+}
+
+export function buildCaptureBusinessEventTargets(input: CaptureBusinessEventSignal): RuleMatchTarget[] {
+  const buyingSignals = trimStringArray(input.extraction.buying_signals);
+  const objections = trimStringArray(input.extraction.key_objections);
+  const uncertaintyNotes = trimStringArray(input.extraction.uncertainty_notes);
+  const baseEvidence = buildCaptureBaseEvidence({
+    communicationInputId: input.communicationInputId,
+    followupId: input.followupId,
+    lifecycle: input.lifecycle
+  });
+  const summarySnippet = shortenText(input.extraction.summary.trim(), 120);
+  const targets: RuleMatchTarget[] = [];
+
+  if (buyingSignals.length > 0) {
+    targets.push({
+      entityType: "customer",
+      entityId: input.customerId,
+      ownerId: input.ownerId,
+      customerId: input.customerId,
+      severity: "info",
+      eventType: "conversion_signal",
+      summary: `Communication capture suggests conversion momentum: ${summarySnippet}`,
+      evidence: [
+        ...baseEvidence,
+        ...buyingSignals.slice(0, 3).map((item) => `buying_signal=${item}`)
+      ],
+      recommendedAction: "Convert buying signal into an explicit owner next step and confirm timeline."
+    });
+  }
+
+  const requiresRiskAttention =
+    input.extraction.should_trigger_alert_review || objections.length > 0 || uncertaintyNotes.length > 0;
+  if (requiresRiskAttention) {
+    const severity: BusinessEventSeverity =
+      input.extraction.should_trigger_alert_review || objections.length >= 2 ? "critical" : "warning";
+    targets.push({
+      entityType: "customer",
+      entityId: input.customerId,
+      ownerId: input.ownerId,
+      customerId: input.customerId,
+      severity,
+      eventType: "manager_attention_escalated",
+      summary: `Communication capture indicates execution risk that needs manager attention: ${summarySnippet}`,
+      evidence: [
+        ...baseEvidence,
+        ...objections.slice(0, 3).map((item) => `objection=${item}`),
+        ...uncertaintyNotes.slice(0, 2).map((item) => `uncertainty=${item}`),
+        `should_trigger_alert_review=${input.extraction.should_trigger_alert_review}`
+      ],
+      recommendedAction: "Review objection risks, confirm owner recovery plan, and set next checkpoint."
+    });
+  }
+
+  return targets;
+}
+
+export function buildCaptureBusinessEventPayload(params: {
+  input: CaptureBusinessEventSignal;
+  target: RuleMatchTarget;
+}): Record<string, unknown> {
+  return {
+    source: "communication_capture",
+    source_lifecycle: params.input.lifecycle,
+    source_ref_type: "communication_input",
+    source_ref_id: params.input.communicationInputId,
+    communication_input_id: params.input.communicationInputId,
+    followup_id: params.input.followupId,
+    owner_id: params.input.ownerId,
+    customer_id: params.input.customerId,
+    evidence: params.target.evidence,
+    recommended_action: params.target.recommendedAction,
+    extraction_snapshot: {
+      buying_signal_count: trimStringArray(params.input.extraction.buying_signals).length,
+      objection_count: trimStringArray(params.input.extraction.key_objections).length,
+      uncertainty_note_count: trimStringArray(params.input.extraction.uncertainty_notes).length,
+      should_trigger_alert_review: params.input.extraction.should_trigger_alert_review
+    }
+  };
 }
 
 export async function listBusinessEvents(params: {
@@ -206,6 +324,48 @@ export async function updateBusinessEventStatus(params: {
     .single();
   if (res.error) throw new Error(res.error.message);
   return mapBusinessEventRow(res.data as BusinessEventRow);
+}
+
+export async function upsertCaptureBusinessEvents(params: {
+  supabase: DbClient;
+  orgId: string;
+  input: CaptureBusinessEventSignal;
+}): Promise<{
+  matchedCount: number;
+  createdCount: number;
+  updatedCount: number;
+  events: BusinessEvent[];
+}> {
+  const targets = buildCaptureBusinessEventTargets(params.input);
+  const events: BusinessEvent[] = [];
+  let createdCount = 0;
+  let updatedCount = 0;
+
+  for (const target of targets) {
+    const result = await upsertBusinessEvent({
+      supabase: params.supabase,
+      orgId: params.orgId,
+      entityType: target.entityType,
+      entityId: target.entityId,
+      eventType: target.eventType,
+      severity: target.severity,
+      eventSummary: target.summary,
+      eventPayload: buildCaptureBusinessEventPayload({
+        input: params.input,
+        target
+      })
+    });
+    if (result.created) createdCount += 1;
+    else updatedCount += 1;
+    events.push(result.event);
+  }
+
+  return {
+    matchedCount: targets.length,
+    createdCount,
+    updatedCount,
+    events
+  };
 }
 
 export async function generateBusinessEventsFromSignals(params: {

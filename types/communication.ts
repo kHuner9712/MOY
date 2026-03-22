@@ -50,6 +50,7 @@ export interface CaptureExtractResult {
   followupId: string | null;
   draftStatus: "draft" | "confirmed" | null;
   extracted: Record<string, unknown> | null;
+  trace?: CaptureDownstreamTrace;
 }
 
 export interface CaptureConfirmInput {
@@ -62,4 +63,16 @@ export interface CaptureConfirmResult {
   followupId: string | null;
   status: "confirmed" | "skipped";
   message: string;
+  trace?: CaptureDownstreamTrace;
+}
+
+export interface CaptureDownstreamTrace {
+  followupAnalysisRunId: string | null;
+  leakAlertAction: "created" | "updated" | "deduped" | null;
+  linkedWorkItemId: string | null;
+  linkedWorkItemCreated: boolean | null;
+  businessEventIds: string[];
+  businessEventCreatedCount: number;
+  businessEventUpdatedCount: number;
+  downstreamErrors: string[];
 }

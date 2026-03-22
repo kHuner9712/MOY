@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 
 import { useAuth } from "@/components/auth/auth-provider";
@@ -12,51 +12,46 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { useAutomationCenter } from "@/hooks/use-automation-center";
 import { formatDateTime } from "@/lib/format";
+import { canViewAutomationCenter, resolveEffectiveOrgRole } from "@/lib/role-capability";
 import { executiveClientService } from "@/services/executive-client-service";
-import { settingsClientService } from "@/services/settings-client-service";
 import { Activity, BellRing, PlayCircle, ShieldCheck } from "lucide-react";
+
+function mapAutomationPermissionMessage(message: string | null | undefined): string {
+  if (message === "org_admin_access_required") {
+    return "Only owner/admin can modify or run automation rules.";
+  }
+  if (message === "org_manager_access_required") {
+    return "Only owner/admin/manager can access the automation center.";
+  }
+  return message ?? "Request failed";
+}
 
 export default function AutomationSettingsPage(): JSX.Element {
   const { user } = useAuth();
-  const { data, loading, error, reload } = useAutomationCenter(user?.role === "manager");
-  const [canManageRules, setCanManageRules] = useState(false);
-  const [membershipRole, setMembershipRole] = useState<string>("manager");
+  const canAccess = canViewAutomationCenter(user);
+  const { data, loading, error, reload } = useAutomationCenter(canAccess);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [busyRuleId, setBusyRuleId] = useState<string | null>(null);
   const [runningRules, setRunningRules] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadRole = async () => {
-      if (user?.role !== "manager") return;
-      try {
-        const team = await settingsClientService.getTeamSettings();
-        if (cancelled) return;
-        setMembershipRole(team.role);
-        setCanManageRules(Boolean(team.canManageTeam));
-      } catch {
-        if (!cancelled) {
-          setMembershipRole("manager");
-          setCanManageRules(false);
-        }
-      }
-    };
-    void loadRole();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.role]);
-
   const enabledRuleCount = useMemo(() => (data?.rules ?? []).filter((item) => item.isEnabled).length, [data?.rules]);
+  const membershipRole = data?.access.role ?? resolveEffectiveOrgRole(user) ?? "unknown";
+  const canManageRules = data?.access.canManageRules ?? false;
+  const canRunRules = data?.access.canRunRules ?? false;
 
-  if (user?.role !== "manager") {
-    return <div className="text-sm text-muted-foreground">Only manager can access automation center.</div>;
+  if (!canAccess) {
+    return <div className="text-sm text-muted-foreground">Only owner/admin/manager can access the automation center.</div>;
   }
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading automation rule center...</div>;
-  if (error || !data) return <div className="text-sm text-rose-600">Failed to load automation center: {error}</div>;
+  if (error || !data) return <div className="text-sm text-rose-600">Failed to load automation center: {mapAutomationPermissionMessage(error)}</div>;
 
   const toggleRule = async (ruleId: string, isEnabled: boolean): Promise<void> => {
+    if (!canManageRules) {
+      setActionMessage("Only owner/admin can modify or run automation rules.");
+      return;
+    }
+
     setActionMessage(null);
     setBusyRuleId(ruleId);
     try {
@@ -64,13 +59,18 @@ export default function AutomationSettingsPage(): JSX.Element {
       setActionMessage(isEnabled ? "Rule enabled." : "Rule disabled.");
       await reload();
     } catch (cause) {
-      setActionMessage(cause instanceof Error ? cause.message : "Failed to update rule");
+      setActionMessage(mapAutomationPermissionMessage(cause instanceof Error ? cause.message : "Failed to update rule"));
     } finally {
       setBusyRuleId(null);
     }
   };
 
   const runAllRules = async (): Promise<void> => {
+    if (!canRunRules) {
+      setActionMessage("Only owner/admin can modify or run automation rules.");
+      return;
+    }
+
     setActionMessage(null);
     setRunningRules(true);
     try {
@@ -82,7 +82,7 @@ export default function AutomationSettingsPage(): JSX.Element {
       );
       await reload();
     } catch (cause) {
-      setActionMessage(cause instanceof Error ? cause.message : "Failed to run automation rules");
+      setActionMessage(mapAutomationPermissionMessage(cause instanceof Error ? cause.message : "Failed to run automation rules"));
     } finally {
       setRunningRules(false);
     }
@@ -98,7 +98,7 @@ export default function AutomationSettingsPage(): JSX.Element {
             <Button variant="outline" onClick={() => void reload()}>
               Refresh
             </Button>
-            <Button onClick={() => void runAllRules()} disabled={runningRules || !canManageRules}>
+            <Button onClick={() => void runAllRules()} disabled={runningRules || !canRunRules}>
               <PlayCircle className="mr-1 h-4 w-4" />
               {runningRules ? "Running..." : "Run Rules"}
             </Button>
@@ -127,7 +127,11 @@ export default function AutomationSettingsPage(): JSX.Element {
             <p>
               Membership role: <Badge variant="secondary">{membershipRole}</Badge>
             </p>
-            <p>{canManageRules ? "You can enable/disable rules and maintain automation strategy." : "Read-only mode: only owner/admin can modify rules."}</p>
+            <p>
+              {canManageRules
+                ? "Owner/admin access confirmed: you can enable, disable, and run automation rules."
+                : "Read-only mode: owner/admin can enable, disable, and run automation rules."}
+            </p>
           </CardContent>
         </Card>
       </section>
@@ -198,5 +202,3 @@ export default function AutomationSettingsPage(): JSX.Element {
     </div>
   );
 }
-
-

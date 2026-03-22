@@ -10,9 +10,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { buildClientPublicCommercialEntryInput, generateCommercialTraceId } from "@/lib/commercial-entry";
 
 export default function StartTrialPage(): JSX.Element {
   const router = useRouter();
+  const [entryTraceId] = useState(() => generateCommercialTraceId("trial"));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -32,12 +34,19 @@ export default function StartTrialPage(): JSX.Element {
     setSubmitting(true);
     setError(null);
     try {
+      const entryContext = buildClientPublicCommercialEntryInput({
+        fallbackLandingPage: "/start-trial",
+        entryTraceId
+      });
       const response = await fetch("/api/public/start-trial", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(form)
+        body: JSON.stringify({
+          ...form,
+          ...entryContext
+        })
       });
       const payload = (await response.json()) as {
         success: boolean;

@@ -8,6 +8,7 @@ import type {
   ExecutiveCockpitSummary,
   RenewalWatchItem
 } from "@/types/automation";
+import type { OrgMemberRole } from "@/types/productization";
 
 interface ApiPayload<T> {
   success: boolean;
@@ -27,6 +28,11 @@ export interface AutomationCenterPayload {
   rules: AutomationRule[];
   recentRuns: AutomationRuleRun[];
   openEvents: number;
+  access: {
+    role: OrgMemberRole;
+    canManageRules: boolean;
+    canRunRules: boolean;
+  };
 }
 
 export interface AutomationRunPayload {
@@ -163,4 +169,3 @@ export const executiveClientService = {
     return readPayload<DealOpsEventsPayload>(response);
   }
 };
-

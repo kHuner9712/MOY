@@ -61,7 +61,8 @@ export async function POST(request: Request) {
         orgId: auth.profile.org_id,
         customerId,
         triggeredByUserId: auth.profile.id,
-        triggerSource: "manual"
+        triggerSource: "manual",
+        createWorkItemForAlert: true
       });
     } catch (leakError) {
       console.error("[api.ai.customer-analysis] leak_inference_failed", {
@@ -76,6 +77,7 @@ export async function POST(request: Request) {
       customerHealth: health.result,
       leakInference: leak?.result ?? null,
       leakAlertAction: leak?.alertAction ?? null,
+      alertWorkItem: leak?.alertWorkItem ?? null,
       usedFallback: health.usedFallback || leak?.usedFallback === true
     });
   } catch (error) {

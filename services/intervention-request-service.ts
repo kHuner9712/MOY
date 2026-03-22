@@ -2,7 +2,7 @@ import { isInterventionStatusTransitionAllowed } from "@/lib/intervention-reques
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { addSystemEventMessage, createCollaborationThread } from "@/services/collaboration-thread-service";
 import { mapInterventionRequestRow } from "@/services/mappers";
-import { createWorkItem } from "@/services/work-item-service";
+import { createOrReuseWorkItemBySourceRef } from "@/services/work-item-service";
 import type { Database } from "@/types/database";
 import type { InterventionRequest } from "@/types/deal";
 
@@ -168,7 +168,7 @@ export async function updateInterventionRequestStatus(params: {
   const request = mapInterventionRequestRow(data as InterventionRow & { requester?: ProfileLite | null; target?: ProfileLite | null });
 
   if (request.status === "accepted") {
-    await createWorkItem({
+    await createOrReuseWorkItemBySourceRef({
       supabase: params.supabase,
       orgId: params.orgId,
       ownerId: request.targetUserId ?? request.requestedBy,

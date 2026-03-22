@@ -1,4 +1,5 @@
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
+import { readPublicCommercialEntryTrace } from "@/lib/commercial-entry";
 import { getInboundLeadById, appendConversionEvent } from "@/services/inbound-lead-service";
 import { createWorkItem } from "@/services/work-item-service";
 import type { DemoOutcomeStatus, DemoRequest, DemoRequestStatus, InboundLeadStatus } from "@/types/commercialization";
@@ -37,6 +38,18 @@ function mapDemoRequestRow(row: DemoRequestRow): DemoRequest {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function readString(payload: Record<string, unknown>, key: string): string | null {
+  const value = payload[key];
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 export async function listDemoRequests(params: {
@@ -88,6 +101,10 @@ export async function createDemoRequest(params: {
     leadId: params.leadId
   });
   if (!lead) throw new Error("inbound_lead_not_found");
+  const leadSnapshot = asRecord(lead.payloadSnapshot);
+  const entryTrace = readPublicCommercialEntryTrace(leadSnapshot);
+  const scenarioFocus = readString(leadSnapshot, "scenario_focus");
+  const preferredTime = params.preferredTimeText ?? readString(leadSnapshot, "preferred_time_text");
 
   const insertRes = await (params.supabase as any)
     .from("demo_requests")
@@ -120,12 +137,21 @@ export async function createDemoRequest(params: {
     eventType: "demo_requested",
     eventSummary: "A demo request was created from inbound lead.",
     eventPayload: {
-      preferred_time_text: params.preferredTimeText ?? null
+      preferred_time_text: preferredTime ?? null,
+      scenario_focus: scenarioFocus,
+      entry_trace_id: entryTrace?.traceId ?? null,
+      entry_landing_page: entryTrace?.landingPage ?? null,
+      source_campaign: entryTrace?.sourceCampaign ?? null,
+      lead_source: lead.leadSource,
+      assigned_owner_id: lead.assignedOwnerId
     }
   });
 
   let workItemCreated = false;
   if (params.createWorkItem !== false && lead.assignedOwnerId) {
+    const scenarioNote = scenarioFocus ? `Scenario focus: ${scenarioFocus}.` : null;
+    const preferredTimeNote = preferredTime ? `Preferred time: ${preferredTime}.` : null;
+    const detailNotes = [scenarioNote, preferredTimeNote].filter((item): item is string => Boolean(item));
     await createWorkItem({
       supabase: params.supabase,
       orgId: params.orgId,
@@ -133,8 +159,8 @@ export async function createDemoRequest(params: {
       sourceType: "manual",
       workType: "schedule_demo",
       title: `Schedule demo for ${lead.companyName}`,
-      description: "Confirm agenda and schedule a product demo call with this inbound lead.",
-      rationale: "Public demo request submitted.",
+      description: ["Confirm agenda and schedule a product demo call with this inbound lead.", ...detailNotes].join(" "),
+      rationale: `Public demo request submitted${entryTrace?.traceId ? ` (trace: ${entryTrace.traceId})` : ""}.`,
       priorityScore: 82,
       priorityBand: "high",
       dueAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),

@@ -46,6 +46,18 @@ export function canAccessExecutive(input: RoleCapabilityInput | Pick<User, "role
   return canAccessExecutiveByOrgRole(resolveEffectiveOrgRole(input));
 }
 
+export function canViewAutomationCenter(input: RoleCapabilityInput | Pick<User, "role" | "orgRole"> | null | undefined): boolean {
+  return canViewManagerWorkspace(input);
+}
+
+export function canManageAutomationRules(input: RoleCapabilityInput | Pick<User, "role" | "orgRole"> | null | undefined): boolean {
+  return isOrgAdminLike(input);
+}
+
+export function canTriggerAutomationRules(input: RoleCapabilityInput | Pick<User, "role" | "orgRole"> | null | undefined): boolean {
+  return isOrgAdminLike(input);
+}
+
 export function canManageTemplates(input: RoleCapabilityInput | Pick<User, "role" | "orgRole"> | null | undefined): boolean {
   return canManageTemplatesByOrgRole(resolveEffectiveOrgRole(input));
 }

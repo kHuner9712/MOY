@@ -63,7 +63,8 @@ export async function POST(request: Request) {
       fallbackReason: result.run.fallback_reason,
       result: result.result,
       leakInference: result.leakInference,
-      leakAlertAction: result.leakAlertAction
+      leakAlertAction: result.leakAlertAction,
+      alertWorkItem: result.alertWorkItem
     });
   } catch (error) {
     return fail(error instanceof Error ? error.message : "followup_analysis_failed", 500);

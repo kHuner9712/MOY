@@ -21,6 +21,7 @@ export type WorkType =
 
 export type WorkPriorityBand = "low" | "medium" | "high" | "critical";
 export type WorkItemStatus = "todo" | "in_progress" | "done" | "snoozed" | "cancelled";
+export type WorkItemTriggerOrigin = "ai" | "rule" | "manager" | "manual" | "system";
 export type DailyPlanStatus = "draft" | "active" | "completed" | "archived";
 export type PlanTimeBlock = "early_morning" | "morning" | "noon" | "afternoon" | "evening";
 export type TaskActionType =
@@ -36,6 +37,21 @@ export type TaskActionType =
 
 export type WorkAgentRunScope = "user_daily_plan" | "manager_team_plan" | "alert_reprioritization" | "weekly_task_review";
 export type WorkAgentRunStatus = "queued" | "running" | "completed" | "failed";
+
+export interface WorkItemTraceContext {
+  sourceType: WorkItemSourceType;
+  sourceRefType: string | null;
+  sourceRefId: string | null;
+  triggerOrigin: WorkItemTriggerOrigin;
+  triggerEntityType: string | null;
+  triggerEntityId: string | null;
+  linkedCustomerId: string | null;
+  linkedOpportunityId: string | null;
+  linkedDealRoomId: string | null;
+  linkedBusinessEventId: string | null;
+  linkedAlertId: string | null;
+  linkedInterventionRequestId: string | null;
+}
 
 export interface WorkItem {
   id: string;
@@ -64,6 +80,7 @@ export interface WorkItem {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  traceContext?: WorkItemTraceContext;
 }
 
 export interface DailyWorkPlan {

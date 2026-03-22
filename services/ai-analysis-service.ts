@@ -8,6 +8,7 @@ import { upsertLeakAlert } from "@/services/alert-workflow-service";
 import { getActivePromptVersion } from "@/services/ai-prompt-service";
 import { createAiRun, listCustomerAiRuns as listRuns, updateAiRunStatus } from "@/services/ai-run-service";
 import { mapAlertRow, mapCustomerRow, mapFollowupRow, mapOpportunityRow } from "@/services/mappers";
+import { createWorkItemFromAlert } from "@/services/work-item-service";
 import {
   customerHealthResultSchema,
   followupAnalysisResultSchema,
@@ -42,6 +43,12 @@ interface ScenarioExecution<T> {
   latencyMs: number | null;
   usedFallback: boolean;
   fallbackReason: string | null;
+}
+
+interface LeakAlertWorkItemLink {
+  alertId: string;
+  workItemId: string;
+  created: boolean;
 }
 
 function nowIso(): string {
@@ -446,6 +453,7 @@ export async function runFollowupAnalysis(params: {
   result: FollowupAnalysisResult;
   leakInference: LeakAlertInferenceResult | null;
   leakAlertAction: "created" | "updated" | "deduped" | null;
+  alertWorkItem: LeakAlertWorkItemLink | null;
   usedFallback: boolean;
 }> {
   const start = Date.now();
@@ -533,16 +541,19 @@ export async function runFollowupAnalysis(params: {
 
     let leakInference: LeakAlertInferenceResult | null = null;
     let leakAlertAction: "created" | "updated" | "deduped" | null = null;
+    let alertWorkItem: LeakAlertWorkItemLink | null = null;
     try {
       const leak = await runLeakRiskInference({
         supabase: params.supabase,
         orgId: params.orgId,
         customerId: params.customerId,
         triggeredByUserId: params.triggeredByUserId,
-        triggerSource: "alert_regen"
+        triggerSource: "alert_regen",
+        createWorkItemForAlert: true
       });
       leakInference = leak.result;
       leakAlertAction = leak.alertAction;
+      alertWorkItem = leak.alertWorkItem;
     } catch (leakError) {
       console.error("[ai.followup] leak_inference_failed", {
         customer_id: params.customerId,
@@ -560,7 +571,8 @@ export async function runFollowupAnalysis(params: {
       parsedResult: {
         followup_analysis: result,
         leak_inference: leakInference,
-        leak_alert_action: leakAlertAction
+        leak_alert_action: leakAlertAction,
+        alert_work_item: alertWorkItem
       },
       latencyMs: execution.latencyMs,
       resultSource: execution.usedFallback ? "fallback" : "provider",
@@ -596,6 +608,7 @@ export async function runFollowupAnalysis(params: {
       result,
       leakInference,
       leakAlertAction,
+      alertWorkItem,
       usedFallback: execution.usedFallback
     };
   } catch (error) {
@@ -778,10 +791,12 @@ export async function runLeakRiskInference(params: {
   triggerSource: AiTriggerSource;
   contextOverride?: CustomerContext;
   ruleHitsOverride?: AlertRuleHit[];
+  createWorkItemForAlert?: boolean;
 }): Promise<{
   run: AiRun;
   result: LeakAlertInferenceResult;
   alertAction: "created" | "updated" | "deduped" | null;
+  alertWorkItem: LeakAlertWorkItemLink | null;
   usedFallback: boolean;
 }> {
   const start = Date.now();
@@ -847,6 +862,7 @@ export async function runLeakRiskInference(params: {
 
     const result = normalizeLeakInferenceResult(execution.result as Partial<LeakAlertInferenceResult>);
     let alertAction: "created" | "updated" | "deduped" | null = null;
+    let alertWorkItem: LeakAlertWorkItemLink | null = null;
 
     if (result.should_create_alert) {
       const upserted = await upsertLeakAlert({
@@ -867,6 +883,20 @@ export async function runLeakRiskInference(params: {
         }
       });
       alertAction = upserted.action;
+
+      if (params.createWorkItemForAlert === true) {
+        const linkedWorkItem = await createWorkItemFromAlert({
+          supabase: params.supabase,
+          orgId: params.orgId,
+          alertId: upserted.alertId,
+          actorUserId: params.triggeredByUserId
+        });
+        alertWorkItem = {
+          alertId: upserted.alertId,
+          workItemId: linkedWorkItem.workItem.id,
+          created: linkedWorkItem.created
+        };
+      }
     }
 
     await updateAiRunStatus({
@@ -879,7 +909,8 @@ export async function runLeakRiskInference(params: {
       parsedResult: {
         leak_inference: result,
         rule_hits: ruleHits,
-        alert_action: alertAction
+        alert_action: alertAction,
+        alert_work_item: alertWorkItem
       },
       latencyMs: execution.latencyMs,
       resultSource: execution.usedFallback ? "fallback" : "provider",
@@ -913,6 +944,7 @@ export async function runLeakRiskInference(params: {
       },
       result,
       alertAction,
+      alertWorkItem,
       usedFallback: execution.usedFallback
     };
   } catch (error) {

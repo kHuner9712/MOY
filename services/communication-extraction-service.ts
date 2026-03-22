@@ -1,9 +1,10 @@
 ﻿import { getAiProvider } from "@/lib/ai/provider";
 import { decideCaptureApplyMode } from "@/lib/capture-flow";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
-import { runFollowupAnalysis, runLeakRiskInference } from "@/services/ai-analysis-service";
+import { runFollowupAnalysis } from "@/services/ai-analysis-service";
 import { getActivePromptVersion } from "@/services/ai-prompt-service";
 import { createAiRun, updateAiRunStatus } from "@/services/ai-run-service";
+import { upsertCaptureBusinessEvents } from "@/services/business-event-service";
 import { matchCustomer } from "@/services/customer-match-service";
 import {
   communicationExtractionResultSchema,
@@ -12,7 +13,12 @@ import {
   type CommunicationExtractionResult,
   type CommunicationType
 } from "@/types/ai";
-import type { CaptureConfirmResult, CaptureExtractResult, CommunicationSourceType } from "@/types/communication";
+import type {
+  CaptureConfirmResult,
+  CaptureDownstreamTrace,
+  CaptureExtractResult,
+  CommunicationSourceType
+} from "@/types/communication";
 import type { Database } from "@/types/database";
 
 type DbClient = ServerSupabaseClient;
@@ -174,6 +180,33 @@ function readExtractionFromStoredData(stored: Record<string, unknown>): Communic
   return parsed.data;
 }
 
+function createEmptyCaptureTrace(): CaptureDownstreamTrace {
+  return {
+    followupAnalysisRunId: null,
+    leakAlertAction: null,
+    linkedWorkItemId: null,
+    linkedWorkItemCreated: null,
+    businessEventIds: [],
+    businessEventCreatedCount: 0,
+    businessEventUpdatedCount: 0,
+    downstreamErrors: []
+  };
+}
+
+function toCaptureTracePayload(trace: CaptureDownstreamTrace): Record<string, unknown> {
+  return {
+    followup_analysis_run_id: trace.followupAnalysisRunId,
+    leak_alert_action: trace.leakAlertAction,
+    linked_work_item_id: trace.linkedWorkItemId,
+    linked_work_item_created: trace.linkedWorkItemCreated,
+    business_event_ids: trace.businessEventIds,
+    business_event_created_count: trace.businessEventCreatedCount,
+    business_event_updated_count: trace.businessEventUpdatedCount,
+    downstream_errors: trace.downstreamErrors,
+    updated_at: nowIso()
+  };
+}
+
 export async function extractCommunicationInput(params: {
   supabase: DbClient;
   profile: AuthLikeProfile;
@@ -310,6 +343,7 @@ export async function extractCommunicationInput(params: {
 
     let followupId: string | null = null;
     let draftStatus: FollowupDraftStatus | null = null;
+    const downstreamTrace = createEmptyCaptureTrace();
 
     if (match.matchedCustomer && (mode === "auto" || mode === "manual")) {
       draftStatus = mode === "auto" ? "confirmed" : "draft";
@@ -331,6 +365,45 @@ export async function extractCommunicationInput(params: {
       });
     }
 
+    if (mode === "auto" && followupId && match.matchedCustomer) {
+      try {
+        const analysis = await runFollowupAnalysis({
+          supabase: params.supabase,
+          orgId: params.profile.org_id,
+          customerId: match.matchedCustomer.id,
+          followupId,
+          triggeredByUserId: params.profile.id,
+          triggerSource: "followup_submit"
+        });
+        downstreamTrace.followupAnalysisRunId = analysis.run.id;
+        downstreamTrace.leakAlertAction = analysis.leakAlertAction;
+        downstreamTrace.linkedWorkItemId = analysis.alertWorkItem?.workItemId ?? null;
+        downstreamTrace.linkedWorkItemCreated = analysis.alertWorkItem?.created ?? null;
+      } catch (cause) {
+        downstreamTrace.downstreamErrors.push(cause instanceof Error ? cause.message : "followup_analysis_failed");
+      }
+
+      try {
+        const eventResult = await upsertCaptureBusinessEvents({
+          supabase: params.supabase,
+          orgId: params.profile.org_id,
+          input: {
+            customerId: match.matchedCustomer.id,
+            ownerId: match.matchedCustomer.owner_id,
+            communicationInputId: inputRow.id,
+            followupId,
+            extraction,
+            lifecycle: "capture_auto_confirmed"
+          }
+        });
+        downstreamTrace.businessEventIds = eventResult.events.map((item) => item.id);
+        downstreamTrace.businessEventCreatedCount = eventResult.createdCount;
+        downstreamTrace.businessEventUpdatedCount = eventResult.updatedCount;
+      } catch (cause) {
+        downstreamTrace.downstreamErrors.push(cause instanceof Error ? cause.message : "capture_event_upsert_failed");
+      }
+    }
+
     const extractedData = {
       extraction,
       match: {
@@ -340,7 +413,14 @@ export async function extractCommunicationInput(params: {
         candidates: match.candidates
       },
       apply_mode: mode,
-      ai_run_id: aiRun.id
+      ai_run_id: aiRun.id,
+      trace: {
+        source_input_id: inputRow.id,
+        followup_id: followupId,
+        customer_id: match.matchedCustomer?.id ?? params.customerId ?? null,
+        lifecycle: mode === "auto" ? "capture_auto_confirmed" : "capture_extract_only",
+        ...toCaptureTracePayload(downstreamTrace)
+      }
     };
 
     await params.supabase
@@ -367,27 +447,6 @@ export async function extractCommunicationInput(params: {
       completedAt: nowIso()
     });
 
-    if (mode === "auto" && followupId && match.matchedCustomer) {
-      await runFollowupAnalysis({
-        supabase: params.supabase,
-        orgId: params.profile.org_id,
-        customerId: match.matchedCustomer.id,
-        followupId,
-        triggeredByUserId: params.profile.id,
-        triggerSource: "followup_submit"
-      });
-
-      if (extraction.should_trigger_alert_review) {
-        await runLeakRiskInference({
-          supabase: params.supabase,
-          orgId: params.profile.org_id,
-          customerId: match.matchedCustomer.id,
-          triggeredByUserId: params.profile.id,
-          triggerSource: "manual"
-        });
-      }
-    }
-
     console.info("[capture.extract]", {
       org_id: params.profile.org_id,
       user_id: params.profile.id,
@@ -410,7 +469,8 @@ export async function extractCommunicationInput(params: {
       requiresConfirmation: mode === "manual" || (extraction.should_create_followup && !match.matchedCustomer),
       followupId,
       draftStatus,
-      extracted: extraction
+      extracted: extraction,
+      trace: downstreamTrace
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "communication_extraction_failed";
@@ -562,47 +622,79 @@ export async function confirmCommunicationInput(params: {
     });
   }
 
-  await params.supabase
-    .from("communication_inputs")
-    .update({
-      customer_id: customer.id,
-      extracted_followup_id: followupId,
-      extraction_status: "completed",
-      extraction_error: null
-    })
-    .eq("id", inputRow.id);
-
   await patchOpportunityFromExtraction({
     supabase: params.supabase,
     customerId: customer.id,
     extraction
   });
 
-  await runFollowupAnalysis({
-    supabase: params.supabase,
-    orgId: params.profile.org_id,
-    customerId: customer.id,
-    followupId,
-    triggeredByUserId: params.profile.id,
-    triggerSource: "manual"
-  });
+  const downstreamTrace = createEmptyCaptureTrace();
 
-  if (extraction.should_trigger_alert_review) {
-    await runLeakRiskInference({
+  try {
+    const analysis = await runFollowupAnalysis({
       supabase: params.supabase,
       orgId: params.profile.org_id,
       customerId: customer.id,
+      followupId,
       triggeredByUserId: params.profile.id,
       triggerSource: "manual"
     });
+    downstreamTrace.followupAnalysisRunId = analysis.run.id;
+    downstreamTrace.leakAlertAction = analysis.leakAlertAction;
+    downstreamTrace.linkedWorkItemId = analysis.alertWorkItem?.workItemId ?? null;
+    downstreamTrace.linkedWorkItemCreated = analysis.alertWorkItem?.created ?? null;
+  } catch (cause) {
+    downstreamTrace.downstreamErrors.push(cause instanceof Error ? cause.message : "followup_analysis_failed");
   }
+
+  try {
+    const eventResult = await upsertCaptureBusinessEvents({
+      supabase: params.supabase,
+      orgId: params.profile.org_id,
+      input: {
+        customerId: customer.id,
+        ownerId: customer.owner_id,
+        communicationInputId: inputRow.id,
+        followupId,
+        extraction,
+        lifecycle: "capture_manual_confirmed"
+      }
+    });
+    downstreamTrace.businessEventIds = eventResult.events.map((item) => item.id);
+    downstreamTrace.businessEventCreatedCount = eventResult.createdCount;
+    downstreamTrace.businessEventUpdatedCount = eventResult.updatedCount;
+  } catch (cause) {
+    downstreamTrace.downstreamErrors.push(cause instanceof Error ? cause.message : "capture_event_upsert_failed");
+  }
+
+  await params.supabase
+    .from("communication_inputs")
+    .update({
+      customer_id: customer.id,
+      extracted_followup_id: followupId,
+      extraction_status: "completed",
+      extraction_error: null,
+      extracted_data: {
+        ...extractedData,
+        trace: {
+          source_input_id: inputRow.id,
+          followup_id: followupId,
+          customer_id: customer.id,
+          lifecycle: "capture_manual_confirmed",
+          ...toCaptureTracePayload(downstreamTrace)
+        }
+      }
+    })
+    .eq("id", inputRow.id);
 
   return {
     inputId: inputRow.id,
     followupId,
     status: "confirmed",
-    message: "Followup confirmed and linked to customer."
+    message:
+      downstreamTrace.downstreamErrors.length > 0
+        ? "Followup confirmed and linked to customer. Downstream analysis/events partially failed."
+        : "Followup confirmed and linked to customer.",
+    trace: downstreamTrace
   };
 }
-
-

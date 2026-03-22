@@ -1,6 +1,12 @@
 import { z } from "zod";
 
 import { fail, ok } from "@/lib/api-response";
+import {
+  buildPublicCommercialEntryContext,
+  buildTrialOnboardingIntent,
+  toPublicCommercialEntryTracePayload,
+  toTrialOnboardingIntentPayload
+} from "@/lib/commercial-entry";
 import { createSupabaseAdminClient, hasSupabaseAdminEnv } from "@/lib/supabase/admin";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
 import { buildPublicSubmissionFingerprint, createInboundLead, ensurePublicFormAllowed, getSelfSalesOrgId } from "@/services/inbound-lead-service";
@@ -18,6 +24,16 @@ const requestSchema = z.object({
   useCaseHint: z.string().max(1000).optional().nullable(),
   sourceCampaign: z.string().max(120).optional().nullable(),
   landingPage: z.string().max(220).optional().nullable(),
+  referrer: z.string().max(400).optional().nullable(),
+  utmSource: z.string().max(120).optional().nullable(),
+  utmMedium: z.string().max(120).optional().nullable(),
+  utmCampaign: z.string().max(120).optional().nullable(),
+  utmTerm: z.string().max(120).optional().nullable(),
+  utmContent: z.string().max(120).optional().nullable(),
+  locale: z.string().max(32).optional().nullable(),
+  timezone: z.string().max(80).optional().nullable(),
+  submittedAt: z.string().max(64).optional().nullable(),
+  entryTraceId: z.string().max(120).optional().nullable(),
   website: z.string().optional()
 });
 
@@ -41,6 +57,32 @@ export async function POST(request: Request) {
       source: "website_trial",
       ip,
       userAgent
+    });
+    const entryContext = buildPublicCommercialEntryContext({
+      source: "website_trial",
+      fallbackLandingPage: "/start-trial",
+      input: {
+        sourceCampaign: parsed.data.sourceCampaign ?? null,
+        landingPage: parsed.data.landingPage ?? null,
+        referrer: parsed.data.referrer ?? null,
+        utmSource: parsed.data.utmSource ?? null,
+        utmMedium: parsed.data.utmMedium ?? null,
+        utmCampaign: parsed.data.utmCampaign ?? null,
+        utmTerm: parsed.data.utmTerm ?? null,
+        utmContent: parsed.data.utmContent ?? null,
+        locale: parsed.data.locale ?? null,
+        timezone: parsed.data.timezone ?? null,
+        submittedAt: parsed.data.submittedAt ?? null,
+        entryTraceId: parsed.data.entryTraceId ?? null
+      }
+    });
+    const entryTracePayload = toPublicCommercialEntryTracePayload(entryContext);
+    const onboardingIntent = buildTrialOnboardingIntent({
+      needImportData: parsed.data.needImportData,
+      preferredTemplateKey: parsed.data.preferredTemplateKey ?? null,
+      useCaseHint: parsed.data.useCaseHint ?? null,
+      industryHint: parsed.data.industryHint ?? null,
+      teamSizeHint: parsed.data.teamSizeHint ?? null
     });
 
     await ensurePublicFormAllowed({
@@ -77,11 +119,18 @@ export async function POST(request: Request) {
       industryHint: parsed.data.industryHint ?? null,
       teamSizeHint: parsed.data.teamSizeHint ?? null,
       useCaseHint: parsed.data.useCaseHint ?? null,
-      sourceCampaign: parsed.data.sourceCampaign ?? null,
-      landingPage: parsed.data.landingPage ?? "/start-trial",
+      sourceCampaign: entryContext.sourceCampaign,
+      landingPage: entryContext.landingPage,
       payloadSnapshot: {
         preferred_template_key: parsed.data.preferredTemplateKey ?? null,
         need_import_data: parsed.data.needImportData,
+        commercialization_intent: {
+          intent_type: "start_trial",
+          preferred_template_key: parsed.data.preferredTemplateKey ?? null,
+          need_import_data: parsed.data.needImportData
+        },
+        entry_trace: entryTracePayload,
+        trial_onboarding_intent: toTrialOnboardingIntentPayload(onboardingIntent),
         request_fingerprint: requestFingerprint
       },
       createPipelineDraft: true
@@ -111,6 +160,13 @@ export async function POST(request: Request) {
       assignedOwnerId: leadCreated.assignment.ownerId,
       qualificationFitScore: leadCreated.qualification.result.fitScore,
       pipelineCreated: leadCreated.pipelineCreated,
+      entryTraceId: entryContext.entryTraceId,
+      onboardingIntent,
+      handoff: {
+        leadStatus: leadCreated.lead.status,
+        pipelineStatus: leadCreated.pipelineCreated ? "pipeline_ready" : "pipeline_not_created",
+        downstreamStatus: trialRequestId ? "trial_request_created" : "trial_request_pending_manual_retry"
+      },
       warning
     });
   } catch (error) {

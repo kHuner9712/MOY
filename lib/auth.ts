@@ -1,4 +1,10 @@
-import { canAccessExecutive, canManageOrgCustomization, canViewManagerWorkspace, canViewOrgUsage } from "@/lib/role-capability";
+import {
+  canAccessExecutive,
+  canManageOrgCustomization,
+  canViewAutomationCenter,
+  canViewManagerWorkspace,
+  canViewOrgUsage
+} from "@/lib/role-capability";
 import type { User, UserRole } from "@/types/auth";
 
 export interface NavItem {
@@ -77,7 +83,7 @@ const userPathAccessRules: UserPathAccessRule[] = [
   { pathPrefix: "/settings/org-config", check: canViewManagerWorkspace },
   { pathPrefix: "/settings/runtime-debug", check: canViewManagerWorkspace },
   { pathPrefix: "/settings/onboarding", check: canViewManagerWorkspace },
-  { pathPrefix: "/settings/automation", check: canViewManagerWorkspace },
+  { pathPrefix: "/settings/automation", check: canViewAutomationCenter },
   { pathPrefix: "/settings/usage", check: canViewOrgUsage },
   { pathPrefix: "/settings/team", check: canViewManagerWorkspace },
   { pathPrefix: "/settings/org", check: canViewManagerWorkspace },

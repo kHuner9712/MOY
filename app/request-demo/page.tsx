@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { buildClientPublicCommercialEntryInput, generateCommercialTraceId } from "@/lib/commercial-entry";
 
 interface SubmitState {
   submitting: boolean;
@@ -17,6 +18,7 @@ interface SubmitState {
 
 export default function RequestDemoPage(): JSX.Element {
   const router = useRouter();
+  const [entryTraceId] = useState(() => generateCommercialTraceId("demo"));
   const [state, setState] = useState<SubmitState>({
     submitting: false,
     error: null
@@ -40,12 +42,19 @@ export default function RequestDemoPage(): JSX.Element {
       error: null
     });
     try {
+      const entryContext = buildClientPublicCommercialEntryInput({
+        fallbackLandingPage: "/request-demo",
+        entryTraceId
+      });
       const res = await fetch("/api/public/request-demo", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(form)
+        body: JSON.stringify({
+          ...form,
+          ...entryContext
+        })
       });
       const payload = (await res.json()) as {
         success: boolean;

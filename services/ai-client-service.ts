@@ -13,6 +13,7 @@ export const aiClientService = {
     customerHealth: CustomerHealthResult;
     leakInference: LeakAlertInferenceResult | null;
     leakAlertAction: "created" | "updated" | "deduped" | null;
+    alertWorkItem: { alertId: string; workItemId: string; created: boolean } | null;
     usedFallback: boolean;
   }> {
     const response = await fetch("/api/ai/customer-analysis", {
@@ -27,6 +28,7 @@ export const aiClientService = {
       customerHealth: CustomerHealthResult;
       leakInference: LeakAlertInferenceResult | null;
       leakAlertAction: "created" | "updated" | "deduped" | null;
+      alertWorkItem: { alertId: string; workItemId: string; created: boolean } | null;
       usedFallback: boolean;
     }>;
 
@@ -79,6 +81,7 @@ export const aiClientService = {
     result: FollowupAnalysisResult;
     leakInference: LeakAlertInferenceResult | null;
     leakAlertAction: "created" | "updated" | "deduped" | null;
+    alertWorkItem: { alertId: string; workItemId: string; created: boolean } | null;
   }> {
     const response = await fetch("/api/ai/followup-analysis", {
       method: "POST",
@@ -95,6 +98,7 @@ export const aiClientService = {
       result: FollowupAnalysisResult;
       leakInference: LeakAlertInferenceResult | null;
       leakAlertAction: "created" | "updated" | "deduped" | null;
+      alertWorkItem: { alertId: string; workItemId: string; created: boolean } | null;
     }>;
 
     if (!response.ok || !payload.success || !payload.data) {
@@ -103,4 +107,3 @@ export const aiClientService = {
     return payload.data;
   }
 };
-

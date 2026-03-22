@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import { canAccessPath, canAccessPathForUser } from "../lib/auth";
 import {
   canAccessExecutive,
+  canManageAutomationRules,
   canManageOrgCustomization,
   canManageTemplates,
+  canTriggerAutomationRules,
+  canViewAutomationCenter,
   canViewManagerWorkspace,
   canViewOrgUsage,
   isOrgAdminLike,
@@ -35,6 +38,9 @@ export function runRolePermissionModelTests(logPass: (name: string) => void): vo
       managerWorkspace: boolean;
       orgUsage: boolean;
       executive: boolean;
+      automationView: boolean;
+      automationManage: boolean;
+      automationRun: boolean;
       templateManage: boolean;
       customizationManage: boolean;
     };
@@ -47,6 +53,9 @@ export function runRolePermissionModelTests(logPass: (name: string) => void): vo
         managerWorkspace: true,
         orgUsage: true,
         executive: true,
+        automationView: true,
+        automationManage: true,
+        automationRun: true,
         templateManage: true,
         customizationManage: true
       }
@@ -59,6 +68,9 @@ export function runRolePermissionModelTests(logPass: (name: string) => void): vo
         managerWorkspace: true,
         orgUsage: true,
         executive: true,
+        automationView: true,
+        automationManage: true,
+        automationRun: true,
         templateManage: true,
         customizationManage: true
       }
@@ -71,6 +83,9 @@ export function runRolePermissionModelTests(logPass: (name: string) => void): vo
         managerWorkspace: true,
         orgUsage: true,
         executive: true,
+        automationView: true,
+        automationManage: false,
+        automationRun: false,
         templateManage: false,
         customizationManage: false
       }
@@ -83,6 +98,9 @@ export function runRolePermissionModelTests(logPass: (name: string) => void): vo
         managerWorkspace: false,
         orgUsage: false,
         executive: false,
+        automationView: false,
+        automationManage: false,
+        automationRun: false,
         templateManage: false,
         customizationManage: false
       }
@@ -95,6 +113,9 @@ export function runRolePermissionModelTests(logPass: (name: string) => void): vo
         managerWorkspace: false,
         orgUsage: false,
         executive: false,
+        automationView: false,
+        automationManage: false,
+        automationRun: false,
         templateManage: false,
         customizationManage: false
       }
@@ -106,6 +127,9 @@ export function runRolePermissionModelTests(logPass: (name: string) => void): vo
     assert.equal(canViewManagerWorkspace(item.user), item.expect.managerWorkspace, `${item.label}: manager workspace mismatch`);
     assert.equal(canViewOrgUsage(item.user), item.expect.orgUsage, `${item.label}: org usage mismatch`);
     assert.equal(canAccessExecutive(item.user), item.expect.executive, `${item.label}: executive mismatch`);
+    assert.equal(canViewAutomationCenter(item.user), item.expect.automationView, `${item.label}: automation view mismatch`);
+    assert.equal(canManageAutomationRules(item.user), item.expect.automationManage, `${item.label}: automation manage mismatch`);
+    assert.equal(canTriggerAutomationRules(item.user), item.expect.automationRun, `${item.label}: automation run mismatch`);
     assert.equal(canManageTemplates(item.user), item.expect.templateManage, `${item.label}: template manage mismatch`);
     assert.equal(canManageOrgCustomization(item.user), item.expect.customizationManage, `${item.label}: customization manage mismatch`);
   }
@@ -123,11 +147,17 @@ export function runRolePermissionModelTests(logPass: (name: string) => void): vo
   const manager = buildUser("manager", "manager");
   const sales = buildUser("sales", "sales");
   const viewer = buildUser("sales", "viewer");
+  const ownerWithSalesDisplay = buildUser("sales", "owner");
+  const salesWithManagerDisplay = buildUser("manager", "sales");
 
   assert.equal(canAccessPathForUser(owner, "/executive"), true);
   assert.equal(canAccessPathForUser(sales, "/executive"), false);
   assert.equal(canAccessPathForUser(manager, "/settings/templates"), true);
   assert.equal(canAccessPathForUser(sales, "/settings/templates"), false);
+  assert.equal(canAccessPathForUser(ownerWithSalesDisplay, "/settings/automation"), true);
+  assert.equal(canAccessPathForUser(salesWithManagerDisplay, "/settings/automation"), false);
+  assert.equal(canAccessPathForUser(ownerWithSalesDisplay, "/executive"), true);
+  assert.equal(canAccessPathForUser(salesWithManagerDisplay, "/executive"), false);
   assert.equal(canAccessPathForUser(manager, "/settings/usage"), true);
   assert.equal(canAccessPathForUser(viewer, "/settings/usage"), false);
   assert.equal(canAccessPathForUser(manager, "/manager"), true);

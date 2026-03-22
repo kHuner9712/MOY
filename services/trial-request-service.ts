@@ -1,5 +1,6 @@
 import { createSupabaseAdminClient, hasSupabaseAdminEnv } from "@/lib/supabase/admin";
 import type { ServerSupabaseClient } from "@/lib/supabase/types";
+import { readPublicCommercialEntryTrace, readTrialOnboardingIntentFromLeadSnapshot } from "@/lib/commercial-entry";
 import { appendConversionEvent, buildTrialActivationToken, getInboundLeadById } from "@/services/inbound-lead-service";
 import { createWorkItem } from "@/services/work-item-service";
 import { upsertTrialConversionTrack } from "@/services/trial-conversion-service";
@@ -40,6 +41,11 @@ function mapTrialRequestRow(row: TrialRequestRow): TrialRequest {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }
 
 function slugify(input: string): string {
@@ -114,6 +120,9 @@ export async function createTrialRequest(params: {
     leadId: params.leadId
   });
   if (!lead) throw new Error("inbound_lead_not_found");
+  const leadSnapshot = asRecord(lead.payloadSnapshot);
+  const entryTrace = readPublicCommercialEntryTrace(leadSnapshot);
+  const onboardingIntent = readTrialOnboardingIntentFromLeadSnapshot(leadSnapshot);
 
   const insertRes = await (params.supabase as any)
     .from("trial_requests")
@@ -142,21 +151,34 @@ export async function createTrialRequest(params: {
     eventType: "trial_requested",
     eventSummary: "Trial request submitted.",
     eventPayload: {
-      requested_template_id: params.requestedTemplateId ?? null
+      requested_template_id: params.requestedTemplateId ?? null,
+      preferred_template_key: onboardingIntent?.preferredTemplateKey ?? null,
+      need_import_data: onboardingIntent?.needsDataImport ?? false,
+      onboarding_motion: onboardingIntent?.onboardingMotion ?? "guided_activation",
+      kickoff_priority: onboardingIntent?.kickoffPriority ?? "normal",
+      expected_first_outcome: onboardingIntent?.expectedFirstOutcome ?? null,
+      entry_trace_id: entryTrace?.traceId ?? null,
+      entry_landing_page: entryTrace?.landingPage ?? null,
+      source_campaign: entryTrace?.sourceCampaign ?? null
     }
   });
 
   let workItemCreated = false;
   if (params.createWorkItem !== false && lead.assignedOwnerId) {
+    const assistedImport = onboardingIntent?.onboardingMotion === "assisted_import";
+    const title = assistedImport ? `Review trial import kickoff for ${lead.companyName}` : `Review trial activation for ${lead.companyName}`;
+    const description = assistedImport
+      ? "Confirm import scope, data owner, and first-value scenario before activating trial org."
+      : "Qualify trial scope, choose industry template, and activate trial org.";
     await createWorkItem({
       supabase: params.supabase,
       orgId: params.orgId,
       ownerId: lead.assignedOwnerId,
       sourceType: "manual",
       workType: "review_customer",
-      title: `Review trial activation for ${lead.companyName}`,
-      description: "Qualify trial scope, choose industry template, and activate trial org.",
-      rationale: "Inbound lead requested trial.",
+      title,
+      description,
+      rationale: `Inbound lead requested trial${entryTrace?.traceId ? ` (trace: ${entryTrace.traceId})` : ""}.`,
       priorityScore: 90,
       priorityBand: "critical",
       dueAt: new Date(Date.now() + 36 * 60 * 60 * 1000).toISOString(),
@@ -198,6 +220,9 @@ export async function activateTrialRequest(params: {
     leadId: trialRequest.leadId
   });
   if (!lead) throw new Error("inbound_lead_not_found");
+  const leadSnapshot = asRecord(lead.payloadSnapshot);
+  const entryTrace = readPublicCommercialEntryTrace(leadSnapshot);
+  const onboardingIntent = readTrialOnboardingIntentFromLeadSnapshot(leadSnapshot);
 
   const admin = hasSupabaseAdminEnv() ? (createSupabaseAdminClient() as unknown as DbClient) : params.supabase;
   let targetOrgId = trialRequest.targetOrgId;
@@ -260,14 +285,27 @@ export async function activateTrialRequest(params: {
       summary: "Trial bootstrap initialized from commercialization request.",
       detail_snapshot: {
         source: "trial_activation",
-        lead_id: lead.id
+        lead_id: lead.id,
+        trial_request_id: trialRequest.id,
+        entry_trace_id: entryTrace?.traceId ?? null,
+        onboarding_intent: onboardingIntent
+          ? {
+              intent_version: onboardingIntent.intentVersion,
+              need_import_data: onboardingIntent.needsDataImport,
+              preferred_template_key: onboardingIntent.preferredTemplateKey,
+              onboarding_motion: onboardingIntent.onboardingMotion,
+              kickoff_priority: onboardingIntent.kickoffPriority,
+              expected_first_outcome: onboardingIntent.expectedFirstOutcome
+            }
+          : null
       }
     });
 
     const templateCandidate =
       params.requestedTemplateId ??
       trialRequest.requestedTemplateId ??
-      (typeof lead.payloadSnapshot.preferred_template_key === "string" ? lead.payloadSnapshot.preferred_template_key : null);
+      onboardingIntent?.preferredTemplateKey ??
+      (typeof leadSnapshot.preferred_template_key === "string" ? leadSnapshot.preferred_template_key : null);
     if (templateCandidate) {
       await applyTemplate({
         supabase: admin,
@@ -304,7 +342,11 @@ export async function activateTrialRequest(params: {
     eventType: "trial_approved",
     eventSummary: "Trial request approved.",
     eventPayload: {
-      trial_request_id: trialRequest.id
+      trial_request_id: trialRequest.id,
+      entry_trace_id: entryTrace?.traceId ?? null,
+      need_import_data: onboardingIntent?.needsDataImport ?? false,
+      preferred_template_key: onboardingIntent?.preferredTemplateKey ?? null,
+      onboarding_motion: onboardingIntent?.onboardingMotion ?? null
     }
   });
 
@@ -317,7 +359,10 @@ export async function activateTrialRequest(params: {
     eventSummary: "Trial org activated.",
     eventPayload: {
       trial_request_id: trialRequest.id,
-      target_org_id: targetOrgId
+      target_org_id: targetOrgId,
+      entry_trace_id: entryTrace?.traceId ?? null,
+      need_import_data: onboardingIntent?.needsDataImport ?? false,
+      expected_first_outcome: onboardingIntent?.expectedFirstOutcome ?? null
     }
   });
 
