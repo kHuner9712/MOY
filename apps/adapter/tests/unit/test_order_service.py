@@ -494,3 +494,278 @@ class _OfflinePlanStore(InMemoryBillingStore):
         if plan is None or plan_code != self._offline_plan:
             return plan
         return _replace(plan, status="offline")
+
+
+# ===========================================================================
+# W3-04 覆盖率补测（只补测试、不改实现）：真实分支优先
+# ===========================================================================
+class _RacingCreateStore(InMemoryBillingStore):
+    """模拟并发下单的存储替身。
+
+    `find_pending_order` 返回 None（本请求「看不到」对方刚插的待支付单），
+    但 `create_order` 会被部分唯一索引拦下并返回既有行——正是两个请求同时
+    下单时的真实时序。
+    """
+
+    async def find_pending_order(self, tenant_id: str) -> None:
+        """始终报告「没有待支付订单」，用于制造并发窗口。
+
+        Args:
+            tenant_id: 企业 ID。
+
+        Returns:
+            None: 永远没有待支付订单。
+        """
+        del tenant_id
+        return None
+
+
+class _RefusingClaimStore(InMemoryBillingStore):
+    """模拟并发领取回调幂等键的存储替身。
+
+    `get_callback` 看不到对方刚写的留痕（读在前），`append_callback` 被唯一键拦住
+    （写在后）——两个渠道重试同时到达时的真实时序。
+    """
+
+    async def get_callback(self, channel: str, external_txn_id: str) -> None:
+        """始终报告「没有留痕」，用于制造并发窗口。
+
+        Args:
+            channel: 渠道。
+            external_txn_id: 渠道流水号。
+
+        Returns:
+            None: 永远没有留痕。
+        """
+        del channel, external_txn_id
+        return None
+
+    async def append_callback(self, record: object) -> bool:
+        """始终报告「已被别人领取」。
+
+        Args:
+            record: 回调留痕。
+
+        Returns:
+            bool: 永远 False。
+        """
+        del record
+        return False
+
+
+@pytest.mark.asyncio
+async def test_bank_info_invalid_json_falls_back_to_template() -> None:
+    """对公转账收款信息非法（非 JSON / 非对象）时回落到模板，不让下单失败。"""
+    for raw in ("not-a-json", '"[1,2,3]"', "123"):
+        settings = _settings(pay_bank_info=raw)
+        service, _store = _service(settings)
+        data = await service.create(
+            tenant_id=TENANT_ID,
+            actor_id="usr_owner",
+            request=CreateOrderRequest(
+                plan_code=PLAN_PROFESSIONAL, seats=5, payment_method="offline_transfer"
+            ),
+        )
+        assert data.pay_url == ""
+        assert data.bank_info is not None
+        assert data.bank_info.get("account_name") == "请填写收款户名", (
+            f"配置 {raw!r} 非法时应回落到模板"
+        )
+
+
+def test_service_exposes_store_and_gateway() -> None:
+    """`store` / `gateway` 访问器返回构造时注入的实例。"""
+    settings = _settings()
+    store = InMemoryBillingStore()
+    gateway = FakeGateway(FAKE_KEY)
+    service = OrderService(
+        settings=settings, store=store, plans=PlanService(settings, store), gateway=gateway
+    )
+    assert service.store is store
+    assert service.gateway is gateway
+
+
+@pytest.mark.asyncio
+@pytest.mark.p0
+async def test_create_conflict_on_race_returns_15004() -> None:
+    """并发下单：唯一索引拦下第二单时统一转成 `15004`（不产生第二单、不静默成功）。"""
+    settings = _settings()
+    store = _RacingCreateStore()
+    service = OrderService(
+        settings=settings,
+        store=store,
+        plans=PlanService(settings, store),
+        gateway=FakeGateway(FAKE_KEY),
+    )
+    first = await service.create(
+        tenant_id=TENANT_ID,
+        actor_id="usr_owner",
+        request=CreateOrderRequest(plan_code=PLAN_PROFESSIONAL, seats=5),
+    )
+    with pytest.raises(ApiError) as excinfo:
+        await service.create(
+            tenant_id=TENANT_ID,
+            actor_id="usr_owner",
+            request=CreateOrderRequest(plan_code=PLAN_PROFESSIONAL, seats=5),
+        )
+    assert excinfo.value.code is ErrorCode.PENDING_ORDER_EXISTS
+    assert store.counts()["orders"] == 1, "并发冲突不得落第二单"
+    record = await store.get_order(TENANT_ID, first.order_id)
+    assert record is not None
+
+
+@pytest.mark.asyncio
+async def test_callback_for_already_paid_order_short_circuits() -> None:
+    """已支付订单（运营核销已完成）再收到回调：返回成功语义，不重复开票/开通。"""
+    settings = _settings()
+    service, store = _service(settings)
+    order = await service.create(
+        tenant_id=TENANT_ID,
+        actor_id="usr_owner",
+        request=CreateOrderRequest(
+            plan_code=PLAN_PROFESSIONAL, seats=5, payment_method="offline_transfer"
+        ),
+    )
+    await service.confirm_paid(
+        tenant_id=TENANT_ID,
+        order_id=order.order_id,
+        paid_amount_cents=order.amount_cents,
+        actor_id="usr_ops_1",
+        remark="对公到账",
+    )
+    before = store.counts()
+    result = await service.handle_callback(
+        _callback_payload(order.order_id, order.amount_cents, "txn_after_paid")
+    )
+    assert result.code == "SUCCESS"
+    after = store.counts()
+    assert after["invoices"] == before["invoices"] == 1, "不得重复开票"
+    assert after["callbacks"] == before["callbacks"], "已支付后不再占用幂等键"
+
+
+@pytest.mark.asyncio
+@pytest.mark.p0
+async def test_callback_for_closed_order_rejected() -> None:
+    """订单已关闭（超时）后收到成功回调 → `15008`，不置 paid、不开票。"""
+    settings = _settings()
+    service, store = _service(settings)
+    order = await service.create(
+        tenant_id=TENANT_ID,
+        actor_id="usr_owner",
+        request=CreateOrderRequest(plan_code=PLAN_PROFESSIONAL, seats=5),
+    )
+    past = (datetime.now(UTC) - timedelta(minutes=31)).isoformat().replace("+00:00", "Z")
+    await store.update_order(TENANT_ID, order.order_id, expires_at=past)
+    assert await service.close_expired_orders() == 1
+
+    with pytest.raises(ApiError) as excinfo:
+        await service.handle_callback(
+            _callback_payload(order.order_id, order.amount_cents, "txn_closed")
+        )
+    assert excinfo.value.code is ErrorCode.ORDER_ALREADY_PROCESSED
+    record = await store.get_order(TENANT_ID, order.order_id)
+    assert record is not None
+    assert record.status == ORDER_CLOSED
+    assert store.counts()["invoices"] == 0
+    rejections = await service._audit.recent(  # noqa: SLF001 - 断言审计留痕
+        TENANT_ID, action="billing.payment_callback_rejected"
+    )
+    assert [item.change_summary["reason"] for item in rejections] == ["order_not_pending"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.p0
+async def test_callback_lost_claim_returns_success_without_activation() -> None:
+    """并发领取幂等键失败（被另一路抢先）→ 返回成功语义但不重复生效。"""
+    settings = _settings()
+    store = _RefusingClaimStore()
+    service = OrderService(
+        settings=settings,
+        store=store,
+        plans=PlanService(settings, store),
+        gateway=FakeGateway(FAKE_KEY),
+    )
+    order = await service.create(
+        tenant_id=TENANT_ID,
+        actor_id="usr_owner",
+        request=CreateOrderRequest(plan_code=PLAN_PROFESSIONAL, seats=5),
+    )
+    result = await service.handle_callback(
+        _callback_payload(order.order_id, order.amount_cents, "txn_lost_claim")
+    )
+    assert result.code == "SUCCESS"
+    record = await store.get_order(TENANT_ID, order.order_id)
+    assert record is not None
+    assert record.status == "pending_payment", "没领到幂等键就不生效（等另一路处理）"
+    assert store.counts()["invoices"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ops_confirm_rejects_unknown_and_closed_order() -> None:
+    """运营核销：订单不存在 → `20004`；订单已关闭 → `15008`。"""
+    settings = _settings()
+    service, store = _service(settings)
+    with pytest.raises(ApiError) as unknown:
+        await service.confirm_paid(
+            tenant_id=TENANT_ID,
+            order_id="ord_missing",
+            paid_amount_cents=100,
+            actor_id="usr_ops_1",
+        )
+    assert unknown.value.code is ErrorCode.RESOURCE_NOT_FOUND
+
+    order = await service.create(
+        tenant_id=TENANT_ID,
+        actor_id="usr_owner",
+        request=CreateOrderRequest(
+            plan_code=PLAN_PROFESSIONAL, seats=5, payment_method="offline_transfer"
+        ),
+    )
+    past = (datetime.now(UTC) - timedelta(minutes=31)).isoformat().replace("+00:00", "Z")
+    await store.update_order(TENANT_ID, order.order_id, expires_at=past)
+    assert await service.close_expired_orders() == 1
+    with pytest.raises(ApiError) as closed:
+        await service.confirm_paid(
+            tenant_id=TENANT_ID,
+            order_id=order.order_id,
+            paid_amount_cents=order.amount_cents,
+            actor_id="usr_ops_1",
+        )
+    assert closed.value.code is ErrorCode.ORDER_ALREADY_PROCESSED
+
+
+@pytest.mark.asyncio
+async def test_close_expired_orders_is_noop_when_nothing_expired() -> None:
+    """补偿任务：没有超时订单时返回 0，不误伤待支付订单。"""
+    settings = _settings()
+    service, store = _service(settings)
+    order = await service.create(
+        tenant_id=TENANT_ID,
+        actor_id="usr_owner",
+        request=CreateOrderRequest(plan_code=PLAN_PROFESSIONAL, seats=5),
+    )
+    assert await service.close_expired_orders() == 0
+    record = await store.get_order(TENANT_ID, order.order_id)
+    assert record is not None
+    assert record.status == "pending_payment", "未超时的订单不得被关闭"
+
+
+@pytest.mark.asyncio
+async def test_callback_amount_mismatch_boundary_one_cent() -> None:
+    """金额校验边界：少 1 分 / 多 1 分都必须 `15009`（不允许任何偏差）。"""
+    for delta in (-1, 1):
+        settings = _settings()
+        service, store = _service(settings)
+        order = await service.create(
+            tenant_id=TENANT_ID,
+            actor_id="usr_owner",
+            request=CreateOrderRequest(plan_code=PLAN_PROFESSIONAL, seats=5),
+        )
+        with pytest.raises(ApiError) as excinfo:
+            await service.handle_callback(
+                _callback_payload(order.order_id, order.amount_cents + delta, f"txn_edge_{delta}")
+            )
+        assert excinfo.value.code is ErrorCode.ORDER_AMOUNT_MISMATCH
+        record = await store.get_order(TENANT_ID, order.order_id)
+        assert record is not None
+        assert record.status == "pending_payment"
