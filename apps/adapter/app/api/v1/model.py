@@ -149,4 +149,4 @@ async def get_usage(
     Raises:
         ApiError: 周期参数非法（20001）。
     """
-    return ApiResponse[UsageData].ok(get_model_service().get_usage(context.auth, period))
+    return ApiResponse[UsageData].ok(await get_model_service().get_usage(context.auth, period))

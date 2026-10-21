@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -57,6 +57,118 @@ VISIBILITY_ORGANIZATION: Final[str] = "organization"
 
 #: 知识库 ID 前缀（唯一规范形态）
 BASE_ID_PREFIX: Final[str] = "kb_"
+
+#: 部门 ID 前缀（B08 唯一规范形态）
+DEPARTMENT_ID_PREFIX: Final[str] = "dept_"
+
+#: 角色键：企业所有者
+ROLE_OWNER: Final[str] = "owner"
+
+#: 角色键：组织管理员
+ROLE_ORG_ADMIN: Final[str] = "org_admin"
+
+#: 角色键：普通成员
+ROLE_MEMBER: Final[str] = "member"
+
+#: 角色键：访客
+ROLE_GUEST: Final[str] = "guest"
+
+#: 角色键：平台运营（仅运营后台）
+ROLE_OPS: Final[str] = "ops_operator"
+
+#: 16 个业务权限点（架构文档 §4.8）
+BUSINESS_PERMISSIONS: Final[frozenset[str]] = frozenset(
+    {
+        "knowledge:base:create",
+        "knowledge:base:update",
+        "knowledge:base:delete",
+        "knowledge:document:upload",
+        "knowledge:document:delete",
+        "knowledge:grant:manage",
+        "knowledge:base:read",
+        "tool:connection:manage",
+        "tool:execute",
+        "team:member:invite",
+        "team:member:update",
+        "team:structure:manage",
+        "team:role:manage",
+        "billing:subscription:read",
+        "billing:subscription:manage",
+        "audit:log:read",
+    }
+)
+
+#: 4 个运营权限点（架构文档 §4.8）
+OPS_PERMISSIONS: Final[frozenset[str]] = frozenset(
+    {
+        "ops:console:access",
+        "ops:order:confirm",
+        "ops:tenant:manage",
+        "ops:settings:manage",
+    }
+)
+
+#: 内置角色 → 权限点（架构文档 §4.8 矩阵的**唯一**代码实现）。
+#:
+#: 矩阵中的 🔸 表示「**拥有权限点**，但对象级仍受限（仅被授权库 / 个人数据）」，
+#: 因此 🔸 计入本表；真正的对象级判定由 `is_visible()` 与各业务服务负责。
+#: 这是「权限点层 → 对象级」两层分离的口径，缺一层都会造成越权或误拒。
+BUILTIN_ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
+    ROLE_OWNER: BUSINESS_PERMISSIONS,
+    ROLE_ORG_ADMIN: BUSINESS_PERMISSIONS,
+    ROLE_MEMBER: frozenset(
+        {
+            "knowledge:base:create",
+            "knowledge:base:update",
+            "knowledge:base:delete",
+            "knowledge:document:upload",
+            "knowledge:document:delete",
+            "knowledge:base:read",
+            "tool:connection:manage",
+            "tool:execute",
+            "billing:subscription:read",
+        }
+    ),
+    ROLE_GUEST: frozenset(
+        {
+            "knowledge:base:read",
+            "tool:connection:manage",
+            "billing:subscription:read",
+        }
+    ),
+    ROLE_OPS: OPS_PERMISSIONS,
+}
+
+#: 内置角色键（B08 建 4 个内置角色，不可删除）
+BUILTIN_ROLE_KEYS: Final[tuple[str, ...]] = (
+    ROLE_OWNER,
+    ROLE_ORG_ADMIN,
+    ROLE_MEMBER,
+    ROLE_GUEST,
+)
+
+
+def permissions_for_roles(roles: Iterable[str]) -> frozenset[str]:
+    """把令牌角色集合展开为权限点集合（fail-closed：未知角色不贡献任何权限）。
+
+    Args:
+        roles: 角色键集合（令牌 `roles`）。
+
+    Returns:
+        frozenset[str]: 权限点集合；含通配角色时返回全集。
+    """
+    normalized = {str(role).strip().lower() for role in roles if str(role).strip()}
+    if WILDCARD_ROLE in normalized:
+        return BUSINESS_PERMISSIONS | OPS_PERMISSIONS
+    granted: set[str] = set()
+    for role in normalized:
+        mapped = BUILTIN_ROLE_PERMISSIONS.get(role)
+        if mapped is not None:
+            granted.update(mapped)
+        elif ":" in role:
+            # 兼容以「权限点即角色」形式签发的令牌（阶段一既有形态）
+            granted.add(role)
+    return frozenset(granted)
 
 
 def normalize_base_id(raw: str) -> str:
@@ -132,6 +244,7 @@ class PolicySnapshot:
         is_admin: 是否组织管理员。
         granted_base_ids: 通过授权表可见的知识库 ID 集合（仅非 `organization` 库有意义）。
         permissions: `base_id → viewer|editor`（授权级别，用于 `my_role`）。
+        permission_points: 该用户拥有的权限点集合（权限点层，B07/B08 统一出口）。
         expires_at: 过期时刻（`time.monotonic()` 基准）。
     """
 
@@ -140,6 +253,7 @@ class PolicySnapshot:
     is_admin: bool = False
     granted_base_ids: frozenset[str] = field(default_factory=frozenset)
     permissions: Mapping[str, str] = field(default_factory=dict)
+    permission_points: frozenset[str] = frozenset()
     expires_at: float = 0.0
 
     def permission_of(self, base_id: str) -> str | None:
@@ -225,7 +339,16 @@ class PolicyService:
             PolicySnapshot: 新建快照。
         """
         admin = has_admin_role(auth)
-        permissions = dict(await self._grants.resolve_permissions(auth.tenant_id, auth.user_id))
+        # 部门数据范围（D-13）：组织来源是业务库，不再读身份底座 group。
+        # 部门授权（KB6 `subject_type=department`）必须拿到用户所属部门才能命中，
+        # 否则「部门授权形同虚设」，会出现「成员被授了部门却看不到」的误拒。
+        department_ids = await self._user_departments(auth)
+        role_ids = await self._user_role_ids(auth)
+        permissions = dict(
+            await self._grants.resolve_permissions(
+                auth.tenant_id, auth.user_id, department_ids=department_ids, role_ids=role_ids
+            )
+        )
         granted = frozenset(base_id for base_id, permission in permissions.items() if permission)
         ttl = max(float(self._settings.permission_cache_ttl_seconds), 0.0)
         return PolicySnapshot(
@@ -234,7 +357,108 @@ class PolicyService:
             is_admin=admin,
             granted_base_ids=granted,
             permissions=permissions,
+            permission_points=await self._resolve_points(auth),
             expires_at=now + ttl,
+        )
+
+    async def _user_departments(self, auth: AuthContext) -> tuple[str, ...]:
+        """取用户所属部门（供部门级授权命中）。
+
+        Args:
+            auth: 鉴权上下文。
+
+        Returns:
+            tuple[str, ...]: 部门 ID 元组；组织域不可用时为空。
+        """
+        try:
+            from app.db.repositories.org_repo import get_org_store
+
+            links = await get_org_store(self._settings).links_of_user(auth.tenant_id, auth.user_id)
+        except Exception:  # pragma: no cover - 组织域不可用时退化为无部门
+            logger.debug("policy_departments_unavailable", user_id=auth.user_id)
+            return ()
+        return tuple(link.department_id for link in links)
+
+    async def _user_role_ids(self, auth: AuthContext) -> tuple[str, ...]:
+        """取用户当前角色 ID（供角色级授权命中）。
+
+        Args:
+            auth: 鉴权上下文。
+
+        Returns:
+            tuple[str, ...]: 角色 ID 元组；无角色或权限域不可用时为空。
+        """
+        try:
+            from app.db.repositories.role_repo import get_role_store
+
+            role_ids = await get_role_store(self._settings).role_ids_of_user(
+                auth.tenant_id, auth.user_id
+            )
+        except Exception:  # pragma: no cover - 权限域不可用时退化为无角色
+            logger.debug("policy_roles_unavailable", user_id=auth.user_id)
+            return ()
+        return tuple(role_ids)
+
+    async def _resolve_points(self, auth: AuthContext) -> frozenset[str]:
+        """解析用户拥有的权限点（内置矩阵 ∪ 业务库角色授权）。
+
+        **权威源是业务库**（D-13）：令牌角色只做兜底，`member_role` 里配置的
+        角色权限优先并入。改角色后由 `invalidate()` 精确失效，最迟 5s 全站生效。
+
+        Args:
+            auth: 鉴权上下文。
+
+        Returns:
+            frozenset[str]: 权限点集合（未知角色不贡献任何权限，fail-closed）。
+        """
+        points = set(permissions_for_roles(auth.roles))
+        try:
+            from app.db.repositories.role_repo import get_role_store
+
+            points.update(
+                await get_role_store(self._settings).permissions_of_user(
+                    auth.tenant_id, auth.user_id
+                )
+            )
+        except Exception:  # pragma: no cover - 组织权限域未落地/不可用时按令牌角色判定
+            logger.debug("policy_role_store_unavailable", user_id=auth.user_id)
+        return frozenset(points)
+
+    # ------------------------------------------------------------------
+    # 权限点判定（B07 起 BL5/B08 ID* 的统一出口）
+    # ------------------------------------------------------------------
+    async def has_point(self, auth: AuthContext, permission: str) -> bool:
+        """判断是否拥有某个权限点（**fail-closed**：无角色即无权限）。
+
+        Args:
+            auth: 鉴权上下文。
+            permission: 权限点，形如 `team:member:update`。
+
+        Returns:
+            bool: 拥有返回 True。
+        """
+        if not permission:
+            return True
+        snapshot = await self.snapshot(auth)
+        return permission in snapshot.permission_points
+
+    async def require_point(self, auth: AuthContext, permission: str) -> None:
+        """校验权限点，不足则抛 `20003`（唯一判权出口）。
+
+        Args:
+            auth: 鉴权上下文。
+            permission: 权限点。
+
+        Raises:
+            ApiError: 权限不足（20003）。
+        """
+        if await self.has_point(auth, permission):
+            return
+        from app.core.errors import ApiError, ErrorCode
+
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            internal_detail=f"permission={permission} roles={auth.roles}",
         )
 
     # ------------------------------------------------------------------
@@ -409,8 +633,18 @@ def reset_policy_service() -> None:
 
 __all__: list[str] = [
     "BASE_ID_PREFIX",
+    "BUILTIN_ROLE_KEYS",
+    "BUILTIN_ROLE_PERMISSIONS",
+    "BUSINESS_PERMISSIONS",
+    "DEPARTMENT_ID_PREFIX",
     "GUEST_ROLES",
+    "OPS_PERMISSIONS",
     "ORG_ADMIN_ROLES",
+    "ROLE_GUEST",
+    "ROLE_MEMBER",
+    "ROLE_OPS",
+    "ROLE_ORG_ADMIN",
+    "ROLE_OWNER",
     "VISIBILITY_ORGANIZATION",
     "WILDCARD_ROLE",
     "PolicyService",
@@ -420,5 +654,6 @@ __all__: list[str] = [
     "is_guest_role",
     "normalize_base_id",
     "normalized_roles",
+    "permissions_for_roles",
     "reset_policy_service",
 ]

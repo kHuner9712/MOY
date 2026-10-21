@@ -35,6 +35,7 @@ from app.business.document_service import DocumentService, map_stage
 from app.business.knowledge_base_service import KnowledgeBaseService
 from app.business.policy_service import PolicyService, get_policy_service, normalize_base_id
 from app.business.segment_service import SegmentHit, SegmentService, build_key
+from app.business.usage_service import UsageService, get_usage_service
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -162,6 +163,7 @@ class RagService:
         documents: DocumentService | None = None,
         policy: PolicyService | None = None,
         segments: SegmentService | None = None,
+        usage: UsageService | None = None,
     ) -> None:
         """初始化服务。
 
@@ -174,6 +176,7 @@ class RagService:
             documents: 可选文档业务服务（测试注入）。
             policy: 可选可见性判定服务（测试注入）。
             segments: 可选片段映射服务（测试注入）。
+            usage: 可选计量服务（测试注入；D-12 唯一写入口）。
         """
         self._settings = settings or get_settings()
         self._routes = routes or get_profile_routes()
@@ -187,6 +190,7 @@ class RagService:
         self._segments: SegmentService = segments or SegmentService(
             self._settings, documents=self._documents.store, bases=self._bases
         )
+        self._usage: UsageService = usage or get_usage_service(self._settings)
 
     # ------------------------------------------------------------------
     # per-kb 凭据（D-10）
@@ -504,8 +508,56 @@ class RagService:
             )
             refreshed = await self._documents.store.get(tenant_id, doc_id)
             if refreshed is not None:
+                await self._record_doc_process_if_completed(
+                    tenant_id=tenant_id, record=refreshed, previous_stage=stored.stage, auth=auth
+                )
                 return self._documents.to_status_data(refreshed)
         return data
+
+    async def _record_doc_process_if_completed(
+        self,
+        *,
+        tenant_id: str,
+        record: Any,
+        previous_stage: str,
+        auth: AuthContext | None,
+    ) -> None:
+        """文档处理「刚刚完成」时写一条 `doc_process` 用量事件（D-12）。
+
+        只在**状态跃迁**到 `completed` 时写，且幂等键为 `document_id:run_id`，
+        因此重复轮询 R4 不会产生第二条事件；R5 重新处理换新批次才产生新事件。
+
+        Args:
+            tenant_id: 租户 ID。
+            record: 刷新后的文档记录。
+            previous_stage: 刷新前的阶段（用于识别跃迁）。
+            auth: 鉴权上下文（上传人缺失时的兜底用户）。
+        """
+        if record.stage != DocumentStage.COMPLETED.value or previous_stage == record.stage:
+            return
+        user_id = record.uploader_user_id or (auth.user_id if auth is not None else "")
+        if not user_id:
+            return
+        units = self._usage.estimate_document_units(
+            file_size=int(record.file_size or 0),
+            segment_count=int(record.segment_count or 0),
+        )
+        if units <= 0:
+            return
+        try:
+            await self._usage.record_document_processed(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                document_id=record.document_id,
+                run_id=record.run_id,
+                units=units,
+            )
+        except Exception as exc:  # 计量失败不得影响进度查询（对账脚本负责发现偏差）
+            logger.warning(
+                "usage_doc_process_failed",
+                document_id=record.document_id,
+                detail=type(exc).__name__,
+            )
 
     def _transform_index_status(self, doc_id: str, payload: dict[str, Any]) -> IndexStatusData:
         """将底座原生处理进度转换为自研五态 + 三态。

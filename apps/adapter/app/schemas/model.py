@@ -214,17 +214,22 @@ class Quota(BaseModel):
 class UsageData(BaseModel):
     """M4 用量统计响应数据。
 
+    B07 加性扩展：新增 `quota_unit`（额度单位文案，如「字数额度」），
+    使前端不必硬编码单位；既有字段与 `quota` 子结构保持不变。
+
     Attributes:
         period: 统计周期，形如 `2026-11`。
         conversation_count: 对话次数。
         document_qa_count: 文档问答次数。
         quota: 套餐额度。
+        quota_unit: 额度单位文案。
     """
 
     period: str = Field(default="", description="统计周期，形如 2026-11")
     conversation_count: int = Field(default=0, ge=0, description="对话次数")
     document_qa_count: int = Field(default=0, ge=0, description="文档问答次数")
     quota: Quota = Field(default_factory=Quota, description="套餐额度")
+    quota_unit: str = Field(default="", description="额度单位文案")
 
 
 #: 自研 SSE 事件类型（不复用底座原生 event 名称，附录 A-4/A-6）

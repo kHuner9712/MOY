@@ -15,12 +15,14 @@ T01 阶段说明：`Settings.downstream_enabled=false` 时返回业务化 mock �
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Final
 
 from app.business.policy_service import PolicyService, get_policy_service, normalize_base_id
 from app.business.segment_service import SegmentHit, SegmentService, build_key
+from app.business.usage_service import UsageService, get_usage_service
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -105,6 +107,46 @@ def _position_of_native(raw: Any) -> SegmentPosition | None:
     )
 
 
+def _delta_text_of(frame: str) -> int:
+    """取一帧 `delta` 事件的正文长度（流式中断折算用）。
+
+    Args:
+        frame: 自研 SSE 文本帧。
+
+    Returns:
+        int: 正文字符数；非 `delta` 帧返回 0。
+    """
+    if not frame.startswith("event: delta"):
+        return 0
+    _, _, raw = frame.partition("data: ")
+    try:
+        payload = json.loads(raw.strip() or "{}")
+    except ValueError:  # pragma: no cover - 帧由本模块序列化，解析失败属编码缺陷
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    return len(str(payload.get("text", "")))
+
+
+def _total_units_of(event: dict[str, Any]) -> int:
+    """取底座 `message_end` 事件的结算额度。
+
+    Args:
+        event: 底座原生 `message_end` 事件。
+
+    Returns:
+        int: `total_tokens`；缺失时退化为 `prompt + completion`，全缺返回 0。
+    """
+    metadata = event.get("metadata", {})
+    usage = metadata.get("usage", {}) if isinstance(metadata, dict) else {}
+    if not isinstance(usage, dict):
+        return 0
+    total = int(usage.get("total_tokens", 0) or 0)
+    if total:
+        return total
+    return int(usage.get("prompt_tokens", 0) or 0) + int(usage.get("completion_tokens", 0) or 0)
+
+
 @dataclass(slots=True)
 class CitationContext:
     """流式引用回链的上下文（M2 专用）。
@@ -158,6 +200,7 @@ class ModelService:
         policy: PolicyService | None = None,
         segments: SegmentService | None = None,
         bases: KnowledgeBaseStore | None = None,
+        usage: UsageService | None = None,
     ) -> None:
         """初始化服务。
 
@@ -168,6 +211,7 @@ class ModelService:
             policy: 可选可见性判定服务（测试注入）。
             segments: 可选片段映射服务（测试注入）。
             bases: 可选知识库元数据存储（引用回链的名称回填）。
+            usage: 可选计量服务（测试注入；D-12 唯一写入口）。
         """
         self._settings = settings or get_settings()
         self._routes = routes or get_profile_routes()
@@ -175,6 +219,7 @@ class ModelService:
         self._policy: PolicyService = policy or get_policy_service(self._settings)
         self._segments: SegmentService = segments or SegmentService(self._settings)
         self._bases: KnowledgeBaseStore = bases or get_knowledge_base_store(self._settings)
+        self._usage: UsageService = usage or get_usage_service(self._settings)
 
     # ------------------------------------------------------------------
     # 租户与授权库解析（B05）
@@ -370,7 +415,15 @@ class ModelService:
         )
 
         if self._settings.mock_mode:
-            return self._stub_generate(request)
+            stub = self._stub_generate(request)
+            await self._settle_generation(
+                generation_id=stub.generation_id,
+                units=stub.usage.total_units,
+                has_authorized_bases=bool(authorized),
+                auth=auth,
+                source="settled",
+            )
+            return stub
 
         response = await self._dify.post(
             _DIFY_CHAT_PATH, self._build_downstream_payload(request, user_id)
@@ -381,9 +434,64 @@ class ModelService:
             flt = _ReasoningFilter()
             payload = {**payload, "answer": flt.feed(payload["answer"]) + flt.flush()}
         data = self._transform_generate_response(payload)
-        return await self._attach_citation_backlinks(
+        settled = await self._attach_citation_backlinks(
             data, authorized, self._tenant_of(auth), schedule=False
         )
+        # 结算时点：下游已返回 message_end（blocking 模式即响应体），
+        # 用下游 usage.total_units 结算，source='settled'（D-12 第 3 条）
+        await self._settle_generation(
+            generation_id=settled.generation_id,
+            units=settled.usage.total_units,
+            has_authorized_bases=bool(authorized),
+            auth=auth,
+            source="settled",
+        )
+        return settled
+
+    async def _settle_generation(
+        self,
+        *,
+        generation_id: str,
+        units: int,
+        has_authorized_bases: bool,
+        auth: AuthContext | None,
+        source: str,
+    ) -> bool:
+        """结算一次生成（D-12 唯一写入口的调用点）。
+
+        结算失败**不得**影响用户已得到的回答：异常只记 WARN，
+        由 `scripts/reconcile_usage.py` 在对账时发现偏差（架构文档 2.5 第 7 条）。
+
+        Args:
+            generation_id: 生成记录 ID（幂等键，重放不产生第二条事件）。
+            units: 结算额度。
+            has_authorized_bases: 本次是否使用知识库（决定 `chat` / `doc_qa`）。
+            auth: 鉴权上下文。
+            source: 结算来源（`settled` / `estimated`）。
+
+        Returns:
+            bool: 首次写入返回 True。
+        """
+        user_id = auth.user_id if auth is not None else ""
+        if not user_id:
+            return False
+        try:
+            return await self._usage.record_generation(
+                tenant_id=self._tenant_of(auth),
+                user_id=user_id,
+                generation_id=generation_id,
+                units=units,
+                source=source,
+                has_authorized_bases=has_authorized_bases,
+            )
+        except Exception as exc:  # 计量失败不得中断用户请求（对账脚本负责发现偏差）
+            logger.warning(
+                "usage_settlement_failed",
+                generation_id=generation_id,
+                source=source,
+                detail=type(exc).__name__,
+            )
+            return False
 
     def _build_downstream_payload(
         self, request: GenerateRequest, user_id: str = ""
@@ -603,9 +711,23 @@ class ModelService:
         )
         yield sse_frame("start", StreamStartData(generation_id=generation_id).model_dump())
 
+        # 结算状态：`produced_chars` 累计已下发正文（中断折算依据），
+        # `settled` 标记是否已按下游 usage 精确结算（D-12 第 3 条）
+        produced_chars = 0
+        settled = False
+        downstream_total: int | None = None
+
         if self._settings.mock_mode:
             async for frame in self._stub_stream(generation_id, request):
+                produced_chars += _delta_text_of(frame)
                 yield frame
+            await self._settle_generation(
+                generation_id=generation_id,
+                units=self._stub_units(request),
+                has_authorized_bases=bool(authorized),
+                auth=auth,
+                source="settled",
+            )
             return
 
         try:
@@ -621,12 +743,15 @@ class ModelService:
                     visible = reasoning_filter.feed(str(event.get("answer", "")))
                     if not visible:
                         continue
+                    produced_chars += len(visible)
                     event = {**event, "answer": visible}
                 elif native == "message_end":
                     # 流结束前冲洗过滤器缓冲（短回答可能整体滞留在缓冲中）
                     rest = reasoning_filter.flush()
                     if rest:
+                        produced_chars += len(rest)
                         yield sse_frame("delta", StreamDeltaData(text=rest).model_dump())
+                    downstream_total = _total_units_of(event)
                 mapped_frame = self._transform_stream_event(event, citation_ctx)
                 if mapped_frame is not None:
                     yield mapped_frame
@@ -636,6 +761,26 @@ class ModelService:
         finally:
             # 引用回链旁路回填：不阻塞流，写失败只记 WARN
             await self._segments.record_hits(tenant_id, citation_ctx.hits, schedule=True)
+            if downstream_total is not None:
+                await self._settle_generation(
+                    generation_id=generation_id,
+                    units=downstream_total,
+                    has_authorized_bases=bool(authorized),
+                    auth=auth,
+                    source="settled",
+                )
+                settled = True
+            if not settled:
+                # 中断/超时/客户端断开：按已产出内容折算（source='estimated'）
+                estimated = self._usage.estimate_interrupted_units(produced_chars=produced_chars)
+                if estimated > 0:
+                    await self._settle_generation(
+                        generation_id=generation_id,
+                        units=estimated,
+                        has_authorized_bases=bool(authorized),
+                        auth=auth,
+                        source="estimated",
+                    )
 
     def _transform_stream_event(
         self, event: dict[str, Any], citation_ctx: CitationContext | None = None
@@ -724,6 +869,26 @@ class ModelService:
         citation_ctx.index += 1
         return enriched.model_dump()
 
+    #: 桩模式流式分片（T01）
+    _STUB_CHUNKS: Final[tuple[str, ...]] = (
+        "（演示环境）",
+        "已收到你的问题，",
+        "智能助手将在正式接入后返回回答。",
+    )
+
+    def _stub_units(self, request: GenerateRequest) -> int:
+        """构造桩模式结算额度（与非流式桩口径一致）。
+
+        Args:
+            request: 生成请求。
+
+        Returns:
+            int: `输入字符数 + 桩输出字符数`。
+        """
+        prompt_units = sum(len(message.content) for message in request.messages)
+        completion_units = sum(len(chunk) for chunk in self._STUB_CHUNKS)
+        return prompt_units + completion_units
+
     async def _stub_stream(
         self, generation_id: str, request: GenerateRequest
     ) -> AsyncIterator[str]:
@@ -736,7 +901,7 @@ class ModelService:
         Yields:
             str: SSE 文本帧序列。
         """
-        chunks = ("（演示环境）", "已收到你的问题，", "智能助手将在正式接入后返回回答。")
+        chunks = self._STUB_CHUNKS
         for chunk in chunks:
             yield sse_frame("delta", StreamDeltaData(text=chunk).model_dump())
 
@@ -746,7 +911,7 @@ class ModelService:
             usage=Usage(
                 prompt_units=prompt_units,
                 completion_units=sum(len(chunk) for chunk in chunks),
-                total_units=prompt_units + sum(len(chunk) for chunk in chunks),
+                total_units=self._stub_units(request),
             ),
         )
         logger.info("model_stream_completed", generation_id=generation_id)
@@ -784,18 +949,19 @@ class ModelService:
     # ------------------------------------------------------------------
     # M4 用量统计
     # ------------------------------------------------------------------
-    def get_usage(self, auth: AuthContext, period: str = "month") -> UsageData:
+    async def get_usage(self, auth: AuthContext, period: str = "month") -> UsageData:
         """查询用量统计（业务化口径：次数/额度，附录 A-7）。
 
-        T01 为桩实现：真实计量在 S2 由业务能力层提供，
-        此处只做协议转换与字段占位，不做额度计算（适配层边界红线）。
+        **与 BL5 同源**（D-12 第 5 条）：额度数字来自 `UsageService.snapshot()`，
+        与 `GET /billing/usage` 是同一函数、同一张聚合表、同一段计算，
+        因此同刻 `used_units == quota_units_used`。
 
         Args:
             auth: 鉴权上下文。
             period: 统计周期，`month` / `day`。
 
         Returns:
-            UsageData: 业务化用量数据。
+            UsageData: 业务化用量数据（新增 `quota_unit`，加性字段）。
 
         Raises:
             ApiError: 周期参数非法（20001）。
@@ -804,14 +970,28 @@ class ModelService:
             raise ApiError(
                 ErrorCode.PARAM_INVALID, internal_detail=f"unsupported usage period: {period}"
             )
+        snapshot = await self._usage.snapshot(
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+        )
         logger.info(
-            "model_usage_queried", period=period, tenant_id=auth.tenant_id, user_id=auth.user_id
+            "model_usage_queried",
+            period=period,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            used_units=snapshot.used_units,
         )
         return UsageData(
             period=period,
-            conversation_count=0,
-            document_qa_count=0,
-            quota=Quota(plan_name="", total_units=0, used_units=0, remaining_units=0),
+            conversation_count=snapshot.event_counts.get("chat", 0),
+            document_qa_count=snapshot.event_counts.get("doc_qa", 0),
+            quota=Quota(
+                plan_name=snapshot.plan_name,
+                total_units=snapshot.total_units,
+                used_units=snapshot.used_units,
+                remaining_units=snapshot.remaining_units,
+            ),
+            quota_unit=snapshot.quota_unit,
         )
 
 

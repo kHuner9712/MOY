@@ -157,6 +157,19 @@ class Settings(BaseSettings):
     permission_cache_ttl_seconds: float = Field(default=5.0, ge=0.0, le=300.0)
 
     # ------------------------------------------------------------------
+    # 计量（阶段二 D-12，架构文档 2.5 / 11.5）
+    #
+    # `usage_write_enabled` 是 D-12 的回滚开关：置 false 后不再写新事件与聚合，
+    # M4 / BL5 回落到「读 usage_monthly 现有行」（只读历史聚合）；
+    # 折算参数集中在此，**不改代码调参**（架构文档 2.5 第 3 条）。
+    # ------------------------------------------------------------------
+    usage_write_enabled: bool = True
+    #: 每个额度单位对应的字符数（中文 1 字 ≈ 1 字数额度）
+    usage_chars_per_unit: int = Field(default=1, ge=1)
+    #: 流式中断且下游未回传 prompt 用量时的兜底输入额度（架构文档 2.5 第 3 条）
+    usage_estimate_prompt_units: int = Field(default=800, ge=0)
+
+    # ------------------------------------------------------------------
     # 幂等与限流（架构文档 3.0.4）
     # ------------------------------------------------------------------
     idempotency_backend: IdempotencyBackend = "memory"

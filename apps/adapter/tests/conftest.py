@@ -24,6 +24,7 @@ from app.business.audit_service import reset_audit_recorder
 from app.business.credential_service import reset_credential_resolver
 from app.business.policy_service import reset_policy_service
 from app.business.segment_service import reset_segment_service
+from app.business.usage_service import reset_usage_service
 from app.clients.dify_client import reset_dify_client
 from app.clients.keycloak_client import reset_keycloak_client
 from app.core.config import Settings, get_settings, reset_settings_cache
@@ -42,6 +43,7 @@ from app.db.repositories.grant_repo import reset_grant_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
 from app.db.repositories.segment_repo import reset_segment_store
 from app.db.repositories.tool_repo import reset_tool_store
+from app.db.repositories.usage_repo import reset_usage_store
 from app.main import create_app
 from app.registry.loader import reset_registry_cache
 from app.services.agent_service import reset_agent_service
@@ -169,6 +171,8 @@ def _reset_all() -> None:
     reset_segment_store()
     reset_segment_service()
     reset_policy_service()
+    reset_usage_store()
+    reset_usage_service()
     reset_tool_store()
     reset_publish_registry()
     reset_audit_recorder()

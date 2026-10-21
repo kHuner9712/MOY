@@ -264,22 +264,25 @@ def test_build_downstream_payload_single_turn_no_transcript() -> None:
     assert payload["conversation_id"] is None
 
 
-def test_get_usage_rejects_unknown_period() -> None:
+async def test_get_usage_rejects_unknown_period() -> None:
     """非法统计周期返回 20001。"""
     auth = AuthContext(user_id="usr_1", tenant_id="tnt_1")
     with pytest.raises(ApiError) as exc_info:
-        _service().get_usage(auth, period="year")
+        await _service().get_usage(auth, period="year")
     assert exc_info.value.code == ErrorCode.PARAM_INVALID
 
 
-def test_get_usage_returns_business_fields_only() -> None:
-    """用量统计仅返回业务化口径，不含 token 精确值。"""
+async def test_get_usage_returns_business_fields_only() -> None:
+    """用量统计仅返回业务化口径，不含 token 精确值（B07 起改读 UsageService）。"""
     auth = AuthContext(user_id="usr_1", tenant_id="tnt_1")
-    data = _service().get_usage(auth, period="month")
+    data = await _service().get_usage(auth, period="month")
     serialized = data.model_dump_json()
     assert data.period == "month"
     assert "token" not in serialized.lower()
+    # 无订阅时额度总量为 0（免费版额度由 B09 落地），已用额度来自同一聚合表
     assert data.quota.total_units == 0
+    assert data.quota.used_units == 0
+    assert data.quota_unit
 
 
 def test_native_paths_only_in_clients_and_services() -> None:

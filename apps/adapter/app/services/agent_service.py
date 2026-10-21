@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Final
 
+from app.business.usage_service import UsageService, get_usage_service
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -87,6 +88,21 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _total_units_of(native_data: dict[str, Any]) -> int:
+    """取工作流运行结果中的结算额度。
+
+    Args:
+        native_data: 底座 `data` 对象（含 `total_tokens` 等字段）。
+
+    Returns:
+        int: 结算额度；字段缺失返回 0（此时不写事件）。
+    """
+    try:
+        return int(native_data.get("total_tokens", 0) or 0)
+    except (TypeError, ValueError):  # pragma: no cover - 下游字段类型异常
+        return 0
+
+
 class AgentService:
     """Agent 服务。
 
@@ -104,14 +120,17 @@ class AgentService:
         self,
         settings: Settings | None = None,
         dify: DifyClient | None = None,
+        usage: UsageService | None = None,
     ) -> None:
         """初始化服务。
 
         Args:
             settings: 可选配置实例。
             dify: 可选底座客户端。
+            usage: 可选计量服务（测试注入；D-12 唯一写入口）。
         """
         self._settings = settings or get_settings()
+        self._usage: UsageService = usage or get_usage_service(self._settings)
         if dify is not None:
             self._dify = dify
         elif self._settings.dify_agent_app_key:
@@ -188,7 +207,8 @@ class AgentService:
                 task_id = f"{_TASK_PREFIX}{native_run_id}"
                 # blocking 模式下底座已同步返回终态（data.status），
                 # 直接映射为自研任务状态，而非停留 running（T02 实联调修复）
-                native_status = str((response.payload.get("data") or {}).get("status", "")).lower()
+                native_data = response.payload.get("data") or {}
+                native_status = str(native_data.get("status", "")).lower()
                 self._tasks[task_id] = TaskDetailData(
                     task_id=task_id,
                     status=_STATUS_MAP.get(native_status, TaskStatus.RUNNING),
@@ -196,6 +216,10 @@ class AgentService:
                     updated_at=created_at,
                 )
                 self._steps[task_id] = StepsData(task_id=task_id, steps=[])
+                if native_status == "succeeded":
+                    await self._record_automation(
+                        task_id=task_id, units=_total_units_of(native_data), auth=auth
+                    )
 
         return CreateTaskData(
             task_id=task_id,
@@ -203,6 +227,28 @@ class AgentService:
             created_at=created_at,
             estimated_seconds=estimated,
         )
+
+    async def _record_automation(self, *, task_id: str, units: int, auth: AuthContext) -> None:
+        """任务成功完成时写一条 `automation` 用量事件（D-12 第 2 条幂等键 = task_id）。
+
+        计量失败不得影响任务创建结果，只记 WARN（由对账脚本发现偏差）。
+
+        Args:
+            task_id: 任务 ID。
+            units: 结算额度。
+            auth: 鉴权上下文。
+        """
+        if units <= 0:
+            return
+        try:
+            await self._usage.record_automation(
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                task_id=task_id,
+                units=units,
+            )
+        except Exception as exc:  # 计量失败不得影响任务创建（对账脚本负责发现偏差）
+            logger.warning("usage_automation_failed", task_id=task_id, detail=type(exc).__name__)
 
     # ------------------------------------------------------------------
     # A2 任务列表
