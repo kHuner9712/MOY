@@ -203,8 +203,9 @@ async def get_document_status(
     Returns:
         ApiResponse[IndexStatusData]: 索引进度。
     """
-    del context
-    data = await get_rag_service().get_index_status(base_id=base_id, doc_id=doc_id)
+    data = await get_rag_service().get_index_status(
+        base_id=base_id, doc_id=doc_id, auth=context.auth
+    )
     return ApiResponse[IndexStatusData].ok(data)
 
 
@@ -236,7 +237,7 @@ async def reindex_document(
     service = get_rag_service()
 
     async def factory() -> ReindexData:
-        return await service.reindex(base_id=base_id, doc_id=doc_id)
+        return await service.reindex(base_id=base_id, doc_id=doc_id, auth=context.auth)
 
     result, replayed = await run_idempotent(request, context, factory, manager)
     if replayed:
@@ -276,7 +277,9 @@ async def delete_document(
     service = get_rag_service()
 
     async def factory() -> DeletedData:
-        deleted_id = await service.delete_document(base_id=base_id, doc_id=doc_id)
+        deleted_id = await service.delete_document(
+            base_id=base_id, doc_id=doc_id, auth=context.auth
+        )
         return DeletedData(id=deleted_id, deleted=True)
 
     result, replayed = await run_idempotent(request, context, factory, manager)
@@ -317,7 +320,7 @@ async def search(
     service = get_rag_service()
 
     async def factory() -> SearchData:
-        return await service.search(body)
+        return await service.search(body, context.auth)
 
     result, replayed = await run_idempotent(request, context, factory, manager)
     if replayed:

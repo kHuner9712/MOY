@@ -24,6 +24,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, Final, Protocol, runtime_checkable
 
+from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings, get_settings
@@ -45,8 +46,19 @@ SET_READ_ONLY_SQL: Final[str] = "SET TRANSACTION READ ONLY"
 
 
 @runtime_checkable
-class TransactionLike(Protocol):
-    """事务对象契约（兼容 SQLAlchemy `AsyncTransaction` 与测试替身）。"""
+class SessionLike(Protocol):
+    """会话对象契约（兼容 SQLAlchemy `AsyncSession` 与测试替身）。
+
+    事务由**语句的 autobegin** 隐式开启（`SET TRANSACTION READ ONLY` /
+    `set_config` 本身就是事务的第一条语句），结束时显式 `commit()` / `rollback()`。
+    不用 `session.begin()` 是因为 SQLAlchemy 2.1 的 `AsyncTransaction` 必须被
+    await 或作为上下文管理，否则 `commit()` 会抛 `AsyncContextNotStarted`
+    （真实数据库烟测时暴露，单测替身无法发现）。
+    """
+
+    async def execute(self, statement: Any, parameters: Mapping[str, Any] | None = None) -> Any:
+        """执行语句（首条语句会隐式开启事务）。"""
+        ...
 
     async def commit(self) -> None:
         """提交事务。"""
@@ -54,19 +66,6 @@ class TransactionLike(Protocol):
 
     async def rollback(self) -> None:
         """回滚事务。"""
-        ...
-
-
-@runtime_checkable
-class SessionLike(Protocol):
-    """会话对象契约（兼容 SQLAlchemy `AsyncSession` 与测试替身）。"""
-
-    def begin(self) -> TransactionLike:
-        """开启事务。"""
-        ...
-
-    async def execute(self, statement: Any, parameters: Mapping[str, Any] | None = None) -> Any:
-        """执行语句。"""
         ...
 
     async def close(self) -> None:
@@ -97,7 +96,6 @@ class UnitOfWork:
         "_session",
         "_session_factory",
         "_tenant_id",
-        "_tx",
     )
 
     def __init__(
@@ -124,7 +122,6 @@ class UnitOfWork:
         self._read_only = read_only
         self._allow_platform = allow_platform
         self._session: SessionLike | None = None
-        self._tx: TransactionLike | None = None
 
     @property
     def tenant_id(self) -> str:
@@ -161,11 +158,17 @@ class UnitOfWork:
         """
         session = self._session_factory()
         self._session = session
-        self._tx = session.begin()
-        if self._read_only:
-            await session.execute(SET_READ_ONLY_SQL)
-        # 事务内第一条业务语句：设置租户会话变量（is_local=TRUE，事务结束自动复位）
-        await session.execute(SET_TENANT_SQL, {"tenant_id": self._tenant_id})
+        try:
+            if self._read_only:
+                await session.execute(coerce_statement(SET_READ_ONLY_SQL))
+            # 事务内第一条业务语句：设置租户会话变量（is_local=TRUE，事务结束自动复位）
+            await session.execute(coerce_statement(SET_TENANT_SQL), {"tenant_id": self._tenant_id})
+        except BaseException:
+            # 进入阶段失败（连接中断/权限不足等）：必须回滚并归还连接，避免连接池泄漏
+            await session.rollback()
+            await session.close()
+            self._session = None
+            raise
         logger.debug(
             "tenant_scope_opened",
             tenant_id=self._tenant_id,
@@ -186,12 +189,12 @@ class UnitOfWork:
             bool: 恒为 False（不吞异常）。
         """
         try:
-            if self._tx is not None:
+            if self._session is not None:
                 if exc_type is None:
-                    await self._tx.commit()
+                    await self._session.commit()
                     logger.debug("tenant_scope_committed", tenant_id=self._tenant_id)
                 else:
-                    await self._tx.rollback()
+                    await self._session.rollback()
                     logger.warning(
                         "tenant_scope_rolled_back",
                         tenant_id=self._tenant_id,
@@ -201,20 +204,22 @@ class UnitOfWork:
             if self._session is not None:
                 await self._session.close()
             self._session = None
-            self._tx = None
         return False
 
     async def execute(self, statement: Any, parameters: Mapping[str, Any] | None = None) -> Any:
-        """在事务内执行语句（统一补齐 `tenant_id` 参数的入口留给仓储层）。
+        """在事务内执行语句。
+
+        字符串会被自动包装为 `text()`：SQLAlchemy 2.x 不接受裸字符串，
+        而仓储层的 SQL 是「表名常量 + 命名参数」拼接出的文本，统一在此收敛。
 
         Args:
-            statement: SQLAlchemy 语句（`text()` / `select()` 等）。
+            statement: SQLAlchemy 语句或 SQL 字符串。
             parameters: 命名参数。
 
         Returns:
             Any: 执行结果。
         """
-        return await self.session.execute(statement, parameters)
+        return await self.session.execute(coerce_statement(statement), parameters)
 
     async def fetch_all(
         self, statement: Any, parameters: Mapping[str, Any] | None = None
@@ -261,6 +266,25 @@ class UnitOfWork:
         """
         result = await self.execute(statement, parameters)
         return result.scalar()
+
+
+def coerce_statement(statement: Any) -> Any:
+    """把 SQL 字符串包装为 SQLAlchemy `TextClause`。
+
+    SQLAlchemy 2.x 的 `Session.execute` **不接受裸字符串**（会抛
+    `ArgumentError: Textual SQL expression ... should be explicitly declared`）；
+    而仓储层的 SQL 是「表名常量 + 命名参数」拼出的文本，统一在此收敛，
+    避免每个仓储自己 import `text`（漏一个就只在真实数据库上炸）。
+
+    Args:
+        statement: SQL 字符串或已构造的语句对象。
+
+    Returns:
+        Any: 可交给 `AsyncSession.execute` 的语句。
+    """
+    if isinstance(statement, str):
+        return sql_text(statement)
+    return statement
 
 
 def get_session_factory(
@@ -334,8 +358,8 @@ __all__ = [
     "SET_TENANT_SQL",
     "TENANT_SETTING_NAME",
     "SessionLike",
-    "TransactionLike",
     "UnitOfWork",
+    "coerce_statement",
     "get_session_factory",
     "tenant_scope",
 ]

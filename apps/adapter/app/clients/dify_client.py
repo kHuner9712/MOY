@@ -96,17 +96,22 @@ class DifyClient:
             connect=self._settings.dify_connect_timeout_seconds,
         )
 
-    def _headers(self, *, stream: bool = False) -> dict[str, str]:
+    def _headers(self, *, stream: bool = False, api_key: str | None = None) -> dict[str, str]:
         """构造请求头（含底座鉴权与链路透传）。
+
+        阶段二 D-10：支持按知识库覆盖密钥（per-kb 凭据）。传 `None` 时沿用
+        客户端自身的全局密钥——既有调用方**无需改动**，行为完全不变。
 
         Args:
             stream: 是否为流式请求。
+            api_key: 库级密钥（`None` 表示使用全局密钥）。
 
         Returns:
             dict[str, str]: 请求头。
         """
+        effective_key = api_key if api_key is not None else self.api_key
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {effective_key}",
             "Content-Type": "application/json",
             TRACE_HEADER: structlog.contextvars.get_contextvars().get("trace_id", "-"),
         }
@@ -129,6 +134,7 @@ class DifyClient:
         params: dict[str, Any] | None = None,
         stream: bool = False,
         idempotent: bool = False,
+        api_key: str | None = None,
     ) -> AsyncIterator[httpx.Response]:
         """发起一次底座请求，统一处理超时、重试与错误映射。
 
@@ -142,6 +148,7 @@ class DifyClient:
             params: 查询参数。
             stream: 是否使用流式响应。
             idempotent: 是否为幂等请求（决定是否允许重试）。
+            api_key: 库级密钥（D-10；`None` 表示使用全局密钥）。
 
         Yields:
             httpx.Response: 原始响应对象。
@@ -159,7 +166,7 @@ class DifyClient:
                     path,
                     json=json_body,
                     params=params,
-                    headers=self._headers(stream=stream),
+                    headers=self._headers(stream=stream, api_key=api_key),
                     timeout=self._client.timeout,
                 )
                 response = await self._client.send(request, stream=stream)
@@ -239,7 +246,12 @@ class DifyClient:
             return ""
 
     async def post(
-        self, path: str, payload: dict[str, Any], *, idempotent: bool = False
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        idempotent: bool = False,
+        api_key: str | None = None,
     ) -> DifyResponse:
         """发起 POST 请求（不重试）。
 
@@ -247,42 +259,53 @@ class DifyClient:
             path: 底座路径。
             payload: JSON 请求体。
             idempotent: 是否允许重试（默认写操作不重试）。
+            api_key: 库级密钥（D-10；`None` 表示使用全局密钥）。
 
         Returns:
             DifyResponse: 底座响应包装。
         """
         async with self._request(
-            "POST", path, json_body=payload, idempotent=idempotent
+            "POST", path, json_body=payload, idempotent=idempotent, api_key=api_key
         ) as response:
             return DifyResponse(response.status_code, await self._json(response))
 
-    async def get(self, path: str, params: dict[str, Any] | None = None) -> DifyResponse:
+    async def get(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        api_key: str | None = None,
+    ) -> DifyResponse:
         """发起 GET 请求（幂等，失败自动重试）。
 
         Args:
             path: 底座路径。
             params: 查询参数。
+            api_key: 库级密钥（D-10；`None` 表示使用全局密钥）。
 
         Returns:
             DifyResponse: 底座响应包装。
         """
-        async with self._request("GET", path, params=params, idempotent=True) as response:
+        async with self._request(
+            "GET", path, params=params, idempotent=True, api_key=api_key
+        ) as response:
             return DifyResponse(response.status_code, await self._json(response))
 
-    async def delete(self, path: str) -> DifyResponse:
+    async def delete(self, path: str, *, api_key: str | None = None) -> DifyResponse:
         """发起 DELETE 请求（不重试）。
 
         Args:
             path: 底座路径。
+            api_key: 库级密钥（D-10；`None` 表示使用全局密钥）。
 
         Returns:
             DifyResponse: 底座响应包装。
         """
-        async with self._request("DELETE", path) as response:
+        async with self._request("DELETE", path, api_key=api_key) as response:
             return DifyResponse(response.status_code, await self._json(response))
 
     async def post_stream(
-        self, path: str, payload: dict[str, Any]
+        self, path: str, payload: dict[str, Any], *, api_key: str | None = None
     ) -> AsyncIterator[dict[str, Any]]:
         """发起流式 POST 请求，逐事件产出底座原生事件字典。
 
@@ -291,6 +314,7 @@ class DifyClient:
         Args:
             path: 底座路径。
             payload: JSON 请求体。
+            api_key: 库级密钥（D-10；`None` 表示使用全局密钥）。
 
         Yields:
             dict[str, Any]: 底座原生事件字典（仅在 `services/` 内消费）。
@@ -303,7 +327,7 @@ class DifyClient:
                 "POST",
                 path,
                 json=payload,
-                headers=self._headers(stream=True),
+                headers=self._headers(stream=True, api_key=api_key),
                 timeout=httpx.Timeout(
                     timeout=None,
                     connect=self._settings.dify_connect_timeout_seconds,

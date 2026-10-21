@@ -49,6 +49,9 @@ class ErrorCode(IntEnum):
     DOCUMENT_INDEXING = 11004
     RETRIEVAL_FAILED = 11005
     DOCUMENT_STATE_CONFLICT = 11006
+    #: 库级凭据解析失败（阶段二 D-10）。**严禁**回落全局凭据，
+    #: 否则 A 库的请求会打到 B 库的应用上（跨库数据泄露）。
+    KB_CREDENTIAL_UNAVAILABLE = 11007
 
     # ---------------- Agent 服务域 12001-12099 ----------------
     TASK_NOT_FOUND = 12001
@@ -164,6 +167,12 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
     ),
     ErrorCode.DOCUMENT_STATE_CONFLICT: ErrorSpec(
         ErrorCode.DOCUMENT_STATE_CONFLICT, 200, "文档正在处理，无法重复操作", "索引状态冲突"
+    ),
+    ErrorCode.KB_CREDENTIAL_UNAVAILABLE: ErrorSpec(
+        ErrorCode.KB_CREDENTIAL_UNAVAILABLE,
+        200,
+        "该知识库暂时无法访问，请联系管理员",
+        "库级凭据解析失败（缺失/失效/解密失败），已禁止回落全局凭据",
     ),
     # Agent 服务域
     ErrorCode.TASK_NOT_FOUND: ErrorSpec(

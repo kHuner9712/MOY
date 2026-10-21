@@ -131,6 +131,32 @@
         "title": "ApiResponse[CreateTaskData]",
         "type": "object"
       },
+      "ApiResponse_CredentialBindingData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CredentialBindingData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[CredentialBindingData]",
+        "type": "object"
+      },
       "ApiResponse_DeletedData_": {
         "properties": {
           "code": {
@@ -1347,6 +1373,50 @@
           "goal"
         ],
         "title": "CreateTaskRequest",
+        "type": "object"
+      },
+      "CredentialBindingData": {
+        "description": "KB8 响应数据。\n\nAttributes:\n    base_id: 知识库 ID。\n    bound: 是否已完成绑定（固定 True）。\n    updated_at: 绑定更新时间（ISO 8601）。",
+        "properties": {
+          "base_id": {
+            "description": "知识库 ID",
+            "title": "Base Id",
+            "type": "string"
+          },
+          "bound": {
+            "default": true,
+            "description": "是否已绑定",
+            "title": "Bound",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "default": "",
+            "description": "绑定更新时间，ISO 8601",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_id"
+        ],
+        "title": "CredentialBindingData",
+        "type": "object"
+      },
+      "CredentialBindingRequest": {
+        "description": "KB8 请求体。\n\nAttributes:\n    credential_ref: 凭据引用，形如 `cred_01K4Q8Z2X7M9B3N5P6R8T0V2W4`。\n        明文密钥**永不**出现在本接口的请求/响应中。",
+        "properties": {
+          "credential_ref": {
+            "description": "凭据引用（形如 cred_01K...），由运营侧预先入库",
+            "maxLength": 128,
+            "minLength": 4,
+            "title": "Credential Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_ref"
+        ],
+        "title": "CredentialBindingRequest",
         "type": "object"
       },
       "DeletedData": {
@@ -4009,6 +4079,63 @@
           }
         },
         "summary": "R1 创建知识库",
+        "tags": [
+          "RAG 服务"
+        ]
+      }
+    },
+    "/api/v1/knowledge/bases/{base_id}/credential-binding": {
+      "put": {
+        "description": "为知识库绑定（或换绑）下游访问凭据。换绑后下一个请求即生效，无需重启服务。写接口，需携带 Idempotency-Key 请求头；需 knowledge:base:update 权限。",
+        "operationId": "update_credential_binding_api_v1_knowledge_bases__base_id__credential_binding_put",
+        "parameters": [
+          {
+            "description": "知识库 ID",
+            "in": "path",
+            "name": "base_id",
+            "required": true,
+            "schema": {
+              "description": "知识库 ID",
+              "maxLength": 128,
+              "minLength": 3,
+              "title": "Base Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialBindingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CredentialBindingData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "KB8 更新知识库凭据绑定",
         "tags": [
           "RAG 服务"
         ]

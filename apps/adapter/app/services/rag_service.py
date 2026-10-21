@@ -16,12 +16,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Final
 
+from app.business.credential_service import CredentialResolver, get_credential_resolver
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
+from app.db.tenant import resolve_runtime_tenant
 from app.registry.loader import ProfileRouteTable, get_profile_routes
 from app.schemas.common import build_page
 from app.schemas.rag import (
@@ -109,6 +111,7 @@ class RagService:
         _settings: 配置实例。
         _routes: 档位路由表（提供检索与分块默认策略）。
         _dify: 底座客户端。
+        _credentials: per-kb 凭据解析器（D-10）。
     """
 
     def __init__(
@@ -116,6 +119,7 @@ class RagService:
         settings: Settings | None = None,
         routes: ProfileRouteTable | None = None,
         dify: DifyClient | None = None,
+        resolver: CredentialResolver | None = None,
     ) -> None:
         """初始化服务。
 
@@ -123,10 +127,47 @@ class RagService:
             settings: 可选配置实例。
             routes: 可选档位路由表。
             dify: 可选底座客户端。
+            resolver: 可选凭据解析器（测试注入）。
         """
         self._settings = settings or get_settings()
         self._routes = routes or get_profile_routes()
         self._dify = dify or get_dify_client()
+        self._credentials = resolver or get_credential_resolver(self._settings)
+
+    # ------------------------------------------------------------------
+    # per-kb 凭据（D-10）
+    # ------------------------------------------------------------------
+    def _tenant_of(self, auth: AuthContext | None) -> str:
+        """解析本次下游调用所属租户。
+
+        Args:
+            auth: 鉴权上下文（路由层传入；服务层单测可为 None）。
+
+        Returns:
+            str: 租户 ID。
+        """
+        if auth is not None and auth.tenant_id:
+            return auth.tenant_id
+        return resolve_runtime_tenant(self._settings)
+
+    async def _api_key_for(self, base_id: str, auth: AuthContext | None) -> str:
+        """解析该知识库应使用的下游密钥。
+
+        未绑定库返回全局凭据（现状行为不变）；已绑定库解析失败抛 `11007`
+        且**绝不回落**（架构文档 2.3 结论第 4 条）。
+
+        Args:
+            base_id: 知识库 ID。
+            auth: 鉴权上下文。
+
+        Returns:
+            str: 下游密钥。
+
+        Raises:
+            ApiError: 库级凭据不可用（11007）。
+        """
+        resolved = await self._credentials.resolve(base_id, tenant_id=self._tenant_of(auth))
+        return resolved.api_key
 
     # ------------------------------------------------------------------
     # R1 创建知识库
@@ -240,8 +281,9 @@ class RagService:
                 progress=0,
             )
 
+        api_key = await self._api_key_for(base_id, auth)
         upload = await self._dify.post(
-            _DIFY_UPLOAD_PATH, {"filename": file_name, "purpose": "document"}
+            _DIFY_UPLOAD_PATH, {"filename": file_name, "purpose": "document"}, api_key=api_key
         )
         native_file_id = str(upload.payload.get("id", ""))
         if not native_file_id:
@@ -259,6 +301,7 @@ class RagService:
                 },
                 "indexing_technique": "high_quality",
             },
+            api_key=api_key,
         )
         batch = created.payload.get("batch", "")
         logger.debug("document_upload_dispatched", base_id=base_id, has_batch=bool(batch))
@@ -318,18 +361,25 @@ class RagService:
     # ------------------------------------------------------------------
     # R4 索引进度查询
     # ------------------------------------------------------------------
-    async def get_index_status(self, *, base_id: str, doc_id: str) -> IndexStatusData:
+    async def get_index_status(
+        self,
+        *,
+        base_id: str,
+        doc_id: str,
+        auth: AuthContext | None = None,
+    ) -> IndexStatusData:
         """查询文档索引进度。
 
         Args:
             base_id: 知识库 ID。
             doc_id: 文档 ID。
+            auth: 鉴权上下文（用于 per-kb 凭据的租户解析）。
 
         Returns:
             IndexStatusData: 三态索引状态与进度百分比。
 
         Raises:
-            ApiError: 文档不存在（20004）。
+            ApiError: 文档不存在（20004）或库级凭据不可用（11007）。
         """
         if self._settings.mock_mode:
             return IndexStatusData(
@@ -340,9 +390,11 @@ class RagService:
                 error_message=None,
             )
 
+        api_key = await self._api_key_for(base_id, auth)
         native_doc_id = doc_id.removeprefix(_DOC_PREFIX)
         response = await self._dify.get(
-            f"{_DIFY_DATASETS_PATH}/{base_id.removeprefix(_BASE_PREFIX)}/documents/{native_doc_id}"
+            f"{_DIFY_DATASETS_PATH}/{base_id.removeprefix(_BASE_PREFIX)}/documents/{native_doc_id}",
+            api_key=api_key,
         )
         return self._transform_index_status(doc_id, response.payload)
 
@@ -380,7 +432,9 @@ class RagService:
     # ------------------------------------------------------------------
     # R5 重建索引
     # ------------------------------------------------------------------
-    async def reindex(self, *, base_id: str, doc_id: str) -> ReindexData:
+    async def reindex(
+        self, *, base_id: str, doc_id: str, auth: AuthContext | None = None
+    ) -> ReindexData:
         """触发文档重建索引。
 
         底座无原生重建 API，T02 由适配层编排「查原文档 → 重新触发索引」；
@@ -389,14 +443,15 @@ class RagService:
         Args:
             base_id: 知识库 ID。
             doc_id: 文档 ID。
+            auth: 鉴权上下文（用于 per-kb 凭据的租户解析）。
 
         Returns:
             ReindexData: 重建后的索引状态。
 
         Raises:
-            ApiError: 文档正在处理（11006）或文档不存在（20004）。
+            ApiError: 文档正在处理（11006）、文档不存在（20004）或凭据不可用（11007）。
         """
-        current = await self.get_index_status(base_id=base_id, doc_id=doc_id)
+        current = await self.get_index_status(base_id=base_id, doc_id=doc_id, auth=auth)
         if current.index_status == IndexStatus.PROCESSING:
             raise ApiError(
                 ErrorCode.DOCUMENT_STATE_CONFLICT,
@@ -412,43 +467,49 @@ class RagService:
     # ------------------------------------------------------------------
     # R6 删除文档
     # ------------------------------------------------------------------
-    async def delete_document(self, *, base_id: str, doc_id: str) -> str:
+    async def delete_document(
+        self, *, base_id: str, doc_id: str, auth: AuthContext | None = None
+    ) -> str:
         """删除文档。
 
         Args:
             base_id: 知识库 ID。
             doc_id: 文档 ID。
+            auth: 鉴权上下文（用于 per-kb 凭据的租户解析）。
 
         Returns:
             str: 被删除的文档 ID。
 
         Raises:
-            ApiError: 文档不存在（20004）。
+            ApiError: 文档不存在（20004）或库级凭据不可用（11007）。
         """
         logger.info("document_delete_requested", base_id=base_id, doc_id=doc_id)
         if not self._settings.mock_mode:
+            api_key = await self._api_key_for(base_id, auth)
             await self._dify.delete(
                 f"{_DIFY_DATASETS_PATH}/{base_id.removeprefix(_BASE_PREFIX)}"
-                f"/documents/{doc_id.removeprefix(_DOC_PREFIX)}"
+                f"/documents/{doc_id.removeprefix(_DOC_PREFIX)}",
+                api_key=api_key,
             )
         return doc_id
 
     # ------------------------------------------------------------------
     # R7 独立检索
     # ------------------------------------------------------------------
-    async def search(self, request: SearchRequest) -> SearchData:
+    async def search(self, request: SearchRequest, auth: AuthContext | None = None) -> SearchData:
         """执行知识库检索。
 
         召回参数经适配层默认策略校准后下发，底座参数不对外暴露（附录 A-3）。
 
         Args:
             request: 检索请求。
+            auth: 鉴权上下文（用于 per-kb 凭据的租户解析）。
 
         Returns:
             SearchData: 命中片段列表。
 
         Raises:
-            ApiError: 知识库不存在（11001）或检索失败（11005）。
+            ApiError: 知识库不存在（11001）、检索失败（11005）或凭据不可用（11007）。
         """
         logger.info(
             "knowledge_search_requested",
@@ -459,6 +520,7 @@ class RagService:
         if self._settings.mock_mode:
             return SearchData(segments=[])
 
+        api_key = await self._api_key_for(request.base_id, auth)
         defaults = self._routes.retrieval_defaults
         response = await self._dify.post(
             _DIFY_RETRIEVE_PATH.format(dataset_id=request.base_id.removeprefix(_BASE_PREFIX)),
@@ -472,6 +534,7 @@ class RagService:
                     "score_threshold": max(request.score_threshold, defaults.score_threshold),
                 },
             },
+            api_key=api_key,
         )
         return self._transform_search_result(response.payload)
 

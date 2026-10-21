@@ -106,19 +106,34 @@ def test_openapi_does_not_leak_base_layer_terms(client: TestClient) -> None:
 
 
 def test_exactly_30_business_endpoints(client: TestClient) -> None:
-    """业务端点数量必须恰为 30（契约基线）。
+    """核心业务端点数量必须恰为 30（契约基线）。
+
+    阶段二改造（D-09）：`/api/v1` 下同时存在「核心基线 30」与「新域基线 38」，
+    因此这里按基线文件把新域端点剔除后再断言 30——核心基线仍然冻结，
+    新域端点由 `docs/api/baseline-phase2-38.json` 逐批登记（见
+    `tests/integration/test_endpoint_baseline.py` 的集合精确相等断言）。
 
     注意：同一路径上的多个方法在 OpenAPI 中合并为一个 path 项，
     因此这里按「路径 + 方法」组合计数。
     """
+    import json
+    import pathlib
+
     schema = client.get("/openapi.json").json()
-    operations = [
+    operations = {
         (method.upper(), path)
         for path, methods in schema["paths"].items()
         if path.startswith("/api/v1")
         for method in methods
-    ]
-    assert len(operations) == 30
+    }
+    baseline_path = (
+        pathlib.Path(__file__).resolve().parents[4] / "docs" / "api" / "baseline-phase2-38.json"
+    )
+    phase2 = {
+        (str(item["method"]).upper(), str(item["path"]))
+        for item in json.loads(baseline_path.read_text(encoding="utf-8"))["endpoints"]
+    }
+    assert len(operations - phase2) == 30
 
 
 @pytest.mark.integration

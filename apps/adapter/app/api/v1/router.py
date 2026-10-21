@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
-from app.api.v1 import agent, identity, model, rag, tool
+from app.api.v1 import agent, identity, knowledge_ext, model, rag, tool
 from app.core.config import Settings, get_request_settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
@@ -191,6 +191,10 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     api_router = APIRouter()
     api_router.include_router(model.router, prefix=prefix, dependencies=business_dependencies)
     api_router.include_router(rag.router, prefix=prefix, dependencies=business_dependencies)
+    # 阶段二新域模块：与既有资源域共用前缀（架构文档 2.2 第 2 条），不新增版本
+    api_router.include_router(
+        knowledge_ext.router, prefix=prefix, dependencies=business_dependencies
+    )
     api_router.include_router(agent.router, prefix=prefix, dependencies=business_dependencies)
     api_router.include_router(tool.router, prefix=prefix, dependencies=business_dependencies)
     api_router.include_router(identity.router, prefix=prefix, dependencies=business_dependencies)

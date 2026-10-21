@@ -68,32 +68,8 @@ class FakeResult:
         return self._rows[0].get("value") if self._rows else None
 
 
-class FakeTransaction:
-    """模拟事务对象：结束（提交/回滚）时清空事务级会话变量。"""
-
-    def __init__(self, database: FakeRlsDatabase) -> None:
-        """初始化。
-
-        Args:
-            database: 所属模拟库。
-        """
-        self._database = database
-        self.committed = False
-        self.rolled_back = False
-
-    async def commit(self) -> None:
-        """提交事务。"""
-        self.committed = True
-        self._database.end_transaction()
-
-    async def rollback(self) -> None:
-        """回滚事务。"""
-        self.rolled_back = True
-        self._database.end_transaction()
-
-
 class FakeSession:
-    """模拟会话对象：只识别本用例关心的三类语句。"""
+    """模拟会话对象（autobegin 语义：首条语句隐式开启事务）。"""
 
     def __init__(self, database: FakeRlsDatabase) -> None:
         """初始化。
@@ -103,24 +79,32 @@ class FakeSession:
         """
         self._database = database
         self.closed = False
-
-    def begin(self) -> FakeTransaction:
-        """开启事务。"""
-        self._database.begin_transaction()
-        return FakeTransaction(self._database)
+        self.committed = False
+        self.rolled_back = False
 
     async def execute(self, statement: Any, parameters: dict[str, Any] | None = None) -> FakeResult:
-        """执行语句。
+        """执行语句（首条语句隐式开启事务）。
 
         Args:
-            statement: SQL 字符串。
+            statement: SQL 语句（字符串或 SQLAlchemy TextClause）。
             parameters: 命名参数。
 
         Returns:
             FakeResult: 模拟结果集。
         """
+        self._database.ensure_transaction()
         sql = str(statement)
         return self._database.execute_sql(sql, parameters or {})
+
+    async def commit(self) -> None:
+        """提交事务（事务级会话变量复位）。"""
+        self.committed = True
+        self._database.end_transaction()
+
+    async def rollback(self) -> None:
+        """回滚事务（事务级会话变量复位）。"""
+        self.rolled_back = True
+        self._database.end_transaction()
 
     async def close(self) -> None:
         """关闭会话。"""
@@ -138,16 +122,20 @@ class FakeRlsDatabase:
         ]
         self.session_level_tenant: str | None = None
         self.transaction_level_tenant: str | None = None
+        self.in_transaction = False
         self.executed: list[tuple[str, dict[str, Any]]] = []
         self.sessions: list[FakeSession] = []
 
     # ---------------- 生命周期 ----------------
-    def begin_transaction(self) -> None:
-        """事务开始：事务级变量为空（除非上一次被错误地写成会话级）。"""
-        self.transaction_level_tenant = None
+    def ensure_transaction(self) -> None:
+        """autobegin：首条语句开启事务（事务级变量为空）。"""
+        if not self.in_transaction:
+            self.in_transaction = True
+            self.transaction_level_tenant = None
 
     def end_transaction(self) -> None:
         """事务结束：事务级变量复位。"""
+        self.in_transaction = False
         self.transaction_level_tenant = None
 
     @property
@@ -324,6 +312,25 @@ async def test_exception_inside_scope_rolls_back() -> None:
 
     assert database.current_setting is None
     assert database.sessions[-1].closed
+
+
+async def test_entry_failure_rolls_back_and_closes_session() -> None:
+    """进入阶段失败（如连接中断）必须回滚并关闭会话，避免连接池泄漏。"""
+
+    class FailingDatabase(FakeRlsDatabase):
+        """首条语句即失败的模拟库。"""
+
+        def execute_sql(self, sql: str, parameters: dict[str, Any]) -> FakeResult:
+            raise RuntimeError("connection reset")
+
+    database = FailingDatabase()
+    with pytest.raises(RuntimeError):
+        async with tenant_scope(_TENANT_A, session_factory=database.factory):
+            pass
+
+    session = database.sessions[-1]
+    assert session.rolled_back is True
+    assert session.closed is True
 
 
 async def test_using_uow_before_enter_raises() -> None:

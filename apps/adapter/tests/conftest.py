@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jose import jwt
 
+from app.business.credential_service import reset_credential_resolver
 from app.clients.dify_client import reset_dify_client
 from app.clients.keycloak_client import reset_keycloak_client
 from app.core.config import Settings, get_settings, reset_settings_cache
@@ -30,6 +31,7 @@ from app.core.idempotency import (
 )
 from app.core.logging import reset_logging_for_test
 from app.core.ratelimit import RateLimiter, reset_rate_limiter
+from app.db.repositories.credential_repo import reset_credential_stores
 from app.main import create_app
 from app.registry.loader import reset_registry_cache
 from app.services.agent_service import reset_agent_service
@@ -123,6 +125,8 @@ def reset_all_singletons() -> Iterator[None]:
     reset_agent_service()
     reset_tool_service()
     reset_identity_service()
+    reset_credential_resolver()
+    reset_credential_stores()
     reset_logging_for_test()
     yield
     reset_settings_cache()
@@ -136,6 +140,8 @@ def reset_all_singletons() -> Iterator[None]:
     reset_agent_service()
     reset_tool_service()
     reset_identity_service()
+    reset_credential_resolver()
+    reset_credential_stores()
 
 
 @pytest.fixture
