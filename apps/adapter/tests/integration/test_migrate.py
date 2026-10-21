@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import os
 import pathlib
 from typing import Any
 
@@ -201,15 +200,12 @@ async def test_startup_migration_skipped_when_auto_migrate_off() -> None:
 
 
 # ===========================================================================
-# 真实 PostgreSQL 用例（未提供测试库时 skip，绝不允许 fail）
+# 真实 PostgreSQL 用例（`--run-pg` 启用；未启用或缺少 DSN 时 skip，绝不允许 fail）
 # ===========================================================================
-_PG_DSN = os.environ.get("OA_TEST_DATABASE_URL", "").strip()
-
-
-@pytest.mark.skipif(not _PG_DSN, reason="未提供 OA_TEST_DATABASE_URL，跳过真实 PostgreSQL 迁移用例")
-async def test_real_postgres_migration_is_idempotent() -> None:
+@pytest.mark.pg
+async def test_real_postgres_migration_is_idempotent(pg_dsn: str) -> None:
     """真实库：全量执行两遍 + `--check` 通过（与主理人实测口径一致）。"""
-    database: Any = _build_real_database(_PG_DSN)
+    database: Any = _build_real_database(pg_dsn)
     try:
         await apply_migrations(database)
         first_applied = await database.fetch_applied()
@@ -226,12 +222,17 @@ async def test_real_postgres_migration_is_idempotent() -> None:
 def _build_real_database(dsn: str) -> Any:
     """构造真实 PostgreSQL 迁移库（延迟导入，避免离线环境依赖 asyncpg）。
 
+    夹具 `pg_dsn` 传入的是 SQLAlchemy 形式（`postgresql+asyncpg://`），
+    而 asyncpg 只认原生 scheme，直接传会抛
+    `ClientConfigurationError: scheme is expected to be either
+    "postgresql" or "postgres"`。此处归一化，避免该门禁整体失效。
+
     Args:
-        dsn: `postgresql://` 连接串。
+        dsn: `postgresql://` 或 `postgresql+asyncpg://` 连接串。
 
     Returns:
         Any: 迁移数据库实现。
     """
     from app.db.migrate import AsyncpgMigrationDatabase
 
-    return AsyncpgMigrationDatabase(dsn)
+    return AsyncpgMigrationDatabase(dsn.replace("postgresql+asyncpg://", "postgresql://", 1))
