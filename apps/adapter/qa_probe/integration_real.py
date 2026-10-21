@@ -22,6 +22,8 @@ import sys
 import time
 import uuid
 
+import json
+
 import httpx
 
 ADAPTER = os.environ.get("OA_ADAPTER_URL", "http://127.0.0.1:8000")
@@ -77,8 +79,68 @@ async def main() -> int:
         r = await client.get("/api/v1/model/catalog", headers=headers)
         _record("M3 模型目录", r.status_code == 200, r.text[:120])
 
-        # 3. A1 创建任务（真实 Dify 工作流执行）
         conv_id = f"conv_{uuid.uuid4().hex[:26]}"
+
+        # 2.5 M1 非流式生成（真实 DeepSeek 模型，经 Dify chat 应用）
+        r = await client.post(
+            "/api/v1/model/generate",
+            headers={**headers, "Idempotency-Key": f"idem_{uuid.uuid4().hex[:24]}"},
+            json={
+                "conversation_id": conv_id,
+                "messages": [{"role": "user", "content": "你好，请用一句话介绍你自己"}],
+                "profile": "general",
+                "context": {"history_window": 10, "memory_hints": []},
+                "knowledge_base_ids": [],
+            },
+        )
+        body = r.json()
+        content = str((body.get("data") or {}).get("content", ""))
+        usage = (body.get("data") or {}).get("usage") or {}
+        _record(
+            "M1 非流式生成（DeepSeek 真实模型）",
+            r.status_code == 200 and body.get("code") == 0 and bool(content),
+            f"content={content[:40]!r} total_units={usage.get('total_units')}",
+        )
+
+        # 2.6 M2 流式生成（SSE 首帧 + 增量帧 + done 帧）
+        async with client.stream(
+            "POST",
+            "/api/v1/model/generate/stream",
+            headers=headers,
+            json={
+                "conversation_id": conv_id,
+                "messages": [{"role": "user", "content": "用一个词回答：天空是什么颜色"}],
+                "profile": "general",
+                "context": {"history_window": 10, "memory_hints": []},
+                "knowledge_base_ids": [],
+            },
+        ) as resp:
+            # SSE 规范：event: <类型> 与 data: <JSON> 成对出现，
+            # 事件类型在 event 行（早期版本误从 data JSON 里取，恒为空）
+            kinds: list[str] = []
+            deltas: list[str] = []
+            current_event = ""
+            async for line in resp.aiter_lines():
+                if line.startswith("event: "):
+                    current_event = line[len("event: "):].strip()
+                    kinds.append(current_event)
+                elif line.startswith("data: ") and current_event == "delta":
+                    try:
+                        deltas.append(str(json.loads(line[len("data: "):]).get("text", "")))
+                    except Exception:
+                        pass
+        answer_text = "".join(deltas)
+        _record(
+            "M2 流式生成（SSE）",
+            resp.status_code == 200
+            and "start" in kinds
+            and "delta" in kinds
+            and "done" in kinds
+            and bool(answer_text),
+            f"events={kinds[:6]} answer={answer_text[:30]!r}",
+        )
+
+        # 3. A1 创建任务（真实 Dify 工作流执行）
         idem_key = f"idem_{uuid.uuid4().hex[:24]}"
         r = await client.post(
             "/api/v1/agent/tasks",

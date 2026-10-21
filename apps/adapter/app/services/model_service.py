@@ -161,7 +161,12 @@ class ModelService:
         response = await self._dify.post(
             _DIFY_CHAT_PATH, self._build_downstream_payload(request, user_id)
         )
-        return self._transform_generate_response(response.payload)
+        # 非流式同样剥离推理标记（INT-06）
+        payload = response.payload
+        if isinstance(payload.get("answer"), str):
+            flt = _ReasoningFilter()
+            payload = {**payload, "answer": flt.feed(payload["answer"]) + flt.flush()}
+        return self._transform_generate_response(payload)
 
     def _build_downstream_payload(
         self, request: GenerateRequest, user_id: str = ""
@@ -183,15 +188,29 @@ class ModelService:
                 last_user_message = message.content
                 break
 
-        [
-            {"role": message.role.value, "content": message.content}
-            for message in request.messages[:-1]
-        ]
+        # 多轮历史转写为中立对话转录（Dify chat 接口仅接受单条 query；
+        # 适配层无状态不拼装语义提示词，只做机械格式转换 —— D-03 会话由上层自持，
+        # T02 实联调修复 INT-04a）
+        history_lines: list[str] = []
+        for message in request.messages[:-1]:
+            role_label = "用户" if message.role.value == "user" else "助手"
+            history_lines.append(f"{role_label}: {message.content}")
+        query = last_user_message
+        if history_lines:
+            query = (
+                "以下是此前的对话记录：\n"
+                + "\n".join(history_lines)
+                + "\n\n请基于以上对话回答最后这个问题："
+                + last_user_message
+            )
+
         return {
             "inputs": {},
-            "query": last_user_message,
+            "query": query,
             "response_mode": "blocking",
-            "conversation_id": request.conversation_id,
+            # 内部会话 ID 严禁透传：Dify 要求 null 或其签发的 UUID，
+            # 透传 conv_xxx 会直接 400（T02 实联调修复 INT-04a）
+            "conversation_id": None,
             # 底座 user 为必填终端用户标识（Dify >= 0.6 强制，T02 实联调修复）
             "user": user_id,
             "files": [],
@@ -364,7 +383,21 @@ class ModelService:
             streaming_payload = self._build_downstream_payload(request, user_id) | {
                 "response_mode": "streaming"
             }
+            reasoning_filter = _ReasoningFilter()
             async for event in self._dify.post_stream(_DIFY_CHAT_PATH, streaming_payload):
+                native = str(event.get("event", ""))
+                if native in {"message", "agent_message"}:
+                    # 推理模型（DeepSeek V4 等）会把思考过程混在 answer 中下发，
+                    # 由状态机剥离后再发 delta（INT-06，技术黑盒化红线）
+                    visible = reasoning_filter.feed(str(event.get("answer", "")))
+                    if not visible:
+                        continue
+                    event = {**event, "answer": visible}
+                elif native == "message_end":
+                    # 流结束前冲洗过滤器缓冲（短回答可能整体滞留在缓冲中）
+                    rest = reasoning_filter.flush()
+                    if rest:
+                        yield sse_frame("delta", StreamDeltaData(text=rest).model_dump())
                 mapped_frame = self._transform_stream_event(event)
                 if mapped_frame is not None:
                     yield mapped_frame
@@ -528,3 +561,60 @@ def reset_model_service() -> None:
     """重置模型服务单例，供测试隔离用例。"""
     global _service
     _service = None
+
+
+class _ReasoningFilter:
+    """剥离推理模型思考过程的流式状态机（INT-06）。
+
+    DeepSeek V4 等推理模型经 Dify 下发时，answer 中混有：
+      - `<think> ... </think>`（或未闭合的 `<think>` 前缀）
+      - `<!--dify-deepseek-reasoning-->` 分隔标记
+    产品红线（总方案 1.2 技术黑盒化）要求用户不可见任何模型内部形态，
+    本过滤器跨 delta 维护状态：思考段丢弃，思考结束后的正文原样输出。
+    """
+
+    _OPEN = "<think>"
+    _CLOSE = "</think>"
+    _MARKER = "<!--dify-deepseek-reasoning-->"
+
+    def __init__(self) -> None:
+        """初始化过滤器状态。"""
+        self._in_think = False
+        self._buf = ""
+
+    def feed(self, chunk: str) -> str:
+        """喂入 delta 文本，返回应展示给用户的可见文本。"""
+        self._buf += chunk
+        out: list[str] = []
+        while self._buf:
+            if self._in_think:
+                idx = self._buf.find(self._CLOSE)
+                if idx >= 0:
+                    self._buf = self._buf[idx + len(self._CLOSE) :]
+                    self._in_think = False
+                    continue
+                # 未闭合：保留可能是半个结束标记的尾部，其余丢弃
+                self._buf = self._buf[-len(self._CLOSE) :]
+                break
+            self._buf = self._buf.replace(self._MARKER, "")
+            idx = self._buf.find(self._OPEN)
+            if idx >= 0:
+                out.append(self._buf[:idx])
+                self._buf = self._buf[idx + len(self._OPEN) :]
+                self._in_think = True
+                continue
+            # 无思考标记：但尾部可能是半个 "<think>"，暂存
+            keep = len(self._OPEN) - 1
+            if len(self._buf) > keep:
+                out.append(self._buf[:-keep])
+                self._buf = self._buf[-keep:]
+            break
+        return "".join(out)
+
+    def flush(self) -> str:
+        """流结束：若不存在未闭合思考段，输出剩余缓冲。"""
+        if self._in_think:
+            self._buf = ""
+            return ""
+        rest, self._buf = self._buf, ""
+        return rest.replace(self._MARKER, "")

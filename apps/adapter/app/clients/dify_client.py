@@ -375,7 +375,13 @@ class DifyClient:
             parsed = {"text": raw}
         if not isinstance(parsed, dict):
             parsed = {"data": parsed}
-        parsed["event"] = event_name
+        # 事件名来源优先级：JSON 自身 event 字段 > SSE event: 行。
+        # Dify 的 chat-messages 流只在 data JSON 内携带 event 字段（无 event: 行），
+        # 早期实现无条件用（可能为空的）event_name 覆盖，导致所有事件被置空、
+        # 转换器全部丢弃（INT-05，2026-10-21 升级验证时定位）。
+        if event_name:
+            parsed.setdefault("event", event_name)
+        parsed.setdefault("event", "")
         return parsed
 
     async def _json(self, response: httpx.Response) -> dict[str, Any]:

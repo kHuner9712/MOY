@@ -232,13 +232,36 @@ async def test_generate_stream_emits_error_frame_for_bad_profile() -> None:
 
 
 def test_build_downstream_payload_uses_native_contract() -> None:
-    """构造底座原生请求体（仅服务层允许出现原生字段名）。"""
+    """构造底座原生请求体（仅服务层允许出现原生字段名）。
+
+    T02 实联调修复 INT-04a 后的契约：
+    - conversation_id 必须为 None —— Dify 只接受 null 或其签发的 UUID，
+      透传内部 conv_xxx 会 400；
+    - 多轮历史转写为中立对话转录并入 query（Dify chat 仅接受单条 query）；
+    - user 为必填终端用户标识。
+    """
     request = _request()
+    # 真实多轮序列：用户 → 助手 → 用户（最后一条永远是要回答的新问题）
     request.messages.append(ChatMessage(role=MessageRole.ASSISTANT, content="上一轮回答"))
-    payload = _service()._build_downstream_payload(request)  # noqa: SLF001
+    request.messages.append(ChatMessage(role=MessageRole.USER, content="再补充一点"))
+    payload = _service()._build_downstream_payload(request, "usr_1")  # noqa: SLF001
     assert payload["response_mode"] == "blocking"
-    assert payload["query"] == "帮我整理这段内容"
+    assert payload["conversation_id"] is None
+    assert payload["user"] == "usr_1"
     assert payload["inputs"] == {}
+    # 最后一条用户消息必须完整保留在 query 中
+    assert "再补充一点" in payload["query"]
+    # 多轮历史以中立转录形式并入（适配层不做语义提示词拼装）
+    assert "上一轮回答" in payload["query"]
+    assert "帮我整理这段内容" in payload["query"]
+
+
+def test_build_downstream_payload_single_turn_no_transcript() -> None:
+    """单轮对话不附加历史转录段（INT-04a）。"""
+    request = _request()
+    payload = _service()._build_downstream_payload(request, "usr_1")  # noqa: SLF001
+    assert payload["query"] == "帮我整理这段内容"
+    assert payload["conversation_id"] is None
 
 
 def test_get_usage_rejects_unknown_period() -> None:
@@ -297,3 +320,30 @@ def test_service_uses_configured_client() -> None:
     client = DifyClient("http://example.invalid", "app-test")
     service = ModelService(settings=Settings(), dify=client)
     assert service._dify is client  # noqa: SLF001 - 验证依赖注入
+
+
+def test_reasoning_filter_strips_think_blocks() -> None:
+    """INT-06 回归：推理模型思考内容不得透传给用户（技术黑盒化红线）。"""
+    from app.services.model_service import _ReasoningFilter
+
+    flt = _ReasoningFilter()
+    out = []
+    # 模拟跨 delta 的思考 + 正文流
+    for chunk in ["<thi", "nk>思考中", "...</think>", "正文第一段", "<!--dify-deepseek-reasoning-->", "，继续"]:
+        out.append(flt.feed(chunk))
+    out.append(flt.flush())
+    visible = "".join(out)
+    assert "思考中" not in visible
+    assert "<think>" not in visible
+    assert "dify-deepseek-reasoning" not in visible
+    assert "正文第一段" in visible
+    assert "继续" in visible
+
+
+def test_reasoning_filter_passthrough_normal_text() -> None:
+    """无思考标记的普通文本原样输出（不误伤）。"""
+    from app.services.model_service import _ReasoningFilter
+
+    flt = _ReasoningFilter()
+    visible = flt.feed("你好，我是麦子。") + flt.flush()
+    assert visible == "你好，我是麦子。"

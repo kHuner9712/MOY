@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     downstream_enabled: bool = False
     dify_base_url: str = "http://dify-api:5001"
     dify_default_app_key: str = ""
+    # Agent 任务专用工作流应用密钥（缺省回退 dify_default_app_key）；
+    # 会话（chat）与任务（workflow）在底座侧是两类应用，密钥必须可分离
+    dify_agent_app_key: str = ""
     dify_connect_timeout_seconds: float = Field(default=3.0, gt=0)
     dify_read_timeout_seconds: float = Field(default=60.0, gt=0)
     dify_stream_first_byte_timeout_seconds: float = Field(default=15.0, gt=0)

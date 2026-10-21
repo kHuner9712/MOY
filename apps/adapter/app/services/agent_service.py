@@ -112,7 +112,17 @@ class AgentService:
             dify: 可选底座客户端。
         """
         self._settings = settings or get_settings()
-        self._dify = dify or get_dify_client()
+        if dify is not None:
+            self._dify = dify
+        elif self._settings.dify_agent_app_key:
+            # Agent 任务走独立工作流应用（密钥与对话应用分离，T02 实联调修复 INT-04b）
+            self._dify = DifyClient(
+                base_url=self._settings.dify_base_url,
+                api_key=self._settings.dify_agent_app_key,
+                settings=self._settings,
+            )
+        else:
+            self._dify = get_dify_client()
         self._tasks: dict[str, TaskDetailData] = {}
         self._steps: dict[str, StepsData] = {}
 
@@ -178,9 +188,7 @@ class AgentService:
                 task_id = f"{_TASK_PREFIX}{native_run_id}"
                 # blocking 模式下底座已同步返回终态（data.status），
                 # 直接映射为自研任务状态，而非停留 running（T02 实联调修复）
-                native_status = str(
-                    (response.payload.get("data") or {}).get("status", "")
-                ).lower()
+                native_status = str((response.payload.get("data") or {}).get("status", "")).lower()
                 self._tasks[task_id] = TaskDetailData(
                     task_id=task_id,
                     status=_STATUS_MAP.get(native_status, TaskStatus.RUNNING),

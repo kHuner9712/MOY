@@ -348,3 +348,22 @@ class TestKeycloakClient:
         assert exc_info.value.code == ErrorCode.DOWNSTREAM_UNAVAILABLE
         assert "policy engine" not in exc_info.value.to_response().message
         await raw.aclose()
+
+
+def test_build_event_preserves_json_event_field() -> None:
+    """INT-05 回归：data JSON 自带的 event 字段不得被空的 SSE event 行覆盖。
+
+    Dify chat-messages 流只在 `data: {"event": "message", ...}` 内携带事件名，
+    不带 `event:` 行；早期实现无条件用 event_name 覆盖，导致事件名恒为空、
+    流式增量被转换器全部丢弃（M2 表面返回 start 帧、实际无任何增量）。
+    """
+    client = DifyClient(base_url="http://dify.svc", api_key="app-test")
+    # 无 event: 行（event_name 为空）→ 保留 JSON 内 event
+    built = client._build_event("", ['{"event": "message", "answer": "你好"}'])  # noqa: SLF001
+    assert built["event"] == "message"
+    # 有 event: 行且 JSON 无 event → 采用 SSE 行名
+    built = client._build_event("delta", ['{"answer": "x"}'])  # noqa: SLF001
+    assert built["event"] == "delta"
+    # JSON 已有 event 时优先 JSON（SSE 行名不覆盖）
+    built = client._build_event("custom", ['{"event": "message", "answer": "y"}'])  # noqa: SLF001
+    assert built["event"] == "message"
