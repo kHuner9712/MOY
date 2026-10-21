@@ -101,7 +101,7 @@ export default function TeamPage(): JSX.Element {
               id="org-id"
               value={orgId}
               onChange={(event) => setOrgId(event.target.value)}
-              placeholder="例如：org_01HF8YQZ3K7M9X2P4R6T8V0W"
+              placeholder="例如：org_01K4Q8Z2X7M9B3N5P6R8T0V2W4"
             />
           </Field>
           <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>

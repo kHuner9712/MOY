@@ -13,6 +13,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from fastapi import Request
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -139,6 +140,9 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """获取全局配置单例（带缓存）。
 
+    仅作为**兜底**使用：请求链路上的配置一律从 `app.state.settings` 读取
+    （见 `get_request_settings`），避免注入式构造应用时配置失效。
+
     Returns:
         Settings: 进程内唯一的配置实例。
     """
@@ -148,3 +152,25 @@ def get_settings() -> Settings:
 def reset_settings_cache() -> None:
     """清空配置缓存，供测试与热加载使用。"""
     get_settings.cache_clear()
+
+
+def get_request_settings(request: Request) -> Settings:
+    """获取当前请求生效的配置。
+
+    优先级：`app.state.settings`（`create_app(settings=...)` 注入）> 全局单例。
+
+    **根因修复（QA BUG-01 / BUG-02）**：此前鉴权与租户链路直接读取全局
+    `get_settings()` 单例，导致 `create_app(settings=...)` 注入的配置被忽略——
+    `auth_mode=oidc` 会被降级为 stub（伪造令牌可登录），
+    `deploy_mode=private` 的单租户隔离也会失效。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        Settings: 当前请求生效的配置。
+    """
+    app_settings = getattr(request.app.state, "settings", None)
+    if isinstance(app_settings, Settings):
+        return app_settings
+    return get_settings()

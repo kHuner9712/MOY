@@ -9,12 +9,12 @@ T01 阶段说明：连接器为桩实现，不发起任何真实第三方调用�
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
+from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
 from app.registry.loader import ToolRegistry, ToolSpecModel, get_tool_registry
@@ -60,27 +60,27 @@ def new_connection_id() -> str:
     """生成连接 ID。
 
     Returns:
-        str: 形如 `conn_01HF8...` 的 ID。
+        str: 形如 `conn_01K4Q8Z2X7M9B3N5P6R8T0V2W4` 的 ULID（架构文档 9.1）。
     """
-    return f"{_CONN_PREFIX}{uuid.uuid4().hex[:24].upper()}"
+    return new_resource_id(_CONN_PREFIX)
 
 
 def new_execution_id() -> str:
     """生成执行记录 ID。
 
     Returns:
-        str: 形如 `exec_01HF8...` 的 ID。
+        str: 形如 `exec_01K4Q8Z2X7M9B3N5P6R8T0V2W4` 的 ULID（架构文档 9.1）。
     """
-    return f"{_EXEC_PREFIX}{uuid.uuid4().hex[:24].upper()}"
+    return new_resource_id(_EXEC_PREFIX)
 
 
 def new_job_id() -> str:
     """生成同步任务 ID。
 
     Returns:
-        str: 形如 `job_01HF8...` 的 ID。
+        str: 形如 `job_01K4Q8Z2X7M9B3N5P6R8T0V2W4` 的 ULID（架构文档 9.1）。
     """
-    return f"{_JOB_PREFIX}{uuid.uuid4().hex[:24].upper()}"
+    return new_resource_id(_JOB_PREFIX)
 
 
 def _now_iso() -> str:

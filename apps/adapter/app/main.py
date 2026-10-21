@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import include_all_routers
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
+from app.core.ratelimit import RateLimiter
 from app.middleware.error_handler import register_exception_handlers
 from app.middleware.trace import AccessLogMiddleware, TraceMiddleware
 
@@ -101,6 +102,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json",
         lifespan=lifespan,
     )
+
+    # 配置与限流器挂到 app.state：请求链路一律从这里读取，
+    # 避免回落到全局单例导致注入式配置失效（QA BUG-01 / BUG-02 / BUG-03）。
+    app.state.settings = conf
+    app.state.rate_limiter = RateLimiter(settings=conf)
 
     # 中间件：trace_id 注入在最外层，保证全链路（含错误响应）均带 trace_id
     app.add_middleware(TraceMiddleware)

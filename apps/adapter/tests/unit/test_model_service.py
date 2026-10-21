@@ -31,7 +31,7 @@ def _request(profile: ModelProfile = ModelProfile.GENERAL) -> GenerateRequest:
         GenerateRequest: 生成请求。
     """
     return GenerateRequest(
-        conversation_id="conv_01HF8YQZ3K7M9X2P4R6T8V0W",
+        conversation_id="conv_01K4Q8Z2X7M9B3N5P6R8T0V2W4",
         profile=profile,
         messages=[ChatMessage(role=MessageRole.USER, content="帮我整理这段内容")],
     )

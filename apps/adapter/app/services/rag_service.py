@@ -13,13 +13,13 @@ T01 阶段说明：`Settings.downstream_enabled=false` 时返回业务化 mock �
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 from typing import Any, Final
 
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
+from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
 from app.registry.loader import ProfileRouteTable, get_profile_routes
@@ -67,18 +67,18 @@ def new_base_id() -> str:
     """生成知识库 ID。
 
     Returns:
-        str: 形如 `kb_01HF8...` 的 ID。
+        str: 形如 `kb_01K4Q8Z2X7M9B3N5P6R8T0V2W4` 的 ULID（架构文档 9.1）。
     """
-    return f"{_BASE_PREFIX}{uuid.uuid4().hex[:24].upper()}"
+    return new_resource_id(_BASE_PREFIX)
 
 
 def new_document_id() -> str:
     """生成文档 ID。
 
     Returns:
-        str: 形如 `doc_01HF8...` 的 ID。
+        str: 形如 `doc_01K4Q8Z2X7M9B3N5P6R8T0V2W4` 的 ULID（架构文档 9.1）。
     """
-    return f"{_DOC_PREFIX}{uuid.uuid4().hex[:24].upper()}"
+    return new_resource_id(_DOC_PREFIX)
 
 
 def _now_iso() -> str:
@@ -272,18 +272,22 @@ class RagService:
     def _validate_document(self, file_name: str, file_size: int) -> None:
         """校验文档格式与大小。
 
+        错误码语义（架构文档 3.0.3）：
+        - `20008`（413，请求体超限）：文件字节数超过传输层上限；
+        - `11003`（400，文档内容过多）：解析后的字符数超过处理上限。
+
         Args:
             file_name: 文件名。
             file_size: 文件字节数。
 
         Raises:
-            ApiError: 格式不支持（11002）、超出大小限制（11003 / 20008）。
+            ApiError: 格式不支持（11002）、请求体超限（20008）。
         """
         if file_size <= 0:
             raise ApiError(ErrorCode.DOCUMENT_FORMAT_UNSUPPORTED, internal_detail="empty file")
         if file_size > self._settings.max_upload_bytes:
             raise ApiError(
-                ErrorCode.DOCUMENT_TOO_LARGE,
+                ErrorCode.PAYLOAD_TOO_LARGE,
                 internal_detail=f"file_size={file_size} limit={self._settings.max_upload_bytes}",
             )
         extension = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
@@ -292,6 +296,23 @@ class RagService:
             raise ApiError(
                 ErrorCode.DOCUMENT_FORMAT_UNSUPPORTED,
                 internal_detail=f"extension not allowed: {extension}",
+            )
+
+    def _validate_document_chars(self, char_count: int) -> None:
+        """校验文档解析后的字符数上限。
+
+        Args:
+            char_count: 解析后的字符数。
+
+        Raises:
+            ApiError: 文档内容过多（11003）。
+        """
+        if char_count > self._settings.max_document_chars:
+            raise ApiError(
+                ErrorCode.DOCUMENT_TOO_LARGE,
+                internal_detail=(
+                    f"char_count={char_count} limit={self._settings.max_document_chars}"
+                ),
             )
 
     # ------------------------------------------------------------------

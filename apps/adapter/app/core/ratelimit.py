@@ -14,6 +14,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
+from fastapi import Request
+
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
@@ -206,6 +208,24 @@ def get_rate_limiter() -> RateLimiter:
     if _limiter is None:
         _limiter = RateLimiter()
     return _limiter
+
+
+def get_request_rate_limiter(request: Request) -> RateLimiter:
+    """获取当前请求生效的限流器。
+
+    优先使用 `app.state.rate_limiter`（`create_app(settings=...)` 注入时按注入配置构造），
+    缺省回落到全局单例。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        RateLimiter: 限流器实例。
+    """
+    app_limiter = getattr(request.app.state, "rate_limiter", None)
+    if isinstance(app_limiter, RateLimiter):
+        return app_limiter
+    return get_rate_limiter()
 
 
 def reset_rate_limiter() -> None:

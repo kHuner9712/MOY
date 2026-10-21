@@ -15,7 +15,6 @@ T01 阶段说明：返回业务化 mock 结果，不产生任何真实底座请�
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Final
@@ -23,6 +22,7 @@ from typing import Any, Final
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
+from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
 from app.schemas.agent import (
@@ -73,9 +73,9 @@ def new_task_id() -> str:
     """生成任务 ID。
 
     Returns:
-        str: 形如 `task_01HF8...` 的 ID。
+        str: 形如 `task_01K4Q8Z2X7M9B3N5P6R8T0V2W4` 的 ULID（架构文档 9.1）。
     """
-    return f"{_TASK_PREFIX}{uuid.uuid4().hex[:24].upper()}"
+    return new_resource_id(_TASK_PREFIX)
 
 
 def _now_iso() -> str:

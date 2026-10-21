@@ -15,13 +15,13 @@ T01 阶段说明：`Settings.downstream_enabled=false` 时返回业务化 mock �
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncIterator
 from typing import Any, Final
 
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
+from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
 from app.registry.loader import ProfileRoute, ProfileRouteTable, get_profile_routes
@@ -56,9 +56,9 @@ def new_generation_id() -> str:
     """生成生成记录 ID。
 
     Returns:
-        str: 形如 `gen_01HF8...` 的 ID。
+        str: 形如 `gen_01K4Q8Z2X7M9B3N5P6R8T0V2W4` 的 ULID（架构文档 9.1）。
     """
-    return f"{_GENERATION_PREFIX}{uuid.uuid4().hex[:24].upper()}"
+    return new_resource_id(_GENERATION_PREFIX)
 
 
 class ModelService:

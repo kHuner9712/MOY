@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.integration
 
 _GENERATE_BODY = {
-    "conversation_id": "conv_01HF8YQZ3K7M9X2P4R6T8V0W",
+    "conversation_id": "conv_01K4Q8Z2X7M9B3N5P6R8T0V2W4",
     "profile": "general",
     "messages": [{"role": "user", "content": "帮我把这段话改写得更专业"}],
 }

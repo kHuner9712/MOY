@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, Path, Query, Request, UploadFile
 
-from app.core.config import get_settings
-from app.core.errors import ErrorCode, error_response
+from app.core.config import get_request_settings
+from app.core.errors import ApiError, ErrorCode, error_response
 from app.core.idempotency import IdempotencyManager, get_idempotency_manager
 from app.core.security import RequestContext, get_request_context, run_idempotent
 from app.schemas.common import ApiResponse, DeletedData, PageResult
@@ -140,10 +140,16 @@ async def upload_document(
     Raises:
         ApiError: 文件超限（20008）、格式不支持（11002）、内容过大（11003）。
     """
-    settings = get_settings()
+    settings = get_request_settings(request)
     file_name = file.filename or "unnamed"
+    # 多读 1 字节用于判断是否超过传输层上限（20008）
     payload = await file.read(settings.max_upload_bytes + 1)
     file_size = len(payload)
+    if file_size > settings.max_upload_bytes:
+        raise ApiError(
+            ErrorCode.PAYLOAD_TOO_LARGE,
+            internal_detail=(f"file_size={file_size} limit={settings.max_upload_bytes}"),
+        )
 
     service = get_rag_service()
 

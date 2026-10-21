@@ -11,14 +11,15 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Annotated, Any, Final
 
 from fastapi import Depends, Header, Request
 
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, get_request_settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import TENANT_ID_KEY, USER_ID_KEY, bind_context, get_logger
+from app.core.ratelimit import get_request_rate_limiter
 
 logger = get_logger(__name__)
 
@@ -297,6 +298,10 @@ async def get_auth_context(request: Request) -> AuthContext:
 
     除 `/healthz`、`/readyz` 外的所有端点都必须声明本依赖。
 
+    配置来源：`app.state.settings`（`create_app(settings=...)` 注入），
+    而非全局单例——否则注入 `auth_mode=oidc` 会被降级为 stub，
+    伪造令牌即可登录（QA BUG-01）。
+
     Args:
         request: FastAPI 请求对象。
 
@@ -306,7 +311,8 @@ async def get_auth_context(request: Request) -> AuthContext:
     Raises:
         ApiError: 令牌缺失或校验失败（20002）。
     """
-    auth = AuthContext.resolve(extract_bearer_token(request))
+    settings = get_request_settings(request)
+    auth = AuthContext.resolve(extract_bearer_token(request), settings)
     request.state.user_id = auth.user_id
     request.state.tenant_id = auth.tenant_id
     bind_context(**{TENANT_ID_KEY: auth.tenant_id, USER_ID_KEY: auth.user_id})
@@ -319,6 +325,13 @@ async def get_request_context(
 ) -> RequestContext:
     """FastAPI 依赖：构造请求上下文（鉴权 + 租户解析）。
 
+    租户解析同样使用 `app.state.settings`：私有化模式的单租户隔离
+    依赖 `deploy_mode=private` 判定，读取全局单例会导致隔离失效（QA BUG-02）。
+
+    **解析后的租户是唯一权威值**：`AuthContext.tenant_id` 原始值来自令牌声明，
+    私有化模式下必须被强制为 `default`；此处以 `dataclasses.replace` 回写，
+    避免下游服务（identity_service 等）继续使用未收敛的原始租户。
+
     Args:
         request: FastAPI 请求对象。
         auth: 鉴权上下文。
@@ -329,7 +342,11 @@ async def get_request_context(
     Raises:
         ApiError: SaaS 模式缺少租户标识（20001）。
     """
-    tenant_id = resolve_tenant_id(request, auth)
+    settings = get_request_settings(request)
+    tenant_id = resolve_tenant_id(request, auth, settings)
+    if tenant_id != auth.tenant_id:
+        # 收敛为最终生效的租户，杜绝下游绕过隔离
+        auth = replace(auth, tenant_id=tenant_id)
     request.state.tenant_id = tenant_id
     return RequestContext(
         auth=auth,
@@ -343,6 +360,34 @@ IdempotencyKey = Annotated[
     str | None,
     Header(alias=IDEMPOTENCY_HEADER, description="写操作幂等键（UUID v4，24h 内有效）"),
 ]
+
+
+async def enforce_ratelimit(
+    request: Request,
+    context: Annotated[RequestContext, Depends(get_request_context)],
+) -> RequestContext:
+    """限流依赖（架构文档 3.0.3 错误码 20006）。
+
+    作为**路由级依赖**挂在五大业务路由上，位置在鉴权之后：
+    租户与用户标识此时已确定，可按「租户 + 用户 + 路径」维度限流。
+
+    限流器取自 `app.state.rate_limiter`（由 `create_app` 按注入配置构造），
+    缺省回落到全局单例。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+
+    Returns:
+        RequestContext: 原样返回请求上下文。
+
+    Raises:
+        ApiError: 触发限流（20006）。
+    """
+    limiter = get_request_rate_limiter(request)
+    if limiter.enabled:
+        await limiter.check(context.tenant_id, context.user_id, request.url.path)
+    return context
 
 
 async def require_idempotency_key(key: IdempotencyKey) -> str:
@@ -375,6 +420,9 @@ async def run_idempotent(
 ) -> tuple[Any, bool]:
     """执行带幂等保护的写操作。
 
+    幂等指纹包含**请求体摘要**（QA BUG-05）：同一幂等键配同一路径但不同请求体时，
+    会被识别为键复用冲突（20005）而非静默回放首次结果。
+
     Args:
         request: FastAPI 请求对象（用于读取幂等键与构造指纹）。
         context: 请求上下文。
@@ -391,7 +439,37 @@ async def run_idempotent(
 
     effective = manager or get_idempotency_manager()
     key = request.headers.get(IDEMPOTENCY_HEADER, "")
+    body_hash = await _read_body_hash(request)
     fingerprint = build_fingerprint(
-        request.method, request.url.path, context.tenant_id, context.user_id
+        request.method,
+        request.url.path,
+        context.tenant_id,
+        context.user_id,
+        body_hash,
     )
     return await effective.execute(key, fingerprint, factory)
+
+
+async def _read_body_hash(request: Request) -> str:
+    """读取请求体并计算摘要（用于幂等指纹）。
+
+    请求体在 FastAPI 解析后已被缓存于 `request._body`，此处安全读取。
+    文件上传（multipart）场景不参与摘要计算（内容已由业务层校验），
+    此时返回空串，指纹退化为「方法 + 路径 + 租户 + 用户」。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        str: 摘要十六进制串；无法获取请求体时为空串。
+    """
+    from app.core.idempotency import hash_request_body
+
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/form-data"):
+        return ""
+    try:
+        body = await request.body()
+    except Exception:
+        return ""
+    return hash_request_body(body)

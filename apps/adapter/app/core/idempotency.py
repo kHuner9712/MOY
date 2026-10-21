@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
@@ -468,18 +469,46 @@ def reset_idempotency_manager() -> None:
     _manager = None
 
 
-def build_fingerprint(method: str, path: str, tenant_id: str, user_id: str) -> str:
+def build_fingerprint(
+    method: str,
+    path: str,
+    tenant_id: str,
+    user_id: str,
+    body_hash: str = "",
+) -> str:
     """构造请求指纹。
 
     同一幂等键若被用于不同请求（指纹不一致），视为键复用冲突（20005）。
+
+    指纹必须包含**请求体摘要**（QA BUG-05）：否则同一幂等键配同一路径但不同请求体时
+    （例如先建「知识库 A」再建「知识库 B」）会被误判为重复请求，
+    静默回放首次结果，造成数据丢失。
 
     Args:
         method: HTTP 方法。
         path: 请求路径。
         tenant_id: 租户 ID。
         user_id: 用户 ID。
+        body_hash: 请求体摘要（建议 sha256 十六进制，缺省为空串）。
 
     Returns:
         str: 指纹字符串。
     """
-    return f"{method.upper()}:{path}:{tenant_id}:{user_id}"
+    return f"{method.upper()}:{path}:{tenant_id}:{user_id}:{body_hash}"
+
+
+def hash_request_body(body: bytes | str | None) -> str:
+    """计算请求体摘要（用于幂等指纹）。
+
+    采用 sha256 十六进制摘要，**不**记录原文——避免敏感内容进入日志或内存驻留。
+
+    Args:
+        body: 请求体字节或字符串。
+
+    Returns:
+        str: 摘要十六进制串；请求体为空时返回空串。
+    """
+    if not body:
+        return ""
+    raw = body.encode("utf-8") if isinstance(body, str) else body
+    return hashlib.sha256(raw).hexdigest()

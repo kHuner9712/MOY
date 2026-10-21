@@ -19,12 +19,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 
 from app.api.v1 import agent, identity, model, rag, tool
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, get_request_settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
+from app.core.security import enforce_ratelimit
 from app.registry.loader import get_profile_routes, get_tool_registry
 from app.schemas.common import ApiResponse, HealthData, ReadyCheck, ReadyData
 
@@ -43,13 +44,18 @@ health_router = APIRouter(tags=["健康检查"])
     summary="存活探针（免鉴权）",
     description="进程存活检查，不校验任何依赖。",
 )
-async def healthz() -> ApiResponse[HealthData]:
+async def healthz(request: Request) -> ApiResponse[HealthData]:
     """存活探针。
+
+    配置取自 `app.state.settings`（注入优先），保证反映应用真实生效的配置。
+
+    Args:
+        request: FastAPI 请求对象。
 
     Returns:
         ApiResponse[HealthData]: `code=0` 的健康数据。
     """
-    settings = get_settings()
+    settings = get_request_settings(request)
     return ApiResponse[HealthData].ok(
         HealthData(
             status="ok",
@@ -68,8 +74,11 @@ async def healthz() -> ApiResponse[HealthData]:
     summary="就绪探针（免鉴权）",
     description="就绪检查：配置加载与注册表解析是否可用。",
 )
-async def readyz() -> ApiResponse[ReadyData]:
+async def readyz(request: Request) -> ApiResponse[ReadyData]:
     """就绪探针。
+
+    Args:
+        request: FastAPI 请求对象。
 
     Returns:
         ApiResponse[ReadyData]: 就绪状态与检查项明细。
@@ -122,6 +131,9 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     每次调用返回**全新**的路由实例，避免重复挂载导致同一端点注册多次
     （测试中多次 `create_app()` 的常见陷阱）。
 
+    五大业务路由统一挂载限流依赖 `enforce_ratelimit`（架构文档 3.0.3 错误码 20006），
+    限流在鉴权之后生效；健康探针不参与限流。
+
     Args:
         settings: 可选配置实例，缺省读取全局单例（取 `api_prefix`）。
 
@@ -131,12 +143,14 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     conf = settings or get_settings()
     prefix = conf.api_prefix
 
+    business_dependencies = [Depends(enforce_ratelimit)]
+
     api_router = APIRouter()
-    api_router.include_router(model.router, prefix=prefix)
-    api_router.include_router(rag.router, prefix=prefix)
-    api_router.include_router(agent.router, prefix=prefix)
-    api_router.include_router(tool.router, prefix=prefix)
-    api_router.include_router(identity.router, prefix=prefix)
+    api_router.include_router(model.router, prefix=prefix, dependencies=business_dependencies)
+    api_router.include_router(rag.router, prefix=prefix, dependencies=business_dependencies)
+    api_router.include_router(agent.router, prefix=prefix, dependencies=business_dependencies)
+    api_router.include_router(tool.router, prefix=prefix, dependencies=business_dependencies)
+    api_router.include_router(identity.router, prefix=prefix, dependencies=business_dependencies)
     # 健康检查不挂 API 版本前缀，路径固定为 /healthz 与 /readyz
     api_router.include_router(health_router)
     return api_router

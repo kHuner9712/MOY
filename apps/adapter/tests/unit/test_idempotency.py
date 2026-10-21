@@ -11,6 +11,7 @@ from app.core.idempotency import (
     InMemoryIdempotencyStore,
     RedisIdempotencyStore,
     build_fingerprint,
+    hash_request_body,
 )
 
 pytestmark = pytest.mark.unit
@@ -251,4 +252,30 @@ async def test_execute_detects_key_reuse_conflict(manager: IdempotencyManager) -
 
 def test_build_fingerprint_is_stable() -> None:
     """请求指纹构造稳定且含四元组信息。"""
-    assert build_fingerprint("post", "/x", "tnt_1", "usr_1") == "POST:/x:tnt_1:usr_1"
+    assert build_fingerprint("post", "/x", "tnt_1", "usr_1") == "POST:/x:tnt_1:usr_1:"
+
+
+def test_build_fingerprint_includes_body_hash() -> None:
+    """指纹必须包含请求体摘要（QA BUG-05：否则同键不同体被静默回放）。"""
+    same = build_fingerprint("POST", "/x", "tnt_1", "usr_1", "hash-abc")
+    assert same == "POST:/x:tnt_1:usr_1:hash-abc"
+    different = build_fingerprint("POST", "/x", "tnt_1", "usr_1", "hash-xyz")
+    assert different != same, "不同请求体必须产生不同指纹"
+
+
+def test_hash_request_body_is_stable_and_hides_content() -> None:
+    """请求体摘要稳定且不泄露原文。"""
+    first = hash_request_body('{"name":"知识库 A"}')
+    second = hash_request_body('{"name":"知识库 A"}')
+    third = hash_request_body('{"name":"知识库 B"}')
+    assert first == second
+    assert first != third
+    assert "知识库" not in first
+    assert len(first) == 64, "应为 sha256 十六进制摘要"
+
+
+def test_hash_request_body_handles_empty() -> None:
+    """空请求体返回空串。"""
+    assert hash_request_body(None) == ""
+    assert hash_request_body(b"") == ""
+    assert hash_request_body("") == ""

@@ -128,7 +128,7 @@ async def test_upload_rejects_unsupported_format() -> None:
 
 
 async def test_upload_rejects_oversized_file() -> None:
-    """超出大小限制返回 11003。"""
+    """超出传输层上限返回 20008（请求体超限，QA BUG-04）。"""
     with pytest.raises(ApiError) as exc_info:
         await _service(max_upload_bytes=1024).upload_document(
             base_id="kb_1",
@@ -137,6 +137,14 @@ async def test_upload_rejects_oversized_file() -> None:
             chunk_policy=ChunkPolicy.DEFAULT,
             auth=_AUTH,
         )
+    assert exc_info.value.code == ErrorCode.PAYLOAD_TOO_LARGE
+
+
+async def test_document_char_limit_returns_11003() -> None:
+    """解析后字符数超限返回 11003（文档内容过多，QA BUG-04）。"""
+    service = _service(max_document_chars=100)
+    with pytest.raises(ApiError) as exc_info:
+        service._validate_document_chars(500)  # noqa: SLF001 - 验证校验函数
     assert exc_info.value.code == ErrorCode.DOCUMENT_TOO_LARGE
 
 
