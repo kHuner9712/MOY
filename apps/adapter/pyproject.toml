@@ -26,7 +26,9 @@ dependencies = [
     "pydantic-settings>=2.3,<3.0",
     "httpx>=0.27,<0.29",
     "redis>=5.0",
-    "sqlalchemy>=2.0,<3.0",
+    # `[asyncio]` 额外项用于拉入 greenlet：SQLAlchemy 2.x 的 `ext.asyncio`
+    # 在缺少 greenlet 时**导入即失败**（阶段二 B01 引入异步引擎时实测暴露）。
+    "sqlalchemy[asyncio]>=2.0,<3.0",
     "asyncpg>=0.29",
     "python-jose[cryptography]>=3.3",
     "tenacity>=8.2",
@@ -74,7 +76,9 @@ target-version = "py311"
 src = ["app", "tests"]
 # 仅检查 Python 源码；README 中的示例代码块不参与格式化
 include = ["*.py", "**/*.py"]
-extend-exclude = [".venv", "node_modules", "__pycache__"]
+# `qa_probe/` 是联调期手工探针工具（非交付包、非测试、不进镜像），
+# 其行宽与导入顺序长期未纳入门禁；阶段二 B01 起明确排除，避免噪声掩盖真问题。
+extend-exclude = [".venv", "node_modules", "__pycache__", "qa_probe"]
 
 [tool.ruff.lint]
 select = [

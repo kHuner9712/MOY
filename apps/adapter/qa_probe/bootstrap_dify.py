@@ -83,7 +83,7 @@ def _req(
         ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
         headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
 
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)  # noqa: S310
     try:
         with _OPENER.open(req, timeout=timeout) as resp:
             payload = resp.read()
@@ -100,8 +100,8 @@ def _req(
 
 
 def _wait_ready(base: str, attempts: int = 60) -> bool:
-    for i in range(attempts):
-        status, body = _req(base, "GET", "/health", timeout=10)
+    for _ in range(attempts):
+        status, _body = _req(base, "GET", "/health", timeout=10)
         if status == 200:
             return True
         time.sleep(2)
@@ -255,7 +255,7 @@ def main() -> int:
 
     # 汇总 + 输出适配层所需环境变量
     failed = [n for n, ok, _ in results if not ok]
-    print("\n===== 引导汇总：%d/%d 通过 =====" % (len(results) - len(failed), len(results)))
+    print(f"\n===== 引导汇总：{len(results) - len(failed)}/{len(results)} 通过 =====")
     print("\n# 适配层环境变量（写入 deploy/.env 或编排 environment）：")
     print(f"OA_DIFY_DEFAULT_APP_KEY={chat_key}")
     print(f"OA_DIFY_AGENT_APP_KEY={wf_key}")

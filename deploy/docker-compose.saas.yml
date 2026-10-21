@@ -31,6 +31,8 @@ services:
       - saas-postgres-data:/var/lib/postgresql/data
       - ./init-databases.sql:/docker-entrypoint-initdb.d/00-init-databases.sql:ro
       - ./init-rls.sql:/docker-entrypoint-initdb.d/10-init-rls.sql:ro
+      # 阶段二业务库表结构（D-02）：最后执行，统一重建 p_tenant_isolation 策略
+      - ./init-schema-phase2.sql:/docker-entrypoint-initdb.d/20-init-schema-phase2.sql:ro
     networks: [officeai]
     logging: *default-logging
     healthcheck:

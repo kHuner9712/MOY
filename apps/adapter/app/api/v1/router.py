@@ -1,10 +1,12 @@
 """v1 路由汇总（架构文档 6.1 `api/v1/router.py`）。
 
 职责：
-- 把五大服务域的 30 个端点挂载到 `/api/v1` 前缀下；
-- 挂载 2 个免鉴权健康探针（`/healthz`、`/readyz`，架构文档 10.2 D-07）。
+- 把五大服务域的 30 个核心端点挂载到 `/api/v1` 前缀下；
+- 挂载 2 个免鉴权健康探针（`/healthz`、`/readyz`，架构文档 10.2 D-07）；
+- 阶段二起追加 5 个新域模块（`knowledge_ext` / `tools_ext` / `identity_ext` /
+  `billing` / `ops`），**共用同一 `/api/v1` 前缀**，不新增版本（架构文档 2.2 第 2 条）。
 
-端点总览：
+端点总览（阶段一核心基线，任何人不得修改，只能通过 `/api/v2` 演进）：
 | 域 | 前缀 | 端点数 | 编号 |
 | --- | --- | --- | --- |
 | 模型服务 | `/api/v1/model` | 4 | M1-M4 |
@@ -13,6 +15,9 @@
 | 工具服务 | `/api/v1/tools` | 7 | T1-T7 |
 | 用户权限 | `/api/v1/identity` | 6 | U1-U6 |
 | 健康检查 | `/healthz` `/readyz` | 2 | 免鉴权 |
+
+阶段二新域基线（`PHASE2_DOMAIN_ENDPOINTS = 38`）：
+KB1-KB8 / TL1 / ID1-ID11 / BL1-BL10 / OPS1-OPS8，按 B04-B10 逐批落地。
 
 不兼容变更必须新增 `/api/v2` 汇总，禁止在 v1 内破坏契约（架构文档第 3 章前言）。
 """
@@ -26,13 +31,22 @@ from app.core.config import Settings, get_request_settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
 from app.core.security import enforce_ratelimit
+from app.db.engine import check_engine, get_engine
 from app.registry.loader import get_profile_routes, get_tool_registry
 from app.schemas.common import ApiResponse, HealthData, ReadyCheck, ReadyData
 
 logger = get_logger(__name__)
 
-#: 业务端点总数（契约基线，回归测试据此校验）
+#: 阶段一核心端点基线（30 条，冻结；语义与 `ADAPTER_CORE_ENDPOINTS` 完全相同，
+#: 保留旧名是为了既有测试与 CI 引用的**向后兼容**，架构文档 2.2 第 1 条）
 TOTAL_BUSINESS_ENDPOINTS: int = 30
+
+#: 适配层核心端点基线（30 条，冻结；M1-M4 / R1-R7 / A1-A6 / T1-T7 / U1-U6）
+ADAPTER_CORE_ENDPOINTS: int = 30
+
+#: 阶段二新域端点基线（38 条；KB1-8 / TL1 / ID1-11 / BL1-10 / OPS1-8）
+#: 现阶段（B02）为 0 条已实现，基线文件 `docs/api/baseline-phase2-38.json` 由 B03 起逐步补齐
+PHASE2_DOMAIN_ENDPOINTS: int = 38
 
 #: 健康检查路由（免鉴权，不挂 API 版本前缀）
 health_router = APIRouter(tags=["健康检查"])
@@ -118,11 +132,40 @@ async def readyz(request: Request) -> ApiResponse[ReadyData]:
     except ApiError:
         checks.append(ReadyCheck(name="tool_registry", ready=False, detail="工具注册表不可用"))
 
+    checks.append(await _check_database(request))
+
     all_ready = all(check.ready for check in checks)
     data = ReadyData(status="ready" if all_ready else "not_ready", checks=checks)
     if all_ready:
         return ApiResponse[ReadyData].ok(data)
     raise ApiError(ErrorCode.CONFIG_ERROR, message=data.status, data=data)
+
+
+async def _check_database(request: Request) -> ReadyCheck:
+    """数据库就绪检查项（阶段二 D-02）。
+
+    `business_store=memory` 时直接 ready 并注明「内存模式」——
+    内存模式不依赖 PostgreSQL，不能让 T01 离线演示与离线单测被判为未就绪。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        ReadyCheck: 数据库检查项。
+    """
+    settings = get_request_settings(request)
+    if not settings.uses_postgres:
+        return ReadyCheck(name="database", ready=True, detail="内存模式（未启用业务库）")
+
+    engine = getattr(request.app.state, "db_engine", None)
+    if engine is None:
+        engine = get_engine(settings)
+    healthy = await check_engine(engine)
+    return ReadyCheck(
+        name="database",
+        ready=healthy,
+        detail="数据库连接正常" if healthy else "数据库连接异常",
+    )
 
 
 def include_all_routers(settings: Settings | None = None) -> APIRouter:
@@ -157,6 +200,8 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
 
 
 __all__ = [
+    "ADAPTER_CORE_ENDPOINTS",
+    "PHASE2_DOMAIN_ENDPOINTS",
     "TOTAL_BUSINESS_ENDPOINTS",
     "health_router",
     "healthz",

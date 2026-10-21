@@ -48,6 +48,10 @@ services:
       - postgres-data:/var/lib/postgresql
       # 首次启动（空数据目录）时创建 dify / keycloak 逻辑库
       - ./init-databases.sql:/docker-entrypoint-initdb.d/00-init-databases.sql:ro
+      # 阶段二业务库表结构（D-02）：必须排在 00-/10- 之后执行，
+      # 其 DROP POLICY IF EXISTS + CREATE POLICY p_tenant_isolation 会统一旧策略名
+      # （用 01- 会先于 10-init-rls.sql 执行，导致新旧策略共存，见主理人裁决 1）
+      - ./init-schema-phase2.sql:/docker-entrypoint-initdb.d/20-init-schema-phase2.sql:ro
     networks: [officeai]
     logging: *default-logging
     healthcheck:

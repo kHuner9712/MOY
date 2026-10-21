@@ -7,7 +7,11 @@
 1. 初始化结构化日志；
 2. 注册异常处理器（统一 `{code, message, data}`）；
 3. 注册中间件（trace_id 注入、访问日志、CORS）；
-4. 挂载 v1 路由（30 个业务端点 + 2 个免鉴权探针）。
+4. 挂载 v1 路由（30 个核心业务端点 + 2 个免鉴权探针）。
+
+阶段二新增（D-02）：`lifespan` 负责业务库引擎初始化与启动期迁移；
+`/readyz` 纳入数据库检查项。`business_store=memory` 时**完全不创建引擎**，
+既不连接数据库，也不执行迁移（保证离线单测与 T01 演示可用）。
 """
 
 from __future__ import annotations
@@ -21,8 +25,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import include_all_routers
 from app.core.config import Settings, get_settings
+from app.core.errors import ApiError
 from app.core.logging import configure_logging, get_logger
 from app.core.ratelimit import RateLimiter
+from app.db.engine import dispose_engine, get_engine
+from app.db.migrate import run_startup_migrations
 from app.middleware.error_handler import register_exception_handlers
 from app.middleware.trace import AccessLogMiddleware, TraceMiddleware
 
@@ -61,13 +68,26 @@ API_TAGS_METADATA: list[dict[str, Any]] = [
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期钩子。
 
+    阶段二（D-02）新增职责：
+
+    1. 按 `OA_BUSINESS_STORE` 初始化业务库异步引擎（`memory` 模式返回 `None`，
+       不创建任何连接池）；
+    2. `OA_DB_AUTO_MIGRATE=true` 且 `business_store=postgres` 时执行启动期迁移
+       （checksum 漂移直接抛出 → 启动失败，防手工改库导致的静默不一致）；
+    3. 退出时释放连接池。
+
+    配置一律取 `app.state.settings`（注入优先），与 QA BUG-01/02 的修复口径一致。
+
     Args:
         app: FastAPI 应用实例。
 
     Yields:
         None: 应用运行期间。
+
+    Raises:
+        ApiError: 业务库/迁移配置非法（30004），启动即失败。
     """
-    settings = get_settings()
+    settings: Settings = getattr(app.state, "settings", None) or get_settings()
     logger.info(
         "adapter_starting",
         app=settings.app_name,
@@ -75,8 +95,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         env=settings.env,
         deploy_mode=settings.deploy_mode,
         downstream_enabled=settings.downstream_enabled,
+        business_store=settings.business_store,
+        db_auto_migrate=settings.db_auto_migrate,
     )
+
+    engine = get_engine(settings)
+    app.state.db_engine = engine
+    if engine is None:
+        logger.info("business_store_memory_mode", note="no database engine created")
+    else:
+        try:
+            await run_startup_migrations(settings)
+        except ApiError:
+            await dispose_engine()
+            raise
+
     yield
+
+    await dispose_engine()
     logger.info("adapter_stopping")
 
 

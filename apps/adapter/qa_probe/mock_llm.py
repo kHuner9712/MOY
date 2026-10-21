@@ -12,9 +12,11 @@ Dify 容器经 host.docker.internal:8090 访问本服务。
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -92,7 +94,7 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
         )
 
     # 流式：按词切分，逐段推送 SSE
-    async def _gen():
+    async def _gen() -> AsyncIterator[str]:
         chunks = [answer[i : i + 12] for i in range(0, len(answer), 12)] or [answer]
         for chunk in chunks:
             payload = {
@@ -103,7 +105,7 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
                 "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}],
             }
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            time.sleep(0.02)
+            await asyncio.sleep(0.02)
         final = {
             "id": _chat_id(),
             "object": "chat.completion.chunk",

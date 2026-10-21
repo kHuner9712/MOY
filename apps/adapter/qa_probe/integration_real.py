@@ -127,7 +127,7 @@ async def main() -> int:
                 elif line.startswith("data: ") and current_event == "delta":
                     try:
                         deltas.append(str(json.loads(line[len("data: "):]).get("text", "")))
-                    except Exception:
+                    except Exception:  # noqa: S110 - 单帧解析失败不影响整体流式断言
                         pass
         answer_text = "".join(deltas)
         _record(

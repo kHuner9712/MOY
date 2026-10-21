@@ -329,7 +329,14 @@ def test_reasoning_filter_strips_think_blocks() -> None:
     flt = _ReasoningFilter()
     out = []
     # 模拟跨 delta 的思考 + 正文流
-    for chunk in ["<thi", "nk>思考中", "...</think>", "正文第一段", "<!--dify-deepseek-reasoning-->", "，继续"]:
+    for chunk in [
+        "<thi",
+        "nk>思考中",
+        "...</think>",
+        "正文第一段",
+        "<!--dify-deepseek-reasoning-->",
+        "，继续",
+    ]:
         out.append(flt.feed(chunk))
     out.append(flt.flush())
     visible = "".join(out)
