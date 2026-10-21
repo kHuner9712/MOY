@@ -115,8 +115,8 @@ PRD 与架构存在 5 处判定口径差异，架构第 12.2 章已逐条裁决�
 | G-20 | eslint | `cd apps/web && npm run lint` | 0 error / 0 warning（`--max-warnings=0`） | 阶段一沿用 | B11 |
 | G-21 | build | `cd apps/web && npm run build` | 成功；路由数 10（业务页）+ `/login` + `/` | 阶段一沿用 | B12 |
 | G-22 | 依赖与镜像 | `python deploy/validate_deps.py && python deploy/validate_images.py` | 0 黑名单协议；0 未登记依赖；镜像仓库可拉取 | 阶段一延续（含 P1-5 修正后） | B01 |
-| G-23 | 计量对账 | `python apps/adapter/scripts/reconcile_usage.py --period <YYYY-MM> --threshold 0.01` | 偏差 **≤ 1%**，退出码 0；偏差超限写 `audit_log(billing.reconcile_mismatch)` | 新增 | B07 |
-| G-24 | P0 用例全通 | `pytest tests -q -m p0`（24 条 P0 的映射用例打 `p0` 标记） | `failed=0`；p0 用例数 ≥ 60 | 新增 | B01 |
+| G-23 | 计量对账 | `python apps/adapter/scripts/reconcile_usage.py --period <YYYY-MM> --threshold 0.01` | 偏差 **≤ 1%**，退出码 0；偏差超限写 `audit_log(billing.reconcile_mismatch)`。**对账第二来源口径（事件表而非 Valkey 诊断计数）以 `docs/qa-phase2-waivers.md` W-04 为准** | 新增 | B07 |
+| G-24 | P0 用例全通 | `pytest tests -q -m p0`（24 条 P0 的映射用例打 `p0` 标记；分批补标记的 DoD 见 **§2.5**） | `failed=0`；p0 用例数 ≥ 60 | 新增 | B01 |
 | G-25 | **数据库连接权限自检**（启动级） | 用超级用户 DSN 启动：`OA_DATABASE_URL=postgresql://postgres:***@... python -m uvicorn app.main:app` 后 `curl -s localhost:8000/readyz`（`business_store=postgres` 时生效） | `/readyz` 返回 `status=="not_ready"`，且 `checks` **数组**中存在一项 `{"name":"db_privilege","ready":false,"detail":"数据库连接权限配置不正确"}`（`checks` 为 `list[ReadyCheck]`，**不得改成对象/字典**）；换成 `officeai` 用户 DSN 后 `status=="ready"` 且同名项 `ready==true` | 新增（交付总监裁决 3 + 2026-10-21 结构纠正，纳入 B01 验收） | B01 |
 
 ### 2.2 门禁执行顺序（本地门禁脚本，逐条串行）
@@ -148,6 +148,44 @@ lint/format/mypy → 单元测试 → 迁移幂等 → /readyz 权限自检 → 
 | **不可豁免** | G-07/G-08/G-09（契约基线）、G-12（租户隔离）、G-13（错误码一致性）、G-14/G-15/G-16/G-17（禁词与占位词）、G-24（P0 用例）、**G-25（数据库权限自检，裁决 3）** |
 | 形式 | 写入 `docs/qa-phase2-waivers.md`：门禁编号 / 理由 / 补偿措施 / 到期批次 / 主理人签字，缺任一项无效 |
 | 有效期 | 单批次，跨批次自动失效 |
+
+### 2.5 分批 DoD：批次落地即补 p0 标记（G-24 的可执行化）
+
+> **为什么必须有这一节**：G-24 曾在 B07/B08 轮出现**空跑**——`pytest -m p0` 收集 0 条、门禁恒绿但零覆盖（W2 第 1 轮发现，第 2 轮整改为 130 条）。根因是「24 条 P0 → 用例」的映射没有随批次落地而增量维护。本节把它变成**批次准入条件**。
+
+**硬规则（三条，缺一即该批次不得准出）**
+
+| # | 规则 |
+| --- | --- |
+| 1 | **每个批次落地时，同步把该批次涉及的 P0 需求映射到具体测试函数并加 `pytest.mark.p0`**；只加在**已实现端点**的真实断言上 |
+| 2 | **禁止给未实现端点挂空标记**——不得用 `pytest.mark.p0` + `pass` / `assert True` / `xfail` / 无条件 `skip` 凑数；违者按「伪造门禁」处理（P0 级流程缺陷，一票否决） |
+| 3 | 批次准出前，QA 必须实跑 `pytest tests -q -m p0 --run-pg`，要求 **`failed=0` 且 `skipped=0`**（`skipped>0` 说明有 p0 用例被跳过，等于该条 P0 判据无人看守），并在批次报告中贴出 p0 用例数 |
+
+**各批次待补清单（截至 W2 准出：24 条 P0 中已映射 8 族、空置 10 条）**
+
+| 未映射 P0 需求 | 说明 | 待补批次 |
+| --- | --- | --- |
+| P2-BL-01 | 套餐目录与额度 | **B09** |
+| P2-BL-02 | 订阅变更（升降配） | **B09** |
+| P2-BL-04 | 订单支付与回调幂等 | **B09** |
+| P2-BL-05 | 运营后台（订单确认 / 租户管理 / 设置） | **B10** |
+| P2-UI-01 ~ P2-UI-05 | 5 个前端 P0 页面（套餐账单 / 运营后台 / 知识库详情 / 组织架构 / 6 页深化） | **B11-B14** |
+| P2-UX-01 | 体验兜底与禁词门禁 | **B15** |
+
+**已映射（W2 落地 130 条，供后续批次对齐做法）**
+
+| 文件 | 条数 | P0 判据 / 需求 |
+| --- | --- | --- |
+| `tests/integration/test_security_regressions.py` | 22 | 判据①（跨租户 / 越权红线） |
+| `tests/integration/test_tenant_isolation.py` | 15 | 判据①（SEC-02/03） |
+| `tests/unit/test_credential_service.py` | 20 | 判据②（P2-KB-05） |
+| `tests/integration/test_permission_matrix.py` | 17 | 判据③（P2-KB-03） |
+| `tests/unit/test_usage_service.py` | 18 | 判据④（P2-BL-03） |
+| `tests/integration/test_usage_endpoints.py` | 13 | 判据④（M4 与 BL5 同源） |
+| `tests/integration/test_endpoint_baseline.py` | 20 | 判据⑤（既有 30 端点契约） |
+| `tests/integration/test_g11_migration_idempotency.py` | 5 | 判据⑦（迁移可重复） |
+
+> 结论口径：**「p0 用例数 ≥60 且 0 failed / 0 skipped」与「24 条 P0 100% 映射」是两条独立判据**。W2 只满足前者；后者须由 B09-B15 按上表逐批补齐，在 B15 收尾复核时一并确认。任何批次**不得**以「已满足 ≥60 条」为由跳过本批次的补标记工作。
 
 ---
 
