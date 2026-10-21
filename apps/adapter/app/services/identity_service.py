@@ -47,6 +47,12 @@ PERMISSION_PATTERN: Final[str] = ":"
 #: 权限点允许的最大层级数（资源 : 子资源 : 动作）
 PERMISSION_MAX_PARTS: Final[int] = 3
 
+#: 操作记录查询所需权限点（前端 `PERM.AUDIT_READ`）
+AUDIT_READ_PERMISSION: Final[str] = "audit:log:read"
+
+#: 操作记录查询时间跨度超限文案（同码 20001 的细分文案）
+MESSAGE_AUDIT_SPAN_EXCEEDED: Final[str] = "查询时间范围最长 90 天，请缩小范围"
+
 #: 角色标识 → 业务化角色枚举映射
 _ROLE_MAP: Final[dict[str, OrgRole]] = {
     "owner": OrgRole.OWNER,
@@ -219,9 +225,13 @@ class IdentityService:
     async def list_members(self, org_id: str, query: ListMembersQuery, auth: AuthContext) -> Any:
         """查询组织成员列表。
 
+        **D-13 第 2 条**：组织来源改为业务库（`department_member` ∪ `member_role`），
+        不再读身份底座 group —— 否则「部门调整后 U3 看不到变化」，
+        且判权会退化为读 KC group。展示名以用户 ID 兜底（身份底座不提供批量姓名接口）。
+
         Args:
             org_id: 组织 ID。
-            query: 分页与过滤参数。
+            query: 分页与过滤参数（角色 / 关键字 / 部门 / 在册状态）。
             auth: 鉴权上下文。
 
         Returns:
@@ -232,28 +242,17 @@ class IdentityService:
         """
         if not org_id:
             raise ApiError(ErrorCode.ORGANIZATION_NOT_FOUND, internal_detail="empty org_id")
-        if self._settings.mock_mode:
-            logger.info("identity_members_stub", org_id=org_id, tenant_id=auth.tenant_id)
-            return build_page(items=[], total=0, page=query.page, page_size=query.page_size)
+        from app.business.member_service import MemberService, paginate
 
-        raw_members = await self._keycloak.list_group_members(org_id)
-        members = [self._transform_member(item) for item in raw_members if isinstance(item, dict)]
-        if query.role is not None:
-            members = [item for item in members if item.role == query.role]
-        if query.keyword:
-            keyword = query.keyword.lower()
-            members = [
-                item
-                for item in members
-                if keyword in item.display_name.lower() or keyword in item.email.lower()
-            ]
-        start = query.offset
-        return build_page(
-            items=members[start : start + query.page_size],
+        service = MemberService(self._settings)
+        members = await service.list_members(tenant_id=auth.tenant_id, org_id=org_id, query=query)
+        logger.info(
+            "identity_members_listed",
+            org_id=org_id,
             total=len(members),
-            page=query.page,
-            page_size=query.page_size,
+            tenant_id=auth.tenant_id,
         )
+        return paginate(members, query)
 
     @staticmethod
     def _transform_member(payload: dict[str, Any]) -> MemberItem:
@@ -367,10 +366,11 @@ class IdentityService:
     # ------------------------------------------------------------------
     # U6 审计日志查询
     # ------------------------------------------------------------------
-    def query_audit_logs(self, request: AuditLogQueryRequest, auth: AuthContext) -> Any:
-        """查询审计日志。
+    async def query_audit_logs(self, request: AuditLogQueryRequest, auth: AuthContext) -> Any:
+        """查询操作记录（多维筛选 + 分页）。
 
-        适配层不持有审计逻辑，仅提供查询出口；字段透传，脱敏由业务层写入时完成。
+        判权走 `PolicyService`（统一出口，fail-closed）：无 `audit:log:read` 权限
+        一律 `20003`。时间跨度 > 90 天返回 `20001`（架构文档 §4.4 要点）。
 
         Args:
             request: 查询请求。
@@ -378,18 +378,61 @@ class IdentityService:
 
         Returns:
             Any: `PageResult[AuditLogItem]` 分页结果。
+
+        Raises:
+            ApiError: 权限不足（20003）、时间跨度超限（20001）。
         """
-        del auth  # T01 桩模式不持有审计数据
+        from app.business.policy_service import get_policy_service
+        from app.db.repositories.audit_repo import AuditQuery, query_audit_logs, span_exceeds_limit
+
+        await get_policy_service(self._settings).require_point(auth, AUDIT_READ_PERMISSION)
+        if span_exceeds_limit(request.start_at, request.end_at):
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                message=MESSAGE_AUDIT_SPAN_EXCEEDED,
+                internal_detail=f"{request.start_at}..{request.end_at}",
+            )
+        result = await query_audit_logs(
+            self._settings,
+            auth.tenant_id,
+            AuditQuery(
+                actor_id=request.actor_id,
+                actor_keyword=request.actor_keyword,
+                action=request.action,
+                action_group=request.action_group,
+                resource_type=request.resource_type,
+                result=request.result,
+                start_at=request.start_at,
+                end_at=request.end_at,
+                page=request.page,
+                page_size=request.page_size,
+            ),
+        )
         logger.info(
             "identity_audit_queried",
-            resource_type=request.resource_type,
-            start_at=request.start_at,
-            end_at=request.end_at,
+            total=result.total,
+            action=request.action,
+            action_group=request.action_group,
+            tenant_id=auth.tenant_id,
         )
-        items: list[AuditLogItem] = []
         return build_page(
-            items=items[request.offset : request.offset + request.page_size],
-            total=len(items),
+            items=[
+                AuditLogItem(
+                    log_id=f"{entry.occurred_at}#{index}",
+                    actor_id=entry.actor_id,
+                    action=entry.action,
+                    resource_type=entry.resource_type,
+                    resource_id=entry.resource_id,
+                    result=entry.result,
+                    occurred_at=entry.occurred_at,
+                    actor_role=entry.actor_role,
+                    ip_masked="",
+                    action_display_name=entry.display_name,
+                    change_summary=dict(entry.change_summary),
+                )
+                for index, entry in enumerate(result.items, start=request.offset)
+            ],
+            total=result.total,
             page=request.page,
             page_size=request.page_size,
         )

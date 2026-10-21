@@ -234,14 +234,18 @@ async def test_kb1_requires_idempotency_key(client: TestClient, settings: Settin
 async def test_kb1_without_permission_returns_20003(
     client: TestClient, settings: Settings, make_idempotency_headers: Any
 ) -> None:
-    """无 `knowledge:base:update` 权限返回 20003（PRD 验收 3）。"""
+    """无 `knowledge:base:update` 权限返回 20003（PRD 验收 3）。
+
+    B08 起权限点按架构 §4.8 矩阵判定：`member` 拥有 `knowledge:base:update`
+    （🔸 仅对象级受限），因此「无权限账号」应取 `guest`（该权限点 ⛔）。
+    """
     base_id = _create_base(client, settings, make_idempotency_headers)
 
     response = client.patch(
         f"/api/v1/knowledge/bases/{base_id}",
         json={"name": "改名"},
         headers={
-            **_headers(settings, roles=["member"]),
+            **_headers(settings, roles=["guest"]),
             **make_idempotency_headers("kb1-forbidden"),
         },
     )
@@ -532,12 +536,16 @@ async def test_kb3_deleted_base_returns_11001(
 async def test_kb3_without_permission_returns_20003(
     client: TestClient, settings: Settings, make_idempotency_headers: Any
 ) -> None:
-    """无 `knowledge:base:read` 权限返回 20003。"""
+    """无 `knowledge:base:read` 权限返回 20003。
+
+    B08 起 `member` / `guest` 均拥有 `knowledge:base:read`（🔸 对象级受限），
+    因此「无权限账号」用**未授任何权限点的自定义角色**表示（矩阵外账号）。
+    """
     base_id = _create_base(client, settings, make_idempotency_headers)
 
     response = client.get(
         f"/api/v1/knowledge/bases/{base_id}/documents",
-        headers={**_headers(settings, roles=["member"])},
+        headers={**_headers(settings, roles=["custom_no_permission"])},
     )
     assert response.status_code == 403
     assert response.json()["code"] == 20003

@@ -628,10 +628,14 @@ async def test_kb4_error_boundaries(client: TestClient, settings: Settings) -> N
 
 
 async def test_kb4_requires_permission(client: TestClient, settings: Settings) -> None:
-    """无 `knowledge:base:read` 权限 → 403 / 20003。"""
+    """无 `knowledge:base:read` 权限 → 403 / 20003。
+
+    B08 起权限点按架构 §4.8 矩阵判定：`member` / `guest` 拥有该权限点（🔸 对象级受限），
+    故「无权限账号」用未授任何权限点的自定义角色表示。
+    """
     response = client.get(
         "/api/v1/knowledge/bases/kb_1/documents/doc_1/segments/seg_0000000000000000",
-        headers=_headers(settings, roles=["member"]),
+        headers=_headers(settings, roles=["custom_no_permission"]),
     )
     assert response.status_code == 403
     assert response.json()["code"] == 20003

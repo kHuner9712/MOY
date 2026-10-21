@@ -73,6 +73,14 @@ class ErrorCode(IntEnum):
     ORGANIZATION_NOT_FOUND = 14002
     ROLE_NOT_FOUND = 14003
     PERMISSION_NOT_DEFINED = 14004
+    #: 部门不存在（阶段二 B08，架构文档 §7.1）
+    DEPARTMENT_NOT_FOUND = 14005
+    #: 部门层级/删除冲突（同码多文案：超 5 层 / 移动到自身子树 / 仍有成员或子部门）
+    DEPARTMENT_STRUCTURE_CONFLICT = 14006
+    #: 企业所有者保护（不得移除/降级 owner）
+    OWNER_PROTECTED = 14007
+    #: 同级或更高级成员保护 / 操作自己
+    MEMBER_MODIFICATION_FORBIDDEN = 14008
 
     # ---------------- 系统错误 30001-30099 ----------------
     DOWNSTREAM_UNAVAILABLE = 30001
@@ -218,6 +226,24 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
     ErrorCode.ROLE_NOT_FOUND: ErrorSpec(ErrorCode.ROLE_NOT_FOUND, 404, "角色不存在", "角色不存在"),
     ErrorCode.PERMISSION_NOT_DEFINED: ErrorSpec(
         ErrorCode.PERMISSION_NOT_DEFINED, 400, "权限点未定义", "权限点未注册"
+    ),
+    ErrorCode.DEPARTMENT_NOT_FOUND: ErrorSpec(
+        ErrorCode.DEPARTMENT_NOT_FOUND, 404, "该部门不存在或已被删除", "部门不存在"
+    ),
+    ErrorCode.DEPARTMENT_STRUCTURE_CONFLICT: ErrorSpec(
+        ErrorCode.DEPARTMENT_STRUCTURE_CONFLICT,
+        400,
+        "该部门下仍有成员或子部门，请先迁移后再删除",
+        "部门层级/删除冲突（同码多文案由 ApiError(message=...) 区分）",
+    ),
+    ErrorCode.OWNER_PROTECTED: ErrorSpec(
+        ErrorCode.OWNER_PROTECTED, 400, "不能移除企业所有者，请先转移所有权", "所有者保护"
+    ),
+    ErrorCode.MEMBER_MODIFICATION_FORBIDDEN: ErrorSpec(
+        ErrorCode.MEMBER_MODIFICATION_FORBIDDEN,
+        403,
+        "你没有权限修改该成员",
+        "同级或更高级成员保护 / 操作自己",
     ),
     # 系统错误
     ErrorCode.DOWNSTREAM_UNAVAILABLE: ErrorSpec(

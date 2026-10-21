@@ -161,10 +161,29 @@ def test_require_permission_allows_wildcard_role() -> None:
 
 
 def test_require_permission_rejects_missing_permission() -> None:
-    """权限不足时返回 20003。"""
+    """权限不足时返回 20003（B08 起按架构 §4.8 矩阵判定）。
+
+    `member` 拥有 `knowledge:document:upload`（✅），但**没有** `team:member:update`
+    （⛔），因此用后者验证拒绝路径。
+    """
     auth = AuthContext(user_id="u", tenant_id="t", roles=["member"])
     with pytest.raises(ApiError) as exc_info:
-        require_permission(auth, "knowledge:document:upload")
+        require_permission(auth, "team:member:update")
+    assert exc_info.value.code == ErrorCode.FORBIDDEN
+
+
+def test_require_permission_allows_matrix_granted_point() -> None:
+    """矩阵授予的权限点必须放行（member 可上传文档，§4.8 ✅）。"""
+    require_permission(
+        AuthContext(user_id="u", tenant_id="t", roles=["member"]), "knowledge:document:upload"
+    )
+
+
+def test_require_permission_denies_unknown_role() -> None:
+    """未注册角色不贡献任何权限点（fail-closed）。"""
+    auth = AuthContext(user_id="u", tenant_id="t", roles=["custom_no_permission"])
+    with pytest.raises(ApiError) as exc_info:
+        require_permission(auth, "knowledge:base:read")
     assert exc_info.value.code == ErrorCode.FORBIDDEN
 
 

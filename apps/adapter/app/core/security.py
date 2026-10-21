@@ -230,8 +230,14 @@ def resolve_tenant_id(request: Request, auth: AuthContext, settings: Settings | 
 def require_permission(auth: AuthContext, permission: str) -> None:
     """校验权限点（统一校验出口，架构文档 3.5.1 设计原则）。
 
-    本期（T01）为桩实现：不做业务策略判断，仅在角色显式声明时校验。
-    T02 起接入真实权限点映射表，调用方保持不变。
+    B08 起接入**权限点矩阵**（架构文档 §4.8，唯一实现在
+    `business/policy_service.py` 的 `BUILTIN_ROLE_PERMISSIONS`）：
+
+    - 通配角色 `*`（平台运维令牌）放行全部；
+    - 令牌角色本身就是权限点时放行（阶段一存量的「权限点即角色」形态）；
+    - 否则按内置角色矩阵展开后判定；
+    - **无角色声明**时交给业务能力层（对象级判定 fail-closed），
+      保持既有语义不误伤匿名/受限令牌。
 
     Args:
         auth: 鉴权上下文。
@@ -242,12 +248,19 @@ def require_permission(auth: AuthContext, permission: str) -> None:
     """
     if not permission:
         return
-    if "*" in auth.roles:
+    roles = {str(role).strip() for role in auth.roles if str(role).strip()}
+    if "*" in roles:
         return
-    if permission in auth.roles:
+    if permission in roles:
         return
-    # T01 桩模式：无显式角色声明时放行，由业务能力层做最终判权（架构文档 3.5.1）
-    if not auth.roles:
+    # 延迟导入：`business.policy_service` 依赖本模块的 `AuthContext`，
+    # 模块级互引会成环（导入顺序敏感），故在函数内导入。
+    from app.business.policy_service import permissions_for_roles
+
+    if permission in permissions_for_roles(roles):
+        return
+    # 无角色声明：由业务能力层做最终判权（对象级 fail-closed，架构文档 3.5.1）
+    if not roles:
         logger.debug("permission_check_deferred", permission=permission, user_id=auth.user_id)
         return
     raise ApiError(

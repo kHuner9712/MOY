@@ -52,8 +52,12 @@ def test_verify_allows_granted_permission() -> None:
 
 
 def test_verify_denies_missing_permission() -> None:
-    """角色不命中权限点时拒绝但仍返回结论（不抛异常）。"""
-    data = _service().verify(VerifyRequest(permission="knowledge:document:upload"), _AUTH)
+    """角色不命中权限点时拒绝但仍返回结论（不抛异常）。
+
+    B08 起按架构 §4.8 矩阵判定：`member` 有 `knowledge:document:upload`（✅）
+    但没有 `audit:log:read`（⛔），故用后者验证拒绝路径。
+    """
+    data = _service().verify(VerifyRequest(permission="audit:log:read"), _AUTH)
     assert data.allowed is False
     assert data.user_id == "usr_1"
 
@@ -148,13 +152,22 @@ async def test_upsert_role_stub() -> None:
     assert data.permissions == ["knowledge:document:upload"]
 
 
-def test_query_audit_logs_returns_page() -> None:
-    """审计查询返回空分页且元信息正确。"""
+async def test_query_audit_logs_returns_page() -> None:
+    """审计查询返回空分页且元信息正确（B08 起为异步 + 需 audit:log:read）。"""
     request = AuditLogQueryRequest(page=2, page_size=10, resource_type="knowledge_base")
-    result = _service().query_audit_logs(request, _AUTH)
+    admin = AuthContext(user_id="usr_admin", tenant_id="tnt_1", roles=["org_admin"])
+    result = await _service().query_audit_logs(request, admin)
     assert result.meta.page == 2
     assert result.meta.page_size == 10
     assert result.items == []
+
+
+async def test_query_audit_logs_requires_permission() -> None:
+    """普通成员无 `audit:log:read` → 20003（fail-closed）。"""
+    request = AuditLogQueryRequest(page=1, page_size=10)
+    with pytest.raises(ApiError) as exc_info:
+        await _service().query_audit_logs(request, _AUTH)
+    assert exc_info.value.code == ErrorCode.FORBIDDEN
 
 
 def test_transform_profile_maps_native_fields() -> None:

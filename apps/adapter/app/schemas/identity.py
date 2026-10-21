@@ -104,12 +104,18 @@ class ProfileData(BaseModel):
 class MemberItem(BaseModel):
     """组织成员条目。
 
+    B08 加性扩展（D-13：组织来源改为业务库）：新增 `department_ids` /
+    `department_names` / `status` 三个**可选**字段，既有字段保持不变。
+
     Attributes:
         user_id: 用户 ID。
         display_name: 展示名。
         email: 邮箱。
         role: 角色。
         joined_at: 加入时间。
+        department_ids: 所属部门 ID 列表。
+        department_names: 所属部门名称列表。
+        status: 在册状态（`active` / `invited` / `disabled`）。
     """
 
     user_id: str = Field(description="用户 ID")
@@ -117,6 +123,9 @@ class MemberItem(BaseModel):
     email: str = Field(default="", description="邮箱")
     role: OrgRole = Field(default=OrgRole.MEMBER, description="角色")
     joined_at: str = Field(default="", description="加入时间，ISO 8601 格式")
+    department_ids: list[str] = Field(default_factory=list, description="所属部门 ID 列表")
+    department_names: list[str] = Field(default_factory=list, description="所属部门名称列表")
+    status: str = Field(default="active", description="在册状态")
 
 
 class ListMembersQuery(PageQuery):
@@ -125,10 +134,14 @@ class ListMembersQuery(PageQuery):
     Attributes:
         role: 按角色过滤。
         keyword: 按姓名或邮箱关键字过滤。
+        department_id: 按部门过滤（含子部门）。
+        status: 按在册状态过滤。
     """
 
     role: OrgRole | None = Field(default=None, description="按角色过滤")
     keyword: str = Field(default="", max_length=128, description="按姓名或邮箱关键字过滤")
+    department_id: str = Field(default="", max_length=128, description="按部门过滤")
+    status: str = Field(default="", max_length=32, description="按在册状态过滤")
 
 
 class InviteRequest(BaseModel):
@@ -202,23 +215,35 @@ class RoleData(BaseModel):
 class AuditLogQueryRequest(PageQuery):
     """U6 审计日志查询请求。
 
+    B08 加性扩展：新增 `actor_keyword` / `action_group` / `result` 三个筛选条件，
+    使操作记录页支持「操作人模糊 + 动作域 + 结果」组合筛选（时间跨度 > 90 天由服务层拒绝）。
+
     Attributes:
-        actor_id: 操作人 ID。
-        action: 操作动作。
+        actor_id: 操作人 ID（精确）。
+        actor_keyword: 操作人关键字（模糊）。
+        action: 操作动作（精确）。
+        action_group: 动作域（如 `department`）。
         resource_type: 资源类型。
+        result: 操作结果（`success` / `failure`）。
         start_at: 开始时间。
         end_at: 结束时间。
     """
 
     actor_id: str = Field(default="", max_length=128, description="操作人 ID")
+    actor_keyword: str = Field(default="", max_length=128, description="操作人关键字（模糊）")
     action: str = Field(default="", max_length=128, description="操作动作")
+    action_group: str = Field(default="", max_length=64, description="动作域")
     resource_type: str = Field(default="", max_length=64, description="资源类型")
+    result: str = Field(default="", max_length=16, description="操作结果")
     start_at: str = Field(default="", max_length=64, description="开始时间，ISO 8601 格式")
     end_at: str = Field(default="", max_length=64, description="结束时间，ISO 8601 格式")
 
 
 class AuditLogItem(BaseModel):
     """审计日志条目（字段透传，脱敏由业务层写入时完成）。
+
+    B08 加性扩展：新增 `actor_role` / `ip_masked` / `action_display_name` /
+    `change_summary`，使操作记录页可直接展示「谁、什么角色、做了什么、改了什么」。
 
     Attributes:
         log_id: 日志 ID。
@@ -228,6 +253,10 @@ class AuditLogItem(BaseModel):
         resource_id: 资源 ID。
         result: 操作结果。
         occurred_at: 发生时间。
+        actor_role: 操作人角色（首个角色）。
+        ip_masked: 掩码后的 IP（如 `10.12.*.*`）。
+        action_display_name: 动作展示名（业务语言）。
+        change_summary: 变更摘要（前后值，业务字段）。
     """
 
     log_id: str = Field(default="", description="日志 ID")
@@ -237,3 +266,9 @@ class AuditLogItem(BaseModel):
     resource_id: str = Field(default="", description="资源 ID")
     result: str = Field(default="", description="操作结果")
     occurred_at: str = Field(default="", description="发生时间，ISO 8601 格式")
+    actor_role: str = Field(default="", description="操作人角色")
+    ip_masked: str = Field(default="", description="掩码后的 IP")
+    action_display_name: str = Field(default="", description="动作展示名")
+    change_summary: dict[str, object] = Field(
+        default_factory=dict, description="变更摘要（前后值）"
+    )

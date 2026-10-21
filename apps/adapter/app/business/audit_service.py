@@ -60,6 +60,39 @@ ACTION_DOC_UPLOAD: Final[str] = "document.upload"
 #: 操作：删除文档
 ACTION_DOC_DELETE: Final[str] = "document.delete"
 
+#: 资源类型：部门（B08）
+RESOURCE_DEPARTMENT: Final[str] = "department"
+
+#: 资源类型：成员（B08）
+RESOURCE_MEMBER: Final[str] = "member"
+
+#: 资源类型：角色（B08）
+RESOURCE_ROLE: Final[str] = "role"
+
+#: 操作：新建部门（B08）
+ACTION_DEPT_CREATE: Final[str] = "department.create"
+
+#: 操作：修改/移动部门（B08）
+ACTION_DEPT_UPDATE: Final[str] = "department.update"
+
+#: 操作：删除部门（B08）
+ACTION_DEPT_DELETE: Final[str] = "department.delete"
+
+#: 操作：变更成员角色/部门/状态（B08）
+ACTION_MEMBER_UPDATE: Final[str] = "member.update"
+
+#: 操作：移出成员（B08）
+ACTION_MEMBER_REMOVE: Final[str] = "member.remove"
+
+#: 操作：批量变更成员（B08）
+ACTION_MEMBER_BATCH: Final[str] = "member.batch_update"
+
+#: 操作：删除角色（B08）
+ACTION_ROLE_DELETE: Final[str] = "role.delete"
+
+#: 操作：计量对账偏差（B07，G-23）
+ACTION_RECONCILE_MISMATCH: Final[str] = "billing.reconcile_mismatch"
+
 #: 操作 → 用户可见名称（写入 `action_display_name`，供操作记录页直接展示）
 ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_KB_CREATE: "创建知识库",
@@ -69,6 +102,14 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_GRANT_REVOKE: "撤销成员授权",
     ACTION_DOC_UPLOAD: "上传文档",
     ACTION_DOC_DELETE: "删除文档",
+    ACTION_DEPT_CREATE: "新建部门",
+    ACTION_DEPT_UPDATE: "修改部门",
+    ACTION_DEPT_DELETE: "删除部门",
+    ACTION_MEMBER_UPDATE: "变更成员角色与部门",
+    ACTION_MEMBER_REMOVE: "移出成员",
+    ACTION_MEMBER_BATCH: "批量变更成员",
+    ACTION_ROLE_DELETE: "删除角色",
+    ACTION_RECONCILE_MISMATCH: "计量对账偏差",
 }
 
 
@@ -175,6 +216,22 @@ class InMemoryAuditRecorder:
             candidates = [item for item in candidates if item.resource_id == resource_id]
         candidates.sort(key=lambda item: item.occurred_at, reverse=True)
         return candidates[:limit]
+
+    async def entries_for(self, tenant_id: str) -> list[AuditEntry]:
+        """读取该租户的全部操作记录（B08 的 U6 多维筛选在仓储层完成）。
+
+        与 `recent()` 的区别：不做条数截断，供 `audit_repo` 做多条件过滤与分页。
+
+        Args:
+            tenant_id: 租户 ID。
+
+        Returns:
+            list[AuditEntry]: 操作记录列表（时间倒序）。
+        """
+        async with self._lock:
+            items = [item for item in self._entries if item.tenant_id == tenant_id]
+        items.sort(key=lambda item: item.occurred_at, reverse=True)
+        return items
 
     def clear(self) -> None:
         """清空（测试隔离用）。"""
@@ -469,6 +526,9 @@ def reset_audit_recorder() -> None:
 
 
 __all__: list[str] = [
+    "ACTION_DEPT_CREATE",
+    "ACTION_DEPT_DELETE",
+    "ACTION_DEPT_UPDATE",
     "ACTION_DISPLAY_NAMES",
     "ACTION_DOC_DELETE",
     "ACTION_DOC_UPLOAD",
@@ -477,10 +537,18 @@ __all__: list[str] = [
     "ACTION_KB_CREATE",
     "ACTION_KB_DELETE",
     "ACTION_KB_UPDATE",
+    "ACTION_MEMBER_BATCH",
+    "ACTION_MEMBER_REMOVE",
+    "ACTION_MEMBER_UPDATE",
+    "ACTION_RECONCILE_MISMATCH",
+    "ACTION_ROLE_DELETE",
     "AUDIT_TABLE",
+    "RESOURCE_DEPARTMENT",
     "RESOURCE_DOCUMENT",
     "RESOURCE_GRANT",
     "RESOURCE_KNOWLEDGE_BASE",
+    "RESOURCE_MEMBER",
+    "RESOURCE_ROLE",
     "AuditEntry",
     "AuditRecorder",
     "AuditService",

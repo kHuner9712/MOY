@@ -423,8 +423,14 @@ def test_tl1_filters_by_tool_type(client: TestClient, settings: Settings) -> Non
 
 
 def test_tl1_requires_permission(client: TestClient, settings: Settings) -> None:
-    """无 `tool:connection:manage` → 403 / 20003。"""
-    response = client.get("/api/v1/tools/executions", headers=_headers(settings, roles=["member"]))
+    """无 `tool:connection:manage` → 403 / 20003。
+
+    B08 起 `member` / `guest` 拥有该权限点（🔸 只读可看），
+    故「无权限账号」用未授任何权限点的自定义角色表示。
+    """
+    response = client.get(
+        "/api/v1/tools/executions", headers=_headers(settings, roles=["custom_no_permission"])
+    )
     assert response.status_code == 403
     assert response.json()["code"] == 20003
 

@@ -14,6 +14,9 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import Settings
+from tests.conftest import TEST_TENANT_ID, make_token
+
 pytestmark = pytest.mark.integration
 
 _GENERATE_BODY = {
@@ -638,13 +641,27 @@ class TestIdentityEndpoints:
         assert response.json()["code"] == 14004
 
     def test_u6_audit_logs(
-        self, client: TestClient, auth_headers: dict[str, str], idempotency_headers: dict[str, str]
+        self,
+        client: TestClient,
+        settings: Settings,
+        auth_headers: dict[str, str],
+        idempotency_headers: dict[str, str],
     ) -> None:
-        """U6 审计查询返回分页结构。"""
+        """U6 审计查询返回分页结构。
+
+        B08 起 `audit:log:read` 仅 owner / org_admin 拥有（§4.8），
+        因此本用例使用管理员令牌（无权场景见 test_permission_matrix 与
+        test_org_endpoints::test_u6_audit_logs_require_permission）。
+        """
+        admin_token = make_token(settings=settings, roles=["org_admin"], tenant_id=TEST_TENANT_ID)
         response = client.post(
             "/api/v1/identity/audit-logs",
             json={"page": 1, "page_size": 10, "resource_type": "knowledge_base"},
-            headers={**auth_headers, **idempotency_headers},
+            headers={
+                "Authorization": f"Bearer {admin_token}",
+                "X-Tenant-Id": TEST_TENANT_ID,
+                **idempotency_headers,
+            },
         )
         body = response.json()
         assert body["code"] == 0

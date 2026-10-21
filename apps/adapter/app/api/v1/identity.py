@@ -113,6 +113,8 @@ async def list_members(
     page_size: int = Query(20, ge=1, le=200, description="每页条数"),
     role: str | None = Query(None, description="按角色过滤"),
     keyword: str = Query("", max_length=128, description="按姓名或邮箱过滤"),
+    department_id: str = Query("", max_length=128, description="按部门过滤"),
+    status: str = Query("", max_length=32, description="按在册状态过滤"),
 ) -> ApiResponse[PageResult[MemberItem]]:
     """U3 组织成员列表。
 
@@ -123,6 +125,8 @@ async def list_members(
         page_size: 每页条数。
         role: 按角色过滤。
         keyword: 按姓名或邮箱过滤。
+        department_id: 按部门过滤（B08 加性）。
+        status: 按在册状态过滤（B08 加性）。
 
     Returns:
         ApiResponse[PageResult[MemberItem]]: 分页结果。
@@ -130,7 +134,14 @@ async def list_members(
     from app.schemas.identity import OrgRole
 
     role_enum = OrgRole(role) if role else None
-    query = ListMembersQuery(page=page, page_size=page_size, role=role_enum, keyword=keyword)
+    query = ListMembersQuery(
+        page=page,
+        page_size=page_size,
+        role=role_enum,
+        keyword=keyword,
+        department_id=department_id,
+        status=status,
+    )
     return ApiResponse[PageResult[MemberItem]].ok(
         await get_identity_service().list_members(org_id, query, context.auth)
     )
@@ -252,7 +263,7 @@ async def query_audit_logs(
     from typing import Any
 
     async def factory() -> Any:
-        return service.query_audit_logs(body, context.auth)
+        return await service.query_audit_logs(body, context.auth)
 
     result, replayed = await run_idempotent(request, context, factory, manager)
     if replayed:

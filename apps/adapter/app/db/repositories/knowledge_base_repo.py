@@ -202,6 +202,14 @@ class KnowledgeBaseStore(Protocol):
         """统计该库下未删除的文档数量。"""
         ...
 
+    async def transfer_owner(self, tenant_id: str, *, from_user_id: str, to_user_id: str) -> int:
+        """把某用户名下未删除的知识库所有者转交他人（B08 移出成员时使用）。
+
+        Returns:
+            int: 转交的库数量。
+        """
+        ...
+
 
 class InMemoryKnowledgeBaseStore:
     """进程内知识库元数据存储（development/test）。"""
@@ -353,6 +361,32 @@ class InMemoryKnowledgeBaseStore:
         from app.db.repositories.document_repo import count_by_base_in_memory
 
         return await count_by_base_in_memory(tenant_id, base_id)
+
+    async def transfer_owner(self, tenant_id: str, *, from_user_id: str, to_user_id: str) -> int:
+        """把某用户名下未删除的知识库所有者转交他人。
+
+        Args:
+            tenant_id: 租户 ID。
+            from_user_id: 原所有者用户 ID。
+            to_user_id: 新所有者用户 ID。
+
+        Returns:
+            int: 转交的库数量。
+        """
+        if not from_user_id or not to_user_id or from_user_id == to_user_id:
+            return 0
+        transferred = 0
+        async with self._lock:
+            for key, record in list(self._records.items()):
+                if key[0] != tenant_id or record.is_deleted:
+                    continue
+                if record.owner_user_id != from_user_id:
+                    continue
+                self._records[key] = replace(
+                    record, owner_user_id=to_user_id, updated_at=_now_iso()
+                )
+                transferred += 1
+        return transferred
 
     def clear(self) -> None:
         """清空（测试隔离用）。"""
@@ -613,6 +647,32 @@ class PostgresKnowledgeBaseStore:
                 repo.params(base_id=base_id),
             )
         return int(total or 0)
+
+    async def transfer_owner(self, tenant_id: str, *, from_user_id: str, to_user_id: str) -> int:
+        """把某用户名下未删除的知识库所有者转交他人（B08 移出成员时使用）。
+
+        Args:
+            tenant_id: 租户 ID。
+            from_user_id: 原所有者用户 ID。
+            to_user_id: 新所有者用户 ID。
+
+        Returns:
+            int: 转交的库数量。
+        """
+        if not from_user_id or not to_user_id or from_user_id == to_user_id:
+            return 0
+        async with tenant_scope(tenant_id, settings=self._settings) as uow:
+            repo = _KnowledgeBaseTableRepository(uow)
+            result = await repo.execute(
+                f"""
+                UPDATE {KNOWLEDGE_BASE_TABLE}
+                SET owner_user_id = :to_user_id, updated_at = now()
+                WHERE {repo.tenant_clause()} AND owner_user_id = :from_user_id
+                  AND deleted_at IS NULL
+                """,
+                repo.params(from_user_id=from_user_id, to_user_id=to_user_id),
+            )
+        return int(getattr(result, "rowcount", 0) or 0)
 
 
 class _DocumentCountRepository(BaseRepository):
