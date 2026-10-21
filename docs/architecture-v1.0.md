@@ -79,7 +79,7 @@ graph TB
         INF3[Milvus]
         INF4[Keycloak]
         INF5[SeaweedFS / 对象存储]
-        INF6[监控告警 Prometheus + Grafana]
+        INF6[监控告警 Prometheus]
     end
     L1 -->|仅调用适配层 REST/SSE| L4
     L2 -->|仅调用适配层| L4
@@ -174,7 +174,7 @@ graph TB
 | 数据 | 关系库 | PostgreSQL 16 | PostgreSQL License（类 BSD/MIT） | RLS 多租户隔离、JSON 支持、生态成熟 |
 | 缓存 / 幂等 | Valkey 7.2 | **BSD-3-Clause** | Redis 协议兼容的社区分支，永久宽松许可；**已决策替代 Redis 7**（RSALv2/SSPL 触黑名单），适配层业务代码零改动，仅换镜像与连接地址。详见 ADR-0002 |
 | 存储 | 对象存储 | **SeaweedFS 3.80** | **Apache-2.0**（白名单） | S3 兼容，可单机可集群，私有化友好。**替代 MinIO**（其上游 Docker Hub 仓库已整体下架，制品不可获取），协议直接落入白名单、无需版本线锁定；独立容器运行（见 8.2 说明与 ADR-0002 §2.2） |
-| 运维 | 监控 | Prometheus + Grafana | Apache-2.0 | 云原生事实标准 |
+| 运维 | 监控 | Prometheus | Apache-2.0 | 云原生事实标准。**Grafana 已于 V1.0 移除**（AGPL-3.0 且 AGPL 前版本线在 Docker Hub 已不存在，看板不属 V1.0 验收项，见 `docs/decisions/0004` 第二章） |
 
 ## 2.2 关键决策论证
 
@@ -1443,7 +1443,7 @@ graph LR
 | `OA_DIFY_BASE_URL` | `http://dify-api:5001` | 底座地址（仅适配层可见） |
 | `OA_DIFY_DEFAULT_APP_KEY` | `app-xxx` | 底座应用密钥 |
 | `OA_KEYCLOAK_URL` / `OA_KEYCLOAK_REALM` | ... | IAM 配置 |
-| `OA_DATABASE_URL` / `OA_REDIS_URL` / `OA_MILVUS_URI` / `OA_MINIO_*` | ... | 基础设施连接 |
+| `OA_DATABASE_URL` / `OA_REDIS_URL` / `OA_MILVUS_URI` / `OA_OBJECT_STORE_*` | ... | 基础设施连接（对象存储配置项 2026-10-21 由 `OA_MINIO_*` 改名，QA 附录 A P2-4） |
 | `OA_LOG_LEVEL` | `INFO` | 日志级别 |
 
 ## 9.6 CI 门禁（强制）
@@ -1500,9 +1500,9 @@ graph LR
 | D-03 | 会话与消息的存储归属 | 会话列表/历史消息由上层维护还是适配层代理 Dify 会话？建议上层自持（业务库），适配层只做无状态生成，避免适配层有状态化 | 架构师 + 工程师 |
 | D-04 | Agent 长任务的回调机制 | V1.0 建议「轮询 + SSE 推送」双通道，Webhook 回调留 V1.x；需确认是否接受 | 产品经理 |
 | D-05 | 多租户隔离实现细节 | PostgreSQL RLS + 应用层 tenant_id 双保险已定；需确认 SaaS 是否接受共享 Milvus 实例按 partition/collection 前缀隔离 | 架构师 + 主理人 |
-| D-06 | Redis 7 许可证与对象存储合规方案 | Redis 7 为 RSALv2/SSPL 双许可、MinIO 主线为 AGPL-3.0 且上游仓库已整体下架；**已决策**：缓存改用 Valkey（BSD-3）、对象存储改用 SeaweedFS 3.80（Apache-2.0），二者均直接落入白名单 | 主理人 + 法务/合规 |
+| D-06 | Redis 7 许可证与对象存储合规方案 | Redis 7 为 RSALv2/SSPL 双许可、MinIO 主线为 AGPL-3.0 且上游仓库已整体下架；**已拍板生效**：缓存改用 Valkey（BSD-3）、对象存储改用 SeaweedFS 3.80（Apache-2.0），二者均直接落入白名单；另裁定 Grafana V1.0 移除、Dify 三条规避约束（`docs/decisions/0004`） | ✅ 已批准 |
 | D-07 | 适配层健康检查与就绪探针契约 | `/healthz`、`/readyz` 语义（ready 依赖 Redis/Dify 连通性）需与运维对齐 | 工程师 + 主理人 |
-| D-08 | 前端设计令牌（品牌色/字体/圆角）基线 | 第 3 周组件库开发前需确定品牌视觉基线，否则组件库返工风险 | 产品经理 |
+| D-08 | 前端设计令牌（品牌色/字体/圆角）基线 | **已拍板**：主色 #2563EB、V1.0 不做深色、私有化镜像内置开源中文字体（`docs/decisions/0003` 回执 + `docs/decisions/0004` 第六章） | ✅ 已批准 |
 
 ### 10.3 待决项状态跟踪（V1.0.1 更新）
 
@@ -1513,9 +1513,9 @@ graph LR
 | D-03 | 已定（上层自持） | ADR-0001 推论 | 落地即可 | — |
 | D-04 | 待确认 | — | 产品经理确认 V1.0 采用轮询 + SSE | T05 前 |
 | D-05 | 待确认 | — | 架构师 + 主理人确认 Milvus 隔离方式 | Sprint 1 |
-| **D-06** | **已形成 ADR-0002（v1.3：对象存储改用 SeaweedFS），待法务/合规签字** | `docs/adr/0002-infrastructure-license-compliance.md` | 主理人协调法务确认 Valkey（BSD-3）+ SeaweedFS 3.80（Apache-2.0）；**签字前置条件为镜像可拉取性实测通过** | Sprint 1 启动前 |
+| **D-06** | ✅ **已拍板生效（2026-10-21）** | `docs/adr/0002-infrastructure-license-compliance.md` + `docs/decisions/0004` | 创始人授权主理人批准：Valkey 7.2（BSD-3）+ SeaweedFS 3.80（Apache-2.0）；Docker daemon 实测 `docker pull` 通过（签字前置条件满足）。另裁定：Grafana V1.0 移除（AGPL-3.0 且 AGPL 前版本线已不可获取）；Dify 修改版 Apache-2.0 的三条规避约束（SaaS 不用多租户 / 不修改代码 / 不展示品牌） | — |
 | D-07 | 待确认 | `docs/api/README.md` 第五节 | 与运维对齐探针语义 | T01 内 |
-| **D-08** | **已形成 ADR-0003 占位，待产品经理拍板** | `docs/adr/0003-design-token-baseline.md` | 产品经理在 2.1-2.5 决策项上确认或修改建议默认值 | **第 3 周 T03 开工前（硬时限）** |
+| **D-08** | ✅ **已拍板（2026-10-21）** | `docs/adr/0003-design-token-baseline.md` + `docs/decisions/0003-...-decision-sheet.md` 回执 | 创始人授权主理人代拍：Q1 选 A（#2563EB）、Q2 同意不做深色（配套两条硬约束）、Q3 同意私有化镜像内置开源中文字体（SIL OFL 1.1，走引入审核）；第 1 章 30 余项按推荐执行 | — |
 
 ---
 

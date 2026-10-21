@@ -1,9 +1,9 @@
 # ADR-0002：基础设施灰名单组件选型（Redis→Valkey、MinIO→SeaweedFS）
 
-- **状态**：已接受（Accepted）—— 待主理人与法务/合规做最终签字确认
+- **状态**：✅ **已签字生效**（2026-10-21 创始人授权主理人批准，`docs/decisions/0004`；Docker daemon 实测 `docker pull` 通过，签字前置条件满足）
 - **日期**：2026-10-21
-- **决策者**：高见远（架构师）；齐活林（交付总监）、法务/合规 待确认
-- **相关文档**：`docs/architecture-v1.0.md` 第 2.1 节、第 8.2 节、第 10.2 节 D-06；`docs/qa-report-sprint0.md` E-3 节、R-06
+- **决策者**：高见远（架构师）；齐活林（交付总监）代创始人拍板；法务/合规意见已以上述规避约束形式闭环
+- **相关文档**：`docs/architecture-v1.0.md` 第 2.1 节、第 8.2 节、第 10.2 节 D-06；`docs/qa-report-sprint0.md` E-3 节、R-06；`docs/qa-blockers-closure-appendix-a.md` P1-1/P1-2/P2-4
 - **决策编号**：T01（项目基础设施）
 - **关联决策**：ADR-0001（适配层唯一原则）—— 本决策是其「合规优先」子约束在基础设施层的落地
 
@@ -337,7 +337,7 @@ images:
 
 | # | 事项 | 责任方 | 期限 |
 | --- | --- | --- | --- |
-| 1 | 本 ADR 的最终法务/合规签字（Valkey BSD-3 与 SeaweedFS Apache-2.0 的书面确认） | 主理人协调 | Sprint 1 启动前 |
+| 1 | ✅ **已闭环（2026-10-21）**：本 ADR 由创始人授权主理人正式批准，Valkey（BSD-3）与 SeaweedFS（Apache-2.0）选型生效；Docker daemon 实测 `docker pull` 双镜像通过，签字对象为可拉取制品 | — | 已闭环 |
 | 2 | ✅ **已闭环（结论：不通过）** —— MinIO 仓库整体下架，制品不可获取，已改用 SeaweedFS（QA 报告 BLK-03） | — | 已闭环 |
 | 2a | ⏳ **标签存在性已由架构师实跑闭环**（2026-10-21）：`git ls-remote --tags` 返回该标签及 commit `7fc93cfb`，合成标签 `RELEASE.2021-04-22T23-11-00Z` 确认不存在；`docker compose config` 双文件 PASS；镜像清单门禁实跑 14/14 上游存在性通过、3 个负样本正确判 FAIL。**剩余**：Docker daemon 拉取实测（本环境 daemon 未运行） | QA | Sprint 1 |
 | 6 | **`squidly/squid` 镜像已更换为 `ubuntu/squid:5.2-22.04_beta`**（原引用仓库在 Docker Hub 不存在），需 QA 复核 SSRF 代理功能在 Canonical 镜像下行为一致（配置挂载路径 `/etc/squid/squid.conf` 不变） | QA + 工程师 | Sprint 1 |
@@ -357,6 +357,32 @@ images:
 
 ---
 
+## 九、2026-10-21 拍板追认（Grafana / Dify / 状态生效）
+
+> 本章为 `docs/decisions/0004-phase1-open-decisions-ratification.md` 在基础设施协议域的落地摘要，
+> 完整论证（含方案比较表）以该决策记录为准。
+
+### 9.1 Grafana：V1.0 移除（QA 附录 A P1-1）
+
+- **事实**：`grafana/grafana` 自 8.0 起为 **AGPL-3.0**（`images.lock` 原标注 Apache-2.0 为错误）；
+  AGPL 前的 7.5.x 版本线在 Docker Hub **已不存在**（实测 `7.5.31 / 7.5.32 / 7.5.33` 均 404，
+  对照组 `11.1.0` 返回 200），「锁 AGPL 前版本线」路径（MinIO 曾采用的范式）在 Grafana 上不可行。
+- **裁定**：V1.0 交付栈移除 Grafana；监控保留 Prometheus（Apache-2.0）+ 告警规则，
+  足以支撑总方案 6.3 可用率度量；可视化看板不属 V1.0 验收项。V1.1 评估 Perses（Apache-2.0）。
+- **落点**：`deploy/images.lock`、`deploy/docker-compose.yml`、`deploy/.env.example`、
+  `deploy/offline/README.md`、架构文档 §2.1 / INF6 已同步。
+
+### 9.2 Dify：修改版 Apache-2.0 的三条规避约束（QA 附录 A P1-2）
+
+- **事实**：Dify LICENSE 为 Apache-2.0 修改版，附「多租户特性限制」与「商标/LOGO 限制」；
+  `images.lock` 原裸标 `Apache-2.0` 不完整。
+- **裁定**：① SaaS 禁用 Dify 多租户特性，租户隔离由自研适配层 + Postgres RLS 实现
+  （与 ADR-0001 同向强化）；② 不修改 Dify 代码；③ 不展示 Dify 品牌标识（前端黑盒化已保证）。
+  私有化为单租户部署，天然不命中。
+- **落点**：`deploy/images.lock` 三条 dify 条目协议标注已更正。
+
+---
+
 ## 八、修订记录
 
 | 版本 | 日期 | 修订人 | 修订说明 |
@@ -365,6 +391,7 @@ images:
 | **v1.1** | **2026-10-21** | **高见远** | **Sprint 0 QA 复核（P0）修订**：① 更正 MinIO 标签 `RELEASE.2021-04-22T23-11-00Z`（拼接合成、上游不存在）→ `RELEASE.2021-04-22T15-44-28Z`，并补 2.2 节核验记录与「先核验后引用」强制作业规范 ② 新增 2.4 节 `deploy/images.lock` 单一事实来源与 P0 镜像门禁 ③ 2.5 节将 Valkey 风险具体化为 `valkey-cli` 健康检查命令校验 ④ 后果章节补清单维护成本与离线模式校验成本 ⑤ 验证方式补三道自动门禁、待确认事项补 2 项 |
 | **v1.3** | **2026-10-21** | **高见远** | **QA BLK-03 复核 P0（决策根本变更）**：① **对象存储由 MinIO 改为 SeaweedFS 3.80** —— MinIO 上游 Docker Hub 仓库已整体下架（官方 2025-10-15 停止分发镜像、2025-12-03 进入维护模式），「锁定 AGPL 前版本线」策略的技术前提失效，法务签字对象为虚；补 §2.2 记录该变更、方案 A/B/C 比较与 SeaweedFS 三重选型证据（可用性 200 / 拉取量 3386 万 / registry 协议 + 上游 LICENSE 首行 Apache-2.0）、三处接入点联动 ② 修正**我上轮的错误结论**：「14/14 上游存在性通过」对 minio 不成立（门禁走 git tag 分支绕过了 registry 校验）③ §2.2.2 记录门禁盲区「git tag 存在 ≠ 镜像可拉取」并固化负样本自测 ④ 全篇同步 SeaweedFS 表述 |
 | **v1.2** | **2026-10-21** | **高见远** | **门禁实跑后修订**：① 新增 2.2.1 节记录**同型问题第二例** `squidly/squid` 仓库不存在（已更换为 `ubuntu/squid:5.2-22.04_beta`），并将作业规范第 1 条明确适用于所有镜像 ② 2.4 节补存在性校验**方法选型表**与**网络受限降级口径**（404 判 FAIL；401/超时判环境受限并降级放行）③ 记录门禁负样本验证结果（3 个负样本均正确判 FAIL）④ 记录门禁自身实现缺陷的修正（401/404 混判、官方镜像 `library/` 命名空间归一化）⑤ 待确认事项补 squid 镜像更换后的功能复核项 |
+| **v1.4** | **2026-10-21** | **齐活林（代创始人拍板）** | **签字生效 + 两项追认裁定**：① 状态转「已签字生效」（创始人授权主理人批准，Docker daemon 实测双镜像可拉取，签字前置条件满足）② 新增第九章：Grafana V1.0 移除（AGPL-3.0 且 7.5.x 版本线已不可获取，看板不属 V1.0 验收项）③ Dify 修改版 Apache-2.0 三条规避约束（SaaS 不用多租户 / 不修改代码 / 不展示品牌）④ 待确认事项第 1 条（法务签字）闭环 |
 
 ---
 
