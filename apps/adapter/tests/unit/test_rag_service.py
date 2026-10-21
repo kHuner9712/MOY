@@ -228,6 +228,82 @@ async def test_search_stub_returns_empty_segments() -> None:
     assert data.segments == []
 
 
+async def test_search_with_auth_denies_unregistered_base() -> None:
+    """判权 fail-closed：无元数据的知识库即便换 ID 写法也一律 20003（QA B05-P0-01）。
+
+    修复前 `_assert_readable()` 在「本地查不到元数据」时直接 return，
+    而 R7 下发下游会执行 `removeprefix("kb_")`，于是未授权成员只要去掉前缀
+    就能让判权整体短路。现在入口先归一化、再 fail-closed。
+    """
+    service = _service()
+    for base_id in ("kb_unregistered", "unregistered"):
+        with pytest.raises(ApiError) as excinfo:
+            await service.search(SearchRequest(base_id=base_id, query="年假"), _AUTH)
+        assert excinfo.value.code == ErrorCode.FORBIDDEN
+        assert excinfo.value.http_status == 403
+
+
+async def test_search_skips_permission_check_without_auth() -> None:
+    """服务层无鉴权调用（auth=None）不做对象级判权，保持既有内部调用路径可用。"""
+    data = await _service().search(SearchRequest(base_id="kb_unregistered", query="年假"))
+    assert data.segments == []
+
+
+def test_normalize_base_id_has_single_canonical_form() -> None:
+    """同一底座对象的两种写法归一为同一判定键（`kb_` 形态）。"""
+    from app.business.policy_service import normalize_base_id
+
+    assert normalize_base_id("kb_01ABC") == "kb_01ABC"
+    assert normalize_base_id("01ABC") == "kb_01ABC"
+    assert normalize_base_id("  01ABC  ") == "kb_01ABC"
+    assert normalize_base_id("") == ""
+
+
+async def test_r3_and_kb3_share_one_canonical_base_id() -> None:
+    """R3 写入与 KB3 查询对「原生写法 / 规范写法」得到同一对象（QA B05-P0-01）。
+
+    修复前：用原生 ID 上传会写进 `base_id=<原生>` 的文档行，用 `kb_<原生>` 查清单
+    永远查不到（反之亦然），于是「一个对象两种 ID」在文档链路上也成立。
+    """
+    from app.business.document_service import DocumentService
+    from app.db.repositories.knowledge_base_repo import (
+        KnowledgeBaseRecord,
+        get_knowledge_base_store,
+    )
+    from app.schemas.knowledge_ext import ListDocumentsQuery
+
+    settings = Settings(downstream_enabled=False)
+    await get_knowledge_base_store(settings).create(
+        KnowledgeBaseRecord(
+            tenant_id=_AUTH.tenant_id,
+            base_id="kb_NATIVE_BASE",
+            name="R3 归一化库",
+            visibility="organization",
+            owner_user_id=_AUTH.user_id,
+        )
+    )
+
+    service = _service()
+    uploaded = await service.upload_document(
+        base_id="NATIVE_BASE",
+        file_name="handbook.pdf",
+        file_size=1024,
+        auth=_AUTH,
+    )
+
+    document_service = DocumentService(settings=settings)
+    record = await document_service.store.get(_AUTH.tenant_id, uploaded.document_id)
+    assert record is not None
+    assert record.base_id == "kb_NATIVE_BASE"
+
+    listed = await document_service.list_documents("kb_NATIVE_BASE", ListDocumentsQuery(), _AUTH)
+    assert listed.meta.total == 1
+    listed_by_native = await document_service.list_documents(
+        "NATIVE_BASE", ListDocumentsQuery(), _AUTH
+    )
+    assert [item.document_id for item in listed_by_native.items] == [uploaded.document_id]
+
+
 async def test_reindex_conflicts_while_processing() -> None:
     """文档处理中重建索引返回 11006。"""
     service = _service()

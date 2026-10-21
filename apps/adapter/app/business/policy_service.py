@@ -55,6 +55,31 @@ WILDCARD_ROLE: Final[str] = "*"
 #: 全企业可见
 VISIBILITY_ORGANIZATION: Final[str] = "organization"
 
+#: 知识库 ID 前缀（唯一规范形态）
+BASE_ID_PREFIX: Final[str] = "kb_"
+
+
+def normalize_base_id(raw: str) -> str:
+    """把知识库 ID 归一化为唯一规范形态（`kb_` 前缀）。
+
+    **一个对象只能有一个判定键**（QA B05-P0-01）：底座原生 ID 与 `kb_<原生>`
+    指向同一个底座对象，若判权按拼写分别处理，未授权成员只要换一种写法就能
+    让「本地元数据不存在」的分支短路，从而绕过 `restricted` 判定。
+    因此所有入口（R7 / M1 / M2 / KB4）先归一化，再按同一键判权。
+
+    Args:
+        raw: 原始知识库 ID（`kb_...` 或底座原生 ID）。
+
+    Returns:
+        str: 规范形态；入参为空返回空串。
+    """
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    if value.startswith(BASE_ID_PREFIX):
+        return value
+    return f"{BASE_ID_PREFIX}{value}"
+
 
 def normalized_roles(auth: AuthContext) -> set[str]:
     """取归一化后的角色集合（小写去空白）。
@@ -289,25 +314,31 @@ class PolicyService:
     ) -> list[str]:
         """过滤出当前用户有权使用的知识库（未授权库静默剔除）。
 
-        **未在本地元数据登记的库保持原样透传**：阶段一的历史库（无元数据）
-        无法判定可见性，剔除会让既有调用方行为突变；B08 全量元数据就绪后收紧。
+        **fail-closed（QA B05-P0-01）**：本地查不到元数据、或元数据已软删除的知识库
+        一律剔除，不再「无法判定就放行」——R2 列表本来就只返回元数据内的库，
+        放行只会造成「列表看不到、检索拿得到」的越权形态（架构 §4.8）。
+        历史库若确需继续检索，必须走元数据回填，不接受按 ID 形态开洞。
 
         Args:
             auth: 鉴权上下文（None 表示无鉴权信息，原样返回）。
             base_ids: 请求携带的知识库 ID 列表。
 
         Returns:
-            list[str]: 过滤后的知识库 ID 列表（保持原顺序、去重）。
+            list[str]: 过滤后的知识库 ID 列表（规范形态、去重、保持原顺序）。
         """
         if auth is None or not base_ids:
             return list(dict.fromkeys(base_ids))
         snapshot = await self.snapshot(auth)
         allowed: list[str] = []
         skipped = 0
-        for base_id in dict.fromkeys(base_ids):
+        for raw_id in dict.fromkeys(base_ids):
+            base_id = normalize_base_id(raw_id)
+            if not base_id:
+                skipped += 1
+                continue
             record = await self._bases.get(auth.tenant_id, base_id)
-            if record is None:
-                allowed.append(base_id)
+            if record is None or record.is_deleted:
+                skipped += 1
                 continue
             if self.is_visible(record, auth, snapshot):
                 allowed.append(base_id)
@@ -377,6 +408,7 @@ def reset_policy_service() -> None:
 
 
 __all__: list[str] = [
+    "BASE_ID_PREFIX",
     "GUEST_ROLES",
     "ORG_ADMIN_ROLES",
     "VISIBILITY_ORGANIZATION",
@@ -386,6 +418,7 @@ __all__: list[str] = [
     "get_policy_service",
     "has_admin_role",
     "is_guest_role",
+    "normalize_base_id",
     "normalized_roles",
     "reset_policy_service",
 ]

@@ -38,6 +38,7 @@ from app.business.policy_service import (
     get_policy_service,
     has_admin_role,
     is_guest_role,
+    normalize_base_id,
 )
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -424,6 +425,7 @@ class KnowledgeBaseService:
         Raises:
             ApiError: 库不存在（11001）、无权限（20003）、参数非法（20001）。
         """
+        base_id = normalize_base_id(base_id)
         record = await self._require_base(base_id, auth)
         self.assert_can_update(record, auth)
 
@@ -517,6 +519,7 @@ class KnowledgeBaseService:
         Raises:
             ApiError: 库不存在（11001）、无权限（20003）、并发重复删除（20005）。
         """
+        base_id = normalize_base_id(base_id)
         record = await self._require_base(base_id, auth)
         self.assert_can_delete(record, auth)
 
@@ -558,16 +561,21 @@ class KnowledgeBaseService:
     async def require_readable(self, base_id: str, auth: AuthContext) -> KnowledgeBaseRecord:
         """读取可见的知识库（不存在 11001，不可见 20003）。
 
+        **ID 先归一化再判权**（QA B05-P0-01）：底座原生 ID 与 `kb_<原生>` 指向
+        同一个底座对象，若两种写法分别查表，换一种写法就能落到「查不到」的分支，
+        因此本层统一收敛为唯一规范形态（`kb_` 前缀）后判权（架构 §4.8）。
+
         Args:
-            base_id: 知识库 ID。
+            base_id: 知识库 ID（任一可达写法）。
             auth: 鉴权上下文。
 
         Returns:
-            KnowledgeBaseRecord: 知识库记录。
+            KnowledgeBaseRecord: 知识库记录（`base_id` 为规范形态）。
 
         Raises:
             ApiError: 库不存在（11001）或不可见（20003）。
         """
+        base_id = normalize_base_id(base_id)
         record = await self._store.get(auth.tenant_id, base_id)
         if record is None:
             raise ApiError(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND, internal_detail=f"base_id={base_id}")
@@ -582,7 +590,7 @@ class KnowledgeBaseService:
         """读取知识库（不存在即 11001，不判可见性）。
 
         Args:
-            base_id: 知识库 ID。
+            base_id: 知识库 ID（任一可达写法，本方法内归一化为规范形态）。
             auth: 鉴权上下文。
 
         Returns:
@@ -591,6 +599,7 @@ class KnowledgeBaseService:
         Raises:
             ApiError: 库不存在（11001）。
         """
+        base_id = normalize_base_id(base_id)
         record = await self._store.get(auth.tenant_id, base_id)
         if record is None:
             raise ApiError(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND, internal_detail=f"base_id={base_id}")
@@ -602,13 +611,15 @@ class KnowledgeBaseService:
         """读取**含已删除**的知识库记录（用于「库已删除」的精确报错）。
 
         Args:
-            base_id: 知识库 ID。
+            base_id: 知识库 ID（任一可达写法，本方法内归一化为规范形态）。
             auth: 鉴权上下文。
 
         Returns:
             KnowledgeBaseRecord | None: 记录（含已删除）；不存在返回 None。
         """
-        return await self._store.get(auth.tenant_id, base_id, include_deleted=True)
+        return await self._store.get(
+            auth.tenant_id, normalize_base_id(base_id), include_deleted=True
+        )
 
 
 def _first_role(auth: AuthContext) -> str:

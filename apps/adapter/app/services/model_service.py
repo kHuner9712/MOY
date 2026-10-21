@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from app.business.policy_service import PolicyService, get_policy_service
+from app.business.policy_service import PolicyService, get_policy_service, normalize_base_id
 from app.business.segment_service import SegmentHit, SegmentService, build_key
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
@@ -197,19 +197,27 @@ class ModelService:
     ) -> list[str]:
         """过滤出已授权的知识库（未授权库在对话中**静默跳过**）。
 
+        `skipped` 统计口径与 R7 / 列表一致：**先按规范 ID 去重再比较**，
+        避免「同一对象两种写法」被算成两次剔除（QA B05-P0-01 附带口径统一）。
+
         Args:
             request: 生成请求。
             auth: 鉴权上下文。
 
         Returns:
-            list[str]: 允许参与本次生成的知识库 ID。
+            list[str]: 允许参与本次生成的知识库 ID（规范形态）。
         """
+        requested = {
+            normalized
+            for normalized in (normalize_base_id(item) for item in request.knowledge_base_ids)
+            if normalized
+        }
         authorized = await self._policy.filter_authorized(auth, request.knowledge_base_ids)
-        skipped = len(set(request.knowledge_base_ids)) - len(authorized)
+        skipped = len(requested) - len(authorized)
         if skipped:
             logger.info(
                 "model_unauthorized_bases_skipped",
-                requested=len(set(request.knowledge_base_ids)),
+                requested=len(requested),
                 allowed=len(authorized),
                 skipped=skipped,
             )

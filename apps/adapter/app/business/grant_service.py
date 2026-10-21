@@ -243,7 +243,13 @@ class GrantService:
         created = 0
         skipped = 0
         created_ids: list[str] = []
+        seen: set[str] = set()
         for subject_id in subject_ids:
+            # 同批内重复对象同样计入 skipped（架构 §4.2 要点：重复授权不报错但计数）
+            if subject_id in seen:
+                skipped += 1
+                continue
+            seen.add(subject_id)
             record, is_created = await self._store.create(
                 GrantRecord(
                     tenant_id=auth.tenant_id,
@@ -392,15 +398,19 @@ class GrantService:
 
 
 def _normalize_subject_ids(subject_ids: list[str]) -> list[str]:
-    """规范化并去重授权对象 ID（保持调用方顺序）。
+    """规范化授权对象 ID（去空白，**保留重复项**）。
+
+    保留重复项是刻意的：架构 §4.2 要求「`subject_ids` 中重复对象计入
+    `skipped_count`」，去重会把同批重复藏起来，导致计数与契约不一致
+    （QA B05-P2-02）。
 
     Args:
         subject_ids: 原始对象 ID 列表。
 
     Returns:
-        list[str]: 去空白、去重后的列表。
+        list[str]: 去空白后的列表（保持调用方顺序与重复项）。
     """
-    return list(dict.fromkeys(item.strip() for item in subject_ids if item and item.strip()))
+    return [item.strip() for item in subject_ids if item and item.strip()]
 
 
 def _subject_type_of(value: str) -> GrantSubjectType:

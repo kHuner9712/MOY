@@ -27,6 +27,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from app.business.knowledge_base_service import KnowledgeBaseService
+from app.business.policy_service import normalize_base_id
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
@@ -344,7 +345,9 @@ class SegmentService:
         Raises:
             ApiError: 库不存在（11001）、文档不可定位（11004）、无权读取（20003）。
         """
-        base = await self._bases.require_readable(base_id, auth)
+        normalized_base_id = normalize_base_id(base_id)
+        base = await self._bases.require_readable(normalized_base_id, auth)
+        base_id = normalized_base_id
         document = await self._documents.get(auth.tenant_id, document_id)
         if document is None or (document.base_id and document.base_id != base_id):
             raise ApiError(

@@ -152,7 +152,7 @@ async def test_create_grants_counts_created_and_skipped() -> None:
 
 
 async def test_create_grants_deduplicates_within_single_request() -> None:
-    """同一请求内重复对象只创建一条，其余计入跳过。"""
+    """同一请求内重复对象只创建一条，其余计入 `skipped_count`（架构 §4.2 要点）。"""
     harness = _Harness(_settings())
     await harness.seed_base()
 
@@ -164,7 +164,7 @@ async def test_create_grants_deduplicates_within_single_request() -> None:
         _OWNER,
     )
     assert result.created_count == 1
-    assert result.skipped_count == 0
+    assert result.skipped_count == 2
 
 
 async def test_create_grants_rejects_more_than_fifty_subjects() -> None:

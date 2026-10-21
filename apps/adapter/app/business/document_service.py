@@ -35,6 +35,7 @@ from app.business.audit_service import (
     get_audit_recorder,
 )
 from app.business.knowledge_base_service import KnowledgeBaseService
+from app.business.policy_service import normalize_base_id
 from app.business.segment_service import SegmentService
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -309,6 +310,8 @@ class DocumentService:
         Raises:
             ApiError: 所属知识库已删除（11001）。
         """
+        # ID 归一化后再写：否则「用原生形态上传、用规范形态看清单」会查不到文档
+        base_id = normalize_base_id(base_id)
         existing = await self._bases.base_exists_for_delete_check(base_id, auth)
         if existing is not None and existing.is_deleted:
             raise ApiError(
@@ -389,6 +392,8 @@ class DocumentService:
         Raises:
             ApiError: 库不存在（11001）或不可见（20003）。
         """
+        # 与写入侧同一套规范化，保证「一个对象一个 ID」（QA B05-P0-01）
+        base_id = normalize_base_id(base_id)
         await self._bases.require_readable(base_id, auth)
         sort = query.parsed_sort
         records, total = await self._store.list(

@@ -197,6 +197,33 @@ def auth_context(tenant_id: str = _TENANT) -> AuthContext:
     return AuthContext(user_id="usr_cred_test", tenant_id=tenant_id)
 
 
+async def seed_base(
+    settings: Settings | None = None, *, base_id: str = _BASE_ID, tenant_id: str = _TENANT
+) -> None:
+    """登记知识库元数据（B05 起 R7 判权 fail-closed，检索前必须先有元数据）。
+
+    Args:
+        settings: 配置（与解析器保持一致，保证取到同一份内存单例）。
+        base_id: 知识库 ID。
+        tenant_id: 租户 ID。
+    """
+    from app.db.repositories.knowledge_base_repo import (
+        KnowledgeBaseRecord,
+        get_knowledge_base_store,
+    )
+
+    store = get_knowledge_base_store(settings or make_settings())
+    await store.create(
+        KnowledgeBaseRecord(
+            tenant_id=tenant_id,
+            base_id=base_id,
+            name="凭据联调库",
+            visibility="organization",
+            owner_user_id="usr_cred_test",
+        )
+    )
+
+
 # ===========================================================================
 # 1. 未绑定 → 全局凭据（现状行为不变）
 # ===========================================================================
@@ -251,6 +278,7 @@ async def test_bound_failure_never_falls_back() -> None:
         cache=InMemoryCredentialCache(),
     )
     service, dify = build_service(resolver)
+    await seed_base()
 
     with pytest.raises(ApiError) as excinfo:
         await service.search(SearchRequest(base_id=_BASE_ID, query="报销制度"), auth=auth_context())
@@ -403,6 +431,7 @@ async def test_search_passes_bound_key_to_downstream() -> None:
     """R7 检索把库级密钥透传给下游客户端。"""
     resolver = build_resolver()
     await setup_bound_credential(resolver)
+    await seed_base()
     service, dify = build_service(resolver)
     await service.search(SearchRequest(base_id=_BASE_ID, query="制度"), auth=auth_context())
     assert dify.post_calls
@@ -412,6 +441,7 @@ async def test_search_passes_bound_key_to_downstream() -> None:
 async def test_unbound_search_uses_global_key() -> None:
     """未绑定库的检索仍使用全局密钥（行为与现状一致）。"""
     resolver = build_resolver()
+    await seed_base()
     service, dify = build_service(resolver)
     await service.search(SearchRequest(base_id=_BASE_ID, query="制度"), auth=auth_context())
     assert dify.post_calls[0]["api_key"] == _GLOBAL_KEY

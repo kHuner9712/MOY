@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 
 import pytest
@@ -20,6 +21,19 @@ _GENERATE_BODY = {
     "profile": "general",
     "messages": [{"role": "user", "content": "帮我把这段话改写得更专业"}],
 }
+
+
+def _unique_key(tag: str) -> str:
+    """按标签生成稳定的 UUID 形态幂等键（同一用例内多次写操作时使用）。
+
+    Args:
+        tag: 标签。
+
+    Returns:
+        str: 幂等键。
+    """
+    digest = hashlib.sha256(tag.encode("utf-8")).hexdigest()
+    return f"{digest[0:8]}-{digest[8:12]}-4{digest[13:16]}-8{digest[17:20]}-{digest[20:32]}"
 
 
 def _assert_envelope(response_payload: dict[str, object]) -> None:
@@ -266,15 +280,37 @@ class TestRagEndpoints:
     def test_r7_search(
         self, client: TestClient, auth_headers: dict[str, str], idempotency_headers: dict[str, str]
     ) -> None:
-        """R7 检索返回片段列表结构。"""
+        """R7 检索返回片段列表结构。
+
+        阶段二 B05 起判权 fail-closed：检索目标必须是本租户**已登记元数据**的知识库
+        （未登记即 `20003`，见 QA B05-P0-01），因此这里先用 R1 建库再检索。
+        """
+        created = client.post(
+            "/api/v1/knowledge/bases",
+            json={"name": "检索回归库", "description": "回归用"},
+            headers={**auth_headers, **idempotency_headers},
+        )
+        base_id = created.json()["data"]["base_id"]
+
         response = client.post(
             "/api/v1/knowledge/search",
-            json={"base_id": "kb_1", "query": "年假怎么申请", "top_k": 5, "score_threshold": 0.5},
-            headers={**auth_headers, **idempotency_headers},
+            json={"base_id": base_id, "query": "年假怎么申请", "top_k": 5, "score_threshold": 0.5},
+            headers={**auth_headers, "Idempotency-Key": _unique_key("r7-search")},
         )
         body = response.json()
         assert body["code"] == 0
         assert "segments" in body["data"]
+
+    def test_r7_unknown_base_returns_20003(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        """未登记元数据的知识库一律 20003（判权 fail-closed，QA B05-P0-01）。"""
+        response = client.post(
+            "/api/v1/knowledge/search",
+            json={"base_id": "kb_1", "query": "年假怎么申请"},
+            headers={**auth_headers, "Idempotency-Key": _unique_key("r7-unknown")},
+        )
+        assert response.json()["code"] == 20003
 
     def test_r7_missing_query_returns_20001(
         self, client: TestClient, auth_headers: dict[str, str], idempotency_headers: dict[str, str]

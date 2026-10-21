@@ -33,7 +33,7 @@ from typing import Any, Final
 from app.business.credential_service import CredentialResolver, get_credential_resolver
 from app.business.document_service import DocumentService, map_stage
 from app.business.knowledge_base_service import KnowledgeBaseService
-from app.business.policy_service import PolicyService, get_policy_service
+from app.business.policy_service import PolicyService, get_policy_service, normalize_base_id
 from app.business.segment_service import SegmentHit, SegmentService, build_key
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
@@ -307,6 +307,8 @@ class RagService:
         Raises:
             ApiError: 知识库已删除（11001）、格式不支持（11002）、超出大小限制（11003）。
         """
+        # ID 归一化（QA B05-P0-01）：下游 `datasets/<原生 id>/...` 与本地记录必须同一规范键
+        base_id = normalize_base_id(base_id)
         self._validate_document(file_name, file_size)
         logger.info(
             "document_upload_requested",
@@ -468,6 +470,7 @@ class RagService:
         Raises:
             ApiError: 文档不存在（20004）或库级凭据不可用（11007）。
         """
+        base_id = normalize_base_id(base_id)
         tenant_id = self._tenant_of(auth)
         stored = await self._documents.store.get(tenant_id, doc_id)
 
@@ -578,6 +581,7 @@ class RagService:
         Raises:
             ApiError: 文档正在处理（11006）、文档不存在（20004）或凭据不可用（11007）。
         """
+        base_id = normalize_base_id(base_id)
         current = await self.get_index_status(base_id=base_id, doc_id=doc_id, auth=auth)
         if current.index_status == IndexStatus.PROCESSING:
             raise ApiError(
@@ -613,6 +617,7 @@ class RagService:
         Raises:
             ApiError: 文档正在处理（11006）、文档不存在（20004）或凭据不可用（11007）。
         """
+        base_id = normalize_base_id(base_id)
         logger.info("document_delete_requested", base_id=base_id, doc_id=doc_id)
         tenant_id = self._tenant_of(auth)
         actor_id = auth.user_id if auth is not None else ""
@@ -655,14 +660,19 @@ class RagService:
             top_k=request.top_k,
             score_threshold=request.score_threshold,
         )
-        await self._assert_readable(request.base_id, auth)
+        base_id = normalize_base_id(request.base_id)
+        if not base_id:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID, internal_detail="empty base_id after normalization"
+            )
+        await self._assert_readable(base_id, auth)
         if self._settings.mock_mode:
             return SearchData(segments=[])
 
-        api_key = await self._api_key_for(request.base_id, auth)
+        api_key = await self._api_key_for(base_id, auth)
         defaults = self._routes.retrieval_defaults
         response = await self._dify.post(
-            _DIFY_RETRIEVE_PATH.format(dataset_id=request.base_id.removeprefix(_BASE_PREFIX)),
+            _DIFY_RETRIEVE_PATH.format(dataset_id=base_id.removeprefix(_BASE_PREFIX)),
             {
                 "query": request.query,
                 "retrieval_model": {
@@ -676,26 +686,38 @@ class RagService:
             api_key=api_key,
         )
         data = self._transform_search_result(response.payload)
-        return await self._attach_backlinks(data, request.base_id, auth)
+        return await self._attach_backlinks(data, base_id, auth)
 
     async def _assert_readable(self, base_id: str, auth: AuthContext | None) -> None:
-        """R7 的对象级判权（与列表 / 问答同一套可见性判定）。
+        """R7 的对象级判权（fail-closed，与列表 / 问答同一套可见性判定）。
 
-        未在本地元数据登记的历史库**保持阶段一行为**（无法判定可见性时不阻断）：
-        阶段一已有调用方直接检索外部库，强制 11001 会让兼容性红线破裂。
+        **QA B05-P0-01 修复点**：本地查不到元数据、或元数据已软删除时一律拒绝
+        （`20003`），不再「无法判定就放行」。理由：
+
+        - R2 列表本来就只返回元数据内的知识库，历史库早已从列表消失，
+          「R7 放行」并没有达成阶段一行为不变，反而形成「列表看不到、检索拿得到」；
+        - 同一底座对象存在 `kb_<原生>` 与 `<原生>` 两种写法，放行等于给判权开后门；
+        - 跨租户访问时 `store.get(tenant_id, ...)` 必然为 None，放行即跨租户读取。
+
+        调用方已把 ID 归一化为 `kb_` 形态，因此「换一种写法绕过」不成立。
 
         Args:
-            base_id: 知识库 ID。
-            auth: 鉴权上下文。
+            base_id: 已归一化的知识库 ID。
+            auth: 鉴权上下文（None 表示服务层无鉴权调用，跳过判权）。
 
         Raises:
-            ApiError: 用户无权读取该知识库（20003）。
+            ApiError: 库不存在 / 已删除 / 无权读取（20003）。
         """
         if auth is None:
             return
         record = await self._bases.store.get(auth.tenant_id, base_id)
-        if record is None:
-            return
+        if record is None or record.is_deleted:
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                internal_detail=(
+                    f"base not found in tenant base_id={base_id} tenant_id={auth.tenant_id}"
+                ),
+            )
         if not await self._policy.can_read(auth, record):
             raise ApiError(
                 ErrorCode.FORBIDDEN,
