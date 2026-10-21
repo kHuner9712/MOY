@@ -85,6 +85,12 @@ INVOICE_ID_PREFIX: Final[str] = "inv_"
 #: 回调留痕 ID 前缀
 CALLBACK_ID_PREFIX: Final[str] = "cbk_"
 
+#: 被拒绝回调在 `payment_callback_log` 里的流水号前缀。
+#:
+#: 渠道流水号由渠道签发、**未验签时不可信**；用固定前缀 + 载荷摘要做键，
+#: 既留下取证行（`signature_ok=false`），又不占用真实流水号的幂等位。
+REJECTED_TXN_PREFIX: Final[str] = "rejected:"
+
 #: 一笔订单的支付渠道（本阶段仅微信支付；测试走 FakeGateway）
 DEFAULT_CHANNEL: Final[str] = GATEWAY_WECHAT_PAY
 
@@ -649,11 +655,29 @@ class OrderService:
             detail: 内部诊断信息（只进日志与审计摘要，不含堆栈）。
         """
         tenant = tenant_id or PLATFORM_TENANT
+        signature_ok = reason != "signature_invalid"
         logger.warning(
             "payment_callback_rejected",
             reason=reason,
             order_id=order_id,
             tenant_id=tenant,
+        )
+        # 留痕：`payment_callback_log` 里保留一条 `signature_ok=false` 的取证行，
+        # 但幂等键用 `rejected:<摘要>` 而不是载荷里的渠道流水号——**未受信的标识符
+        # 绝不进入幂等键空间**，否则攻击者可用真实 txn 号占位，让真实支付永不开通
+        # （P0-07）。同摘要的重复脏载荷会命中唯一键而自然去重。
+        await self._store.append_callback(
+            CallbackLogRecord(
+                tenant_id=tenant,
+                callback_id=new_resource_id(CALLBACK_ID_PREFIX),
+                channel=self._gateway.channel or DEFAULT_CHANNEL,
+                external_txn_id=f"{REJECTED_TXN_PREFIX}{digest[:40]}",
+                order_id=order_id,
+                amount_cents=None,
+                signature_ok=signature_ok,
+                payload_sha256=digest,
+                processed=False,
+            )
         )
         await self._audit.record(
             tenant_id=tenant,
@@ -666,7 +690,7 @@ class OrderService:
                 "reason": reason,
                 "order_id": order_id,
                 "payload_sha256": digest,
-                "signature_ok": reason != "signature_invalid",
+                "signature_ok": signature_ok,
                 "detail": detail,
             },
         )
@@ -885,6 +909,7 @@ __all__: list[str] = [
     "MESSAGE_SIGNATURE_INVALID",
     "ORDER_CLOSED",
     "ORDER_ID_PREFIX",
+    "REJECTED_TXN_PREFIX",
     "SYSTEM_ACTOR",
     "OrderService",
     "get_order_service",

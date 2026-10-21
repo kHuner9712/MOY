@@ -30,7 +30,8 @@ from app.business.audit_service import (
     AuditService,
 )
 from app.business.order_service import OrderService
-from app.business.payment_gateway import FakeGateway
+from app.business.order_service import REJECTED_TXN_PREFIX
+from app.business.payment_gateway import FakeGateway, payload_digest
 from app.business.plan_service import PlanService
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ApiError, ErrorCode
@@ -164,11 +165,16 @@ async def _rejection_entries(fixture: _Fixture, tenant_id: str) -> list[Any]:
     return await fixture.audit.recent(tenant_id, action=ACTION_PAYMENT_CALLBACK_REJECTED)
 
 
-async def _assert_untouched(fixture: _Fixture) -> None:
-    """断言订单/账单/订阅/幂等键全部未被失败回调改动。
+async def _assert_untouched(fixture: _Fixture, payload: dict[str, Any]) -> None:
+    """断言订单/账单/订阅未被改动，且**真实流水号未被占用**（幂等位留给真实回调）。
+
+    留痕仍然存在：拒绝事件在 `payment_callback_log` 里以
+    `rejected:<载荷摘要>` 为键写一条 `signature_ok=false/true` 的取证行，
+    因此「有留痕」与「不占幂等位」同时成立。
 
     Args:
         fixture: 测试装配。
+        payload: 本次被拒绝的回调载荷。
     """
     record = await fixture.store.get_order(TENANT_ID, fixture.order_id)
     assert record is not None
@@ -176,7 +182,13 @@ async def _assert_untouched(fixture: _Fixture) -> None:
     counts = fixture.store.counts()
     assert counts["invoices"] == 0, "失败回调不得开票"
     assert counts["subscriptions"] == 0, "失败回调不得开通订阅"
-    assert counts["callbacks"] == 0, "失败回调不得占用幂等键（否则真实回调永远进不来）"
+    txn = str(payload["transaction_id"])
+    assert await fixture.store.get_callback("fake", txn) is None, (
+        "失败回调不得占用真实流水号的幂等键（否则真实回调永远进不来）"
+    )
+    digest = payload_digest(payload)
+    forensics = await fixture.store.get_callback("fake", f"{REJECTED_TXN_PREFIX}{digest[:40]}")
+    assert forensics is not None, "拒绝事件仍须在 payment_callback_log 留取证行"
 
 
 @pytest.mark.asyncio
@@ -192,7 +204,7 @@ async def test_bad_signature_rejects_without_activating() -> None:
     assert excinfo.value.code is ErrorCode.PARAM_INVALID
     assert excinfo.value.message == "支付通知校验未通过，请稍后重试"
 
-    await _assert_untouched(fixture)
+    await _assert_untouched(fixture, payload)
     # 未验签的载荷不可信 → 审计落平台哨兵，且不写入原始流水号
     entries = await _rejection_entries(fixture, PLATFORM_TENANT)
     assert len(entries) == 1
@@ -226,19 +238,20 @@ async def test_bad_signature_does_not_block_real_callback() -> None:
     counts = fixture.store.counts()
     assert counts["invoices"] == 1
     assert counts["subscriptions"] == 1
-    assert counts["callbacks"] == 1
+    # 1 条真实回调留痕 + 1 条被拒绝的取证行（`rejected:` 前缀，不占幂等位）
+    assert counts["callbacks"] == 2
+    assert await fixture.store.get_callback("fake", "txn_real_001") is not None
 
 
 @pytest.mark.asyncio
 async def test_trade_not_success_rejects_and_allows_retry() -> None:
     """交易未成功 → `15007`，不占幂等键；随后成功回调可生效（不变式 2）。"""
     fixture = await _make_fixture()
+    payload = _payload(fixture.order_id, fixture.amount_cents, "txn_fail_001", state="FAIL")
     with pytest.raises(ApiError) as excinfo:
-        await fixture.service.handle_callback(
-            _payload(fixture.order_id, fixture.amount_cents, "txn_fail_001", state="FAIL")
-        )
+        await fixture.service.handle_callback(payload)
     assert excinfo.value.code is ErrorCode.PAYMENT_INCOMPLETE
-    await _assert_untouched(fixture)
+    await _assert_untouched(fixture, payload)
     entries = await _rejection_entries(fixture, TENANT_ID)
     assert [item.change_summary["reason"] for item in entries] == ["trade_not_success"]
 
@@ -254,12 +267,11 @@ async def test_trade_not_success_rejects_and_allows_retry() -> None:
 async def test_amount_mismatch_rejects_and_allows_retry() -> None:
     """金额不符 → `15009`，不占幂等键；同流水号正确金额可生效（不变式 3）。"""
     fixture = await _make_fixture()
+    payload = _payload(fixture.order_id, fixture.amount_cents - 100, "txn_amount_001")
     with pytest.raises(ApiError) as excinfo:
-        await fixture.service.handle_callback(
-            _payload(fixture.order_id, fixture.amount_cents - 100, "txn_amount_001")
-        )
+        await fixture.service.handle_callback(payload)
     assert excinfo.value.code is ErrorCode.ORDER_AMOUNT_MISMATCH
-    await _assert_untouched(fixture)
+    await _assert_untouched(fixture, payload)
     entries = await _rejection_entries(fixture, TENANT_ID)
     assert entries[0].change_summary["reason"] == "amount_mismatch"
     assert entries[0].change_summary["signature_ok"] is True, "验签已通过的拒绝要区分标记"
@@ -279,7 +291,7 @@ async def test_unknown_order_rejects_without_key() -> None:
     with pytest.raises(ApiError) as excinfo:
         await fixture.service.handle_callback(_payload("ord_not_exists", 19_500, "txn_unknown_001"))
     assert excinfo.value.code is ErrorCode.RESOURCE_NOT_FOUND
-    assert fixture.store.counts()["callbacks"] == 0
+    assert await fixture.store.get_callback("fake", "txn_unknown_001") is None
     entries = await _rejection_entries(fixture, PLATFORM_TENANT)
     assert [item.change_summary["reason"] for item in entries] == ["order_unknown"]
 
@@ -296,7 +308,8 @@ async def test_successful_payment_stays_idempotent() -> None:
     counts = fixture.store.counts()
     assert counts["invoices"] == 1
     assert counts["subscriptions"] == 1
-    assert counts["callbacks"] == 1
+    assert counts["callbacks"] == 1, "成功回调只留一条痕，重复回调不新增行"
+    assert await fixture.store.get_callback("fake", "txn_ok_001") is not None
     paid_entries = await fixture.audit.recent(TENANT_ID, action=ACTION_ORDER_PAID)
     assert len(paid_entries) == 1, "支付生效只允许审计一次"
     # 成功后不再产生新的拒绝记录
@@ -315,4 +328,4 @@ async def test_rejected_callback_never_writes_channel_identifier_to_key_space() 
             await fixture.service.handle_callback(payload)
     assert (await fixture.store.get_callback("fake", "txn_dos_1")) is None
     assert (await fixture.store.get_callback("fake", "txn_dos_2")) is None
-    assert fixture.store.counts()["callbacks"] == 0
+    assert fixture.store.counts()["callbacks"] == 2, "两条脏载荷各留一条取证行"
