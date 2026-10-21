@@ -78,10 +78,10 @@ def test_profile_routes_lists_allowed_extensions() -> None:
     assert set(extensions) == {"pdf", "docx", "xlsx", "md", "txt"}
 
 
-def test_tool_registry_has_both_example_connectors() -> None:
-    """工具注册表必须登记两个示例连接器。"""
+def test_tool_registry_has_five_tools() -> None:
+    """工具注册表必须登记 5 款工具（阶段二 B06 补齐企微 / 飞书 / 公众号）。"""
     registry = get_tool_registry()
-    assert set(registry.tool_types) == {"email", "github"}
+    assert set(registry.tool_types) == {"email", "github", "wecom", "feishu", "wechat_mp"}
     assert registry.get("email") is not None
     assert registry.get("nonexistent") is None
 

@@ -374,7 +374,13 @@ class TestToolEndpoints:
         body = response.json()
         assert body["code"] == 0
         tools = body["data"]["tools"]
-        assert {tool["tool_type"] for tool in tools} == {"email", "github"}
+        assert {tool["tool_type"] for tool in tools} == {
+            "email",
+            "github",
+            "wecom",
+            "feishu",
+            "wechat_mp",
+        }
         for tool in tools:
             assert tool["display_name"]
             assert tool["operations"]

@@ -59,7 +59,13 @@ def test_connectors_are_registered() -> None:
 def test_registry_returns_tool_items() -> None:
     """T1 注册表返回全部工具类型与能力清单。"""
     data = _service().list_registry(_AUTH)
-    assert {tool.tool_type for tool in data.tools} == {"email", "github"}
+    assert {tool.tool_type for tool in data.tools} == {
+        "email",
+        "github",
+        "wecom",
+        "feishu",
+        "wechat_mp",
+    }
     email = next(tool for tool in data.tools if tool.tool_type == "email")
     assert email.display_name == "邮箱"
     assert email.category == ToolCategory.COMMUNICATION
@@ -245,10 +251,10 @@ async def test_delete_connection_removes_from_list() -> None:
     conn = await service.create_connection(
         CreateConnectionRequest(tool_type="email", auth_code="code-123"), _AUTH
     )
-    assert len(service.list_connections(ListConnectionsQuery(), _AUTH).items) == 1
+    assert len((await service.list_connections(ListConnectionsQuery(), _AUTH)).items) == 1
     deleted = await service.delete_connection(conn.connection_id, _AUTH)
     assert deleted == conn.connection_id
-    assert len(service.list_connections(ListConnectionsQuery(), _AUTH).items) == 0
+    assert len((await service.list_connections(ListConnectionsQuery(), _AUTH)).items) == 0
 
 
 async def test_delete_unknown_connection_returns_13002() -> None:

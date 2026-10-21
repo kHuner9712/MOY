@@ -6,11 +6,22 @@
 
 安全约束（架构文档 9.3）：连接器返回与接收的数据中**禁止**出现凭据原文，
 凭据由连接管理加密存储，本层只持有引用 ID。
+
+**能力声明规范（阶段二 B06）**：每个连接器必须在类上声明
+`SUPPORTED_OPERATIONS`（取值与 `registry/tool_registry.yaml` 中该工具的
+`operations[].operation` **严格一致**）。`ToolService` 构造时会逐个校验，
+不一致即启动失败（`30004`）——避免「注册表说支持、实现却没写」的静默缺口在
+用户点击时才暴露。
+
+**部分成功语义（阶段二 B06）**：第三方批量操作常出现「整单成功、个别对象失败」。
+此类结果用 `build_partial_result(...)` 构造：`status` 仍为 `success`，
+失败明细放 `warnings`（业务语言），**不得**判整单失败（PRD P2-TL-02 第 4 条）。
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any, ClassVar, Final
 
 from app.core.errors import ApiError, ErrorCode
@@ -20,6 +31,25 @@ logger = get_logger(__name__)
 
 #: 默认工具超时（毫秒），架构文档 3.0.4
 DEFAULT_TIMEOUT_MS: Final[int] = 10_000
+
+#: 部分成功结果中的告警字段名（前端据此提示「已创建，N 位未成功」）
+WARNINGS_KEY: Final[str] = "warnings"
+
+
+def build_partial_result(**fields: Any) -> dict[str, Any]:
+    """构造「部分成功」结果（整单成功 + 告警明细）。
+
+    Args:
+        **fields: 业务结果字段；`warnings` 为业务语言告警列表。
+
+    Returns:
+        dict[str, Any]: 含 `warnings` 的业务结果。
+    """
+    raw_warnings = fields.pop(WARNINGS_KEY, [])
+    warnings = [str(item) for item in raw_warnings if str(item).strip()]
+    payload: dict[str, Any] = {WARNINGS_KEY: warnings}
+    payload.update(fields)
+    return payload
 
 
 class ToolConnector(ABC):
@@ -36,6 +66,50 @@ class ToolConnector(ABC):
 
     #: 业务化展示名（禁止出现第三方产品原始名称之外的实现细节）
     display_name: ClassVar[str] = ""
+
+    #: 本连接器支持的操作标识（**必须**与注册表 `operations[].operation` 一致）
+    SUPPORTED_OPERATIONS: ClassVar[tuple[str, ...]] = ()
+
+    @classmethod
+    def declared_operations(cls) -> tuple[str, ...]:
+        """取本连接器声明的能力清单。
+
+        Returns:
+            tuple[str, ...]: 操作标识元组。
+
+        Raises:
+            ApiError: 连接器未声明任何能力（30004 配置异常）。
+        """
+        if not cls.SUPPORTED_OPERATIONS:
+            raise ApiError(
+                ErrorCode.CONFIG_ERROR,
+                internal_detail=f"connector {cls.__name__} declares no SUPPORTED_OPERATIONS",
+            )
+        return cls.SUPPORTED_OPERATIONS
+
+    @classmethod
+    def assert_registry_consistency(cls, registered: Sequence[str]) -> None:
+        """校验连接器能力声明与注册表一致（启动期暴露配置缺口）。
+
+        Args:
+            registered: 注册表中该工具登记的操作标识序列。
+
+        Raises:
+            ApiError: 两侧能力集合不一致（30004）。
+        """
+        declared = set(cls.declared_operations())
+        configured = {str(item) for item in registered if str(item).strip()}
+        if declared == configured:
+            return
+        missing_in_code = sorted(configured - declared)
+        missing_in_registry = sorted(declared - configured)
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=(
+                f"connector {cls.connector_impl} operations mismatch "
+                f"missing_in_code={missing_in_code} missing_in_registry={missing_in_registry}"
+            ),
+        )
 
     @abstractmethod
     async def connect(
@@ -215,3 +289,13 @@ def register_connector(connector_cls: type[ToolConnector]) -> type[ToolConnector
         type[ToolConnector]: 原类。
     """
     return ConnectorRegistry.register(connector_cls)
+
+
+__all__: list[str] = [
+    "DEFAULT_TIMEOUT_MS",
+    "WARNINGS_KEY",
+    "ConnectorRegistry",
+    "ToolConnector",
+    "build_partial_result",
+    "register_connector",
+]

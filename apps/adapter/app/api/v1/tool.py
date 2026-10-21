@@ -128,9 +128,8 @@ async def list_connections(
         ApiResponse[PageResult[ConnectionItem]]: 分页结果。
     """
     query = ListConnectionsQuery(page=page, page_size=page_size, tool_type=tool_type)
-    return ApiResponse[PageResult[ConnectionItem]].ok(
-        get_tool_service().list_connections(query, context.auth)
-    )
+    result = await get_tool_service().list_connections(query, context.auth)
+    return ApiResponse[PageResult[ConnectionItem]].ok(result)
 
 
 @router.delete(

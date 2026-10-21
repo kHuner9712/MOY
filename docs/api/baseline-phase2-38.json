@@ -1,7 +1,7 @@
 {
   "version": 2,
   "frozen_target": 38,
-  "note": "B03 起逐步补齐至 38（KB1-8 / TL1 / ID1-11 / BL1-10 / OPS1-8）；只允许登记真实已实现端点，禁止为凑数写假端点。B04 追加 KB1/KB2/KB3（落点 apps/adapter/app/api/v1/knowledge_ext.py）；B05 追加 KB4/KB5/KB6/KB7（引用回链 + 成员授权，同上文件）",
+  "note": "B03 起逐步补齐至 38（KB1-8 / TL1 / ID1-11 / BL1-10 / OPS1-8）；只允许登记真实已实现端点，禁止为凑数写假端点。B04 追加 KB1/KB2/KB3（落点 apps/adapter/app/api/v1/knowledge_ext.py）；B05 追加 KB4/KB5/KB6/KB7（引用回链 + 成员授权，同上文件）；B06 追加 TL1（落点 apps/adapter/app/api/v1/tools_ext.py，办公工具调用记录）",
   "endpoints": [
     {
       "method": "PUT",
@@ -34,6 +34,10 @@
     {
       "method": "DELETE",
       "path": "/api/v1/knowledge/bases/{base_id}/grants/{grant_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tools/executions"
     }
   ],
   "registered_at": "2026-10-21"

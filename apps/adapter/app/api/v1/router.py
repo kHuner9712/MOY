@@ -28,7 +28,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
-from app.api.v1 import agent, identity, knowledge_ext, model, rag, tool
+from app.api.v1 import agent, identity, knowledge_ext, model, rag, tool, tools_ext
 from app.core.config import Settings, get_request_settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
@@ -235,6 +235,8 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     )
     api_router.include_router(agent.router, prefix=prefix, dependencies=business_dependencies)
     api_router.include_router(tool.router, prefix=prefix, dependencies=business_dependencies)
+    # 阶段二工具域扩展（TL1 调用记录）：与 T1-T7 共用前缀，端点零改动
+    api_router.include_router(tools_ext.router, prefix=prefix, dependencies=business_dependencies)
     api_router.include_router(identity.router, prefix=prefix, dependencies=business_dependencies)
     # 健康检查不挂 API 版本前缀，路径固定为 /healthz 与 /readyz
     api_router.include_router(health_router)

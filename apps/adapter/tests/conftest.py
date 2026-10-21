@@ -41,6 +41,7 @@ from app.db.repositories.document_repo import reset_document_store
 from app.db.repositories.grant_repo import reset_grant_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
 from app.db.repositories.segment_repo import reset_segment_store
+from app.db.repositories.tool_repo import reset_tool_store
 from app.main import create_app
 from app.registry.loader import reset_registry_cache
 from app.services.agent_service import reset_agent_service
@@ -48,6 +49,7 @@ from app.services.identity_service import reset_identity_service
 from app.services.model_service import reset_model_service
 from app.services.rag_service import reset_rag_service
 from app.services.tool_service import reset_tool_service
+from app.tools.wechat_mp_connector import reset_publish_registry
 
 #: 测试用租户 ID
 TEST_TENANT_ID = "tnt_test_tenant"
@@ -167,6 +169,8 @@ def _reset_all() -> None:
     reset_segment_store()
     reset_segment_service()
     reset_policy_service()
+    reset_tool_store()
+    reset_publish_registry()
     reset_audit_recorder()
     reset_logging_for_test()
 

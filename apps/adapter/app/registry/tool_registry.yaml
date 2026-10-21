@@ -114,5 +114,186 @@ tools:
               type: string
               description: 议题内容
 
+  # ---------------------------------------------------------------------------
+  # 阶段二 B06 新增三款（PRD P2-TL-01/02/03）：只加数据 + 连接器实现，
+  # T1-T7 路径、请求响应结构、错误码集合**零改动**（架构文档 4.1 / 4.3）。
+  # ---------------------------------------------------------------------------
+  - tool_type: wecom
+    display_name: 企业微信
+    category: communication
+    auth_type: oauth2
+    status: available
+    timeout_ms: 10000
+    connector_impl: wecom_connector
+    operations:
+      - operation: send_message
+        display_name: 发送消息
+        params_schema:
+          type: object
+          required: [content]
+          properties:
+            content:
+              type: string
+              description: 消息内容（支持文本与图文）
+            members:
+              type: array
+              description: 接收成员（最多 200 人）
+            departments:
+              type: array
+              description: 接收部门
+            chat_ids:
+              type: array
+              description: 接收群聊
+      - operation: list_departments
+        display_name: 查看通讯录部门
+        params_schema:
+          type: object
+          properties:
+            keyword:
+              type: string
+              description: 部门名称关键字
+      - operation: list_members
+        display_name: 查看通讯录成员
+        params_schema:
+          type: object
+          properties:
+            department_id:
+              type: string
+              description: 按部门筛选
+            keyword:
+              type: string
+              description: 成员名称关键字
+      - operation: create_group
+        display_name: 创建群聊
+        params_schema:
+          type: object
+          required: [name, member_ids]
+          properties:
+            name:
+              type: string
+              description: 群聊名称
+            member_ids:
+              type: array
+              description: 群成员
+
+  - tool_type: feishu
+    display_name: 飞书
+    category: communication
+    auth_type: oauth2
+    status: available
+    timeout_ms: 15000
+    connector_impl: feishu_connector
+    operations:
+      - operation: send_message
+        display_name: 发送消息
+        params_schema:
+          type: object
+          required: [content]
+          properties:
+            content:
+              type: string
+              description: 消息内容
+            receivers:
+              type: array
+              description: 接收成员
+      - operation: create_calendar_event
+        display_name: 创建日程
+        params_schema:
+          type: object
+          required: [title, start_time]
+          properties:
+            title:
+              type: string
+              description: 日程标题
+            start_time:
+              type: string
+              description: 开始时间
+            duration_minutes:
+              type: integer
+              description: 时长（分钟）
+            participants:
+              type: array
+              description: 参与人（最多 50 位）
+            remark:
+              type: string
+              description: 日程备注
+      - operation: list_members
+        display_name: 查看成员
+        params_schema:
+          type: object
+          properties:
+            keyword:
+              type: string
+              description: 成员名称关键字
+      - operation: create_doc
+        display_name: 新建云文档
+        params_schema:
+          type: object
+          required: [title]
+          properties:
+            title:
+              type: string
+              description: 文档标题
+            content:
+              type: string
+              description: 文档内容
+
+  - tool_type: wechat_mp
+    display_name: 微信公众号
+    category: document
+    auth_type: oauth2
+    status: available
+    timeout_ms: 15000
+    connector_impl: wechat_mp_connector
+    operations:
+      - operation: upload_material
+        display_name: 上传素材
+        params_schema:
+          type: object
+          required: [file_name]
+          properties:
+            file_name:
+              type: string
+              description: 素材文件名
+            file_size:
+              type: integer
+              description: 素材大小（字节，上限 10MB）
+      - operation: create_draft
+        display_name: 保存草稿
+        params_schema:
+          type: object
+          required: [title, content]
+          properties:
+            title:
+              type: string
+              description: 文章标题
+            content:
+              type: string
+              description: 文章正文
+            cover_material_id:
+              type: string
+              description: 封面素材
+      - operation: publish_article
+        display_name: 发布文章
+        params_schema:
+          type: object
+          required: [draft_id, confirmed]
+          properties:
+            draft_id:
+              type: string
+              description: 草稿标识（同一草稿只发布一次）
+            confirmed:
+              type: boolean
+              description: 是否已确认发布（两步确认）
+      - operation: list_articles
+        display_name: 查看文章数据
+        params_schema:
+          type: object
+          properties:
+            limit:
+              type: integer
+              description: 返回条数上限
+
 # 首批 5 款工具选型（PRD Q1）为待决项，当前按 PRD 建议方向预登记前两款作为契约样例。
 # 新增工具只需追加条目 + 新增连接器，T1-T7 契约零改动（架构文档 4.1）。
+# 阶段二 B06 已补齐至 5 款：email / github / wecom / feishu / wechat_mp。
