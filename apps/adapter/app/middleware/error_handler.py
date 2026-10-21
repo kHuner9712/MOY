@@ -31,6 +31,40 @@ logger = get_logger(__name__)
 #: 未在注册表中登记的 HTTP 状态码 → 默认系统错误码
 _FALLBACK_CODE: Final[ErrorCode] = ErrorCode.INTERNAL_ERROR
 
+#: **免鉴权白名单**（架构文档 3.0.2 + 阶段二 §4.5 BL10）
+#:
+#: 除下列三项外，**所有**端点都必须带 `Authorization: Bearer`：
+#:
+#: | 路径 | 理由 |
+#: | --- | --- |
+#: | `/healthz` | 容器存活探针（编排层调用，无令牌） |
+#: | `/readyz` | 容器就绪探针（编排层调用，无令牌） |
+#: | `/api/v1/billing/payments/callback` | 支付渠道服务端回调（**验签代替鉴权**） |
+#:
+#: **新增任何免鉴权端点都必须先在此登记**，否则
+#: `tests/integration/test_billing_and_callback.py::test_only_callback_is_public`
+#: 会失败——这条断言是「不许悄悄开洞」的机械防线（G-24）。
+AUTH_EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
+    {
+        "/healthz",
+        "/readyz",
+        "/api/v1/billing/payments/callback",
+    }
+)
+
+
+def is_auth_exempt(path: str) -> bool:
+    """判断路径是否免鉴权。
+
+    Args:
+        path: 请求路径（不含查询串）。
+
+    Returns:
+        bool: 命中白名单时返回 True。
+    """
+    normalized = (path or "").rstrip("/") or "/"
+    return normalized in AUTH_EXEMPT_PATHS
+
 
 def _json_error(
     code: ErrorCode, *, message: str | None = None, data: Any = None, status: int | None = None
@@ -161,8 +195,10 @@ def not_found_response() -> JSONResponse:
 
 
 __all__ = [
+    "AUTH_EXEMPT_PATHS",
     "ERROR_REGISTRY",
     "ApiResponse",
+    "is_auth_exempt",
     "not_found_response",
     "register_exception_handlers",
 ]

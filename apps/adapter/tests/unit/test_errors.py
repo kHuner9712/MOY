@@ -53,7 +53,10 @@ def test_code_segments_are_strictly_ranged() -> None:
     for code in ErrorCode:
         value = int(code)
         assert value == 0 or (
-            10001 <= value <= 14999 or 20001 <= value <= 20999 or 30001 <= value <= 30999
+            10001 <= value <= 14999
+            or 15001 <= value <= 15999
+            or 20001 <= value <= 20999
+            or 30001 <= value <= 30999
         ), f"错误码 {value} 超出注册分段"
 
 

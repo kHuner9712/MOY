@@ -93,6 +93,36 @@ ACTION_ROLE_DELETE: Final[str] = "role.delete"
 #: 操作：计量对账偏差（B07，G-23）
 ACTION_RECONCILE_MISMATCH: Final[str] = "billing.reconcile_mismatch"
 
+#: 资源类型：订阅（B09）
+RESOURCE_SUBSCRIPTION: Final[str] = "subscription"
+
+#: 资源类型：订单（B09）
+RESOURCE_ORDER: Final[str] = "order"
+
+#: 资源类型：企业（B10 运营后台）
+RESOURCE_TENANT: Final[str] = "tenant"
+
+#: 资源类型：系统配置（B10 运营后台）
+RESOURCE_SETTINGS: Final[str] = "ops_settings"
+
+#: 操作：开通/变更套餐与席位（B09，BL3/BL4）
+ACTION_SUBSCRIPTION_UPDATE: Final[str] = "billing.subscription_update"
+
+#: 操作：创建订单（B09，BL6）
+ACTION_ORDER_CREATED: Final[str] = "billing.order_created"
+
+#: 操作：订单支付成功（B09，BL10 回调 / OPS5 核销）
+ACTION_ORDER_PAID: Final[str] = "billing.order_paid"
+
+#: 操作：启用/停用企业（B10，OPS3）
+ACTION_TENANT_STATUS: Final[str] = "ops.tenant_status"
+
+#: 操作：订单核销（B10，OPS5）
+ACTION_ORDER_CONFIRMED: Final[str] = "ops.order_confirm"
+
+#: 操作：修改系统配置（B10，OPS8）
+ACTION_SETTINGS_UPDATE: Final[str] = "ops.settings_update"
+
 #: 操作 → 用户可见名称（写入 `action_display_name`，供操作记录页直接展示）
 ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_KB_CREATE: "创建知识库",
@@ -110,6 +140,12 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_MEMBER_BATCH: "批量变更成员",
     ACTION_ROLE_DELETE: "删除角色",
     ACTION_RECONCILE_MISMATCH: "计量对账偏差",
+    ACTION_SUBSCRIPTION_UPDATE: "变更套餐与席位",
+    ACTION_ORDER_CREATED: "创建订单",
+    ACTION_ORDER_PAID: "订单支付完成",
+    ACTION_TENANT_STATUS: "启用或停用企业",
+    ACTION_ORDER_CONFIRMED: "订单核销",
+    ACTION_SETTINGS_UPDATE: "修改系统配置",
 }
 
 
@@ -540,15 +576,25 @@ __all__: list[str] = [
     "ACTION_MEMBER_BATCH",
     "ACTION_MEMBER_REMOVE",
     "ACTION_MEMBER_UPDATE",
+    "ACTION_ORDER_CONFIRMED",
+    "ACTION_ORDER_CREATED",
+    "ACTION_ORDER_PAID",
     "ACTION_RECONCILE_MISMATCH",
     "ACTION_ROLE_DELETE",
+    "ACTION_SETTINGS_UPDATE",
+    "ACTION_SUBSCRIPTION_UPDATE",
+    "ACTION_TENANT_STATUS",
     "AUDIT_TABLE",
     "RESOURCE_DEPARTMENT",
     "RESOURCE_DOCUMENT",
     "RESOURCE_GRANT",
     "RESOURCE_KNOWLEDGE_BASE",
     "RESOURCE_MEMBER",
+    "RESOURCE_ORDER",
     "RESOURCE_ROLE",
+    "RESOURCE_SETTINGS",
+    "RESOURCE_SUBSCRIPTION",
+    "RESOURCE_TENANT",
     "AuditEntry",
     "AuditRecorder",
     "AuditService",

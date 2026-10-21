@@ -252,8 +252,11 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     api_router.include_router(
         identity_ext.router, prefix=prefix, dependencies=business_dependencies
     )
-    # 阶段二计费域（B07 起挂载 BL5 用量明细，B09 追加 BL1-BL4/BL6-BL10）
+    # 阶段二计费域（B07 起挂载 BL5 用量明细，B09 追加 BL1-BL4/BL6-BL9）
     api_router.include_router(billing.router, prefix=prefix, dependencies=business_dependencies)
+    # BL10 支付回调：**唯一免鉴权业务端点**，不挂限流依赖（限流依赖需要鉴权上下文），
+    # 安全性由验签 + 回调流水号唯一约束保证（见 middleware/error_handler.AUTH_EXEMPT_PATHS）
+    api_router.include_router(billing.public_router, prefix=prefix)
     # 健康检查不挂 API 版本前缀，路径固定为 /healthz 与 /readyz
     api_router.include_router(health_router)
     return api_router

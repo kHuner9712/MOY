@@ -8,9 +8,9 @@
    尚未实现的码通过 ``--allow-pending <批次>`` 显式放行，并逐条打印 ``[PENDING]``；
    传 ``--strict`` 或 ``--allow-pending none`` 时要求 100% 落地（阶段门用）。
 
-   **当前默认值 = ``b09``**：权限域 14005-14008 已随 B08 落地，因此**不得**再放行
-   ``b08``——继续放行会让该域未来真正缺失的码被静默掩盖成绿（门禁失去信号价值）。
-   计费域 15001-15009 属 B09，未落地前放行；B09 落地后必须改为 ``none``/``--strict``。
+   **当前默认值 = ``none``（严格）**：权限域 14005-14008 随 B08 落地、计费域
+   15001-15009 随 B09 落地，**任何批次都不再放行**——继续放行会让该域未来真正
+   缺失的码被静默掩盖成绿（门禁失去信号价值）。新增码必须先落架构文档再进代码。
 2. **后端 → 前端**：``apps/web/src/lib/business-errors.ts`` 的键集合必须是
    ``errors.py`` 码集合的**超集**（前端兜底表漏码 → 用户看到空白文案）。
 3. **码 → 注册表**：``ErrorCode`` 每个成员都必须在 ``ERROR_REGISTRY`` 中有
@@ -25,9 +25,9 @@
 
 用法::
 
-    python scripts/check_error_catalog.py                      # 默认放行 b09
-    python scripts/check_error_catalog.py --allow-pending none  # 要求全量落地
-    python scripts/check_error_catalog.py --strict             # 同 none
+    python scripts/check_error_catalog.py            # 默认严格（全量落地）
+    python scripts/check_error_catalog.py --strict   # 等价写法（阶段门专用）
+    python scripts/check_error_catalog.py --allow-pending b09  # 仅在批次开发期临时使用
 
 退出码：0 = 通过；1 = 不通过。
 """
@@ -55,8 +55,9 @@ ERRORS_PY = ADAPTER_ROOT / "app" / "core" / "errors.py"
 BUSINESS_ERRORS_TS = REPO_ROOT / "apps" / "web" / "src" / "lib" / "business-errors.ts"
 
 #: 默认允许「尚未落地」的批次（显式、可见、可关闭）。
-#: B08（权限域 14005-14008）已落地 → 已从默认值移除，避免该域缺失码被静默掩盖。
-DEFAULT_PENDING = "b09"
+#: B08（14005-14008）与 B09（15001-15009）均已落地 → 默认值改为 `none`：
+#: 门禁回到「架构登记即必须落地」，禁止任何批次继续放行。
+DEFAULT_PENDING = "none"
 
 #: 批次 → 架构 §7.1 表中的「域」列取值。
 #: B08 组织权限域的 14005-14008（已落地）与 B09 计费域的 15001-15009 分属两个批次。
@@ -384,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-pending",
         default=DEFAULT_PENDING,
-        help=("允许尚未落地的批次（逗号分隔，默认 b09）；传 none 或空串表示要求全量落地"),
+        help=("允许尚未落地的批次（逗号分隔，默认 none 即全量落地）；批次落地后不得再放行"),
     )
     parser.add_argument(
         "--strict",

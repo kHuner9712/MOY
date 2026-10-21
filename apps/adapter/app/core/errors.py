@@ -9,6 +9,7 @@
 错误码分段：
 - 0：成功；
 - 10001-14999：领域业务错误（模型 / RAG / Agent / 工具 / 权限）；
+- 15001-15999：计费与订阅错误（阶段二 B09，架构文档 §7.1）；
 - 20000-20999：通用业务错误；
 - 30000-30999：系统错误。
 """
@@ -81,6 +82,26 @@ class ErrorCode(IntEnum):
     OWNER_PROTECTED = 14007
     #: 同级或更高级成员保护 / 操作自己
     MEMBER_MODIFICATION_FORBIDDEN = 14008
+
+    # ---------------- 计费与订阅域 15001-15099（阶段二 B09，架构文档 §7.1） ----------------
+    #: 套餐能力未开通（BL3 BL6）
+    PLAN_FEATURE_UNAVAILABLE = 15001
+    #: 套餐不可购（已下架，BL3 BL6）
+    PLAN_NOT_PURCHASABLE = 15002
+    #: 席位不足（BL4；U4 复用调用）
+    SEATS_EXHAUSTED = 15003
+    #: 重复下单：已有待支付订单（BL3 BL6）
+    PENDING_ORDER_EXISTS = 15004
+    #: 降级将在当前周期结束后生效（**非阻断提示码**，BL3）
+    PLAN_CHANGE_PENDING = 15005
+    #: 额度用尽（软限制，不停服；M1/M2/R3/A1）
+    QUOTA_EXHAUSTED = 15006
+    #: 支付未完成，请重新支付（BL6 BL8）
+    PAYMENT_INCOMPLETE = 15007
+    #: 重复核销 / 重复回调（BL10 OPS5）
+    ORDER_ALREADY_PROCESSED = 15008
+    #: 核销金额校验失败（OPS5）
+    ORDER_AMOUNT_MISMATCH = 15009
 
     # ---------------- 系统错误 30001-30099 ----------------
     DOWNSTREAM_UNAVAILABLE = 30001
@@ -244,6 +265,58 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
         403,
         "你没有权限修改该成员",
         "同级或更高级成员保护 / 操作自己",
+    ),
+    # 计费与订阅域（文案取自架构文档 §7.1，**禁止**改写为技术语言）
+    ErrorCode.PLAN_FEATURE_UNAVAILABLE: ErrorSpec(
+        ErrorCode.PLAN_FEATURE_UNAVAILABLE,
+        403,
+        "当前套餐不支持该功能，升级后即可使用",
+        "套餐能力未开通",
+    ),
+    ErrorCode.PLAN_NOT_PURCHASABLE: ErrorSpec(
+        ErrorCode.PLAN_NOT_PURCHASABLE,
+        400,
+        "该套餐已下架，请选择其他套餐",
+        "套餐不可购（状态非 available）",
+    ),
+    ErrorCode.SEATS_EXHAUSTED: ErrorSpec(
+        ErrorCode.SEATS_EXHAUSTED,
+        400,
+        "成员席位已用满，请先增加席位",
+        "席位不足（邀请/加成员/减席越界）",
+    ),
+    ErrorCode.PENDING_ORDER_EXISTS: ErrorSpec(
+        ErrorCode.PENDING_ORDER_EXISTS,
+        409,
+        "当前账户有未完成订单，请先完成支付",
+        "重复下单：同租户已有待支付订单",
+    ),
+    ErrorCode.PLAN_CHANGE_PENDING: ErrorSpec(
+        ErrorCode.PLAN_CHANGE_PENDING,
+        200,
+        "降级将在当前周期结束后生效",
+        "变更生效时点（非阻断提示码，走 data.notice_code 下发）",
+    ),
+    ErrorCode.QUOTA_EXHAUSTED: ErrorSpec(
+        ErrorCode.QUOTA_EXHAUSTED,
+        200,
+        "本月额度已用完，当前为常规模式，升级套餐可恢复完整能力",
+        "额度用尽（软限制，不停服）",
+    ),
+    ErrorCode.PAYMENT_INCOMPLETE: ErrorSpec(
+        ErrorCode.PAYMENT_INCOMPLETE, 200, "支付未完成，请重新支付", "支付失败/超时"
+    ),
+    ErrorCode.ORDER_ALREADY_PROCESSED: ErrorSpec(
+        ErrorCode.ORDER_ALREADY_PROCESSED,
+        409,
+        "该订单已处理，请勿重复操作",
+        "重复核销/重复回调的业务侧冲突",
+    ),
+    ErrorCode.ORDER_AMOUNT_MISMATCH: ErrorSpec(
+        ErrorCode.ORDER_AMOUNT_MISMATCH,
+        400,
+        "订单金额与应付金额不一致，请核对后重试",
+        "核销金额校验失败",
     ),
     # 系统错误
     ErrorCode.DOWNSTREAM_UNAVAILABLE: ErrorSpec(

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
@@ -179,6 +179,40 @@ class QuotaRecord:
     quota_unit_label: str = DEFAULT_QUOTA_UNIT_LABEL
 
 
+@dataclass(frozen=True, slots=True)
+class RangeEventStats:
+    """时间区间内的事件级统计（运营后台 OPS6 使用，B10）。
+
+    与 `monthly_rows()` 的区别：本结构按 `occurred_at` 落在**任意区间**统计
+    （`7d` / `30d` 会跨越自然月边界），而月度聚合按账期切分。
+    额度口径仍与 BL5 **同源**：`units` 由同一张 `usage_event` 表求和，
+    因此「各企业区间额度之和」与「按账期的企业维度求和」在整月区间上**误差 0**。
+
+    Attributes:
+        units: 区间内额度总和。
+        event_count: 区间内事件条数。
+        distinct_users: 区间内产生用量的成员数（去重）。
+        by_capability: `能力 → 事件条数`。
+    """
+
+    units: int = 0
+    event_count: int = 0
+    distinct_users: int = 0
+    by_capability: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def conversation_count(self) -> int:
+        """对话次数（`chat` + `doc_qa` 事件条数）。"""
+        return int(self.by_capability.get(CAPABILITY_CHAT, 0)) + int(
+            self.by_capability.get(CAPABILITY_DOC_QA, 0)
+        )
+
+    @property
+    def document_count(self) -> int:
+        """文档处理次数（`doc_process` 事件条数）。"""
+        return int(self.by_capability.get(CAPABILITY_DOC_PROCESS, 0))
+
+
 class UsageStore(Protocol):
     """计量存储契约（内存 / PostgreSQL 双实现）。"""
 
@@ -210,6 +244,10 @@ class UsageStore(Protocol):
 
     async def quota(self, tenant_id: str) -> QuotaRecord:
         """读取套餐额度总量。"""
+        ...
+
+    async def range_stats(self, tenant_id: str, start_at: str, end_at: str) -> RangeEventStats:
+        """统计时间区间内的事件级指标（运营后台统计）。"""
         ...
 
 
@@ -371,7 +409,12 @@ class InMemoryUsageStore:
         )
 
     async def quota(self, tenant_id: str) -> QuotaRecord:
-        """读取套餐额度总量（内存模式无订阅表，返回空额度）。
+        """读取套餐额度总量（内存模式复用计费存储的口径）。
+
+        内存后端没有订阅表，但**必须**与 BL2 的 `quota_units_total` 一致，
+        否则开发/测试环境下「套餐页额度」与「用量页额度」会互相矛盾。
+        因此按需读取进程内计费存储（`billing_repo` 的内存实现）；该存储
+        尚未创建时返回空额度（不伪造数字）。
 
         Args:
             tenant_id: 租户 ID。
@@ -379,8 +422,51 @@ class InMemoryUsageStore:
         Returns:
             QuotaRecord: 额度快照。
         """
-        del tenant_id  # 内存模式不持有计费状态（B09 由订阅服务提供）
-        return QuotaRecord()
+        from app.db.repositories.billing_repo import get_memory_billing_store
+
+        store = get_memory_billing_store()
+        if store is None:
+            return QuotaRecord()
+        subscription = await store.get_active_subscription(tenant_id)
+        if subscription is None:
+            return QuotaRecord()
+        plan = await store.get_plan(subscription.plan_code)
+        if plan is None:
+            return QuotaRecord(plan_code=subscription.plan_code)
+        return QuotaRecord(
+            plan_code=plan.plan_code,
+            plan_name=plan.display_name,
+            total_units=max(plan.quota_units_per_seat_month, 0) * max(subscription.seats_total, 0),
+            quota_unit_label=plan.quota_unit_label,
+        )
+
+    async def range_stats(self, tenant_id: str, start_at: str, end_at: str) -> RangeEventStats:
+        """统计时间区间内的事件级指标。
+
+        Args:
+            tenant_id: 租户 ID。
+            start_at: 起始时间（ISO 8601，含）。
+            end_at: 结束时间（ISO 8601，不含）。
+
+        Returns:
+            RangeEventStats: 区间统计。
+        """
+        async with self._lock:
+            events = list(self._events.values())
+        scoped = [
+            event
+            for event in events
+            if event.tenant_id == tenant_id and start_at <= event.occurred_at < end_at
+        ]
+        by_capability: dict[str, int] = {}
+        for event in scoped:
+            by_capability[event.capability] = by_capability.get(event.capability, 0) + 1
+        return RangeEventStats(
+            units=sum(event.units for event in scoped),
+            event_count=len(scoped),
+            distinct_users=len({event.user_id for event in scoped}),
+            by_capability=by_capability,
+        )
 
     def clear(self) -> None:
         """清空（测试隔离用）。"""
@@ -655,6 +741,52 @@ class PostgresUsageStore:
             quota_unit_label=str(plan.get("quota_unit_label", DEFAULT_QUOTA_UNIT_LABEL)),
         )
 
+    async def range_stats(self, tenant_id: str, start_at: str, end_at: str) -> RangeEventStats:
+        """统计时间区间内的事件级指标（单条聚合 SQL，无 N+1）。
+
+        Args:
+            tenant_id: 租户 ID。
+            start_at: 起始时间（ISO 8601，含）。
+            end_at: 结束时间（ISO 8601，不含）。
+
+        Returns:
+            RangeEventStats: 区间统计。
+        """
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _UsageEventTableRepository(uow)
+            totals = await repo.fetch_one(
+                f"""
+                SELECT COALESCE(SUM(units), 0) AS units,
+                       COUNT(*) AS event_count,
+                       COUNT(DISTINCT user_id) AS distinct_users
+                FROM {USAGE_EVENT_TABLE}
+                WHERE {repo.tenant_clause()}
+                  AND occurred_at >= CAST(CAST(:start_at AS text) AS timestamptz)
+                  AND occurred_at < CAST(CAST(:end_at AS text) AS timestamptz)
+                """,
+                repo.params(start_at=start_at, end_at=end_at),
+            )
+            rows = await repo.fetch_all(
+                f"""
+                SELECT capability, COUNT(*) AS cnt
+                FROM {USAGE_EVENT_TABLE}
+                WHERE {repo.tenant_clause()}
+                  AND occurred_at >= CAST(CAST(:start_at AS text) AS timestamptz)
+                  AND occurred_at < CAST(CAST(:end_at AS text) AS timestamptz)
+                GROUP BY capability
+                """,
+                repo.params(start_at=start_at, end_at=end_at),
+            )
+        by_capability = {
+            str(row.get("capability", "")): int(row.get("cnt", 0) or 0) for row in rows
+        }
+        return RangeEventStats(
+            units=int((totals or {}).get("units", 0) or 0),
+            event_count=int((totals or {}).get("event_count", 0) or 0),
+            distinct_users=int((totals or {}).get("distinct_users", 0) or 0),
+            by_capability=by_capability,
+        )
+
 
 # ===========================================================================
 # 进程级单例（内存后端跨模块共享；postgres 后端无状态）
@@ -724,6 +856,7 @@ __all__: list[str] = [
     "MonthlyUsageRecord",
     "PostgresUsageStore",
     "QuotaRecord",
+    "RangeEventStats",
     "UsageEventRecord",
     "UsageStore",
     "current_period",

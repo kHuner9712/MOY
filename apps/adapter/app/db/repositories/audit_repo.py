@@ -40,8 +40,14 @@ from app.business.audit_service import (
     ACTION_MEMBER_BATCH,
     ACTION_MEMBER_REMOVE,
     ACTION_MEMBER_UPDATE,
+    ACTION_ORDER_CONFIRMED,
+    ACTION_ORDER_CREATED,
+    ACTION_ORDER_PAID,
     ACTION_RECONCILE_MISMATCH,
     ACTION_ROLE_DELETE,
+    ACTION_SETTINGS_UPDATE,
+    ACTION_SUBSCRIPTION_UPDATE,
+    ACTION_TENANT_STATUS,
     AUDIT_TABLE,
     AuditEntry,
     InMemoryAuditRecorder,
@@ -64,6 +70,7 @@ ACTION_GROUP_NAMES: Final[dict[str, str]] = {
     "member": "成员",
     "role": "角色",
     "billing": "计量与账单",
+    "ops": "运营管理",
 }
 
 #: ID11 动作目录（分组 → 动作清单），顺序即前端下拉顺序
@@ -75,6 +82,8 @@ ACTION_CATALOG: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
     ("member", (ACTION_MEMBER_UPDATE, ACTION_MEMBER_REMOVE, ACTION_MEMBER_BATCH)),
     ("role", (ACTION_ROLE_DELETE,)),
     ("billing", (ACTION_RECONCILE_MISMATCH,)),
+    ("billing", (ACTION_SUBSCRIPTION_UPDATE, ACTION_ORDER_CREATED, ACTION_ORDER_PAID)),
+    ("ops", (ACTION_TENANT_STATUS, ACTION_ORDER_CONFIRMED, ACTION_SETTINGS_UPDATE)),
 )
 
 #: 动作全集（去重保序）

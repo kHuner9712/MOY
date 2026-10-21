@@ -35,6 +35,7 @@ from app.db.repositories.usage_repo import (
     SCOPE_MEMBER,
     SCOPE_TENANT,
     SOURCE_SETTLED,
+    RangeEventStats,
     UsageEventRecord,
     UsageStore,
     current_period,
@@ -569,6 +570,22 @@ class UsageService:
         """
         return await self._store.event_units_total(tenant_id, period or current_period())
 
+    async def range_stats(self, *, tenant_id: str, start_at: str, end_at: str) -> RangeEventStats:
+        """统计时间区间内的事件级指标（运营后台 OPS6，B10）。
+
+        **不另设口径**：额度仍来自同一张 `usage_event` 表，
+        因此「各企业区间额度求和」与「BL5 企业维度按账期求和」在整月区间上误差 0。
+
+        Args:
+            tenant_id: 租户 ID。
+            start_at: 起始时间（ISO 8601，含）。
+            end_at: 结束时间（ISO 8601，不含）。
+
+        Returns:
+            RangeEventStats: 区间统计。
+        """
+        return await self._store.range_stats(tenant_id, start_at, end_at)
+
     # ------------------------------------------------------------------
     # 内部分项计算
     # ------------------------------------------------------------------
@@ -745,6 +762,7 @@ __all__: list[str] = [
     "RESOURCE_TASK",
     "USAGE_EVENT_PREFIX",
     "NullUsageDirectory",
+    "RangeEventStats",
     "UsageBreakdownItem",
     "UsageDailyPoint",
     "UsageDirectory",

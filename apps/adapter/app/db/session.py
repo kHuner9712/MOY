@@ -31,7 +31,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
 from app.db.engine import get_engine
-from app.db.tenant import assert_tenant_allowed
+from app.db.tenant import PLATFORM_TENANT, assert_tenant_allowed
 
 logger = get_logger(__name__)
 
@@ -353,6 +353,47 @@ async def tenant_scope(
         yield uow
 
 
+@asynccontextmanager
+async def platform_scope(
+    settings: Settings | None = None,
+    *,
+    read_only: bool = False,
+    session_factory: Callable[[], SessionLike] | None = None,
+) -> AsyncIterator[UnitOfWork]:
+    """开启「平台作用域」事务（**仅供运营后台**，B10）。
+
+    平台作用域把会话变量置为 `__platform__`，RLS 策略因此放开全部租户的行——
+    这是运营后台「企业列表 / 订单列表 / 统计」的唯一合法跨租户通道。
+
+    **三道防线**（缺一即越权）：
+
+    1. 调用方必须先通过 `core/security.require_ops_access()`（企业令牌一律 20003）；
+    2. 本函数显式传 `allow_platform=True`，未声明者会被
+       `assert_tenant_allowed` 以 `30003` 拒绝（代码缺陷即刻暴露）；
+    3. 作用域是**事务级**（`set_config(..., TRUE)`），事务结束自动复位，
+       不会把平台视角泄漏给连接池中的下一个请求。
+
+    Args:
+        settings: 可选配置实例。
+        read_only: 是否只读事务。
+        session_factory: 可选的会话工厂（测试注入用）。
+
+    Yields:
+        UnitOfWork: 已开启的**平台作用域**工作单元。
+
+    Raises:
+        ApiError: `business_store=memory` 时不存在数据库事务（30004）。
+    """
+    async with tenant_scope(
+        PLATFORM_TENANT,
+        allow_platform=True,
+        read_only=read_only,
+        settings=settings,
+        session_factory=session_factory,
+    ) as uow:
+        yield uow
+
+
 __all__ = [
     "SET_READ_ONLY_SQL",
     "SET_TENANT_SQL",
@@ -361,5 +402,6 @@ __all__ = [
     "UnitOfWork",
     "coerce_statement",
     "get_session_factory",
+    "platform_scope",
     "tenant_scope",
 ]

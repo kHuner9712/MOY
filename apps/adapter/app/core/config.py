@@ -26,6 +26,8 @@ IdempotencyBackend = Literal["memory", "redis"]
 BusinessStore = Literal["memory", "postgres"]
 #: 凭据解析模式（D-10）。`bound` = 按库凭据优先；`global` = 应急强制走全局凭据。
 CredentialMode = Literal["bound", "global"]
+#: 支付渠道（B09）。`wechat_pay` = 微信支付；`fake` = 测试用假网关（不产生真实请求）。
+PayChannel = Literal["wechat_pay", "fake"]
 
 
 class Settings(BaseSettings):
@@ -170,6 +172,30 @@ class Settings(BaseSettings):
     usage_estimate_prompt_units: int = Field(default=800, ge=0)
 
     # ------------------------------------------------------------------
+    # 计费与支付（阶段二 B09，架构文档 §4.5 / 11.5）
+    #
+    # 设计口径：
+    # 1. **密钥缺失不阻断启动**：`WechatPayGateway` 在构造时不校验密钥，
+    #    只在真正发起支付/验签时抛 `30004`（配置异常，业务语言文案）；
+    #    staging/production 缺密钥属部署事故，但不应让整个服务起不来
+    #    （否则「账单页打不开」会扩散成「全站不可用」）。
+    # 2. `pay_channel=fake` 仅用于测试与本地联调；`mock_mode`（未开启真实下游）
+    #    且 env 为 development/test 时自动回落 fake 网关并打 WARNING——
+    #    与既有「桩模式」哲学一致；真实环境缺密钥一律报错，绝不静默降级。
+    # 3. `order_expire_minutes` 是「未支付自动关闭」的唯一口径（BL6 验收 ⑦）。
+    # ------------------------------------------------------------------
+    pay_channel: PayChannel = "wechat_pay"
+    pay_mch_id: str = ""
+    pay_api_v3_key: str = ""
+    pay_cert_serial: str = ""
+    pay_private_key_path: str = ""
+    pay_notify_url: str = ""
+    #: 对公转账收款信息（JSON 字符串，原样下发给前端展示；不含任何凭据）
+    pay_bank_info: str = ""
+    #: 订单未支付自动关闭的分钟数（BL6）
+    order_expire_minutes: int = Field(default=30, ge=1, le=1440)
+
+    # ------------------------------------------------------------------
     # 幂等与限流（架构文档 3.0.4）
     # ------------------------------------------------------------------
     idempotency_backend: IdempotencyBackend = "memory"
@@ -227,6 +253,32 @@ class Settings(BaseSettings):
             bool: 必须配置 `OA_CREDENTIAL_ENCRYPTION_KEY` 时返回 True。
         """
         return self.uses_postgres or self.env == "production"
+
+    @property
+    def payment_credentials_ready(self) -> bool:
+        """支付渠道密钥是否齐备（B09）。
+
+        Returns:
+            bool: `pay_channel=fake` 时恒为 True；微信支付需商户号 + APIv3 密钥齐备。
+        """
+        if self.pay_channel == "fake":
+            return True
+        return bool(self.pay_mch_id.strip()) and bool(self.pay_api_v3_key.strip())
+
+    @property
+    def use_fake_payment_gateway(self) -> bool:
+        """是否使用测试用假支付网关（B09）。
+
+        判定口径：显式 `pay_channel=fake`，**或**「桩模式 + 开发/测试环境」。
+        真实环境（staging/production）即使处于桩模式也**不**回落假网关——
+        否则上线后支付回调可被任意伪造。
+
+        Returns:
+            bool: 使用假网关时返回 True。
+        """
+        if self.pay_channel == "fake":
+            return True
+        return self.mock_mode and self.env in {"development", "test"}
 
 
 @lru_cache(maxsize=1)
