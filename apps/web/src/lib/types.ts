@@ -103,6 +103,25 @@ export interface ChatMessage {
   pending?: boolean;
 }
 
+/** 生成请求（M1/M2 入参） */
+export interface GenerateRequest {
+  conversation_id: string;
+  profile: ModelProfile;
+  messages: Array<{ role: MessageRole; content: string }>;
+  context?: { history_window?: number; memory_hints?: string[] };
+  knowledge_base_ids?: string[];
+  options?: { temperature?: number; max_tokens?: number };
+}
+
+/** 生成结果（M1/M2 响应） */
+export interface GenerateResult {
+  generation_id: string;
+  content: string;
+  finish_reason: FinishReason;
+  usage: Usage;
+  citations: Citation[];
+}
+
 /** 能力档位条目 */
 export interface ProfileItem {
   profile: ModelProfile;
@@ -183,6 +202,18 @@ export interface TaskResult {
 
 /** 任务条目 */
 export interface AgentTask {
+  task_id: string;
+  conversation_id: string;
+  goal: string;
+  status: TaskStatus;
+  progress: number;
+  created_at: string;
+  updated_at: string;
+  result?: TaskResult | null;
+}
+
+/** 任务条目 */
+export interface TaskItem {
   task_id: string;
   conversation_id: string;
   goal: string;

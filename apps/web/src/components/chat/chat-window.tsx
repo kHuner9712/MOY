@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import { useChatStream } from '@/hooks/use-chat-stream';
 import { newMessageId, useConversationStore } from '@/hooks/use-conversation-store';
-import type { ChatMessage, ModelProfile } from '@/lib/types';
+import type { ModelProfile } from '@/lib/types';
 
 /** 能力档位展示配置（只展示业务名称，不暴露模型信息） */
 const PROFILE_LABELS: Record<ModelProfile, string> = {

@@ -1,7 +1,8 @@
 {
   "extends": ["next/core-web-vitals"],
+  "plugins": ["@typescript-eslint"],
   "rules": {
-    "no-console": ["warn", { "allow": ["warn", "error"] }],
+    "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
     "eqeqeq": ["error", "smart"],
     "prefer-const": "error",
     "no-var": "error",

@@ -13,8 +13,22 @@
  */
 
 // ---------------------------------------------------------------------------
-// 基础类型
+// 公共
 // ---------------------------------------------------------------------------
+
+import type {
+  CurrentUser,
+  GenerateRequest,
+  GenerateResult,
+  OrganizationMember,
+  ProfileItem,
+  TaskItem,
+  TaskStep,
+  ToolConnection,
+  ToolSpec,
+  VerifyResult,
+} from '@/lib/types';
+
 
 /** 统一响应包装 */
 export interface ApiResponse<T> {
@@ -263,7 +277,7 @@ async function request<T>(
   const traceId = response.headers.get(TRACE_HEADER);
   if (traceId) {
     // 便于问题排查：链路 ID 只进控制台，不展示给终端用户
-    console.debug('[trace]', traceId, method, path);
+    console.info('[trace]', traceId, method, path);
   }
 
   return unwrap<T>(response);
@@ -291,39 +305,6 @@ async function upload<T>(path: string, form: FormData, options: RequestOptions =
 // ---------------------------------------------------------------------------
 // 模型服务 M1-M4
 // ---------------------------------------------------------------------------
-
-/** 生成请求 */
-export interface GenerateRequest {
-  conversation_id: string;
-  profile: 'general' | 'code' | 'long_context' | 'reasoning';
-  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
-  context?: { history_window?: number; memory_hints?: string[] };
-  knowledge_base_ids?: string[];
-  options?: { temperature?: number; max_tokens?: number };
-}
-
-/** 生成结果 */
-export interface GenerateResult {
-  generation_id: string;
-  content: string;
-  finish_reason: 'stop' | 'length' | 'error' | 'cancelled';
-  usage: { prompt_units: number; completion_units: number; total_units: number };
-  citations: Array<{
-    document_id: string;
-    document_name: string;
-    segment_content: string;
-    score: number;
-  }>;
-}
-
-/** 能力档位条目 */
-export interface ProfileItem {
-  profile: 'general' | 'code' | 'long_context' | 'reasoning';
-  display_name: string;
-  description: string;
-  max_context_turns: number;
-  status: 'available' | 'unavailable';
-}
 
 /** 模型服务接口 */
 export const modelApi = {
@@ -553,17 +534,6 @@ export const knowledgeApi = {
 // Agent 服务 A1-A6
 // ---------------------------------------------------------------------------
 
-/** 任务条目 */
-export interface TaskItem {
-  task_id: string;
-  conversation_id: string;
-  goal: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  progress: number;
-  created_at: string;
-  updated_at: string;
-}
-
 /** Agent 服务接口 */
 export const agentApi = {
   /** A1 创建任务 */
@@ -599,18 +569,7 @@ export const agentApi = {
   },
 
   /** A4 步骤详情 */
-  listSteps(taskId: string): Promise<{
-    task_id: string;
-    steps: Array<{
-      step_id: string;
-      sequence: number;
-      title: string;
-      status: string;
-      started_at: string | null;
-      finished_at: string | null;
-      output_summary: string | null;
-    }>;
-  }> {
+  listSteps(taskId: string): Promise<{ task_id: string; steps: TaskStep[] }> {
     return request('GET', `/agent/tasks/${taskId}/steps`);
   },
 
@@ -637,21 +596,10 @@ export const agentApi = {
 // 工具服务 T1-T7
 // ---------------------------------------------------------------------------
 
-/** 工具类型条目（前端按注册表动态渲染，不硬编码工具列表） */
-export interface ToolItem {
-  tool_type: string;
-  display_name: string;
-  category: string;
-  auth_type: 'oauth2' | 'token' | 'none';
-  status: 'available' | 'unavailable';
-  operations: Array<{ operation: string; display_name: string; params_schema: Record<string, unknown> }>;
-  timeout_ms: number;
-}
-
 /** 工具服务接口 */
 export const toolApi = {
   /** T1 工具类型注册表 */
-  registry(): Promise<{ tools: ToolItem[] }> {
+  registry(): Promise<{ tools: ToolSpec[] }> {
     return request('GET', '/tools/registry');
   },
 
@@ -667,14 +615,7 @@ export const toolApi = {
 
   /** T3 已连接工具列表 */
   listConnections(params: { page?: number; page_size?: number; tool_type?: string } = {}): Promise<
-    PageResult<{
-      connection_id: string;
-      tool_type: string;
-      display_name: string;
-      status: string;
-      connected_at: string;
-      expires_at: string | null;
-    }>
+    PageResult<ToolConnection>
   > {
     return request('GET', '/tools/connections', { query: params });
   },
@@ -738,17 +679,12 @@ export interface ProfileData {
 /** 用户权限服务接口 */
 export const identityApi = {
   /** U1 令牌与权限点校验 */
-  verify(body: { permission: string; resource?: { type: string; id: string } }): Promise<{
-    allowed: boolean;
-    user_id: string;
-    tenant_id: string;
-    roles: string[];
-  }> {
+  verify(body: { permission: string; resource?: { type: string; id: string } }): Promise<VerifyResult> {
     return request('POST', '/identity/verify', { body });
   },
 
   /** U2 当前用户信息 */
-  profile(): Promise<ProfileData> {
+  profile(): Promise<CurrentUser> {
     return request('GET', '/identity/profile');
   },
 
@@ -756,15 +692,7 @@ export const identityApi = {
   listMembers(
     orgId: string,
     params: { page?: number; page_size?: number; role?: string; keyword?: string } = {},
-  ): Promise<
-    PageResult<{
-      user_id: string;
-      display_name: string;
-      email: string;
-      role: string;
-      joined_at: string;
-    }>
-  > {
+  ): Promise<PageResult<OrganizationMember>> {
     return request('GET', `/identity/organizations/${orgId}/members`, { query: params });
   },
 

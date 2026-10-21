@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/feedback';
-import { toast } from '@/components/ui/toast';
 import { knowledgeApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
 import type { SearchSegment } from '@/lib/types';

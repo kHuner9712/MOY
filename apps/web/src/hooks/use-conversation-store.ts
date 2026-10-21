@@ -33,7 +33,7 @@ export interface ConversationActions {
   /** 追加消息 */
   appendMessage: (message: ChatMessage) => void;
   /** 更新最后一条消息（流式拼接） */
-  updateLastMessage: (patch: Partial<ChatMessage>) => void;
+  updateLastMessage: (patch: Partial<Omit<ChatMessage, 'id' | 'role'>>) => void;
   /** 切换能力档位 */
   setProfile: (profile: ModelProfile) => void;
   /** 关联知识库 */
@@ -102,6 +102,9 @@ export const useConversationStore = create<ConversationState & ConversationActio
         }
         const next = [...prev.messages];
         const last = next[next.length - 1];
+        if (!last) {
+          return prev;
+        }
         next[next.length - 1] = { ...last, ...patch };
         return { messages: next };
       });
