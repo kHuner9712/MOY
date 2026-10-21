@@ -12,13 +12,14 @@
  *   node scripts/check-banned-terms.mjs --update-words  # 从 PRD 第 7 章重新生成词表常量
  *   node scripts/check-banned-terms.mjs --check-words   # 校验词表与 PRD 是否漂移（漂移退出码 3）
  *   node scripts/check-banned-terms.mjs --self-test     # 负样本自检
+ *   node scripts/check-banned-terms.mjs --built         # G-16：扫 .next 产物可见文本（10 个业务路由）
  *
  * 退出码约定（与 docs/qa-phase2-test-plan.md G-14/G-15 一致，**故意如此**）：
  *   0 = 无命中（可放行）
  *   1 = 有命中（拦截）；`--self-test` 下 1 表示**自检通过**（12 条负样本全部命中），
  *       因为"扫描器能抓到东西"与"扫到了违规"在语义上同为"有命中"，
  *       这样任何导致扫描器失效的改动都不会被误判为成功。
- *   2 = 参数/文件错误
+ *   2 = 参数/文件错误（`--built` 下为「产物缺失，先 build」）
  *   3 = 词表与 PRD 漂移
  *
  * 设计红线（避免门禁被误报噪声拖死）：
@@ -575,12 +576,386 @@ function selfTest() {
 }
 
 // ---------------------------------------------------------------------------
+// 构建产物扫描（--built，G-16）
+//
+// 源码扫描（默认模式）能拦住「写进代码里的禁词」，但拦不住「拼进产物的禁词」：
+// 模板拼接、第三方组件文案、序列化进 RSC 载荷的字符串都可能绕过源码层判断。
+// 因此在**真实产物**上再扫一遍：每个业务路由取预渲染 HTML 与服务端 bundle，
+// 抽取可见文本后跑同一套词表 + 错误码正则。
+// ---------------------------------------------------------------------------
+
+const BUILT_APP_ROOT = resolve(WEB_ROOT, '.next/server/app');
+
+/** 受检的 10 个业务路由（与 check-page-states.mjs 保持一致） */
+const BUILT_ROUTES = [
+  'chat',
+  'knowledge',
+  'knowledge/[baseId]',
+  'plugins',
+  'workflows',
+  'team',
+  'team/organization',
+  'profile',
+  'billing',
+  'ops/tenants',
+];
+
+/**
+ * 收集某个路由的构建产物。
+ *
+ * 三类产物：
+ * 1. 预渲染 HTML（静态路由才有）——首屏用户真正看到的文字；
+ * 2. 该路由的服务端 bundle `page.js`——页面模块内的字符串常量；
+ * 3. **HTML 引用到的客户端 chunk**——条件渲染的文案（错误态、提示条、抽屉）都在这里，
+ *    只扫 HTML 会漏掉「只有出错才出现」的文案，等于给禁词留了后门。
+ *
+ * @param {string} route - 路由路径（不带前导斜杠）
+ * @param {Set<string>} seenChunks - 已收录的 chunk（跨路由去重，避免重复扫描）
+ * @returns {Array<{path: string, kind: 'html' | 'js'}>} 产物列表
+ */
+function builtArtifactsOf(route, seenChunks) {
+  const found = [];
+  const htmlPath = join(BUILT_APP_ROOT, `${route}.html`);
+
+  let html = null;
+  try {
+    html = readFileSync(htmlPath, 'utf8');
+    found.push({ path: htmlPath, kind: 'html' });
+  } catch {
+    // 动态路由没有预渲染 HTML
+  }
+
+  const routeBundles = [
+    join(BUILT_APP_ROOT, '(main)', route, 'page.js'),
+    join(BUILT_APP_ROOT, '(auth)', route, 'page.js'),
+    join(BUILT_APP_ROOT, route, 'page.js'),
+  ];
+  for (const bundle of routeBundles) {
+    try {
+      if (statSync(bundle).isFile()) found.push({ path: bundle, kind: 'js' });
+    } catch {
+      // 不存在则跳过
+    }
+  }
+
+  // HTML 里引用的客户端 chunk（`/_next/static/chunks/xxx.js`）
+  if (html) {
+    for (const match of html.matchAll(/(?:src|href)="\/_next\/(static\/[^"]+\.js)"/g)) {
+      const relativePath = match[1];
+      if (seenChunks.has(relativePath)) continue;
+      seenChunks.add(relativePath);
+      const chunkPath = join(WEB_ROOT, '.next', relativePath);
+      try {
+        if (statSync(chunkPath).isFile()) found.push({ path: chunkPath, kind: 'js' });
+      } catch {
+        // chunk 已被清理则跳过
+      }
+    }
+  }
+
+  return found;
+}
+
+/**
+ * 从 HTML 产物里抽取用户可见文本（文本节点 + 可见属性）。
+ *
+ * @param {string} html - HTML 内容
+ * @returns {Array<string>} 可见文本片段（仅保留含中文的，避免 CSS/类名噪声）
+ */
+function extractHtmlVisibleTexts(html) {
+  const texts = [];
+  for (const match of html.matchAll(/>([^<>]{2,400})</g)) texts.push(match[1]);
+  for (const match of html.matchAll(/(?:title|aria-label|placeholder|alt)="([^"]{2,400})"/g)) {
+    texts.push(match[1]);
+  }
+  return texts.filter((text) => /[\u4e00-\u9fa5]/.test(text));
+}
+
+/**
+ * 从一段代码里抽取单/双引号字面量（用于模板 `${}` 表达式内部）。
+ *
+ * @param {string} code - 代码片段
+ * @returns {Array<string>} 字面量内容
+ */
+function collectSimpleStrings(code) {
+  const found = [];
+  let i = 0;
+  while (i < code.length) {
+    const quote = code[i];
+    if (quote === '\'' || quote === '"') {
+      const start = i + 1;
+      i += 1;
+      while (i < code.length) {
+        if (code[i] === '\\') {
+          i += 2;
+          continue;
+        }
+        if (code[i] === quote) break;
+        i += 1;
+      }
+      found.push(code.slice(start, i));
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+  return found;
+}
+
+/**
+ * 拆分模板字面量：静态文本 + `${}` 表达式列表。
+ *
+ * 必须把表达式剔出静态文本，否则 `${user.tenant.name}` 这类**变量名**
+ * 会被当成文案命中（bundle 里全是压缩后的变量，误报会瞬间淹没真实问题）。
+ *
+ * @param {string} inner - 模板内部文本（不含反引号）
+ * @returns {{staticText: string, expressions: Array<string>}} 拆分结果
+ */
+function splitTemplateLiteral(inner) {
+  let staticText = '';
+  const expressions = [];
+  let i = 0;
+  while (i < inner.length) {
+    if (inner[i] === '\\') {
+      staticText += inner[i] + (inner[i + 1] ?? '');
+      i += 2;
+      continue;
+    }
+    if (inner[i] === '$' && inner[i + 1] === '{') {
+      let depth = 1;
+      let j = i + 2;
+      let expression = '';
+      while (j < inner.length && depth > 0) {
+        const ch = inner[j];
+        if (ch === '{') depth += 1;
+        else if (ch === '}') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+        expression += ch;
+        j += 1;
+      }
+      expressions.push(expression);
+      staticText += ' ';
+      i = j + 1;
+      continue;
+    }
+    staticText += inner[i];
+    i += 1;
+  }
+  return { staticText, expressions };
+}
+
+/**
+ * 从 JS 产物里抽取字符串字面量（含中文的才算「可见文案」）。
+ *
+ * 说明：
+ * - bundle 里 ASCII 字面量绝大多数是字段名/类名/路径，把噪声算进来会淹没真实问题，
+ *   因此只保留含中文的片段；
+ * - 模板字面量按「静态文本 + `${}` 内字面量」两段提取，既不漏 `cond ? '已停用' : '正常'`，
+ *   也不会把 `user.tenant.name` 这种变量名当文案。
+ *
+ * @param {string} js - JS 内容
+ * @returns {Array<string>} 可见文本片段
+ */
+function extractJsVisibleTexts(js) {
+  const texts = [];
+  let i = 0;
+  while (i < js.length) {
+    const ch = js[i];
+    if (ch === '\'' || ch === '"') {
+      const start = i + 1;
+      i += 1;
+      while (i < js.length) {
+        if (js[i] === '\\') {
+          i += 2;
+          continue;
+        }
+        if (js[i] === ch) break;
+        i += 1;
+      }
+      const text = js.slice(start, i);
+      if (/[\u4e00-\u9fa5]/.test(text)) texts.push(text);
+      i += 1;
+      continue;
+    }
+    if (ch === '`') {
+      const start = i + 1;
+      let j = start;
+      while (j < js.length) {
+        if (js[j] === '\\') {
+          j += 2;
+          continue;
+        }
+        if (js[j] === '`') break;
+        j += 1;
+      }
+      const inner = js.slice(start, j);
+      const { staticText, expressions } = splitTemplateLiteral(inner);
+      if (/[\u4e00-\u9fa5]/.test(staticText)) texts.push(staticText);
+      for (const expression of expressions) {
+        for (const literal of collectSimpleStrings(expression)) {
+          if (/[\u4e00-\u9fa5]/.test(literal)) texts.push(literal);
+        }
+      }
+      i = j + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return texts;
+}
+
+/**
+ * 构建产物扫描的自检：证明「产物提取 → 词表判定」这条链路真的抓得到东西。
+ *
+ * 只测抽取 + 判定，不依赖磁盘上的 .next（因此可在任何机器上跑）。
+ *
+ * @returns {number} 0 失败 / 1 通过（故意：通过=1）
+ */
+function builtSelfTest() {
+  const failures = [];
+
+  const htmlSample =
+    '<div><p>文档已上传，正在建立索引</p><span title="升级 GPT-4o 版本"></span></div>';
+  const htmlTexts = extractHtmlVisibleTexts(htmlSample);
+  const htmlHits = htmlTexts.flatMap((text) => findHits(text, 'string', ''));
+  if (!htmlHits.some((hit) => hit.term === '索引')) {
+    failures.push('HTML 文本节点未抓到「索引」');
+  }
+  if (!htmlHits.some((hit) => hit.term.toLowerCase() === 'gpt-4o')) {
+    failures.push('HTML 可见属性未抓到模型品牌名');
+  }
+
+  const jsSample = "const a='切换模型档位';const b='操作失败（错误码 20003）';const c='正常文案';";
+  const jsTexts = extractJsVisibleTexts(jsSample);
+  const jsHits = jsTexts.flatMap((text) => findHits(text, 'string', ''));
+  if (!jsHits.some((hit) => hit.term === '模型')) {
+    failures.push('JS 字符串未抓到「模型」');
+  }
+  if (!jsHits.some((hit) => hit.term === '20003')) {
+    failures.push('JS 字符串未抓到 5 位错误码');
+  }
+
+  const cleanTexts = extractJsVisibleTexts("const a='该内容片段来自员工手册';");
+  if (cleanTexts.flatMap((text) => findHits(text, 'string', '')).length > 0) {
+    failures.push('正样本误报：合规文案被判为命中');
+  }
+
+  // 模板字面量：静态部分要抓，`${}` 里的变量名不能误报，`${}` 里的字面量也要抓
+  const templateSample =
+    'const a=`切换模型档位 ${g.tenant.plan}`;const b=`${ok?"正在建立索引":""}`;';
+  const templateHits = extractJsVisibleTexts(templateSample).flatMap((text) =>
+    findHits(text, 'string', ''),
+  );
+  if (!templateHits.some((hit) => hit.term === '模型')) {
+    failures.push('模板静态部分未抓到「模型」');
+  }
+  if (!templateHits.some((hit) => hit.term === '索引')) {
+    failures.push('模板 ${} 内部的字符串字面量未抓到「索引」');
+  }
+  if (templateHits.some((hit) => hit.term.toLowerCase() === 'tenant')) {
+    failures.push('模板 ${} 里的变量名（tenant）被误判为文案');
+  }
+
+  // 纯 ASCII 片段不应被当成文案（否则 bundle 里的字段名会淹没真实问题）
+  if (extractJsVisibleTexts("const k='segment_count';").length > 0) {
+    failures.push('ASCII 标识符被误判为可见文案');
+  }
+
+  if (failures.length > 0) {
+    console.error(`BUILT SELF-TEST FAIL（${failures.length}）`);
+    for (const failure of failures) console.error('  -', failure);
+    return 0;
+  }
+
+  console.info(
+    'BUILT SELF-TEST PASS：HTML 文本/可见属性、JS 字符串（含模板静态段与 `${}` 内字面量）、' +
+      '5 位错误码均能抓到；合规文案、ASCII 标识符与模板变量名 0 误报',
+  );
+  return 1;
+}
+
+/**
+ * 扫描构建产物（--built 模式）。
+ *
+ * @param {boolean} json - 是否输出 JSON
+ * @param {boolean} selfTestMode - 是否只跑抽取/判定自检
+ * @returns {number} 退出码：0 无命中 / 1 有命中（自检模式下 1=通过）/ 2 产物缺失
+ */
+function scanBuilt(json, selfTestMode = false) {
+  if (selfTestMode) return builtSelfTest();
+
+  let htmlCount = 0;
+  let jsCount = 0;
+  let textCount = 0;
+  const hits = [];
+  const missingRoutes = [];
+  const seenChunks = new Set();
+
+  for (const route of BUILT_ROUTES) {
+    const artifacts = builtArtifactsOf(route, seenChunks);
+    if (artifacts.length === 0) {
+      missingRoutes.push(route);
+      continue;
+    }
+    for (const artifact of artifacts) {
+      let content;
+      try {
+        content = readFileSync(artifact.path, 'utf8');
+      } catch {
+        continue;
+      }
+      if (artifact.kind === 'html') htmlCount += 1;
+      else jsCount += 1;
+
+      const texts =
+        artifact.kind === 'html' ? extractHtmlVisibleTexts(content) : extractJsVisibleTexts(content);
+      textCount += texts.length;
+
+      for (const text of texts) {
+        for (const hit of findHits(text, 'string', '')) {
+          hits.push({
+            route,
+            file: relative(WEB_ROOT, artifact.path),
+            term: hit.term,
+            row: hit.row,
+            via: hit.via,
+            snippet: text.trim().replace(/\s+/g, ' ').slice(0, 80),
+          });
+        }
+      }
+    }
+  }
+
+  if (json) {
+    console.info(JSON.stringify({ htmlCount, jsCount, textCount, missingRoutes, hits }, null, 2));
+  } else {
+    for (const hit of hits) {
+      console.info(`${hit.file}:${hit.term}:${hit.snippet}`);
+    }
+    console.info(
+      `[built] 扫描 ${htmlCount + jsCount} 个产物（HTML ${htmlCount} / JS ${jsCount}），` +
+        `提取可见文本 ${textCount} 条，${hits.length} 命中`,
+    );
+    if (missingRoutes.length > 0) {
+      console.info(`[built] 未找到以下路由的产物（请先 npm run build）：${missingRoutes.join(', ')}`);
+    }
+  }
+
+  if (missingRoutes.length > 0) return 2;
+  return hits.length > 0 ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
 function main(argv) {
   if (argv.includes('--update-words')) return updateWords();
   if (argv.includes('--check-words')) return checkWords();
+  // --built 必须在 --self-test 之前判定：`--built --self-test` 走产物扫描器的自检
+  if (argv.includes('--built')) return scanBuilt(argv.includes('--json'), argv.includes('--self-test'));
   if (argv.includes('--self-test')) return selfTest();
 
   // --dump：逐片段输出（kind + 行号 + 文本），用于核查提取逻辑是否漏扫

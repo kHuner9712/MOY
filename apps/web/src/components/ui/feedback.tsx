@@ -1,6 +1,13 @@
+'use client';
+
 import { AlertTriangle, Inbox } from 'lucide-react';
 import * as React from 'react';
 
+import {
+  RETRY_AGGREGATE_HINT,
+  RETRY_AGGREGATE_THRESHOLD,
+  useRetryableRequest,
+} from '@/hooks/use-retryable-request';
 import { cn } from '@/lib/utils';
 
 /** 加载骨架屏（总方案 3.5：所有等待有进度） */
@@ -115,8 +122,12 @@ export function EmptyState({
 /**
  * 错误状态（只展示业务语言文案与解决建议）。
  *
- * `onRetry` 是**必填**：任何错误态都必须给用户一条出路，
- * 不允许出现「报错了但没有重试入口」的死角（B14 三态统一约定）。
+ * 两条硬约定：
+ * 1. `onRetry` **必填**：任何错误态都必须给用户一条出路；
+ * 2. 连续失败 3 次（30 秒滑动窗口内）自动切换为聚合文案
+ *    「多次尝试未成功，请稍后再试或联系管理员」，计数由
+ *    `useRetryableRequest` 持有，组件本身不存任何计数器状态；
+ *    重试只重发该请求，**不刷新整页**（不丢用户输入与滚动位置）。
  *
  * @param props - 组件属性
  * @returns 错误态元素
@@ -124,34 +135,52 @@ export function EmptyState({
 export function ErrorState({
   message,
   onRetry,
-  description = '如果多次重试仍不成功，可联系团队管理员查看服务状态',
+  description,
+  failureCount,
   retryLabel = '重试',
   className,
 }: {
   /** 业务语言错误文案（禁止出现错误码与堆栈） */
   message: string;
-  /** 重试回调（必填） */
+  /** 重试回调（必填）：只重发该请求 */
   onRetry: () => void;
-  /** 补充建议 */
+  /** 自定义补充建议（不传时按失败次数自动选择） */
   description?: string;
+  /** 外部已知的失败次数（如由页面统一计数）；不传时使用内部计数 */
+  failureCount?: number;
   /** 重试按钮文案 */
   retryLabel?: string;
   className?: string;
 }): React.JSX.Element {
+  const { attempts, exhausted, retry, reset } = useRetryableRequest(onRetry);
+
+  // 换了一条错误（例如换了筛选条件）时重新计数，避免旧失败把新错误直接判成「多次未成功」
+  React.useEffect(() => {
+    reset();
+  }, [message, reset]);
+
+  const totalAttempts = failureCount ?? attempts;
+  const showAggregate = failureCount !== undefined ? failureCount >= RETRY_AGGREGATE_THRESHOLD : exhausted;
+
   return (
     <StateBlock
       tone="danger"
       icon={<AlertTriangle aria-hidden="true" className="h-6 w-6 text-destructive" />}
       title={message}
-      description={description}
+      description={
+        showAggregate
+          ? RETRY_AGGREGATE_HINT
+          : (description ?? '如果多次重试仍不成功，可联系团队管理员查看服务状态')
+      }
       className={className}
       action={
         <button
           type="button"
-          onClick={onRetry}
+          onClick={retry}
           className="rounded-md border px-4 py-2 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
           {retryLabel}
+          {totalAttempts > 0 ? `（第 ${totalAttempts} 次尝试）` : ''}
         </button>
       }
     />

@@ -8,9 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/feedback';
 import { Textarea } from '@/components/ui/input';
-import { toast } from '@/components/ui/toast';
 import { useChatStream } from '@/hooks/use-chat-stream';
 import { newMessageId, useConversationStore } from '@/hooks/use-conversation-store';
+import { reportStreamFailure } from '@/lib/error-guard';
 import type { Citation, ModelProfile } from '@/lib/types';
 
 /** 能力档位展示配置（只展示业务名称，不暴露任何内部信息） */
@@ -57,10 +57,10 @@ export default function ChatWindow(): React.JSX.Element {
     });
   }, [stream.citations, stream.text, updateLastMessage]);
 
-  // 流式结束且无内容时给出兜底提示
+  // 流式中断/失败：统一走全局兜底（同一失败 3 秒内只提示一次，避免轮询式刷屏）
   React.useEffect(() => {
     if (!stream.streaming && stream.errorMessage) {
-      toast.error(stream.errorMessage);
+      reportStreamFailure(stream.errorMessage);
     }
   }, [stream.errorMessage, stream.streaming]);
 
