@@ -35,6 +35,7 @@ from app.business.policy_service import (
     ORG_ADMIN_ROLES,
     WILDCARD_ROLE,
     PolicyService,
+    PolicySnapshot,
     get_policy_service,
     has_admin_role,
     is_guest_role,
@@ -360,14 +361,23 @@ class KnowledgeBaseService:
         `restricted` 库通过授权表判定可见：先取 5s 快照（含授权可见库集合），
         再把该集合交给存储层做 SQL 过滤——保证 `total` 与分页一致（无 N+1）。
 
+        **按 ID 精确查询（加性）**：`query.base_id` 非空时只返回该库（0 或 1 条），
+        可见性判据与列表**同一套**（`PolicyService.is_visible`）：
+        不可见 / 不存在 / 已软删都返回**空列表**，不返回 404/403——
+        否则该参数就成了「探测他人库是否存在」的枚举面。
+
         Args:
-            query: 分页与关键字参数。
+            query: 分页、关键字与可选 `base_id`。
             auth: 鉴权上下文。
 
         Returns:
             PageResult[KnowledgeBaseItem]: 分页结果。
         """
         snapshot = await self._policy.snapshot(auth)
+        if query.base_id:
+            return await self._list_single(
+                base_id=query.base_id, auth=auth, snapshot=snapshot, query=query
+            )
         records, total = await self._store.list(
             auth.tenant_id,
             keyword=query.keyword,
@@ -389,6 +399,42 @@ class KnowledgeBaseService:
             tenant_id=auth.tenant_id,
         )
         return build_page(items=items, total=total, page=query.page, page_size=query.page_size)
+
+    async def _list_single(
+        self,
+        *,
+        base_id: str,
+        auth: AuthContext,
+        snapshot: PolicySnapshot,
+        query: ListBasesQuery,
+    ) -> PageResult[KnowledgeBaseItem]:
+        """按 ID 精确返回单个知识库（不可见即空列表）。
+
+        Args:
+            base_id: 知识库 ID（原始形态，内部会归一化为 `kb_` 前缀）。
+            auth: 鉴权上下文。
+            snapshot: 可见性快照（与列表同一次判定）。
+            query: 查询参数（用于回填分页元信息）。
+
+        Returns:
+            PageResult[KnowledgeBaseItem]: 0 或 1 条的分页结果。
+        """
+        normalized = normalize_base_id(base_id)
+        record = await self._store.get(auth.tenant_id, normalized)
+        if record is None or not self._policy.is_visible(record, auth, snapshot):
+            logger.info(
+                "knowledge_base_by_id_hidden",
+                base_id=normalized,
+                tenant_id=auth.tenant_id,
+            )
+            return build_page(items=[], total=0, page=query.page, page_size=query.page_size)
+        item = await self._to_item(record, auth, snapshot.permission_of(record.base_id))
+        logger.info(
+            "knowledge_base_by_id_loaded",
+            base_id=normalized,
+            tenant_id=auth.tenant_id,
+        )
+        return build_page(items=[item], total=1, page=query.page, page_size=query.page_size)
 
     async def _to_item(
         self, record: KnowledgeBaseRecord, auth: AuthContext, grant_permission: str | None = None

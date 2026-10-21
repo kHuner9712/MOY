@@ -89,26 +89,36 @@ async def create_base(
     "/bases",
     response_model=ApiResponse[PageResult[KnowledgeBaseItem]],
     summary="R2 知识库列表",
-    description="知识库列表（分页，支持名称关键字过滤），含内容切分精细度与当前用户角色。",
+    description=(
+        "知识库列表（分页，支持名称关键字过滤），含内容切分精细度与当前用户角色。"
+        "可选 `base_id` 用于精确查单个知识库（前端详情页定位）；"
+        "不可见或不存在都返回空列表，不返回 404/403。"
+    ),
 )
 async def list_bases(
     context: RequestContext = Depends(get_request_context),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=200, description="每页条数"),
     keyword: str = Query("", max_length=128, description="名称关键字"),
+    base_id: str = Query(
+        "",
+        max_length=128,
+        description="精确查询的知识库 ID（加性参数；留空表示按列表返回）",
+    ),
 ) -> ApiResponse[PageResult[KnowledgeBaseItem]]:
-    """R2 知识库列表。
+    """R2 知识库列表（支持按 `base_id` 精确查询）。
 
     Args:
         context: 请求上下文。
         page: 页码。
         page_size: 每页条数。
         keyword: 名称关键字。
+        base_id: 精确查询的知识库 ID；留空表示按列表返回。
 
     Returns:
-        ApiResponse[PageResult[KnowledgeBaseItem]]: 分页结果。
+        ApiResponse[PageResult[KnowledgeBaseItem]]: 分页结果（`base_id` 命中时 0 或 1 条）。
     """
-    query = ListBasesQuery(page=page, page_size=page_size, keyword=keyword)
+    query = ListBasesQuery(page=page, page_size=page_size, keyword=keyword, base_id=base_id)
     result = await get_rag_service().list_bases(query, context.auth)
     return ApiResponse[PageResult[KnowledgeBaseItem]].ok(result)
 

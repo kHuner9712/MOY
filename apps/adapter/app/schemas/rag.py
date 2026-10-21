@@ -170,9 +170,20 @@ class ListBasesQuery(PageQuery):
 
     Attributes:
         keyword: 名称关键字过滤。
+        base_id: 精确查询某个知识库（**加性**，缺省为空表示按列表返回）。
+
+            存在理由：前端知识库详情页需要「按 ID 定位单个库」。此前的唯一途径是
+            拉 R2 列表再在前端按 `base_id` 扫描，库数量超过一页（>200）就失效。
+            语义与列表一致：不可见或不存在都返回**空列表**（不 404、不 403），
+            避免通过该参数探测他人库是否存在；传了就忽略 `keyword` 与分页。
     """
 
     keyword: str = Field(default="", max_length=128, description="名称关键字")
+    base_id: str = Field(
+        default="",
+        max_length=128,
+        description="精确查询的知识库 ID；留空表示按列表返回（加性参数）",
+    )
 
 
 class UploadDocumentData(BaseModel):
