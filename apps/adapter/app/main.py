@@ -113,7 +113,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # D-10：真实部署形态下凭据加密密钥缺失即启动失败（30004，含可操作文案）。
     # development/test 允许缺失，首次真正需要解密时才报错（绝不静默降级）。
-    validate_credential_startup(settings)
+    try:
+        validate_credential_startup(settings)
+    except ApiError:
+        await dispose_engine()
+        raise
 
     yield
 
