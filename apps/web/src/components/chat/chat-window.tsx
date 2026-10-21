@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { Send, Square } from 'lucide-react';
@@ -32,7 +33,7 @@ const PROFILES: ModelProfile[] = ['general', 'code', 'long_context', 'reasoning'
  *
  * @returns 对话窗口元素
  */
-export default function ChatWindow(): JSX.Element {
+export default function ChatWindow(): React.JSX.Element {
   const { messages, conversationId, profile, appendMessage, updateLastMessage, setProfile } =
     useConversationStore();
   const stream = useChatStream();

@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
@@ -24,7 +25,7 @@ const PLAN_LABELS: Record<string, string> = {
 };
 
 /** 个人中心页：账户信息 + 套餐与用量。 */
-export default function ProfilePage(): JSX.Element {
+export default function ProfilePage(): React.JSX.Element {
   const session = useSession();
   const [usage, setUsage] = useState<{
     period: string;

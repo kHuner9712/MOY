@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
@@ -36,7 +37,7 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 /** 团队管理页：成员列表 + 邀请成员。 */
-export default function TeamPage(): JSX.Element {
+export default function TeamPage(): React.JSX.Element {
   const [orgId, setOrgId] = useState('');
   const [members, setMembers] = useState<OrganizationMember[]>([]);
   const [loading, setLoading] = useState(false);

@@ -1,3 +1,4 @@
+import type React from "react";
 import type { Metadata } from 'next';
 
 /** 登录页元信息 */
@@ -15,7 +16,7 @@ export default function AuthLayout({
   children,
 }: {
   children: React.ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
       <div className="w-full max-w-md">{children}</div>

@@ -3,12 +3,12 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 /** 加载骨架屏（总方案 3.5：所有等待有进度） */
-export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element {
+export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): React.JSX.Element {
   return <div className={cn('skeleton', className)} {...props} />;
 }
 
 /** 加载状态容器 */
-export function LoadingState({ label = '正在加载…' }: { label?: string }): JSX.Element {
+export function LoadingState({ label = '正在加载…' }: { label?: string }): React.JSX.Element {
   return (
     <div className="flex items-center justify-center gap-3 py-12 text-sm text-muted-foreground">
       <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground" />
@@ -26,7 +26,7 @@ export function EmptyState({
   title: string;
   description?: string;
   action?: React.ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed py-16 text-center">
       <p className="text-base font-medium">{title}</p>
@@ -43,7 +43,7 @@ export function ErrorState({
 }: {
   message: string;
   onRetry?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 py-12 text-center">
       <p className="text-base font-medium text-destructive">{message}</p>

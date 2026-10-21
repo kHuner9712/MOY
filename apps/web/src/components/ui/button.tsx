@@ -50,7 +50,9 @@ export interface ButtonProps
  */
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, type, ...props }, ref) => {
-    const Comp = asChild ? Slot : 'button';
+    // React 19 类型收紧后，Slot 与 button 的 props 交集无法直接推断；
+    // 多态组件统一按 ElementType 处理（shadcn 同款惯用法）
+    const Comp: React.ElementType = asChild ? Slot : 'button';
     return (
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}

@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -22,7 +23,7 @@ export default function DocumentSearch({
   baseId,
 }: {
   baseId: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [segments, setSegments] = useState<SearchSegment[]>([]);
   const [loading, setLoading] = useState(false);

@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
@@ -24,7 +25,7 @@ import type { ToolSpec } from '@/lib/types';
  *
  * @returns 插件市场页面元素
  */
-export default function PluginsPage(): JSX.Element {
+export default function PluginsPage(): React.JSX.Element {
   const [tools, setTools] = useState<ToolSpec[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');

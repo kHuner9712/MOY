@@ -66,7 +66,7 @@ export function Field({
   required?: boolean;
   children: React.ReactNode;
   className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className={cn('space-y-2', className)}>
       <label htmlFor={htmlFor} className="text-sm font-medium leading-none">

@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { useRouter } from 'next/navigation';
@@ -20,7 +21,7 @@ import { toBusinessMessage } from '@/lib/business-errors';
  *
  * @returns 登录页元素
  */
-export default function LoginPage(): JSX.Element {
+export default function LoginPage(): React.JSX.Element {
   const router = useRouter();
   const [token, setToken] = useState('');
   const [submitting, setSubmitting] = useState(false);

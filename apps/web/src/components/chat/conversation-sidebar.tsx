@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { MessageSquarePlus } from 'lucide-react';
@@ -14,7 +15,7 @@ import { useConversationStore } from '@/hooks/use-conversation-store';
  *
  * @returns 会话侧边栏元素
  */
-export default function ConversationSidebar(): JSX.Element {
+export default function ConversationSidebar(): React.JSX.Element {
   const { conversations, conversationId, newConversation } = useConversationStore();
 
   const handleNew = useCallback(() => {

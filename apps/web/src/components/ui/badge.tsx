@@ -34,7 +34,7 @@ export interface BadgeProps
  * @param props - 组件属性
  * @returns 徽标元素
  */
-function Badge({ className, variant, ...props }: BadgeProps): JSX.Element {
+function Badge({ className, variant, ...props }: BadgeProps): React.JSX.Element {
   return <div className={cn(badgeVariants({ variant }), className)} {...props} />;
 }
 

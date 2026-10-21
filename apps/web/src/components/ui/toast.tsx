@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { Toaster as SonnerToaster } from 'sonner';
@@ -10,7 +11,7 @@ import { cn } from '@/lib/utils';
  * 铁律：所有提示只使用业务语言文案，禁止展示错误码、堆栈或技术细节
  * （架构文档 9.2）。
  */
-export function Toaster(): JSX.Element {
+export function Toaster(): React.JSX.Element {
   return (
     <SonnerToaster
       position="top-center"

@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import {
@@ -32,7 +33,7 @@ export default function MainLayout({
   children,
 }: {
   children: React.ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   const pathname = usePathname();
 
   return (

@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
@@ -25,7 +26,7 @@ const TASK_STATUS_TEXT: Record<string, { label: string; variant: 'success' | 'wa
  *
  * @returns 工作流页面元素
  */
-export default function WorkflowsPage(): JSX.Element {
+export default function WorkflowsPage(): React.JSX.Element {
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState('');
   const [steps, setSteps] = useState<TaskStep[]>([]);

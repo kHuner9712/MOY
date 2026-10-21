@@ -1,3 +1,4 @@
+import type React from "react";
 import type { Metadata, Viewport } from 'next';
 
 import { Toaster } from '@/components/ui/toast';
@@ -31,7 +32,7 @@ export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">

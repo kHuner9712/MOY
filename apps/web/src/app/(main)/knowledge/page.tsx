@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -31,7 +32,7 @@ const INDEX_STATUS_TEXT: Record<string, { label: string; variant: 'success' | 'w
  *
  * @returns 知识库页面元素
  */
-export default function KnowledgePage(): JSX.Element {
+export default function KnowledgePage(): React.JSX.Element {
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');

@@ -1,3 +1,4 @@
+import type React from "react";
 'use client';
 
 import dynamic from 'next/dynamic';
@@ -19,7 +20,7 @@ const ChatWindow = dynamic(() => import('@/components/chat/chat-window'), {
  *
  * @returns 对话页面元素
  */
-export default function ChatPage(): JSX.Element {
+export default function ChatPage(): React.JSX.Element {
   return (
     <div className="flex h-[calc(100vh-7.5rem)] gap-6">
       <aside className="hidden w-64 shrink-0 lg:block">
