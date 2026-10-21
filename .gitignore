@@ -91,3 +91,9 @@ apps/adapter/qa_probe/probe_contract.py
 apps/adapter/qa_probe/probe_runtime.py
 # 注意：qa_probe/ 下的长期资产（mock_llm.py 契约测试 mock、
 # integration_real.py 真实联调脚本）必须入库，不适用本忽略规则
+
+# ---------------------------------------------------------------------------
+# 构建产物：OpenAPI 规范（CI 每次生成并归档为 artifact，不入库以避免噪声 diff）
+# 基线（baseline-*.json）与冻结快照（openapi.snapshot.json）**必须入库**
+# ---------------------------------------------------------------------------
+docs/api/openapi.json

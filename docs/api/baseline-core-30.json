@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "frozen_at": "2026-10-21",
+  "note": "阶段一核心端点基线（30 条，冻结）。由 deploy/validate_openapi.py 从当前应用真实生成，任何人不得修改；不兼容变更必须通过 /api/v2 演进（架构文档 2.2 第 1 条）。",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/tasks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/tasks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/tasks/{task_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/tasks/{task_id}/cancel"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/tasks/{task_id}/events"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/tasks/{task_id}/steps"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/identity/audit-logs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/identity/organizations/{org_id}/invitations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/identity/organizations/{org_id}/members"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/identity/organizations/{org_id}/roles"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/identity/profile"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/identity/verify"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/bases"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge/bases"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge/bases/{base_id}/documents"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/knowledge/bases/{base_id}/documents/{doc_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/bases/{base_id}/documents/{doc_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge/bases/{base_id}/documents/{doc_id}/reindex"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge/search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/model/catalog"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/model/generate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/model/generate/stream"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/model/usage"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tools/connections"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tools/connections"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/tools/connections/{conn_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tools/execute"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tools/registry"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tools/sync-jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tools/sync-jobs/{job_id}"
+    }
+  ]
+}

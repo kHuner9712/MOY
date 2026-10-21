@@ -1,0 +1,4824 @@
+{
+  "components": {
+    "schemas": {
+      "ApiResponse_CancelTaskData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CancelTaskData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[CancelTaskData]",
+        "type": "object"
+      },
+      "ApiResponse_CatalogData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[CatalogData]",
+        "type": "object"
+      },
+      "ApiResponse_ConnectionData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConnectionData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[ConnectionData]",
+        "type": "object"
+      },
+      "ApiResponse_CreateBaseData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CreateBaseData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[CreateBaseData]",
+        "type": "object"
+      },
+      "ApiResponse_CreateTaskData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CreateTaskData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[CreateTaskData]",
+        "type": "object"
+      },
+      "ApiResponse_DeletedData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeletedData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[DeletedData]",
+        "type": "object"
+      },
+      "ApiResponse_ExecutionData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[ExecutionData]",
+        "type": "object"
+      },
+      "ApiResponse_GenerateData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerateData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[GenerateData]",
+        "type": "object"
+      },
+      "ApiResponse_HealthData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HealthData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[HealthData]",
+        "type": "object"
+      },
+      "ApiResponse_IndexStatusData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndexStatusData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[IndexStatusData]",
+        "type": "object"
+      },
+      "ApiResponse_InvitationData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InvitationData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[InvitationData]",
+        "type": "object"
+      },
+      "ApiResponse_PageResult_AuditLogItem__": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageResult_AuditLogItem_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[PageResult[AuditLogItem]]",
+        "type": "object"
+      },
+      "ApiResponse_PageResult_ConnectionItem__": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageResult_ConnectionItem_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[PageResult[ConnectionItem]]",
+        "type": "object"
+      },
+      "ApiResponse_PageResult_KnowledgeBaseItem__": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageResult_KnowledgeBaseItem_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[PageResult[KnowledgeBaseItem]]",
+        "type": "object"
+      },
+      "ApiResponse_PageResult_MemberItem__": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageResult_MemberItem_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[PageResult[MemberItem]]",
+        "type": "object"
+      },
+      "ApiResponse_PageResult_TaskItem__": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageResult_TaskItem_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[PageResult[TaskItem]]",
+        "type": "object"
+      },
+      "ApiResponse_ProfileData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[ProfileData]",
+        "type": "object"
+      },
+      "ApiResponse_ReadyData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadyData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[ReadyData]",
+        "type": "object"
+      },
+      "ApiResponse_RegistryData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegistryData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[RegistryData]",
+        "type": "object"
+      },
+      "ApiResponse_ReindexData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReindexData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[ReindexData]",
+        "type": "object"
+      },
+      "ApiResponse_RoleData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoleData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[RoleData]",
+        "type": "object"
+      },
+      "ApiResponse_SearchData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[SearchData]",
+        "type": "object"
+      },
+      "ApiResponse_StepsData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepsData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[StepsData]",
+        "type": "object"
+      },
+      "ApiResponse_SyncJobData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SyncJobData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[SyncJobData]",
+        "type": "object"
+      },
+      "ApiResponse_SyncJobDetailData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SyncJobDetailData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[SyncJobDetailData]",
+        "type": "object"
+      },
+      "ApiResponse_TaskDetailData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskDetailData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[TaskDetailData]",
+        "type": "object"
+      },
+      "ApiResponse_UploadDocumentData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UploadDocumentData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[UploadDocumentData]",
+        "type": "object"
+      },
+      "ApiResponse_UsageData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UsageData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[UsageData]",
+        "type": "object"
+      },
+      "ApiResponse_VerifyData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifyData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[VerifyData]",
+        "type": "object"
+      },
+      "Artifact": {
+        "description": "任务产物。\n\nAttributes:\n    type: 产物类型。\n    name: 产物名称。\n    download_url: 下载地址（`file` 类型）。\n    url: 外部链接（`link` 类型）。",
+        "properties": {
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "下载地址",
+            "title": "Download Url"
+          },
+          "name": {
+            "default": "",
+            "description": "产物名称",
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ArtifactType",
+            "default": "text",
+            "description": "产物类型"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "外部链接",
+            "title": "Url"
+          }
+        },
+        "title": "Artifact",
+        "type": "object"
+      },
+      "ArtifactType": {
+        "description": "产物类型枚举。",
+        "enum": [
+          "file",
+          "link",
+          "text"
+        ],
+        "title": "ArtifactType",
+        "type": "string"
+      },
+      "AuditLogItem": {
+        "description": "审计日志条目（字段透传，脱敏由业务层写入时完成）。\n\nAttributes:\n    log_id: 日志 ID。\n    actor_id: 操作人 ID。\n    action: 操作动作。\n    resource_type: 资源类型。\n    resource_id: 资源 ID。\n    result: 操作结果。\n    occurred_at: 发生时间。",
+        "properties": {
+          "action": {
+            "default": "",
+            "description": "操作动作",
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_id": {
+            "default": "",
+            "description": "操作人 ID",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "log_id": {
+            "default": "",
+            "description": "日志 ID",
+            "title": "Log Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "default": "",
+            "description": "发生时间，ISO 8601 格式",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "resource_id": {
+            "default": "",
+            "description": "资源 ID",
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "default": "",
+            "description": "资源类型",
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "result": {
+            "default": "",
+            "description": "操作结果",
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "title": "AuditLogItem",
+        "type": "object"
+      },
+      "AuditLogQueryRequest": {
+        "description": "U6 审计日志查询请求。\n\nAttributes:\n    actor_id: 操作人 ID。\n    action: 操作动作。\n    resource_type: 资源类型。\n    start_at: 开始时间。\n    end_at: 结束时间。",
+        "properties": {
+          "action": {
+            "default": "",
+            "description": "操作动作",
+            "maxLength": 128,
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_id": {
+            "default": "",
+            "description": "操作人 ID",
+            "maxLength": 128,
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "end_at": {
+            "default": "",
+            "description": "结束时间，ISO 8601 格式",
+            "maxLength": 64,
+            "title": "End At",
+            "type": "string"
+          },
+          "page": {
+            "default": 1,
+            "description": "页码，从 1 开始",
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "default": 20,
+            "description": "每页条数",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "resource_type": {
+            "default": "",
+            "description": "资源类型",
+            "maxLength": 64,
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "start_at": {
+            "default": "",
+            "description": "开始时间，ISO 8601 格式",
+            "maxLength": 64,
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "title": "AuditLogQueryRequest",
+        "type": "object"
+      },
+      "Body_upload_document_api_v1_knowledge_bases__base_id__documents_post": {
+        "properties": {
+          "chunk_policy": {
+            "$ref": "#/components/schemas/ChunkPolicy",
+            "default": "default",
+            "description": "分块策略"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "待上传文档",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_document_api_v1_knowledge_bases__base_id__documents_post",
+        "type": "object"
+      },
+      "CancelTaskData": {
+        "description": "A5 取消任务响应数据。\n\nAttributes:\n    task_id: 任务 ID。\n    status: 取消后的任务状态。\n    updated_at: 更新时间。",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "default": "cancelled",
+            "description": "任务状态"
+          },
+          "task_id": {
+            "description": "任务 ID",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "default": "",
+            "description": "更新时间，ISO 8601 格式",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "CancelTaskData",
+        "type": "object"
+      },
+      "CatalogData": {
+        "description": "M3 能力档位目录响应数据。\n\nAttributes:\n    profiles: 档位列表（由适配层配置驱动，接口契约不变）。",
+        "properties": {
+          "profiles": {
+            "description": "能力档位列表",
+            "items": {
+              "$ref": "#/components/schemas/ProfileItem"
+            },
+            "title": "Profiles",
+            "type": "array"
+          }
+        },
+        "title": "CatalogData",
+        "type": "object"
+      },
+      "ChatMessage": {
+        "description": "对话消息。\n\nAttributes:\n    role: 消息角色。\n    content: 消息正文（纯文本或附件引用描述）。\n    attachments: 附件引用 ID 列表。",
+        "properties": {
+          "attachments": {
+            "description": "附件引用 ID 列表",
+            "items": {
+              "type": "string"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
+          "content": {
+            "default": "",
+            "description": "消息正文",
+            "title": "Content",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MessageRole",
+            "description": "消息角色"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "ChunkPolicy": {
+        "description": "分块策略枚举（仅暴露策略，不暴露分块参数）。",
+        "enum": [
+          "default",
+          "fine"
+        ],
+        "title": "ChunkPolicy",
+        "type": "string"
+      },
+      "Citation": {
+        "description": "引用片段（用于前端引用展示，FLOW-02）。\n\nAttributes:\n    document_id: 文档 ID。\n    document_name: 文档名称。\n    segment_content: 命中的片段内容。\n    score: 命中相关度。",
+        "properties": {
+          "document_id": {
+            "default": "",
+            "description": "文档 ID",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_name": {
+            "default": "",
+            "description": "文档名称",
+            "title": "Document Name",
+            "type": "string"
+          },
+          "score": {
+            "default": 0.0,
+            "description": "命中相关度",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "segment_content": {
+            "default": "",
+            "description": "命中的片段内容",
+            "title": "Segment Content",
+            "type": "string"
+          }
+        },
+        "title": "Citation",
+        "type": "object"
+      },
+      "ConnectionData": {
+        "description": "T2 响应数据。\n\nAttributes:\n    connection_id: 连接 ID，形如 `conn_01HF8...`。\n    tool_type: 工具类型标识。\n    status: 连接状态。\n    expires_at: 过期时间。",
+        "properties": {
+          "connection_id": {
+            "description": "连接 ID，形如 conn_01HF8...",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "过期时间，ISO 8601 格式",
+            "title": "Expires At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConnectionStatus",
+            "default": "connected",
+            "description": "连接状态"
+          },
+          "tool_type": {
+            "default": "",
+            "description": "工具类型标识",
+            "title": "Tool Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection_id"
+        ],
+        "title": "ConnectionData",
+        "type": "object"
+      },
+      "ConnectionItem": {
+        "description": "已连接工具条目（T3）。\n\nAttributes:\n    connection_id: 连接 ID。\n    tool_type: 工具类型标识。\n    display_name: 业务化名称。\n    status: 连接状态。\n    connected_at: 连接时间。\n    expires_at: 过期时间。",
+        "properties": {
+          "connected_at": {
+            "default": "",
+            "description": "连接时间，ISO 8601 格式",
+            "title": "Connected At",
+            "type": "string"
+          },
+          "connection_id": {
+            "description": "连接 ID",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "description": "业务化名称",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "过期时间，ISO 8601 格式",
+            "title": "Expires At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConnectionStatus",
+            "default": "connected",
+            "description": "连接状态"
+          },
+          "tool_type": {
+            "default": "",
+            "description": "工具类型标识",
+            "title": "Tool Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection_id"
+        ],
+        "title": "ConnectionItem",
+        "type": "object"
+      },
+      "ConnectionStatus": {
+        "description": "工具连接状态枚举。",
+        "enum": [
+          "connected",
+          "expired",
+          "revoked"
+        ],
+        "title": "ConnectionStatus",
+        "type": "string"
+      },
+      "CreateBaseData": {
+        "description": "R1 响应数据。\n\nAttributes:\n    base_id: 知识库 ID。\n    name: 知识库名称。\n    created_at: 创建时间。",
+        "properties": {
+          "base_id": {
+            "description": "知识库 ID，形如 kb_01HF8...",
+            "title": "Base Id",
+            "type": "string"
+          },
+          "created_at": {
+            "default": "",
+            "description": "创建时间，ISO 8601 格式",
+            "title": "Created At",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "description": "知识库名称",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_id"
+        ],
+        "title": "CreateBaseData",
+        "type": "object"
+      },
+      "CreateBaseRequest": {
+        "description": "R1 创建知识库请求。\n\nAttributes:\n    name: 知识库名称。\n    description: 知识库描述。\n    visibility: 可见性。",
+        "properties": {
+          "description": {
+            "default": "",
+            "description": "知识库描述",
+            "maxLength": 1024,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "description": "知识库名称",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility",
+            "default": "organization",
+            "description": "可见性"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateBaseRequest",
+        "type": "object"
+      },
+      "CreateConnectionRequest": {
+        "description": "T2 建立工具连接请求。\n\nAttributes:\n    tool_type: 工具类型标识。\n    auth_code: 授权码或令牌。\n    redirect_uri: 授权回调地址。",
+        "properties": {
+          "auth_code": {
+            "description": "授权码或令牌",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Auth Code",
+            "type": "string"
+          },
+          "redirect_uri": {
+            "default": "",
+            "description": "授权回调地址",
+            "maxLength": 512,
+            "title": "Redirect Uri",
+            "type": "string"
+          },
+          "tool_type": {
+            "description": "工具类型标识",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Tool Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_type",
+          "auth_code"
+        ],
+        "title": "CreateConnectionRequest",
+        "type": "object"
+      },
+      "CreateSyncJobRequest": {
+        "description": "T6 创建数据同步任务请求。\n\nAttributes:\n    tool_type: 工具类型标识。\n    operation: 同步操作标识。\n    scope: 同步范围（如 `inbox`）。\n    params: 同步参数。",
+        "properties": {
+          "operation": {
+            "default": "sync",
+            "description": "同步操作标识",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Operation",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "description": "同步参数",
+            "title": "Params",
+            "type": "object"
+          },
+          "scope": {
+            "default": "",
+            "description": "同步范围",
+            "maxLength": 128,
+            "title": "Scope",
+            "type": "string"
+          },
+          "tool_type": {
+            "description": "工具类型标识",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Tool Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_type"
+        ],
+        "title": "CreateSyncJobRequest",
+        "type": "object"
+      },
+      "CreateTaskData": {
+        "description": "A1 创建任务响应数据。\n\nAttributes:\n    task_id: 任务 ID，形如 `task_01HF8...`。\n    status: 任务状态。\n    created_at: 创建时间。\n    estimated_seconds: 预计耗时（秒）。",
+        "properties": {
+          "created_at": {
+            "default": "",
+            "description": "创建时间，ISO 8601 格式",
+            "title": "Created At",
+            "type": "string"
+          },
+          "estimated_seconds": {
+            "default": 0,
+            "description": "预计耗时，单位秒",
+            "minimum": 0.0,
+            "title": "Estimated Seconds",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "default": "running",
+            "description": "任务状态"
+          },
+          "task_id": {
+            "description": "任务 ID，形如 task_01HF8...",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "CreateTaskData",
+        "type": "object"
+      },
+      "CreateTaskRequest": {
+        "description": "A1 创建任务请求。\n\nAttributes:\n    conversation_id: 会话 ID。\n    goal: 任务目标（业务语言描述）。\n    profile: 能力档位。\n    tool_grants: 允许使用的工具类型列表。\n    inputs: 任务输入。\n    options: 执行选项。",
+        "properties": {
+          "conversation_id": {
+            "description": "会话 ID，形如 conv_01HF8...",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "goal": {
+            "description": "任务目标",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Goal",
+            "type": "string"
+          },
+          "inputs": {
+            "additionalProperties": true,
+            "description": "任务输入",
+            "title": "Inputs",
+            "type": "object"
+          },
+          "options": {
+            "$ref": "#/components/schemas/TaskOptions",
+            "description": "执行选项"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ModelProfile",
+            "default": "general",
+            "description": "能力档位"
+          },
+          "tool_grants": {
+            "description": "允许使用的工具类型列表",
+            "items": {
+              "type": "string"
+            },
+            "title": "Tool Grants",
+            "type": "array"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "goal"
+        ],
+        "title": "CreateTaskRequest",
+        "type": "object"
+      },
+      "DeletedData": {
+        "description": "删除操作结果。\n\nAttributes:\n    id: 被删除资源 ID。\n    deleted: 是否删除成功。",
+        "properties": {
+          "deleted": {
+            "default": true,
+            "description": "是否删除成功",
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "被删除的资源 ID",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "DeletedData",
+        "type": "object"
+      },
+      "ExecuteRequest": {
+        "description": "T5 执行工具操作请求。\n\nAttributes:\n    tool_type: 工具类型标识。\n    operation: 操作标识。\n    params: 操作参数。",
+        "properties": {
+          "operation": {
+            "description": "操作标识",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Operation",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "description": "操作参数",
+            "title": "Params",
+            "type": "object"
+          },
+          "tool_type": {
+            "description": "工具类型标识",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Tool Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_type",
+          "operation"
+        ],
+        "title": "ExecuteRequest",
+        "type": "object"
+      },
+      "ExecutionData": {
+        "description": "T5 响应数据。\n\nAttributes:\n    execution_id: 执行记录 ID，形如 `exec_01HF8...`。\n    tool_type: 工具类型标识。\n    operation: 操作标识。\n    status: 执行状态。\n    result: 执行结果（业务化）。\n    error: 失败原因（业务语言），成功时为 `None`。",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "失败原因，业务语言",
+            "title": "Error"
+          },
+          "execution_id": {
+            "description": "执行记录 ID，形如 exec_01HF8...",
+            "title": "Execution Id",
+            "type": "string"
+          },
+          "operation": {
+            "default": "",
+            "description": "操作标识",
+            "title": "Operation",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "执行结果",
+            "title": "Result"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExecutionStatus",
+            "default": "success",
+            "description": "执行状态"
+          },
+          "tool_type": {
+            "default": "",
+            "description": "工具类型标识",
+            "title": "Tool Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "execution_id"
+        ],
+        "title": "ExecutionData",
+        "type": "object"
+      },
+      "ExecutionStatus": {
+        "description": "工具执行结果状态枚举。",
+        "enum": [
+          "success",
+          "failed"
+        ],
+        "title": "ExecutionStatus",
+        "type": "string"
+      },
+      "FinishReason": {
+        "description": "生成结束原因枚举。",
+        "enum": [
+          "stop",
+          "length",
+          "error",
+          "cancelled"
+        ],
+        "title": "FinishReason",
+        "type": "string"
+      },
+      "GenerateData": {
+        "description": "M1 非流式生成响应数据。\n\nAttributes:\n    generation_id: 生成记录 ID。\n    content: 生成内容。\n    finish_reason: 结束原因。\n    usage: 业务化用量。\n    citations: 引用片段列表。",
+        "properties": {
+          "citations": {
+            "description": "引用片段列表",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "content": {
+            "default": "",
+            "description": "生成内容",
+            "title": "Content",
+            "type": "string"
+          },
+          "finish_reason": {
+            "$ref": "#/components/schemas/FinishReason",
+            "default": "stop",
+            "description": "结束原因"
+          },
+          "generation_id": {
+            "description": "生成记录 ID，形如 gen_01HF8...",
+            "title": "Generation Id",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "description": "业务化用量"
+          }
+        },
+        "required": [
+          "generation_id"
+        ],
+        "title": "GenerateData",
+        "type": "object"
+      },
+      "GenerateRequest": {
+        "description": "M1/M2 生成请求。\n\nAttributes:\n    conversation_id: 会话 ID（上层维护，用于上下文关联与日志追踪）。\n    profile: 能力档位。\n    messages: 当前轮消息。\n    context: 上下文配置。\n    knowledge_base_ids: 关联知识库，触发 RAG 增强。\n    options: 生成参数。",
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/GenerationContext",
+            "description": "上下文配置"
+          },
+          "conversation_id": {
+            "description": "会话 ID，形如 conv_01HF8...",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "knowledge_base_ids": {
+            "description": "关联知识库 ID 列表",
+            "items": {
+              "type": "string"
+            },
+            "title": "Knowledge Base Ids",
+            "type": "array"
+          },
+          "messages": {
+            "description": "当前轮消息",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "minItems": 1,
+            "title": "Messages",
+            "type": "array"
+          },
+          "options": {
+            "$ref": "#/components/schemas/GenerationOptions",
+            "description": "生成参数"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ModelProfile",
+            "description": "能力档位"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "profile",
+          "messages"
+        ],
+        "title": "GenerateRequest",
+        "type": "object"
+      },
+      "GenerationContext": {
+        "description": "生成上下文配置。\n\nAttributes:\n    history_window: 携带的历史轮数，默认 20。\n    memory_hints: 上层记忆注入（P0-02，边界见 Q6）。",
+        "properties": {
+          "history_window": {
+            "default": 20,
+            "description": "携带的历史轮数",
+            "maximum": 200.0,
+            "minimum": 0.0,
+            "title": "History Window",
+            "type": "integer"
+          },
+          "memory_hints": {
+            "description": "上层记忆注入",
+            "items": {
+              "type": "string"
+            },
+            "title": "Memory Hints",
+            "type": "array"
+          }
+        },
+        "title": "GenerationContext",
+        "type": "object"
+      },
+      "GenerationOptions": {
+        "description": "生成参数配置。\n\nAttributes:\n    temperature: 采样温度，缺省按档位默认策略。\n    max_tokens: 最大生成长度，缺省按档位默认策略。",
+        "properties": {
+          "max_tokens": {
+            "anyOf": [
+              {
+                "maximum": 32768.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最大生成长度",
+            "title": "Max Tokens"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "采样温度",
+            "title": "Temperature"
+          }
+        },
+        "title": "GenerationOptions",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthData": {
+        "description": "健康检查数据。\n\nAttributes:\n    status: 服务状态。\n    app: 应用名。\n    version: 应用版本。\n    env: 运行环境。\n    deploy_mode: 部署模式。\n    downstream_enabled: 是否已开启真实下游调用。",
+        "properties": {
+          "app": {
+            "default": "",
+            "description": "应用名",
+            "title": "App",
+            "type": "string"
+          },
+          "deploy_mode": {
+            "default": "",
+            "description": "部署模式",
+            "title": "Deploy Mode",
+            "type": "string"
+          },
+          "downstream_enabled": {
+            "default": false,
+            "description": "是否已开启真实下游调用",
+            "title": "Downstream Enabled",
+            "type": "boolean"
+          },
+          "env": {
+            "default": "",
+            "description": "运行环境",
+            "title": "Env",
+            "type": "string"
+          },
+          "status": {
+            "default": "ok",
+            "description": "服务状态",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "default": "",
+            "description": "应用版本",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "title": "HealthData",
+        "type": "object"
+      },
+      "IndexStatus": {
+        "description": "索引进度状态（三态，底座原状态名不外泄，附录 A-3）。",
+        "enum": [
+          "processing",
+          "completed",
+          "failed"
+        ],
+        "title": "IndexStatus",
+        "type": "string"
+      },
+      "IndexStatusData": {
+        "description": "R4 索引进度查询响应数据。\n\nAttributes:\n    document_id: 文档 ID。\n    index_status: 索引状态。\n    progress: 进度百分比。\n    segment_count: 已完成分块数。\n    error_message: 失败原因（业务语言）。",
+        "properties": {
+          "document_id": {
+            "description": "文档 ID",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "失败原因，业务语言",
+            "title": "Error Message"
+          },
+          "index_status": {
+            "$ref": "#/components/schemas/IndexStatus",
+            "default": "processing",
+            "description": "索引状态"
+          },
+          "progress": {
+            "default": 0,
+            "description": "进度百分比",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "integer"
+          },
+          "segment_count": {
+            "default": 0,
+            "description": "已完成分块数",
+            "minimum": 0.0,
+            "title": "Segment Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "title": "IndexStatusData",
+        "type": "object"
+      },
+      "InvitationData": {
+        "description": "U4 邀请响应数据。\n\nAttributes:\n    invitation_id: 邀请记录 ID。\n    org_id: 组织 ID。\n    email: 被邀请人邮箱。\n    role: 分配角色。\n    status: 邀请状态。\n    expires_at: 过期时间。",
+        "properties": {
+          "email": {
+            "default": "",
+            "description": "被邀请人邮箱",
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "default": "",
+            "description": "过期时间，ISO 8601 格式",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "invitation_id": {
+            "description": "邀请记录 ID",
+            "title": "Invitation Id",
+            "type": "string"
+          },
+          "org_id": {
+            "default": "",
+            "description": "组织 ID",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/OrgRole",
+            "default": "member",
+            "description": "分配角色"
+          },
+          "status": {
+            "default": "pending",
+            "description": "邀请状态",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "invitation_id"
+        ],
+        "title": "InvitationData",
+        "type": "object"
+      },
+      "InviteRequest": {
+        "description": "U4 邀请成员请求。\n\nAttributes:\n    email: 被邀请人邮箱。\n    role: 分配角色。\n    message: 邀请附言（业务语言）。",
+        "properties": {
+          "email": {
+            "description": "被邀请人邮箱",
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "message": {
+            "default": "",
+            "description": "邀请附言",
+            "maxLength": 512,
+            "title": "Message",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/OrgRole",
+            "default": "member",
+            "description": "分配角色"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "InviteRequest",
+        "type": "object"
+      },
+      "KnowledgeBaseItem": {
+        "description": "知识库条目。\n\nAttributes:\n    base_id: 知识库 ID，形如 `kb_01HF8...`。\n    name: 名称。\n    description: 描述。\n    visibility: 可见性。\n    document_count: 文档数量。\n    created_at: 创建时间（ISO 8601）。",
+        "properties": {
+          "base_id": {
+            "description": "知识库 ID，形如 kb_01HF8...",
+            "title": "Base Id",
+            "type": "string"
+          },
+          "created_at": {
+            "default": "",
+            "description": "创建时间，ISO 8601 格式",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "description": "知识库描述",
+            "title": "Description",
+            "type": "string"
+          },
+          "document_count": {
+            "default": 0,
+            "description": "文档数量",
+            "minimum": 0.0,
+            "title": "Document Count",
+            "type": "integer"
+          },
+          "name": {
+            "default": "",
+            "description": "知识库名称",
+            "title": "Name",
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility",
+            "default": "organization",
+            "description": "可见性"
+          }
+        },
+        "required": [
+          "base_id"
+        ],
+        "title": "KnowledgeBaseItem",
+        "type": "object"
+      },
+      "MemberItem": {
+        "description": "组织成员条目。\n\nAttributes:\n    user_id: 用户 ID。\n    display_name: 展示名。\n    email: 邮箱。\n    role: 角色。\n    joined_at: 加入时间。",
+        "properties": {
+          "display_name": {
+            "default": "",
+            "description": "展示名",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "default": "",
+            "description": "邮箱",
+            "title": "Email",
+            "type": "string"
+          },
+          "joined_at": {
+            "default": "",
+            "description": "加入时间，ISO 8601 格式",
+            "title": "Joined At",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/OrgRole",
+            "default": "member",
+            "description": "角色"
+          },
+          "user_id": {
+            "description": "用户 ID",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "MemberItem",
+        "type": "object"
+      },
+      "MessageRole": {
+        "description": "消息角色枚举。",
+        "enum": [
+          "user",
+          "assistant",
+          "system"
+        ],
+        "title": "MessageRole",
+        "type": "string"
+      },
+      "ModelProfile": {
+        "description": "能力档位枚举（契约枚举，新增模型不新增枚举值）。",
+        "enum": [
+          "general",
+          "code",
+          "long_context",
+          "reasoning"
+        ],
+        "title": "ModelProfile",
+        "type": "string"
+      },
+      "OrgRole": {
+        "description": "组织内角色枚举（业务化命名，非身份底座原始角色名）。",
+        "enum": [
+          "owner",
+          "org_admin",
+          "member",
+          "guest"
+        ],
+        "title": "OrgRole",
+        "type": "string"
+      },
+      "OrganizationInfo": {
+        "description": "组织信息。\n\nAttributes:\n    org_id: 组织 ID，形如 `org_01HF8...`。\n    name: 组织名称。\n    role: 当前用户在该组织中的角色。",
+        "properties": {
+          "name": {
+            "default": "",
+            "description": "组织名称",
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "description": "组织 ID，形如 org_01HF8...",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/OrgRole",
+            "default": "member",
+            "description": "当前用户角色"
+          }
+        },
+        "required": [
+          "org_id"
+        ],
+        "title": "OrganizationInfo",
+        "type": "object"
+      },
+      "PageMeta": {
+        "description": "分页元信息。\n\nAttributes:\n    page: 当前页码，从 1 开始。\n    page_size: 每页条数。\n    total: 总条数。\n    total_pages: 总页数。",
+        "properties": {
+          "page": {
+            "default": 1,
+            "description": "当前页码，从 1 开始",
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "default": 20,
+            "description": "每页条数",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "description": "总条数",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "total_pages": {
+            "default": 0,
+            "description": "总页数",
+            "minimum": 0.0,
+            "title": "Total Pages",
+            "type": "integer"
+          }
+        },
+        "title": "PageMeta",
+        "type": "object"
+      },
+      "PageResult_AuditLogItem_": {
+        "properties": {
+          "items": {
+            "description": "当前页数据",
+            "items": {
+              "$ref": "#/components/schemas/AuditLogItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "分页元信息"
+          }
+        },
+        "title": "PageResult[AuditLogItem]",
+        "type": "object"
+      },
+      "PageResult_ConnectionItem_": {
+        "properties": {
+          "items": {
+            "description": "当前页数据",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "分页元信息"
+          }
+        },
+        "title": "PageResult[ConnectionItem]",
+        "type": "object"
+      },
+      "PageResult_KnowledgeBaseItem_": {
+        "properties": {
+          "items": {
+            "description": "当前页数据",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeBaseItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "分页元信息"
+          }
+        },
+        "title": "PageResult[KnowledgeBaseItem]",
+        "type": "object"
+      },
+      "PageResult_MemberItem_": {
+        "properties": {
+          "items": {
+            "description": "当前页数据",
+            "items": {
+              "$ref": "#/components/schemas/MemberItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "分页元信息"
+          }
+        },
+        "title": "PageResult[MemberItem]",
+        "type": "object"
+      },
+      "PageResult_TaskItem_": {
+        "properties": {
+          "items": {
+            "description": "当前页数据",
+            "items": {
+              "$ref": "#/components/schemas/TaskItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "分页元信息"
+          }
+        },
+        "title": "PageResult[TaskItem]",
+        "type": "object"
+      },
+      "ProfileData": {
+        "description": "U2 当前用户信息响应数据。\n\nAttributes:\n    user_id: 用户 ID。\n    display_name: 展示名。\n    email: 邮箱。\n    tenant: 租户信息。\n    organizations: 组织列表。",
+        "properties": {
+          "display_name": {
+            "default": "",
+            "description": "展示名",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "default": "",
+            "description": "邮箱",
+            "title": "Email",
+            "type": "string"
+          },
+          "organizations": {
+            "description": "组织列表",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationInfo"
+            },
+            "title": "Organizations",
+            "type": "array"
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/TenantInfo",
+            "description": "租户信息"
+          },
+          "user_id": {
+            "description": "用户 ID",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "ProfileData",
+        "type": "object"
+      },
+      "ProfileItem": {
+        "description": "能力档位条目。\n\nAttributes:\n    profile: 档位枚举值。\n    display_name: 业务化展示名。\n    description: 业务化描述。\n    max_context_turns: 最大上下文轮数。\n    status: 档位状态。",
+        "properties": {
+          "description": {
+            "default": "",
+            "description": "业务化描述",
+            "title": "Description",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "description": "业务化展示名",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "max_context_turns": {
+            "default": 20,
+            "description": "最大上下文轮数",
+            "minimum": 0.0,
+            "title": "Max Context Turns",
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ModelProfile",
+            "description": "档位枚举值"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProfileStatus",
+            "default": "available",
+            "description": "档位状态"
+          }
+        },
+        "required": [
+          "profile"
+        ],
+        "title": "ProfileItem",
+        "type": "object"
+      },
+      "ProfileStatus": {
+        "description": "能力档位状态枚举。",
+        "enum": [
+          "available",
+          "unavailable"
+        ],
+        "title": "ProfileStatus",
+        "type": "string"
+      },
+      "Quota": {
+        "description": "套餐额度（业务化口径）。\n\nAttributes:\n    plan_name: 套餐名称。\n    total_units: 总额度。\n    used_units: 已用额度。\n    remaining_units: 剩余额度。",
+        "properties": {
+          "plan_name": {
+            "default": "",
+            "description": "套餐名称",
+            "title": "Plan Name",
+            "type": "string"
+          },
+          "remaining_units": {
+            "default": 0,
+            "description": "剩余额度",
+            "minimum": 0.0,
+            "title": "Remaining Units",
+            "type": "integer"
+          },
+          "total_units": {
+            "default": 0,
+            "description": "总额度",
+            "minimum": 0.0,
+            "title": "Total Units",
+            "type": "integer"
+          },
+          "used_units": {
+            "default": 0,
+            "description": "已用额度",
+            "minimum": 0.0,
+            "title": "Used Units",
+            "type": "integer"
+          }
+        },
+        "title": "Quota",
+        "type": "object"
+      },
+      "ReadyCheck": {
+        "description": "就绪探针单项检查结果。\n\nAttributes:\n    name: 检查项名称。\n    ready: 是否就绪。\n    detail: 业务语言描述。",
+        "properties": {
+          "detail": {
+            "default": "",
+            "description": "业务语言描述",
+            "title": "Detail",
+            "type": "string"
+          },
+          "name": {
+            "description": "检查项名称",
+            "title": "Name",
+            "type": "string"
+          },
+          "ready": {
+            "description": "是否就绪",
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "ready"
+        ],
+        "title": "ReadyCheck",
+        "type": "object"
+      },
+      "ReadyData": {
+        "description": "就绪探针数据。\n\nAttributes:\n    status: 整体状态，`ready` / `not_ready`。\n    checks: 各检查项明细。",
+        "properties": {
+          "checks": {
+            "description": "检查项明细",
+            "items": {
+              "$ref": "#/components/schemas/ReadyCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "status": {
+            "default": "ready",
+            "description": "整体状态",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "ReadyData",
+        "type": "object"
+      },
+      "RegistryData": {
+        "description": "T1 注册表响应数据。\n\nAttributes:\n    tools: 工具类型列表（配置驱动，前端按此动态渲染）。",
+        "properties": {
+          "tools": {
+            "description": "工具类型列表",
+            "items": {
+              "$ref": "#/components/schemas/ToolItem"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "title": "RegistryData",
+        "type": "object"
+      },
+      "ReindexData": {
+        "description": "R5 重建索引响应数据。\n\nAttributes:\n    document_id: 文档 ID。\n    index_status: 索引状态。\n    progress: 进度百分比。",
+        "properties": {
+          "document_id": {
+            "description": "文档 ID",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "index_status": {
+            "$ref": "#/components/schemas/IndexStatus",
+            "default": "processing",
+            "description": "索引状态"
+          },
+          "progress": {
+            "default": 0,
+            "description": "进度百分比",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "title": "ReindexData",
+        "type": "object"
+      },
+      "ResourceRef": {
+        "description": "资源引用（权限校验场景）。\n\nAttributes:\n    type: 资源类型，如 `knowledge_base`。\n    id: 资源 ID。",
+        "properties": {
+          "id": {
+            "default": "",
+            "description": "资源 ID",
+            "title": "Id",
+            "type": "string"
+          },
+          "type": {
+            "default": "",
+            "description": "资源类型",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "ResourceRef",
+        "type": "object"
+      },
+      "RoleData": {
+        "description": "U5 响应数据。\n\nAttributes:\n    role_id: 角色 ID，形如 `role_01HF8...`。\n    role_key: 角色标识。\n    display_name: 角色展示名。\n    permissions: 权限点列表。\n    member_count: 已分配成员数。",
+        "properties": {
+          "display_name": {
+            "default": "",
+            "description": "角色展示名",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "member_count": {
+            "default": 0,
+            "description": "已分配成员数",
+            "minimum": 0.0,
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "permissions": {
+            "description": "权限点列表",
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
+          "role_id": {
+            "description": "角色 ID，形如 role_01HF8...",
+            "title": "Role Id",
+            "type": "string"
+          },
+          "role_key": {
+            "default": "",
+            "description": "角色标识",
+            "title": "Role Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_id"
+        ],
+        "title": "RoleData",
+        "type": "object"
+      },
+      "SearchData": {
+        "description": "R7 检索响应数据。\n\nAttributes:\n    segments: 命中片段列表。",
+        "properties": {
+          "segments": {
+            "description": "命中片段列表",
+            "items": {
+              "$ref": "#/components/schemas/SearchSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          }
+        },
+        "title": "SearchData",
+        "type": "object"
+      },
+      "SearchRequest": {
+        "description": "R7 独立检索请求。\n\nAttributes:\n    base_id: 知识库 ID。\n    query: 查询语句。\n    top_k: 返回条数。\n    score_threshold: 相关度阈值。",
+        "properties": {
+          "base_id": {
+            "description": "知识库 ID",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Base Id",
+            "type": "string"
+          },
+          "query": {
+            "description": "查询语句",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "score_threshold": {
+            "default": 0.5,
+            "description": "相关度阈值",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score Threshold",
+            "type": "number"
+          },
+          "top_k": {
+            "default": 5,
+            "description": "返回条数",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_id",
+          "query"
+        ],
+        "title": "SearchRequest",
+        "type": "object"
+      },
+      "SearchSegment": {
+        "description": "检索命中片段。\n\nAttributes:\n    document_id: 文档 ID。\n    document_name: 文档名称。\n    segment_content: 片段内容。\n    score: 相关度。\n    position: 片段位置。",
+        "properties": {
+          "document_id": {
+            "default": "",
+            "description": "文档 ID",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_name": {
+            "default": "",
+            "description": "文档名称",
+            "title": "Document Name",
+            "type": "string"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SegmentPosition"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "片段位置"
+          },
+          "score": {
+            "default": 0.0,
+            "description": "相关度",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "segment_content": {
+            "default": "",
+            "description": "片段内容",
+            "title": "Segment Content",
+            "type": "string"
+          }
+        },
+        "title": "SearchSegment",
+        "type": "object"
+      },
+      "SegmentPosition": {
+        "description": "片段位置。\n\nAttributes:\n    page: 页码。\n    paragraph: 段落序号。",
+        "properties": {
+          "page": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "页码",
+            "title": "Page"
+          },
+          "paragraph": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "段落序号",
+            "title": "Paragraph"
+          }
+        },
+        "title": "SegmentPosition",
+        "type": "object"
+      },
+      "StepItem": {
+        "description": "任务步骤条目（`title` / `output_summary` 为业务语言，底座节点类型名不暴露）。\n\nAttributes:\n    step_id: 步骤 ID。\n    sequence: 步骤序号。\n    title: 步骤业务名称。\n    status: 步骤状态。\n    started_at: 开始时间。\n    finished_at: 完成时间。\n    output_summary: 输出摘要。",
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "完成时间，ISO 8601 格式",
+            "title": "Finished At"
+          },
+          "output_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "输出摘要",
+            "title": "Output Summary"
+          },
+          "sequence": {
+            "default": 0,
+            "description": "步骤序号",
+            "minimum": 0.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "开始时间，ISO 8601 格式",
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StepStatus",
+            "default": "pending",
+            "description": "步骤状态"
+          },
+          "step_id": {
+            "description": "步骤 ID",
+            "title": "Step Id",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "description": "步骤业务名称",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step_id"
+        ],
+        "title": "StepItem",
+        "type": "object"
+      },
+      "StepStatus": {
+        "description": "步骤状态枚举。",
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "skipped"
+        ],
+        "title": "StepStatus",
+        "type": "string"
+      },
+      "StepsData": {
+        "description": "A4 步骤详情响应数据。\n\nAttributes:\n    task_id: 任务 ID。\n    steps: 步骤列表。",
+        "properties": {
+          "steps": {
+            "description": "步骤列表",
+            "items": {
+              "$ref": "#/components/schemas/StepItem"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "task_id": {
+            "description": "任务 ID",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "StepsData",
+        "type": "object"
+      },
+      "SyncJobData": {
+        "description": "T6 响应数据。\n\nAttributes:\n    job_id: 同步任务 ID，形如 `job_01HF8...`。\n    tool_type: 工具类型标识。\n    status: 任务状态。\n    progress: 进度百分比。\n    created_at: 创建时间。",
+        "properties": {
+          "created_at": {
+            "default": "",
+            "description": "创建时间，ISO 8601 格式",
+            "title": "Created At",
+            "type": "string"
+          },
+          "job_id": {
+            "description": "同步任务 ID，形如 job_01HF8...",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "progress": {
+            "default": 0,
+            "description": "进度百分比",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SyncJobStatus",
+            "default": "pending",
+            "description": "任务状态"
+          },
+          "tool_type": {
+            "default": "",
+            "description": "工具类型标识",
+            "title": "Tool Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "SyncJobData",
+        "type": "object"
+      },
+      "SyncJobDetailData": {
+        "description": "T7 同步任务进度响应数据。\n\nAttributes:\n    processed_count: 已处理条目数。\n    total_count: 总条目数。\n    error: 失败原因（业务语言）。\n    updated_at: 更新时间。",
+        "properties": {
+          "created_at": {
+            "default": "",
+            "description": "创建时间，ISO 8601 格式",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "失败原因，业务语言",
+            "title": "Error"
+          },
+          "job_id": {
+            "description": "同步任务 ID，形如 job_01HF8...",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "processed_count": {
+            "default": 0,
+            "description": "已处理条目数",
+            "minimum": 0.0,
+            "title": "Processed Count",
+            "type": "integer"
+          },
+          "progress": {
+            "default": 0,
+            "description": "进度百分比",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SyncJobStatus",
+            "default": "pending",
+            "description": "任务状态"
+          },
+          "tool_type": {
+            "default": "",
+            "description": "工具类型标识",
+            "title": "Tool Type",
+            "type": "string"
+          },
+          "total_count": {
+            "default": 0,
+            "description": "总条目数",
+            "minimum": 0.0,
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "default": "",
+            "description": "更新时间，ISO 8601 格式",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "SyncJobDetailData",
+        "type": "object"
+      },
+      "SyncJobStatus": {
+        "description": "数据同步任务状态枚举。",
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "failed"
+        ],
+        "title": "SyncJobStatus",
+        "type": "string"
+      },
+      "TaskDetailData": {
+        "description": "A3 任务状态查询响应数据。\n\nAttributes:\n    task_id: 任务 ID。\n    status: 任务状态。\n    progress: 进度百分比。\n    current_step: 当前步骤序号。\n    result: 任务结果。\n    usage: 业务化用量。\n    updated_at: 更新时间。",
+        "properties": {
+          "current_step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "当前步骤序号",
+            "title": "Current Step"
+          },
+          "progress": {
+            "default": 0,
+            "description": "进度百分比",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "integer"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "任务结果"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "default": "pending",
+            "description": "任务状态"
+          },
+          "task_id": {
+            "description": "任务 ID",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "default": "",
+            "description": "更新时间，ISO 8601 格式",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "description": "业务化用量"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "TaskDetailData",
+        "type": "object"
+      },
+      "TaskItem": {
+        "description": "任务列表条目。\n\nAttributes:\n    task_id: 任务 ID。\n    conversation_id: 所属会话 ID。\n    goal: 任务目标。\n    status: 任务状态。\n    progress: 进度百分比。\n    created_at: 创建时间。\n    updated_at: 更新时间。",
+        "properties": {
+          "conversation_id": {
+            "default": "",
+            "description": "所属会话 ID",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "default": "",
+            "description": "创建时间，ISO 8601 格式",
+            "title": "Created At",
+            "type": "string"
+          },
+          "goal": {
+            "default": "",
+            "description": "任务目标",
+            "title": "Goal",
+            "type": "string"
+          },
+          "progress": {
+            "default": 0,
+            "description": "进度百分比",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "default": "pending",
+            "description": "任务状态"
+          },
+          "task_id": {
+            "description": "任务 ID",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "default": "",
+            "description": "更新时间，ISO 8601 格式",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "TaskItem",
+        "type": "object"
+      },
+      "TaskOptions": {
+        "description": "任务执行选项。\n\nAttributes:\n    max_steps: 最大步骤数。\n    timeout_seconds: 超时秒数。",
+        "properties": {
+          "max_steps": {
+            "default": 12,
+            "description": "最大步骤数",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Steps",
+            "type": "integer"
+          },
+          "timeout_seconds": {
+            "default": 600,
+            "description": "超时秒数",
+            "maximum": 7200.0,
+            "minimum": 10.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "title": "TaskOptions",
+        "type": "object"
+      },
+      "TaskResult": {
+        "description": "任务结果。\n\nAttributes:\n    summary: 结果摘要（业务语言）。\n    artifacts: 产物列表。",
+        "properties": {
+          "artifacts": {
+            "description": "产物列表",
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "summary": {
+            "default": "",
+            "description": "结果摘要",
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "title": "TaskResult",
+        "type": "object"
+      },
+      "TaskStatus": {
+        "description": "任务状态枚举（底座原生状态已映射为自研三态）。",
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "TaskStatus",
+        "type": "string"
+      },
+      "TenantInfo": {
+        "description": "租户信息。\n\nAttributes:\n    tenant_id: 租户 ID。\n    name: 租户名称。\n    plan: 套餐标识。",
+        "properties": {
+          "name": {
+            "default": "",
+            "description": "租户名称",
+            "title": "Name",
+            "type": "string"
+          },
+          "plan": {
+            "default": "",
+            "description": "套餐标识",
+            "title": "Plan",
+            "type": "string"
+          },
+          "tenant_id": {
+            "default": "",
+            "description": "租户 ID",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "title": "TenantInfo",
+        "type": "object"
+      },
+      "ToolAuthType": {
+        "description": "工具授权方式枚举。",
+        "enum": [
+          "oauth2",
+          "token",
+          "none"
+        ],
+        "title": "ToolAuthType",
+        "type": "string"
+      },
+      "ToolCategory": {
+        "description": "工具分类枚举（业务化分类，不使用第三方原始分类）。",
+        "enum": [
+          "communication",
+          "development",
+          "document",
+          "schedule",
+          "data"
+        ],
+        "title": "ToolCategory",
+        "type": "string"
+      },
+      "ToolItem": {
+        "description": "工具类型条目（T1 注册表元素）。\n\nAttributes:\n    tool_type: 工具类型标识。\n    display_name: 业务化名称。\n    category: 业务化分类。\n    auth_type: 授权方式。\n    status: 可用状态。\n    operations: 能力清单。\n    timeout_ms: 超时声明（架构文档 3.0.4）。",
+        "properties": {
+          "auth_type": {
+            "$ref": "#/components/schemas/ToolAuthType",
+            "default": "oauth2",
+            "description": "授权方式"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ToolCategory",
+            "default": "data",
+            "description": "业务化分类"
+          },
+          "display_name": {
+            "default": "",
+            "description": "业务化名称",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "operations": {
+            "description": "能力清单",
+            "items": {
+              "$ref": "#/components/schemas/ToolOperation"
+            },
+            "title": "Operations",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ToolStatus",
+            "default": "available",
+            "description": "可用状态"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "description": "超时声明，单位毫秒",
+            "minimum": 100.0,
+            "title": "Timeout Ms",
+            "type": "integer"
+          },
+          "tool_type": {
+            "description": "工具类型标识",
+            "title": "Tool Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_type"
+        ],
+        "title": "ToolItem",
+        "type": "object"
+      },
+      "ToolOperation": {
+        "description": "工具操作项。\n\nAttributes:\n    operation: 操作标识，形如 `send_message`。\n    display_name: 业务化操作名称。\n    params_schema: 参数 JSON Schema（自研描述）。",
+        "properties": {
+          "display_name": {
+            "default": "",
+            "description": "业务化操作名称",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "operation": {
+            "description": "操作标识",
+            "title": "Operation",
+            "type": "string"
+          },
+          "params_schema": {
+            "additionalProperties": true,
+            "description": "参数 JSON Schema",
+            "title": "Params Schema",
+            "type": "object"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "title": "ToolOperation",
+        "type": "object"
+      },
+      "ToolStatus": {
+        "description": "工具可用状态枚举。",
+        "enum": [
+          "available",
+          "unavailable"
+        ],
+        "title": "ToolStatus",
+        "type": "string"
+      },
+      "UploadDocumentData": {
+        "description": "R3 上传文档响应数据。\n\nAttributes:\n    document_id: 文档 ID，形如 `doc_01HF8...`。\n    file_name: 文件名。\n    index_status: 索引进度状态。\n    progress: 进度百分比（0-100）。",
+        "properties": {
+          "document_id": {
+            "description": "文档 ID，形如 doc_01HF8...",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "file_name": {
+            "default": "",
+            "description": "文件名",
+            "title": "File Name",
+            "type": "string"
+          },
+          "index_status": {
+            "$ref": "#/components/schemas/IndexStatus",
+            "default": "processing",
+            "description": "索引进度状态"
+          },
+          "progress": {
+            "default": 0,
+            "description": "进度百分比",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "title": "UploadDocumentData",
+        "type": "object"
+      },
+      "UpsertRoleRequest": {
+        "description": "U5 创建/分配角色请求。\n\nAttributes:\n    role_key: 角色标识。\n    display_name: 角色展示名。\n    permissions: 权限点列表。\n    members: 待分配成员 ID 列表。",
+        "properties": {
+          "display_name": {
+            "default": "",
+            "description": "角色展示名",
+            "maxLength": 128,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "members": {
+            "description": "待分配成员 ID 列表",
+            "items": {
+              "type": "string"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "permissions": {
+            "description": "权限点列表",
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
+          "role_key": {
+            "description": "角色标识",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Role Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_key"
+        ],
+        "title": "UpsertRoleRequest",
+        "type": "object"
+      },
+      "Usage": {
+        "description": "业务化用量（字段名 units，附录 A-7）。\n\nAttributes:\n    prompt_units: 输入用量。\n    completion_units: 输出用量。\n    total_units: 总用量。",
+        "properties": {
+          "completion_units": {
+            "default": 0,
+            "description": "输出用量",
+            "minimum": 0.0,
+            "title": "Completion Units",
+            "type": "integer"
+          },
+          "prompt_units": {
+            "default": 0,
+            "description": "输入用量",
+            "minimum": 0.0,
+            "title": "Prompt Units",
+            "type": "integer"
+          },
+          "total_units": {
+            "default": 0,
+            "description": "总用量",
+            "minimum": 0.0,
+            "title": "Total Units",
+            "type": "integer"
+          }
+        },
+        "title": "Usage",
+        "type": "object"
+      },
+      "UsageData": {
+        "description": "M4 用量统计响应数据。\n\nAttributes:\n    period: 统计周期，形如 `2026-11`。\n    conversation_count: 对话次数。\n    document_qa_count: 文档问答次数。\n    quota: 套餐额度。",
+        "properties": {
+          "conversation_count": {
+            "default": 0,
+            "description": "对话次数",
+            "minimum": 0.0,
+            "title": "Conversation Count",
+            "type": "integer"
+          },
+          "document_qa_count": {
+            "default": 0,
+            "description": "文档问答次数",
+            "minimum": 0.0,
+            "title": "Document Qa Count",
+            "type": "integer"
+          },
+          "period": {
+            "default": "",
+            "description": "统计周期，形如 2026-11",
+            "title": "Period",
+            "type": "string"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/Quota",
+            "description": "套餐额度"
+          }
+        },
+        "title": "UsageData",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VerifyData": {
+        "description": "U1 响应数据。\n\nAttributes:\n    allowed: 是否允许。\n    user_id: 用户 ID。\n    tenant_id: 租户 ID。\n    roles: 角色列表。",
+        "properties": {
+          "allowed": {
+            "default": false,
+            "description": "是否允许",
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "roles": {
+            "description": "角色列表",
+            "items": {
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "tenant_id": {
+            "default": "",
+            "description": "租户 ID",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "user_id": {
+            "default": "",
+            "description": "用户 ID",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "title": "VerifyData",
+        "type": "object"
+      },
+      "VerifyRequest": {
+        "description": "U1 权限校验请求。\n\nAttributes:\n    permission: 权限点，形如 `knowledge:document:upload`。\n    resource: 资源上下文（可选）。",
+        "properties": {
+          "permission": {
+            "description": "权限点，形如 resource:action",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Permission",
+            "type": "string"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "资源上下文"
+          }
+        },
+        "required": [
+          "permission"
+        ],
+        "title": "VerifyRequest",
+        "type": "object"
+      },
+      "Visibility": {
+        "description": "知识库可见性枚举。",
+        "enum": [
+          "organization",
+          "private"
+        ],
+        "title": "Visibility",
+        "type": "string"
+      }
+    }
+  },
+  "info": {
+    "description": "企业级跨生态办公 AI 平台 · 自研统一适配层标准接口 v1.0。\n\n## 统一约定\n\n- 所有接口返回 `{code, message, data}`；`code=0` 表示成功。\n- `message` 为面向用户的业务语言提示，前端直接展示；\n  技术细节（错误码、堆栈、下游原始错误）不会出现在响应中。\n- 除 `/healthz`、`/readyz` 外，均需携带 `Authorization: Bearer <access_token>`。\n- 所有写接口需携带 `Idempotency-Key` 请求头（UUID v4，24 小时内有效）。\n\n## 能力档位\n\n模型服务仅暴露能力档位（通用 / 编程 / 长文档 / 深度推理），\n真实模型名称与路由策略由平台内部维护，不对终端用户暴露。",
+    "title": "企业级跨生态办公 AI 平台 · 统一适配层",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/agent/tasks": {
+      "get": {
+        "description": "任务列表（按会话/状态过滤，分页）。",
+        "operationId": "list_tasks_api_v1_agent_tasks_get",
+        "parameters": [
+          {
+            "description": "页码",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "按会话过滤",
+            "in": "query",
+            "name": "conversation_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "按会话过滤",
+              "maxLength": 128,
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "按状态过滤",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TaskStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "按状态过滤",
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PageResult_TaskItem__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A2 任务列表",
+        "tags": [
+          "Agent 服务"
+        ]
+      },
+      "post": {
+        "description": "创建 Agent 任务（异步执行）。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "create_task_api_v1_agent_tasks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CreateTaskData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A1 创建任务",
+        "tags": [
+          "Agent 服务"
+        ]
+      }
+    },
+    "/api/v1/agent/tasks/{task_id}": {
+      "get": {
+        "description": "查询任务状态与结果。status 为自研五态，底座原状态名不暴露。",
+        "operationId": "get_task_api_v1_agent_tasks__task_id__get",
+        "parameters": [
+          {
+            "description": "任务 ID",
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "description": "任务 ID",
+              "maxLength": 128,
+              "minLength": 6,
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TaskDetailData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A3 任务状态查询",
+        "tags": [
+          "Agent 服务"
+        ]
+      }
+    },
+    "/api/v1/agent/tasks/{task_id}/cancel": {
+      "post": {
+        "description": "取消任务。任务已处于终态时返回 12003。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "cancel_task_api_v1_agent_tasks__task_id__cancel_post",
+        "parameters": [
+          {
+            "description": "任务 ID",
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "description": "任务 ID",
+              "maxLength": 128,
+              "minLength": 6,
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CancelTaskData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A5 取消任务",
+        "tags": [
+          "Agent 服务"
+        ]
+      }
+    },
+    "/api/v1/agent/tasks/{task_id}/events": {
+      "get": {
+        "description": "订阅任务进度推送，响应 Content-Type 为 text/event-stream。自研事件类型：step_started / step_finished / task_completed。",
+        "operationId": "stream_task_events_api_v1_agent_tasks__task_id__events_get",
+        "parameters": [
+          {
+            "description": "任务 ID",
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "description": "任务 ID",
+              "maxLength": 128,
+              "minLength": 6,
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A6 任务事件推送（SSE）",
+        "tags": [
+          "Agent 服务"
+        ]
+      }
+    },
+    "/api/v1/agent/tasks/{task_id}/steps": {
+      "get": {
+        "description": "查询任务步骤详情（工作流可视化数据源）。步骤标题为业务语言，底座节点类型名不暴露。",
+        "operationId": "list_steps_api_v1_agent_tasks__task_id__steps_get",
+        "parameters": [
+          {
+            "description": "任务 ID",
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "description": "任务 ID",
+              "maxLength": 128,
+              "minLength": 6,
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_StepsData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A4 步骤详情",
+        "tags": [
+          "Agent 服务"
+        ]
+      }
+    },
+    "/api/v1/identity/audit-logs": {
+      "post": {
+        "description": "审计日志查询（适配层不持有审计逻辑，仅提供查询出口）。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "query_audit_logs_api_v1_identity_audit_logs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuditLogQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PageResult_AuditLogItem__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "U6 审计日志查询",
+        "tags": [
+          "用户权限服务"
+        ]
+      }
+    },
+    "/api/v1/identity/organizations/{org_id}/invitations": {
+      "post": {
+        "description": "邀请成员加入组织。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "invite_member_api_v1_identity_organizations__org_id__invitations_post",
+        "parameters": [
+          {
+            "description": "组织 ID",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "description": "组织 ID",
+              "maxLength": 128,
+              "minLength": 3,
+              "title": "Org Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_InvitationData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "U4 邀请成员",
+        "tags": [
+          "用户权限服务"
+        ]
+      }
+    },
+    "/api/v1/identity/organizations/{org_id}/members": {
+      "get": {
+        "description": "查询组织成员列表（分页，支持角色与关键字过滤）。",
+        "operationId": "list_members_api_v1_identity_organizations__org_id__members_get",
+        "parameters": [
+          {
+            "description": "组织 ID",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "description": "组织 ID",
+              "maxLength": 128,
+              "minLength": 3,
+              "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "页码",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "按角色过滤",
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "按角色过滤",
+              "title": "Role"
+            }
+          },
+          {
+            "description": "按姓名或邮箱过滤",
+            "in": "query",
+            "name": "keyword",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "按姓名或邮箱过滤",
+              "maxLength": 128,
+              "title": "Keyword",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PageResult_MemberItem__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "U3 组织成员列表",
+        "tags": [
+          "用户权限服务"
+        ]
+      }
+    },
+    "/api/v1/identity/organizations/{org_id}/roles": {
+      "post": {
+        "description": "创建或分配角色。权限点命名不合规范视为未注册，返回 14004。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "upsert_role_api_v1_identity_organizations__org_id__roles_post",
+        "parameters": [
+          {
+            "description": "组织 ID",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "description": "组织 ID",
+              "maxLength": 128,
+              "minLength": 3,
+              "title": "Org Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertRoleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RoleData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "U5 创建/分配角色",
+        "tags": [
+          "用户权限服务"
+        ]
+      }
+    },
+    "/api/v1/identity/profile": {
+      "get": {
+        "description": "查询当前登录用户信息（含租户与组织）。",
+        "operationId": "get_profile_api_v1_identity_profile_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ProfileData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "U2 当前用户信息",
+        "tags": [
+          "用户权限服务"
+        ]
+      }
+    },
+    "/api/v1/identity/verify": {
+      "post": {
+        "description": "令牌与权限点校验（内部高频调用）。权限点命名规范为 resource:action；未注册的权限点返回 14004。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "verify_api_v1_identity_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_VerifyData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "U1 令牌与权限点校验",
+        "tags": [
+          "用户权限服务"
+        ]
+      }
+    },
+    "/api/v1/knowledge/bases": {
+      "get": {
+        "description": "知识库列表（分页，支持名称关键字过滤）。",
+        "operationId": "list_bases_api_v1_knowledge_bases_get",
+        "parameters": [
+          {
+            "description": "页码",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "名称关键字",
+            "in": "query",
+            "name": "keyword",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "名称关键字",
+              "maxLength": 128,
+              "title": "Keyword",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PageResult_KnowledgeBaseItem__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "R2 知识库列表",
+        "tags": [
+          "RAG 服务"
+        ]
+      },
+      "post": {
+        "description": "创建知识库。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "create_base_api_v1_knowledge_bases_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CreateBaseData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "R1 创建知识库",
+        "tags": [
+          "RAG 服务"
+        ]
+      }
+    },
+    "/api/v1/knowledge/bases/{base_id}/documents": {
+      "post": {
+        "description": "上传文档（multipart/form-data，字段 file），异步构建索引。支持 pdf/docx/xlsx/md/txt，单文件上限 50MB。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "upload_document_api_v1_knowledge_bases__base_id__documents_post",
+        "parameters": [
+          {
+            "description": "知识库 ID",
+            "in": "path",
+            "name": "base_id",
+            "required": true,
+            "schema": {
+              "description": "知识库 ID",
+              "maxLength": 128,
+              "minLength": 3,
+              "title": "Base Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_document_api_v1_knowledge_bases__base_id__documents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_UploadDocumentData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "R3 上传文档",
+        "tags": [
+          "RAG 服务"
+        ]
+      }
+    },
+    "/api/v1/knowledge/bases/{base_id}/documents/{doc_id}": {
+      "delete": {
+        "description": "删除文档。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "delete_document_api_v1_knowledge_bases__base_id__documents__doc_id__delete",
+        "parameters": [
+          {
+            "description": "知识库 ID",
+            "in": "path",
+            "name": "base_id",
+            "required": true,
+            "schema": {
+              "description": "知识库 ID",
+              "maxLength": 128,
+              "minLength": 3,
+              "title": "Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "文档 ID",
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "description": "文档 ID",
+              "maxLength": 128,
+              "minLength": 4,
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DeletedData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "R6 删除文档",
+        "tags": [
+          "RAG 服务"
+        ]
+      },
+      "get": {
+        "description": "查询文档索引进度。index_status 为自研三态，底座原状态名不暴露。",
+        "operationId": "get_document_status_api_v1_knowledge_bases__base_id__documents__doc_id__get",
+        "parameters": [
+          {
+            "description": "知识库 ID",
+            "in": "path",
+            "name": "base_id",
+            "required": true,
+            "schema": {
+              "description": "知识库 ID",
+              "maxLength": 128,
+              "minLength": 3,
+              "title": "Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "文档 ID",
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "description": "文档 ID",
+              "maxLength": 128,
+              "minLength": 4,
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_IndexStatusData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "R4 索引进度查询",
+        "tags": [
+          "RAG 服务"
+        ]
+      }
+    },
+    "/api/v1/knowledge/bases/{base_id}/documents/{doc_id}/reindex": {
+      "post": {
+        "description": "重建文档索引。文档正在处理中时返回 11006。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "reindex_document_api_v1_knowledge_bases__base_id__documents__doc_id__reindex_post",
+        "parameters": [
+          {
+            "description": "知识库 ID",
+            "in": "path",
+            "name": "base_id",
+            "required": true,
+            "schema": {
+              "description": "知识库 ID",
+              "maxLength": 128,
+              "minLength": 3,
+              "title": "Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "文档 ID",
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "description": "文档 ID",
+              "maxLength": 128,
+              "minLength": 4,
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ReindexData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "R5 重建索引",
+        "tags": [
+          "RAG 服务"
+        ]
+      }
+    },
+    "/api/v1/knowledge/search": {
+      "post": {
+        "description": "独立知识库检索（带引用）。对话内增强由 M1 触发。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "search_api_v1_knowledge_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SearchData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "R7 独立检索",
+        "tags": [
+          "RAG 服务"
+        ]
+      }
+    },
+    "/api/v1/model/catalog": {
+      "get": {
+        "description": "查询可用能力档位目录。内容由适配层配置驱动，不暴露真实模型名称。",
+        "operationId": "get_catalog_api_v1_model_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CatalogData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "M3 能力档位目录",
+        "tags": [
+          "模型服务"
+        ]
+      }
+    },
+    "/api/v1/model/generate": {
+      "post": {
+        "description": "单轮/多轮非流式生成。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "generate_api_v1_model_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_GenerateData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "M1 非流式生成",
+        "tags": [
+          "模型服务"
+        ]
+      }
+    },
+    "/api/v1/model/generate/stream": {
+      "post": {
+        "description": "流式生成，响应 Content-Type 为 text/event-stream。自研事件类型：start / delta / citation / done / error。流式接口不重试、不参与幂等回放。",
+        "operationId": "generate_stream_api_v1_model_generate_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "M2 流式生成（SSE）",
+        "tags": [
+          "模型服务"
+        ]
+      }
+    },
+    "/api/v1/model/usage": {
+      "get": {
+        "description": "用量统计，业务化口径（次数/额度），不展示 token 精确值。",
+        "operationId": "get_usage_api_v1_model_usage_get",
+        "parameters": [
+          {
+            "description": "统计周期：day / month",
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "default": "month",
+              "description": "统计周期：day / month",
+              "title": "Period",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_UsageData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "M4 用量统计",
+        "tags": [
+          "模型服务"
+        ]
+      }
+    },
+    "/api/v1/tools/connections": {
+      "get": {
+        "description": "已连接工具列表（分页，支持工具类型过滤）。",
+        "operationId": "list_connections_api_v1_tools_connections_get",
+        "parameters": [
+          {
+            "description": "页码",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "按工具类型过滤",
+            "in": "query",
+            "name": "tool_type",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "按工具类型过滤",
+              "maxLength": 64,
+              "title": "Tool Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PageResult_ConnectionItem__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "T3 已连接工具列表",
+        "tags": [
+          "工具服务"
+        ]
+      },
+      "post": {
+        "description": "发起工具授权连接（OAuth/令牌）。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "create_connection_api_v1_tools_connections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ConnectionData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "T2 发起工具授权连接",
+        "tags": [
+          "工具服务"
+        ]
+      }
+    },
+    "/api/v1/tools/connections/{conn_id}": {
+      "delete": {
+        "description": "断开工具连接。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "delete_connection_api_v1_tools_connections__conn_id__delete",
+        "parameters": [
+          {
+            "description": "连接 ID",
+            "in": "path",
+            "name": "conn_id",
+            "required": true,
+            "schema": {
+              "description": "连接 ID",
+              "maxLength": 128,
+              "minLength": 6,
+              "title": "Conn Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DeletedData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "T4 断开工具连接",
+        "tags": [
+          "工具服务"
+        ]
+      }
+    },
+    "/api/v1/tools/execute": {
+      "post": {
+        "description": "执行工具操作。操作必须在注册表能力清单内，否则返回 13005；工具未连接返回 13002。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "execute_tool_api_v1_tools_execute_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecuteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ExecutionData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "T5 执行工具操作",
+        "tags": [
+          "工具服务"
+        ]
+      }
+    },
+    "/api/v1/tools/registry": {
+      "get": {
+        "description": "查询工具类型注册表（可用工具与能力清单）。前端按本返回动态渲染工具卡片，不硬编码工具列表；新增工具不改本接口契约。",
+        "operationId": "get_registry_api_v1_tools_registry_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RegistryData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "T1 工具类型注册表",
+        "tags": [
+          "工具服务"
+        ]
+      }
+    },
+    "/api/v1/tools/sync-jobs": {
+      "post": {
+        "description": "创建数据同步任务（如邮件收件箱同步）。写接口，需携带 Idempotency-Key 请求头。",
+        "operationId": "create_sync_job_api_v1_tools_sync_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSyncJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SyncJobData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "T6 创建数据同步任务",
+        "tags": [
+          "工具服务"
+        ]
+      }
+    },
+    "/api/v1/tools/sync-jobs/{job_id}": {
+      "get": {
+        "description": "查询数据同步任务进度。",
+        "operationId": "get_sync_job_api_v1_tools_sync_jobs__job_id__get",
+        "parameters": [
+          {
+            "description": "同步任务 ID",
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "description": "同步任务 ID",
+              "maxLength": 128,
+              "minLength": 6,
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SyncJobDetailData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "T7 查询同步任务进度",
+        "tags": [
+          "工具服务"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "description": "进程存活检查，不校验任何依赖。",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_HealthData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "存活探针（免鉴权）",
+        "tags": [
+          "健康检查"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "description": "就绪检查：配置加载与注册表解析是否可用。",
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ReadyData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "就绪探针（免鉴权）",
+        "tags": [
+          "健康检查"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "对话生成、流式输出、能力档位目录与用量统计",
+      "name": "模型服务"
+    },
+    {
+      "description": "知识库、文档索引与带引用的检索",
+      "name": "RAG 服务"
+    },
+    {
+      "description": "任务创建、状态查询、步骤详情与进度推送",
+      "name": "Agent 服务"
+    },
+    {
+      "description": "工具类型注册表、授权连接、操作执行与数据同步",
+      "name": "工具服务"
+    },
+    {
+      "description": "令牌校验、用户资料、组织成员、角色与审计",
+      "name": "用户权限服务"
+    },
+    {
+      "description": "存活探针与就绪探针（免鉴权）",
+      "name": "健康检查"
+    }
+  ]
+}

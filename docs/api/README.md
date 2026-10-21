@@ -44,8 +44,25 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 | Agent 服务 | `/api/v1/agent` | 6 | A1-A6 |
 | 工具服务 | `/api/v1/tools` | 7 | T1-T7 |
 | 用户权限服务 | `/api/v1/identity` | 6 | U1-U6 |
-| **业务端点合计** | | **30** | |
+| **核心业务端点合计（冻结）** | | **30** | |
 | 健康检查 | `/healthz`、`/readyz` | 2 | 免鉴权 |
+
+**阶段二新域端点（38 个，按 B03-B10 逐批落地；同挂 `/api/v1`，不新增版本）**
+
+| 域 | 前缀 | target | 编号 |
+| --- | --- | --- | --- |
+| 知识库扩展 | `/api/v1/knowledge` | 8 | KB1-KB8 |
+| 工具扩展 | `/api/v1/tools` | 1 | TL1 |
+| 组织与权限 | `/api/v1/identity` | 11 | ID1-ID11 |
+| 计费订阅 | `/api/v1/billing` | 10 | BL1-BL10 |
+| 运营后台 | `/api/v1/ops` | 8 | OPS1-OPS8 |
+| **新域端点合计** | | **38** | |
+
+> 合计 **68 个业务端点**（30 冻结 + 38 新域）。基线文件：
+> `docs/api/baseline-core-30.json`（受 CODEOWNERS 保护，禁止修改）、
+> `docs/api/baseline-phase2-38.json`（只允许登记真实已实现端点）。
+> 门禁：`python deploy/validate_openapi.py`（G1-G5，失败退出码非 0）；
+> 现阶段（新域未补齐）CI 使用 `--allow-missing-phase2`。
 
 ### 2.2 统一约定
 
@@ -65,6 +82,7 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 | --- | --- |
 | `0` | 成功 |
 | `10001-14999` | 领域业务错误（模型 / RAG / Agent / 工具 / 权限） |
+| `15001-15099` | 计费与订阅错误（阶段二新增） |
 | `20001-20999` | 通用业务错误 |
 | `30001-30999` | 系统错误 |
 

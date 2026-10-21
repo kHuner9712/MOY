@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "frozen_target": 38,
+  "note": "B03 起逐步补齐至 38（KB1-8 / TL1 / ID1-11 / BL1-10 / OPS1-8）；只允许登记真实已实现端点",
+  "endpoints": []
+}

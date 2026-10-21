@@ -259,35 +259,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
-      - name: 生成 OpenAPI 规范
-        working-directory: apps/adapter
+      - name: 端点基线门禁（G1-G5）
+        # D-09：核心基线冻结 30 + 阶段二新域 38 = 68；B02-B10 期间用
+        # --allow-missing-phase2 放宽「已登记但尚未实现」的新域端点。
+        # 不允许为了过门禁而删除该参数或改写基线文件（baseline-core-30.json 受保护）。
+        working-directory: .
+        run: |
+          python deploy/validate_openapi.py --allow-missing-phase2
+
+      - name: 对外文档禁止泄露底座术语
+        # 保留阶段一既有扫描（G5 已在 validate_openapi.py 内覆盖，
+        # 此步骤作为独立可读的兜底，禁止删除）
+        working-directory: .
         run: |
           python - <<'PY'
           import json
           import pathlib
 
-          from app.main import create_app
-
-          schema = create_app().openapi()
-          output = pathlib.Path('../../docs/api/openapi.json')
-          output.parent.mkdir(parents=True, exist_ok=True)
-          output.write_text(
-              json.dumps(schema, ensure_ascii=False, indent=2) + '\n', encoding='utf-8'
-          )
-
-          business = [
-              (method.upper(), path)
-              for path, methods in schema['paths'].items()
-              if path.startswith('/api/v1')
-              for method in methods
-          ]
-          print(f'业务端点数量: {len(business)}')
-          if len(business) != 30:
-              print('[FAIL] 业务端点数量必须为 30')
-              raise SystemExit(1)
-          print('[OK]   业务端点数量为 30')
-
-          text = json.dumps(schema, ensure_ascii=False).lower()
+          text = pathlib.Path('docs/api/openapi.json').read_text(encoding='utf-8').lower()
           leaked = [w for w in ('dify', 'milvus', 'litellm', 'chat-messages') if w in text]
           if leaked:
               print(f'[FAIL] 对外文档泄露底座术语: {leaked}')
