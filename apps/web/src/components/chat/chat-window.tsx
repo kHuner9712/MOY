@@ -1,5 +1,6 @@
-import type React from "react";
 'use client';
+
+import type React from "react";
 
 import { Send, Square } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
