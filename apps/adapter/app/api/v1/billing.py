@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.business.policy_service import PolicyService, get_policy_service, has_admin_role
+from app.business.policy_service import PolicyService, get_policy_service
 from app.business.usage_service import UsageService, get_usage_service
 from app.core.config import get_request_settings
 from app.core.errors import ApiError, ErrorCode
@@ -101,8 +101,11 @@ async def get_billing_usage(
     Raises:
         ApiError: 权限不足（20003）、参数非法（20001）。
     """
-    await _policy_service(request).require_point(context.auth, BILLING_READ_PERMISSION)
-    if group_by is not None and not has_admin_role(context.auth):
+    policy = _policy_service(request)
+    await policy.require_point(context.auth, BILLING_READ_PERMISSION)
+    # 管理视图判定必须走 PolicyService（业务库角色优先）：按令牌角色判会让
+    # 「业务库已降级为 member」的账号继续看到企业总量（D-13 撤权不生效）。
+    if group_by is not None and not await policy.admin_of(context.auth):
         # 管理视图：成员只能看自己的用量，不得看到企业总量（PRD 6.3 组织层）
         raise ApiError(
             ErrorCode.FORBIDDEN,

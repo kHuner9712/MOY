@@ -89,6 +89,34 @@ class GrantRecord:
         return self.revoked_at is None
 
 
+def normalize_department_subject(subject_id: str) -> str:
+    """把部门型授权对象的 ID 归一化为唯一规范形态（`dept_` 前缀）。
+
+    **一个对象一个 ID**（W1 §5.5 修复建议 3 的推广）：授权表按字符串相等匹配
+    `subject_id`，若写入侧允许 `qa_form` 与 `dept_qa_form` 两种写法并存，同一物理
+    部门的两条授权只会命中其中一条 → 「授权建成功但没人拿到权限」的静默失效
+    （QA `test_perm_2`）。因此写侧统一收敛为规范形态。
+
+    无法归一化的值（含非法字符）原样返回：授权表不接受「猜」，宁可在写入时保留
+    原文并由人工核对，也不静默改写为别的对象。
+
+    Args:
+        subject_id: 授权对象 ID（任意写法）。
+
+    Returns:
+        str: 规范形态；入参无法识别时原样返回。
+    """
+    from app.db.repositories.org_repo import DEPARTMENT_ID_PREFIX, normalize_department_id
+
+    value = str(subject_id or "").strip()
+    if not value or value.startswith(DEPARTMENT_ID_PREFIX):
+        return value
+    try:
+        return normalize_department_id(value)
+    except Exception:  # pragma: no cover - 非法形态保持原样，不做静默改写
+        return value
+
+
 class GrantStore(Protocol):
     """授权存储契约。"""
 
@@ -155,7 +183,9 @@ class InMemoryGrantStore:
         self._lock = asyncio.Lock()
 
     async def create(self, record: GrantRecord) -> tuple[GrantRecord, bool]:
-        """幂等新增授权。"""
+        """幂等新增授权（部门型 subject 先归一化为 `dept_` 前缀）。"""
+        if record.subject_type == "department":
+            record = replace(record, subject_id=normalize_department_subject(record.subject_id))
         async with self._lock:
             for current in self._records.values():
                 if (
@@ -305,7 +335,9 @@ class PostgresGrantStore:
         self._settings = settings or get_settings()
 
     async def create(self, record: GrantRecord) -> tuple[GrantRecord, bool]:
-        """幂等新增授权。"""
+        """幂等新增授权（部门型 subject 先归一化为 `dept_` 前缀）。"""
+        if record.subject_type == "department":
+            record = replace(record, subject_id=normalize_department_subject(record.subject_id))
         async with tenant_scope(record.tenant_id, settings=self._settings) as uow:
             repo = _GrantTableRepository(uow)
             row = await repo.fetch_one(

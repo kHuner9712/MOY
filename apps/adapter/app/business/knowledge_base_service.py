@@ -209,20 +209,29 @@ class KnowledgeBaseService:
         return self._policy.is_visible(record, auth)
 
     def _viewer_of(
-        self, auth: AuthContext, allowed_base_ids: tuple[str, ...] = ()
+        self,
+        auth: AuthContext,
+        allowed_base_ids: tuple[str, ...] = (),
+        *,
+        is_admin: bool | None = None,
     ) -> KnowledgeBaseViewer:
         """构造观察者上下文。
+
+        `is_admin` 必须来自 `PolicyService` 快照（业务库角色优先，D-13）：
+        列表若继续按令牌角色判管理员，角色降级后「列表仍可见受限库」而
+        「详情已拒」，会出现列表与详情口径不一致（QA `test_b08_5b` ③）。
 
         Args:
             auth: 鉴权上下文。
             allowed_base_ids: 授权可见的知识库 ID（由 `PolicyService` 计算）。
+            is_admin: 管理员判定（缺省时回落令牌角色，供同步直接调用场景）。
 
         Returns:
             KnowledgeBaseViewer: 观察者上下文。
         """
         return KnowledgeBaseViewer(
             user_id=auth.user_id,
-            is_admin=is_org_admin(auth),
+            is_admin=is_org_admin(auth) if is_admin is None else is_admin,
             allowed_base_ids=tuple(sorted(allowed_base_ids)),
         )
 
@@ -362,7 +371,9 @@ class KnowledgeBaseService:
         records, total = await self._store.list(
             auth.tenant_id,
             keyword=query.keyword,
-            viewer=self._viewer_of(auth, tuple(snapshot.granted_base_ids)),
+            viewer=self._viewer_of(
+                auth, tuple(snapshot.granted_base_ids), is_admin=snapshot.is_admin
+            ),
             limit=query.page_size,
             offset=query.offset,
         )

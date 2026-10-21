@@ -245,6 +245,7 @@ class PolicySnapshot:
         granted_base_ids: 通过授权表可见的知识库 ID 集合（仅非 `organization` 库有意义）。
         permissions: `base_id → viewer|editor`（授权级别，用于 `my_role`）。
         permission_points: 该用户拥有的权限点集合（权限点层，B07/B08 统一出口）。
+        business_role: 业务库中的角色标识（空串表示业务库未登记该成员角色）。
         expires_at: 过期时刻（`time.monotonic()` 基准）。
     """
 
@@ -254,6 +255,7 @@ class PolicySnapshot:
     granted_base_ids: frozenset[str] = field(default_factory=frozenset)
     permissions: Mapping[str, str] = field(default_factory=dict)
     permission_points: frozenset[str] = frozenset()
+    business_role: str = ""
     expires_at: float = 0.0
 
     def permission_of(self, base_id: str) -> str | None:
@@ -338,12 +340,13 @@ class PolicyService:
         Returns:
             PolicySnapshot: 新建快照。
         """
-        admin = has_admin_role(auth)
         # 部门数据范围（D-13）：组织来源是业务库，不再读身份底座 group。
         # 部门授权（KB6 `subject_type=department`）必须拿到用户所属部门才能命中，
         # 否则「部门授权形同虚设」，会出现「成员被授了部门却看不到」的误拒。
         department_ids = await self._user_departments(auth)
         role_ids = await self._user_role_ids(auth)
+        business_role = await self._user_role_key(auth)
+        admin = self._resolve_admin(auth, business_role)
         permissions = dict(
             await self._grants.resolve_permissions(
                 auth.tenant_id, auth.user_id, department_ids=department_ids, role_ids=role_ids
@@ -357,7 +360,8 @@ class PolicyService:
             is_admin=admin,
             granted_base_ids=granted,
             permissions=permissions,
-            permission_points=await self._resolve_points(auth),
+            permission_points=await self._resolve_points(auth, business_role),
+            business_role=business_role,
             expires_at=now + ttl,
         )
 
@@ -379,6 +383,25 @@ class PolicyService:
             return ()
         return tuple(link.department_id for link in links)
 
+    async def _user_role_key(self, auth: AuthContext) -> str:
+        """取业务库中的成员角色标识（权威源，D-13）。
+
+        Args:
+            auth: 鉴权上下文。
+
+        Returns:
+            str: 角色标识；业务库未登记或权限域不可用时为空串。
+        """
+        try:
+            from app.db.repositories.role_repo import get_role_store
+
+            return await get_role_store(self._settings).role_key_of_user(
+                auth.tenant_id, auth.user_id
+            )
+        except Exception:  # pragma: no cover - 权限域不可用时回落令牌角色
+            logger.debug("policy_role_key_unavailable", user_id=auth.user_id)
+            return ""
+
     async def _user_role_ids(self, auth: AuthContext) -> tuple[str, ...]:
         """取用户当前角色 ID（供角色级授权命中）。
 
@@ -399,34 +422,74 @@ class PolicyService:
             return ()
         return tuple(role_ids)
 
-    async def _resolve_points(self, auth: AuthContext) -> frozenset[str]:
-        """解析用户拥有的权限点（内置矩阵 ∪ 业务库角色授权）。
+    async def _resolve_points(self, auth: AuthContext, business_role: str = "") -> frozenset[str]:
+        """解析用户拥有的权限点。
 
-        **权威源是业务库**（D-13）：令牌角色只做兜底，`member_role` 里配置的
-        角色权限优先并入。改角色后由 `invalidate()` 精确失效，最迟 5s 全站生效。
+        **业务库是权威源（D-13），令牌角色只是兜底**——这一点决定了「减权」是否生效：
+
+        | 业务库有该成员角色 | 权限点来源 | 撤权效果 |
+        | --- | --- | --- |
+        | 有 | 业务库 `role_permission` ∪ 该角色键的内置矩阵 | **立即收紧**（降级生效） |
+        | 无 | 令牌角色矩阵（外部账号 / 未播种租户） | 只能靠令牌过期 |
+
+        早期实现取「令牌 ∪ 业务库」并集，导致降级后令牌角色仍撑着旧权限
+        （业务库只能加不能减），QA `test_b08_5b` 已按 D-13 判为缺陷。
+
+        Args:
+            auth: 鉴权上下文。
+            business_role: 业务库中的角色标识（空串表示未登记）。
+
+        Returns:
+            frozenset[str]: 权限点集合（未知角色不贡献任何权限，fail-closed）。
+        """
+        if WILDCARD_ROLE in normalized_roles(auth):
+            # 平台运维令牌：与令牌约定一致，不受租户内角色降级影响
+            return permissions_for_roles(auth.roles)
+        if business_role:
+            points = set(BUILTIN_ROLE_PERMISSIONS.get(business_role, frozenset()))
+            try:
+                from app.db.repositories.role_repo import get_role_store
+
+                points.update(
+                    await get_role_store(self._settings).permissions_of_user(
+                        auth.tenant_id, auth.user_id
+                    )
+                )
+            except Exception:  # pragma: no cover - 权限域不可用时按角色键矩阵判定
+                logger.debug("policy_role_store_unavailable", user_id=auth.user_id)
+            return frozenset(points)
+        return permissions_for_roles(auth.roles)
+
+    def _resolve_admin(self, auth: AuthContext, business_role: str) -> bool:
+        """判定是否组织管理员（业务库角色优先，令牌角色兜底）。
+
+        Args:
+            auth: 鉴权上下文。
+            business_role: 业务库中的角色标识（空串表示未登记）。
+
+        Returns:
+            bool: 管理员返回 True。
+        """
+        if WILDCARD_ROLE in normalized_roles(auth):
+            return True
+        if business_role:
+            return business_role in ORG_ADMIN_ROLES
+        return has_admin_role(auth)
+
+    # ------------------------------------------------------------------
+    # 权限点判定（B07 起 BL5/B08 ID* 的统一出口）
+    # ------------------------------------------------------------------
+    async def admin_of(self, auth: AuthContext) -> bool:
+        """判定是否组织管理员（业务库角色优先；管理视图等入口统一调用本方法）。
 
         Args:
             auth: 鉴权上下文。
 
         Returns:
-            frozenset[str]: 权限点集合（未知角色不贡献任何权限，fail-closed）。
+            bool: 管理员返回 True。
         """
-        points = set(permissions_for_roles(auth.roles))
-        try:
-            from app.db.repositories.role_repo import get_role_store
+        return (await self.snapshot(auth)).is_admin
 
-            points.update(
-                await get_role_store(self._settings).permissions_of_user(
-                    auth.tenant_id, auth.user_id
-                )
-            )
-        except Exception:  # pragma: no cover - 组织权限域未落地/不可用时按令牌角色判定
-            logger.debug("policy_role_store_unavailable", user_id=auth.user_id)
-        return frozenset(points)
-
-    # ------------------------------------------------------------------
-    # 权限点判定（B07 起 BL5/B08 ID* 的统一出口）
-    # ------------------------------------------------------------------
     async def has_point(self, auth: AuthContext, permission: str) -> bool:
         """判断是否拥有某个权限点（**fail-closed**：无角色即无权限）。
 
@@ -484,7 +547,8 @@ class PolicyService:
             return False
         if record.visibility == VISIBILITY_ORGANIZATION:
             return True
-        if has_admin_role(auth):
+        is_admin = snapshot.is_admin if snapshot is not None else has_admin_role(auth)
+        if is_admin:
             return True
         if record.owner_user_id and record.owner_user_id == auth.user_id:
             return True

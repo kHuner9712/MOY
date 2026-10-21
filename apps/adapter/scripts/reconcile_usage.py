@@ -211,6 +211,35 @@ async def record_mismatch(settings: Settings, report: ReconcileReport) -> None:
     )
 
 
+async def _run_once(
+    *, args: argparse.Namespace, settings: Settings, period: str
+) -> tuple[ReconcileReport, bool]:
+    """在同一事件循环内完成「对账 + 偏差超限写审计」。
+
+    两次 `asyncio.run` 会复用绑定了已关闭事件循环的数据库引擎单例，导致
+    `record_mismatch` 抛 `Event loop is closed`（被上层当成「脚本崩了」），
+    而退出码仍是 1 → 表面看「失败即告警」，实际审计里没有记录（QA `test_b07_5c`）。
+
+    Args:
+        args: 命令行参数（用到 `tenant` / `threshold`）。
+        settings: 配置实例。
+        period: 账期 `YYYY-MM`。
+
+    Returns:
+        tuple[ReconcileReport, bool]: 对账结果与**审计是否写入成功**。
+    """
+    report = await reconcile(
+        settings=settings,
+        tenant_id=args.tenant,
+        period=period,
+        threshold=args.threshold,
+    )
+    if report.passed:
+        return report, False
+    await record_mismatch(settings, report)
+    return report, True
+
+
 def render(report: ReconcileReport) -> str:
     """把对账结果渲染为可读文本。
 
@@ -269,14 +298,13 @@ def main(argv: list[str] | None = None) -> int:
 
     import asyncio
 
-    report = asyncio.run(
-        reconcile(
-            settings=settings,
-            tenant_id=args.tenant,
-            period=period,
-            threshold=args.threshold,
-        )
-    )
+    # **必须单事件循环**：`app.db.engine` 是进程级单例且绑定创建它的事件循环，
+    # 先 `asyncio.run(reconcile)` 再 `asyncio.run(record_mismatch)` 会在第二次运行
+    # 时拿到「Event loop is closed」的引擎 → 偏差超限时审计写不进去
+    # （QA `test_b07_5c` 实测：退出码 1 但 audit_log 无记录，等于告警丢失）。
+    report, audited = asyncio.run(_run_once(args=args, settings=settings, period=period))
+    if report is None:  # pragma: no cover - _run_once 恒返回报告
+        return 1
     if args.json:
         print(
             json.dumps(
@@ -300,8 +328,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if report.passed:
         return 0
-    asyncio.run(record_mismatch(settings, report))
-    print("[FAIL] 计量对账未通过（已写入操作记录 billing.reconcile_mismatch）")
+    if audited:
+        print("[FAIL] 计量对账未通过（已写入操作记录 billing.reconcile_mismatch）")
+    else:  # pragma: no cover - 审计写入失败时不得静默
+        print(
+            "[FAIL] 计量对账未通过，但操作记录写入失败；请在数据库可写后重跑，否则告警会丢失。",
+            file=sys.stderr,
+        )
     return 1
 
 
