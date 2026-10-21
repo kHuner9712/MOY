@@ -21,7 +21,7 @@ import { knowledgeApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
 import type { KnowledgeBase } from '@/lib/types';
 
-/** 索引状态展示映射（业务语言） */
+/** 文档处理进度展示映射（业务语言） */
 const INDEX_STATUS_TEXT: Record<string, { label: string; variant: 'success' | 'warning' | 'destructive' }> = {
   completed: { label: '可用', variant: 'success' },
   processing: { label: '处理中', variant: 'warning' },
@@ -97,7 +97,7 @@ export default function KnowledgePage(): React.JSX.Element {
     if (upload.errorMessage) {
       toast.error(upload.errorMessage);
     } else if (upload.documentId) {
-      toast.success('文档已上传，正在建立索引');
+      toast.success('文档已上传，正在处理内容');
     }
   };
 
@@ -149,7 +149,7 @@ export default function KnowledgePage(): React.JSX.Element {
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    正在建立索引，请稍候（{upload.progress}%）
+                    正在准备内容，请稍候（{upload.progress}%）
                   </p>
                 </>
               ) : (
