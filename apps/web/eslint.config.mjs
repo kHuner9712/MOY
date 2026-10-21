@@ -4,7 +4,15 @@ import nextVitals from "eslint-config-next/core-web-vitals";
 // eslint-config-next 16 原生导出扁平配置数组（Linter.Config[]），直接展开。
 const eslintConfig = [
   {
-    ignores: [".next/**", "node_modules/**", "next-env.d.ts", "tsconfig.tsbuildinfo"],
+    ignores: [
+      ".next/**",
+      // Windows 上 .next 临时目录无法删除时按约定改名保留，避免把构建产物当源码扫描
+      ".next-bak*/**",
+      "node_modules/**",
+      "next-env.d.ts",
+      "tsconfig.tsbuildinfo",
+      "build.log",
+    ],
   },
   ...nextVitals,
   {
