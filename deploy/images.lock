@@ -93,12 +93,14 @@ images:
   # 网络与监控
   # ---------------------------------------------------------------------
   # squid 为 GPL-2.0，按灰名单规则「仅可独立进程调用、不可引入核心代码」处理
-  - name: squidly/squid
-    tag: "5.2"
+  # 原引用 squidly/squid:5.2 —— 实测该仓库在 Docker Hub 不存在（连 latest 均 404），
+  # 已更换为 Canonical 官方维护的 ubuntu/squid（squid 5.2 / Ubuntu 22.04）
+  - name: ubuntu/squid
+    tag: "5.2-22.04_beta"
     license: GPL-2.0
     role: 出站代理（SSRF 防护）
     source: docker-hub
-    note: 灰名单，仅独立进程调用；如需收紧可替换为 ubuntu/squid
+    note: 灰名单，仅独立进程调用；标签已核验存在（HTTP 200）
 
   - name: prom/prometheus
     tag: "v2.54.0"

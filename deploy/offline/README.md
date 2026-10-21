@@ -32,7 +32,7 @@ deploy/offline/
 | etcd | `quay.io/coreos/etcd:v3.5.16` | Apache-2.0 |
 | 对象存储 | `minio/minio:RELEASE.2021-04-22T15-44-28Z` | Apache-2.0（AGPL 前版本线）⚠️ D-06 |
 | 身份底座 | `quay.io/keycloak/keycloak:25.0.6` | Apache-2.0 |
-| 代理 | `squidly/squid:5.2` | GPL-2.0 ⚠️ **灰名单** |
+| 代理 | `ubuntu/squid:5.2-22.04_beta` | GPL-2.0 ⚠️ **灰名单** |
 | 监控 | `prom/prometheus:v2.54.0`、`grafana/grafana:11.1.0` | Apache-2.0 |
 | 自研适配层 | `officeai/adapter:1.0.0` | 内部交付物 |
 | 自研前端 | `officeai/web:1.0.0` | 内部交付物 |
@@ -40,9 +40,9 @@ deploy/offline/
 ## ⚠️ 合规待决
 
 1. **D-06**：Valkey 与 MinIO 的最终方案需主理人与法务/合规确认。
-2. **squid 协议**：`squidly/squid` 为 GPL-2.0，按灰名单规则「仅可独立进程调用、
+2. **squid 协议**：`ubuntu/squid` 为 GPL-2.0，按灰名单规则「仅可独立进程调用、
    不可引入核心代码」处理。本项目仅以独立容器方式调用其进程，不引入任何代码。
-   若合规要求进一步收紧，可替换为 `ubuntu/squid` 或改用应用层出站控制。
+   若合规要求进一步收紧，可改用应用层出站控制替代代理方案。
    **建议主理人确认此项（可并入 D-06 一并决策）。**
 
 ## 阻塞项

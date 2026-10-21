@@ -216,7 +216,7 @@ services:
     logging: *default-logging
 
   ssrf_proxy:
-    image: squidly/squid:5.2
+    image: ubuntu/squid:5.2-22.04_beta
     container_name: oa-saas-ssrf-proxy
     restart: unless-stopped
     volumes:
