@@ -35,6 +35,7 @@ from app.api.v1 import (
     identity_ext,
     knowledge_ext,
     model,
+    ops,
     rag,
     tool,
     tools_ext,
@@ -257,6 +258,8 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     # BL10 支付回调：**唯一免鉴权业务端点**，不挂限流依赖（限流依赖需要鉴权上下文），
     # 安全性由验签 + 回调流水号唯一约束保证（见 middleware/error_handler.AUTH_EXEMPT_PATHS）
     api_router.include_router(billing.public_router, prefix=prefix)
+    # 阶段二运营后台（B10，OPS1-OPS8）：平台模式守卫在端点内做，不依赖路由级依赖
+    api_router.include_router(ops.router, prefix=prefix, dependencies=business_dependencies)
     # 健康检查不挂 API 版本前缀，路径固定为 /healthz 与 /readyz
     api_router.include_router(health_router)
     return api_router

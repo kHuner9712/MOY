@@ -156,8 +156,30 @@ def test_cli_returns_zero_with_allow_missing_phase2() -> None:
     assert validator.main(["--allow-missing-phase2", "--no-write-openapi"]) == 0
 
 
-def test_cli_returns_nonzero_in_strict_mode_now() -> None:
-    """严格模式在 B02 阶段必须非 0（新域 38 条未实现）。"""
+def test_cli_returns_zero_in_strict_mode_after_b10() -> None:
+    """B10 收尾后严格模式必须通过（新域 38 条已全部落地）。
+
+    历史：B02 阶段此用例断言「严格模式非 0」（当时 38 条新域端点尚未实现）。
+    B10 落地最后 8 条（OPS1-OPS8）后，严格模式从「预期失败」变为「必须通过」——
+    这正是该门禁的设计意图：放宽期结束，端点基线进入冻结状态。
+    缺失检测能力由 `test_cli_returns_nonzero_when_endpoint_missing` 用合成 schema 兜住。
+    """
+    assert validator.main(["--no-write-openapi"]) == 0
+
+
+def test_cli_returns_nonzero_when_endpoint_missing(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """严格模式下**少一条新域端点**必须非 0（防止门禁被改宽松后失去信号）。"""
+    schema = validator.build_schema()
+    paths = dict(schema["paths"])
+    victim = "/api/v1/ops/settings"
+    removed = {method: value for method, value in paths[victim].items() if method != "patch"}
+    if removed:
+        paths[victim] = removed
+    else:  # pragma: no cover - 端点被整体移除时才走到这里
+        paths.pop(victim)
+    monkeypatch.setattr(validator, "build_schema", lambda: {**schema, "paths": paths})
     assert validator.main(["--no-write-openapi"]) == 1
 
 

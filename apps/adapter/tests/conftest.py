@@ -46,6 +46,7 @@ from app.db.repositories.credential_repo import reset_credential_stores
 from app.db.repositories.document_repo import reset_document_store
 from app.db.repositories.grant_repo import reset_grant_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
+from app.db.repositories.ops_repo import reset_ops_store
 from app.db.repositories.segment_repo import reset_segment_store
 from app.db.repositories.tool_repo import reset_tool_store
 from app.db.repositories.usage_repo import reset_usage_store
@@ -182,7 +183,9 @@ def _reset_all() -> None:
     reset_publish_registry()
     reset_audit_recorder()
     reset_logging_for_test()
-    # 阶段二 B09：计费域的进程级单例
+    # 阶段二 B09/B10：计费与运营后台的进程级单例
+    # 注意顺序：运营存储持有计费存储的引用，必须先重置它，否则会继续指向旧实例
+    reset_ops_store()
     reset_billing_store()
     reset_plan_service()
     reset_subscription_service()

@@ -487,3 +487,99 @@ async def _read_body_digest(request: Request) -> str:
     except Exception:
         return ""
     return hash_request_body(body)
+
+
+# ===========================================================================
+# 运营后台（B10）：平台模式守卫
+#
+# 三道防线（缺一即越权，架构文档 §3.4 / §4.6）：
+#   1. 本函数：企业令牌一律 20003（**不返回 404**，避免探测运维接口是否存在）；
+#   2. 权限点：令牌角色必须能展开出 ops:* 权限点（fail-closed，未知角色不贡献权限）；
+#   3. 数据访问：跨租户查询只能走 `db/session.platform_scope()`（allow_platform=True）。
+# ===========================================================================
+
+#: 平台租户哨兵（运营令牌的租户声明；与 RLS 策略里的哨兵一致）
+OPS_TENANT_ID: Final[str] = "__platform__"
+
+#: 运营后台默认权限点
+OPS_CONSOLE_PERMISSION: Final[str] = "ops:console:access"
+
+#: 通配角色（平台运维令牌）
+OPS_WILDCARD_ROLE: Final[str] = "*"
+
+
+def is_platform_scope(auth: AuthContext, tenant_id: str = "") -> bool:
+    """判断当前令牌是否具备平台视角。
+
+    判定口径：生效租户（请求头/令牌声明收敛后的值）为 `__platform__`，
+    **或**令牌带通配角色 `*`（平台运维账号）。
+
+    Args:
+        auth: 鉴权上下文。
+        tenant_id: 收敛后的生效租户 ID（缺省用 `auth.tenant_id`）。
+
+    Returns:
+        bool: 具备平台视角返回 True。
+    """
+    effective = (tenant_id or auth.tenant_id or "").strip()
+    if effective == OPS_TENANT_ID:
+        return True
+    roles = {str(role).strip().lower() for role in auth.roles if str(role).strip()}
+    return OPS_WILDCARD_ROLE in roles
+
+
+async def require_ops_access(
+    request: Request,
+    context: RequestContext,
+    permission: str = OPS_CONSOLE_PERMISSION,
+) -> str:
+    """校验运营后台访问权（`/ops/**` 的统一入口）。
+
+    企业令牌调用任一 `/ops/**` → `20003`（**不返回 404**，避免探测）；
+    平台令牌还必须在权限点矩阵里拥有对应 `ops:*` 权限点。
+
+    运营角色来自**平台令牌**而非租户业务库（运营账号不是任何企业的成员，
+    D-13 的「业务库权威」只适用于租户内角色），因此这里直接按令牌角色展开
+    权限点，不做业务库查询——也避免在平台作用域下读租户表导致的空转。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        permission: 所需 `ops:*` 权限点。
+
+    Returns:
+        str: 平台租户哨兵（供 `platform_scope()` 使用）。
+
+    Raises:
+        ApiError: 非平台视角或权限点不足（20003）。
+    """
+    from app.business.policy_service import permissions_for_roles
+
+    del request  # 平台判定不依赖请求头之外的配置，保留参数以便未来接入白名单
+    if not is_platform_scope(context.auth, context.tenant_id):
+        logger.warning(
+            "ops_access_denied",
+            tenant_id=context.tenant_id,
+            user_id=context.user_id,
+            permission=permission,
+        )
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            internal_detail=(
+                f"ops endpoint requires platform scope, tenant_id={context.tenant_id} "
+                f"roles={context.auth.roles}"
+            ),
+        )
+    points = permissions_for_roles(context.auth.roles)
+    if permission not in points:
+        logger.warning(
+            "ops_permission_denied",
+            user_id=context.user_id,
+            permission=permission,
+            roles=context.auth.roles,
+        )
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            internal_detail=f"permission={permission} roles={context.auth.roles}",
+        )
+    return OPS_TENANT_ID

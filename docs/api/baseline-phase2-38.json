@@ -1,7 +1,7 @@
 {
   "version": 2,
   "frozen_target": 38,
-  "note": "B03 起逐步补齐至 38（KB1-8 / TL1 / ID1-11 / BL1-10 / OPS1-8）；只允许登记真实已实现端点，禁止为凑数写假端点。B04 追加 KB1/KB2/KB3（落点 apps/adapter/app/api/v1/knowledge_ext.py）；B05 追加 KB4/KB5/KB6/KB7（引用回链 + 成员授权，同上文件）；B06 追加 TL1（落点 apps/adapter/app/api/v1/tools_ext.py，办公工具调用记录）；B07 追加 BL5（落点 apps/adapter/app/api/v1/billing.py，用量明细与 M4 同源）；B08 追加 ID1-ID11（落点 apps/adapter/app/api/v1/identity_ext.py，组织架构与权限点）；B09 追加 BL1-BL4 + BL6-BL10（同上 billing.py，计费订阅与订单支付闭环，支付回调为唯一免鉴权业务端点）",
+  "note": "B03 起逐步补齐至 38（KB1-8 / TL1 / ID1-11 / BL1-10 / OPS1-8）；只允许登记真实已实现端点，禁止为凑数写假端点。B04 追加 KB1/KB2/KB3（落点 apps/adapter/app/api/v1/knowledge_ext.py）；B05 追加 KB4/KB5/KB6/KB7（引用回链 + 成员授权，同上文件）；B06 追加 TL1（落点 apps/adapter/app/api/v1/tools_ext.py，办公工具调用记录）；B07 追加 BL5（落点 apps/adapter/app/api/v1/billing.py，用量明细与 M4 同源）；B08 追加 ID1-ID11（落点 apps/adapter/app/api/v1/identity_ext.py，组织架构与权限点）；B09 追加 BL1-BL4 + BL6-BL10（同上 billing.py，计费订阅与订单支付闭环，支付回调为唯一免鉴权业务端点）；B10 追加 OPS1-OPS8（落点 apps/adapter/app/api/v1/ops.py，运营后台：企业/订单/统计/配置，企业令牌一律 403）",
   "endpoints": [
     {
       "method": "PUT",
@@ -122,6 +122,38 @@
     {
       "method": "GET",
       "path": "/api/v1/identity/audit-logs/actions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ops/tenants"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ops/tenants/{tenant_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/ops/tenants/{tenant_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ops/orders"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/ops/orders/{order_id}/confirm"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ops/metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ops/settings"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/ops/settings"
     }
   ],
   "registered_at": "2026-10-21"
