@@ -129,6 +129,24 @@ images:
 > **镜像层风险高于代码依赖层**：代码依赖违规会被 SCA 扫出来；**镜像标签拼错则 CI 全绿、部署才炸**。
 > 因此本门禁的优先级高于「包名也在清单内」的文档同步增强。
 
+**存在性校验的方法选型（实测结论，Sprint 1 实现依据）**
+
+| 方法 | 适用镜像源 | 实测结果 | 结论 |
+| --- | --- | --- | --- |
+| `git ls-remote --tags <github-repo>` | GitHub 源（minio/minio 等） | ✅ 可用，正确返回 2021-04 的 3 个真实标签，合成标签确认不存在 | **首选方法** |
+| Docker Hub Registry API（`/v2/<repo>/manifests/<tag>` + token） | Docker Hub 源（valkey/valkey、milvusdb/milvus 等） | ⚠️ **在部分企业网络环境下被策略阻断**（实测：连 `latest` 均返回 401，`hub.docker.com/v2` 与 `registry-1.docker.io/v2` 同此） | **必须做降级** |
+| `docker pull` | 全部 | ⚠️ 需 Docker daemon；CI agent 与开发机可能未运行 daemon | 兜底手段，非首选 |
+
+**实现要求**：
+
+1. **按镜像源分别选择方法**：GitHub 源镜像走 `git ls-remote`；Docker Hub 源镜像走 Registry API；
+2. **Registry API 必须有降级路径**：当 API 因网络策略不可用时（表现为**任意标签都返回 401**，
+   而非仅不存在的标签 404 —— 二者必须区分，否则会把"网络受限"误判为"标签不存在"），
+   **降级为「跳过在线存在性校验 + 依赖 `images.lock` 白名单 + 记录警告」**，不得直接判 FAIL；
+3. **网络受限与标签不存在的区分是硬要求**：404 = 标签不存在（**判 FAIL**）；401/超时/连接错误 = 环境受限（**降级放行 + 警告**）；
+   误判会导致 CI 在受限网络下全线飘红，门禁将被团队忽略，反而失去防护作用；
+4. **离线模式**（私有化断网流水线）：`images.lock` 中已核验条目视为通过。
+
 ### 2.5 Valkey 边缘命令差异的风险具体化
 
 初稿将「Valkey 边缘命令差异」列为泛化风险，经与 QA 复核后**具体化**为可落地检查项：
@@ -200,6 +218,7 @@ images:
 | --- | --- | --- | --- |
 | 1 | 本 ADR 的最终法务/合规签字（Valkey BSD-3 与 MinIO `RELEASE.2021-04-22T15-44-28Z` 版本线 Apache-2.0 的书面确认） | 主理人协调 | Sprint 1 启动前 |
 | 2 | MinIO `RELEASE.2021-04-22T15-44-28Z` 标签的**镜像可拉取性实测**（QA 报告 BLK-03） | QA | Sprint 1 |
+| 2a | ⏳ **标签存在性已由架构师实跑闭环**（2026-10-21）：`git ls-remote --tags` 返回该标签及 commit `7fc93cfb`，合成标签 `RELEASE.2021-04-22T23-11-00Z` 确认不存在；`docker compose config` 双文件 PASS。**剩余**：Docker daemon 拉取实测（本环境 daemon 未运行） | QA | Sprint 1 |
 | 3 | 若未来 MinIO 需要升级（安全补丁需求）与「锁版本线」原则的冲突裁决原则 | 架构师 | 按需 |
 | 4 | `deploy/images.lock` 落地与 CI 三道镜像门禁实现 | 工程师 | Sprint 1 |
 | 5 | CI 镜像存在性校验的**离线模式**（断网流水线用已核验条目放行） | 工程师 | Sprint 1（与私有化交付同步） |
