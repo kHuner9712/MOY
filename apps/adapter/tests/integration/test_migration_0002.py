@@ -1,4 +1,4 @@
-"""0002 迁移（支付回调幂等键对账）测试（阶段二 B09 安全加固 / QA P1-03）。
+"""0002 迁移（支付回调幂等索引「升级路径自检」）测试（阶段二 B09 chore）。
 
 三条路径都要真跑（`--run-pg` 启用）：
 
@@ -13,6 +13,10 @@
 第 2 条是本迁移的设计动因：已初始化库里 `payment_callback_log` 属主是 initdb 的
 超级用户，应用角色执行任何 `CREATE INDEX` 都会 `InsufficientPrivilegeError`；
 因此 0002 是「只读对账 + 失败即响」，不做 DDL（详见迁移文件头注释）。
+
+⚠️ 本迁移**不是缺陷修复**：索引在基线里随建表创建，SaaS 与私有化两条 initdb
+编排都挂了基线，因此首建库一定已有该索引。它只覆盖「存量库/私有化现场被人工
+改过」的升级路径。
 """
 
 from __future__ import annotations
@@ -38,7 +42,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.pg]
 SCRATCH_DB_PREFIX = "oa_qa_m0002"
 
 #: 迁移版本号
-VERSION = "0002_billing_callback_unique"
+VERSION = "0002_callback_idempotency_selfcheck"
 
 #: 迁移脚本路径（`deploy/migrations/`）
 MIGRATION_PATH = resolve_sql_dir() / "migrations" / f"{VERSION}.sql"
@@ -128,11 +132,13 @@ async def test_0002_is_privilege_safe_on_initialized_database(b01_app_dsn: str) 
     """
     database = AsyncpgMigrationDatabase(to_raw_dsn(b01_app_dsn))
     try:
-        plan = await apply_migrations(database)
+        # 本用例只关心「应用角色能否通过」：不得抛 InsufficientPrivilegeError。
+        # 是否 pending 取决于该库此前是否已应用过（空转/首次应用都合法），
+        # 幂等性由 test_0002_on_fresh_database 的「第二遍 pending == []」严格覆盖。
+        await apply_migrations(database)
     finally:
         await database.close()
 
-    assert plan.pending == [], "已初始化库上 0002 应已是空转（首轮已应用）"
     index_def = await _index_def(b01_app_dsn)
     assert index_def is not None
     assert index_def.startswith("CREATE UNIQUE INDEX")
