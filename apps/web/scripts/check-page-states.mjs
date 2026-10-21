@@ -34,7 +34,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(HERE, '..');
 const SRC_ROOT = join(WEB_ROOT, 'src');
 
-/** 受门禁约束的 10 个业务页面（路由 → 源码路径，均相对 src/app） */
+/**
+ * 受门禁约束的业务页面（路由 → 源码路径，均相对 src/app）。
+ *
+ * 覆盖：主应用 9 页 + 运营后台 5 页。
+ * 运营页必须一起进清单——运营同学同样不能遇到白屏，而且运营页更容易因为
+ * 「只有内部人用」而被忽略三态。
+ */
 export const PAGES = [
   { route: '/chat', file: '(main)/chat/page.tsx' },
   { route: '/knowledge', file: '(main)/knowledge/page.tsx' },
@@ -46,6 +52,10 @@ export const PAGES = [
   { route: '/profile', file: '(main)/profile/page.tsx' },
   { route: '/billing', file: '(main)/billing/page.tsx' },
   { route: '/ops/tenants', file: '(main)/ops/tenants/page.tsx' },
+  { route: '/ops/tenants/[tenantId]', file: '(main)/ops/tenants/[tenantId]/page.tsx' },
+  { route: '/ops/orders', file: '(main)/ops/orders/page.tsx' },
+  { route: '/ops/metrics', file: '(main)/ops/metrics/page.tsx' },
+  { route: '/ops/settings', file: '(main)/ops/settings/page.tsx' },
 ];
 
 /** 装载态可接受的符号（含表格/骨架别名） */

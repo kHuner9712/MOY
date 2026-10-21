@@ -586,7 +586,7 @@ function selfTest() {
 
 const BUILT_APP_ROOT = resolve(WEB_ROOT, '.next/server/app');
 
-/** 受检的 10 个业务路由（与 check-page-states.mjs 保持一致） */
+/** 受检的业务路由（与 check-page-states.mjs 的页面清单保持一致，含运营后台） */
 const BUILT_ROUTES = [
   'chat',
   'knowledge',
@@ -598,6 +598,10 @@ const BUILT_ROUTES = [
   'profile',
   'billing',
   'ops/tenants',
+  'ops/tenants/[tenantId]',
+  'ops/orders',
+  'ops/metrics',
+  'ops/settings',
 ];
 
 /**
