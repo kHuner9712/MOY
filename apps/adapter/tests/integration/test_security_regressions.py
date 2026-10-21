@@ -24,7 +24,9 @@ from jose import jwt
 from app.core.config import Settings
 from app.core.errors import ErrorCode
 
-pytestmark = pytest.mark.integration
+# P0 红线用例（G-24，测试方案 §7.1）：SEC-01~07 / P0 判据① —— 红线用例：OIDC/租户锁定/限流/幂等 body
+# 映射与实跑见 docs/qa-phase2-w2-r2-report.md §3.1
+pytestmark = [pytest.mark.integration, pytest.mark.p0]
 
 #: 测试用 OIDC 密钥
 OIDC_SECRET = "oidc-mode-correct-secret"

@@ -159,6 +159,7 @@ markers = [
     "unit: 单元测试",
     "integration: 契约/集成测试",
     "contract: 接口契约测试",
+    "p0: P0 红线用例（测试方案 §7.1，G-24 门禁）",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:httpx.*",

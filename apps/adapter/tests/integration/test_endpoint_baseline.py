@@ -18,7 +18,9 @@ from typing import Any
 
 import pytest
 
-pytestmark = pytest.mark.integration
+# P0 红线用例（G-24，测试方案 §7.1）：P0 判据⑤ —— 既有 30 端点契约被破坏
+# 映射与实跑见 docs/qa-phase2-w2-r2-report.md §3.1
+pytestmark = [pytest.mark.integration, pytest.mark.p0]
 
 #: 仓库根目录（apps/adapter/tests/integration → parents[4]）
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]

@@ -39,7 +39,9 @@ from app.db.repositories.org_repo import MemberLink, get_org_store, reset_org_st
 from app.db.repositories.role_repo import reset_role_store
 from tests.conftest import make_token
 
-pytestmark = pytest.mark.integration
+# P0 红线用例（G-24，测试方案 §7.1）：P2-KB-03 / P0 判据③ —— 无权限账号通过详情/检索入口拿到数据
+# 映射与实跑见 docs/qa-phase2-w2-r2-report.md §3.1
+pytestmark = [pytest.mark.integration, pytest.mark.p0]
 
 #: 生效租户（私有化模式下请求头/令牌里的租户会被收敛为 `default`）
 TENANT: Final[str] = "default"

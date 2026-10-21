@@ -34,7 +34,9 @@ from app.db.repositories.usage_repo import (
     reset_usage_store,
 )
 
-pytestmark = pytest.mark.unit
+# P0 红线用例（G-24，测试方案 §7.1）：P2-BL-03 / P0 判据④ —— 按成员求和 ≠ 企业总量
+# 映射与实跑见 docs/qa-phase2-w2-r2-report.md §3.1
+pytestmark = [pytest.mark.unit, pytest.mark.p0]
 
 TENANT = "tnt_usage"
 USER = "usr_alice"

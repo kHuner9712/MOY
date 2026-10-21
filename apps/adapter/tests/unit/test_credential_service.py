@@ -38,7 +38,9 @@ from app.db.repositories.credential_repo import (
 from app.schemas.rag import ChunkPolicy, SearchRequest
 from app.services.rag_service import RagService
 
-pytestmark = pytest.mark.unit
+# P0 红线用例（G-24，测试方案 §7.1）：P2-KB-05 / P0 判据② —— 已绑定凭证回落全局
+# 映射与实跑见 docs/qa-phase2-w2-r2-report.md §3.1
+pytestmark = [pytest.mark.unit, pytest.mark.p0]
 
 _TENANT = "tnt_cred_tenant"
 _BASE_ID = "kb_01K4Q8Z2X7M9B3N5P6R8T0V2W4"

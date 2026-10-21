@@ -40,7 +40,9 @@ from tests.integration.pg_fixture import (
 # 夹具由独立文件提供：避免与 B04 批次的 conftest 改动互相踩踏
 pytest_plugins = ["tests.integration.pg_fixture"]
 
-pytestmark = [pytest.mark.integration, pytest.mark.pg]
+# P0 红线用例（G-24，测试方案 §7.1）：P0 判据⑦ —— 迁移不可重复
+# 映射与实跑见 docs/qa-phase2-w2-r2-report.md §3.1
+pytestmark = [pytest.mark.integration, pytest.mark.pg, pytest.mark.p0]
 
 #: 空库名前缀（每个用例独立，避免互相踩）
 SCRATCH_DB_PREFIX = "oa_qa_g11"
