@@ -12,7 +12,9 @@
     "typecheck": "tsc --noEmit",
     "scan:banned": "node scripts/check-banned-terms.mjs",
     "scan:words": "node scripts/check-banned-terms.mjs --check-words",
-    "scan:self-test": "node scripts/check-banned-terms.mjs --self-test"
+    "scan:self-test": "node scripts/check-banned-terms.mjs --self-test",
+    "scan:placeholders": "node scripts/check-no-placeholders.mjs",
+    "scan:placeholders-self-test": "node scripts/check-no-placeholders.mjs --self-test"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

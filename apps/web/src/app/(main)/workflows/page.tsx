@@ -1,123 +1,118 @@
 'use client';
 
-import type React from "react";
+import * as React from 'react';
 
-import { useCallback, useEffect, useState } from 'react';
-
-import { Badge } from '@/components/ui/badge';
+import { StatusBadge } from '@/components/common/status-badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/feedback';
+import { useApiQuery } from '@/hooks/use-api';
 import { agentApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
-import type { AgentTask, TaskStep } from '@/lib/types';
+import { formatDateTime, orPlaceholder } from '@/lib/format';
+import type { TaskItem } from '@/lib/types';
 
-/** 任务状态展示映射（业务语言） */
-const TASK_STATUS_TEXT: Record<string, { label: string; variant: 'success' | 'warning' | 'destructive' | 'secondary' }> = {
-  pending: { label: '排队中', variant: 'secondary' },
-  running: { label: '执行中', variant: 'warning' },
-  completed: { label: '已完成', variant: 'success' },
-  failed: { label: '未完成', variant: 'destructive' },
-  cancelled: { label: '已取消', variant: 'secondary' },
-};
+/** 任务列表查询键（工作流域，B13/B14 统一用域名作第一段） */
+const TASKS_KEY = ['workflows', 'tasks'] as const;
 
 /**
- * 工作流可视化页（S3 阶段实现完整节点视图）。
+ * 工作流页（任务进度与执行步骤）。
  *
- * 本期展示任务列表与步骤进度，数据来源为 A2/A4 标准接口。
+ * 数据来源：A2 任务列表 + A4 步骤详情；两段数据各有独立三态，
+ * 任一段失败都能就地重试，不会把整页拖成空白。
  *
- * @returns 工作流页面元素
+ * @returns 工作流页元素
  */
 export default function WorkflowsPage(): React.JSX.Element {
-  const [tasks, setTasks] = useState<AgentTask[]>([]);
-  const [selectedTaskId, setSelectedTaskId] = useState('');
-  const [steps, setSteps] = useState<TaskStep[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState('');
+  const [selectedTaskId, setSelectedTaskId] = React.useState<string>('');
 
-  const load = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    setErrorMessage('');
-    try {
-      const page = await agentApi.listTasks({ page: 1, page_size: 20 });
-      setTasks(page.items);
-      if (page.items.length > 0) {
-        setSelectedTaskId((prev) => prev || (page.items[0]?.task_id ?? ''));
-      }
-    } catch (error) {
-      setErrorMessage(toBusinessMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const tasksQuery = useApiQuery(TASKS_KEY, () => agentApi.listTasks({ page: 1, page_size: 20 }));
+  const tasks = React.useMemo<TaskItem[]>(() => tasksQuery.data?.items ?? [], [tasksQuery.data]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // 默认选中第一个任务（不覆盖用户选择）
+  React.useEffect(() => {
+    if (selectedTaskId || tasks.length === 0) return;
+    const first = tasks[0];
+    if (first) setSelectedTaskId(first.task_id);
+  }, [selectedTaskId, tasks]);
 
-  useEffect(() => {
-    if (!selectedTaskId) {
-      setSteps([]);
-      return;
-    }
-    void (async () => {
-      try {
-        const detail = await agentApi.listSteps(selectedTaskId);
-        setSteps(detail.steps);
-      } catch {
-        setSteps([]);
-      }
-    })();
-  }, [selectedTaskId]);
+  const stepsQuery = useApiQuery(
+    ['workflows', 'tasks', selectedTaskId, 'steps'],
+    () => agentApi.listSteps(selectedTaskId),
+    { enabled: Boolean(selectedTaskId) },
+  );
+
+  const steps = stepsQuery.data?.steps ?? [];
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
-        <h2 className="text-lg font-semibold">任务进度</h2>
+        <h2 className="text-lg font-semibold">工作流</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          查看长任务的执行步骤与结果，随时可以查看详情或重试
+          查看长任务的执行步骤与结果，可随时中断或重新发起
         </p>
       </div>
 
-      {loading ? (
-        <LoadingState />
-      ) : errorMessage ? (
-        <ErrorState message={errorMessage} onRetry={() => void load()} />
+      {tasksQuery.isLoading ? (
+        <LoadingState label="正在加载任务…" />
+      ) : tasksQuery.error ? (
+        <ErrorState
+          message={toBusinessMessage(tasksQuery.error)}
+          onRetry={() => void tasksQuery.refetch()}
+        />
       ) : tasks.length === 0 ? (
         <EmptyState
-          title="暂无任务"
-          description="在对话中发起一个复杂任务后，进度会显示在这里"
+          title="还没有任务"
+          description="在对话中发起一个需要多步完成的任务后，执行进度会显示在这里"
         />
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>任务列表</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle>任务列表</CardTitle>
+                <Button variant="ghost" size="sm" onClick={() => void tasksQuery.refetch()}>
+                  刷新
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <ul className="divide-y">
-                {tasks.map((task) => {
-                  const status = TASK_STATUS_TEXT[task.status] ?? TASK_STATUS_TEXT.pending;
-                  return (
-                    <li
-                      key={task.task_id}
+                {tasks.map((task) => (
+                  <li key={task.task_id}>
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setSelectedTaskId(task.task_id)}
-                      className={`cursor-pointer py-3 ${
-                        task.task_id === selectedTaskId ? 'text-primary' : ''
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedTaskId(task.task_id);
+                        }
+                      }}
+                      aria-current={task.task_id === selectedTaskId ? 'true' : undefined}
+                      className={`w-full cursor-pointer py-3 text-left transition-colors ${
+                        task.task_id === selectedTaskId ? 'text-primary' : 'hover:text-foreground'
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">{task.goal}</span>
-                        <Badge variant={status?.variant ?? 'secondary'}>{status?.label}</Badge>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-medium">
+                          {orPlaceholder(task.goal, '未命名任务')}
+                        </span>
+                        <StatusBadge status={task.status} />
                       </div>
                       <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
                         <div
-                          className="h-full bg-primary transition-all"
+                          className="h-full rounded-full bg-primary transition-all"
                           style={{ width: `${task.progress}%` }}
                         />
                       </div>
-                    </li>
-                  );
-                })}
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        更新于 {formatDateTime(task.updated_at)}
+                      </p>
+                    </div>
+                  </li>
+                ))}
               </ul>
             </CardContent>
           </Card>
@@ -127,20 +122,41 @@ export default function WorkflowsPage(): React.JSX.Element {
               <CardTitle>执行步骤</CardTitle>
             </CardHeader>
             <CardContent>
-              {steps.length === 0 ? (
-                <EmptyState title="暂无步骤信息" description="任务开始执行后会展示详细步骤" />
+              {!selectedTaskId ? (
+                <EmptyState
+                  title="请选择一个任务"
+                  description="左侧点选任务即可查看每一步的执行情况"
+                />
+              ) : stepsQuery.isLoading ? (
+                <LoadingState label="正在加载步骤…" />
+              ) : stepsQuery.error ? (
+                <ErrorState
+                  message={toBusinessMessage(stepsQuery.error)}
+                  onRetry={() => void stepsQuery.refetch()}
+                />
+              ) : steps.length === 0 ? (
+                <EmptyState
+                  title="暂无步骤信息"
+                  description="任务开始执行后会按步骤展示进度，若长时间为空可刷新任务列表"
+                />
               ) : (
                 <ol className="space-y-3">
                   {steps.map((step) => (
                     <li key={step.step_id} className="flex gap-3">
-                      <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">{step.title}</p>
-                        {step.output_summary ? (
-                          <p className="mt-0.5 text-sm text-muted-foreground">
-                            {step.output_summary}
+                      <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="truncate text-sm font-medium">
+                            {step.sequence}. {step.title}
                           </p>
+                          <StatusBadge status={step.status} />
+                        </div>
+                        {step.output_summary ? (
+                          <p className="text-sm text-muted-foreground">{step.output_summary}</p>
                         ) : null}
+                        <p className="text-xs text-muted-foreground">
+                          {formatDateTime(step.finished_at ?? step.started_at ?? '')}
+                        </p>
                       </div>
                     </li>
                   ))}

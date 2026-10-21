@@ -92,6 +92,14 @@ export interface Citation {
   document_name: string;
   segment_content: string;
   score: number;
+  /** 所属知识库 ID（阶段二加性字段，用于回链） */
+  base_id?: string;
+  /** 所属知识库名称 */
+  base_name?: string;
+  /** 片段稳定标识（阶段二加性字段，KB4 回链必填） */
+  segment_id?: string;
+  /** 原文位置（页码 / 段落），无页码信息时两项为 null */
+  position?: { page: number | null; paragraph: number | null } | null;
 }
 
 /** 对话消息（前端本地状态） */
@@ -338,6 +346,28 @@ export interface VerifyResult {
   user_id: string;
   tenant_id: string;
   roles: string[];
+}
+
+/** 操作记录条目（U6，阶段二加性字段） */
+export interface AuditLogItem {
+  log_id: string;
+  /** 操作动作编码 */
+  action: string;
+  /** 操作动作的用户可见名称 */
+  action_display_name?: string;
+  /** 操作人展示名 */
+  actor_name?: string;
+  /** 操作人在该企业的角色 */
+  actor_role?: string;
+  /** 资源类型（知识库/文档/成员/订单…） */
+  resource_type?: string;
+  /** 结果：成功 / 失败 */
+  result?: 'success' | 'failed';
+  /** 变更摘要（业务语言） */
+  change_summary?: string;
+  /** 脱敏来源地址 */
+  ip_masked?: string;
+  created_at: string;
 }
 
 // ---------------------------------------------------------------------------

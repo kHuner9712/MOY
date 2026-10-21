@@ -1,62 +1,50 @@
 'use client';
 
-import type React from "react";
-
-import { useCallback, useEffect, useState } from 'react';
+import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { ErrorState, LoadingState } from '@/components/ui/feedback';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { EmptyState, ErrorState, LoadingState } from '@/components/ui/feedback';
+import { QuotaProgress } from '@/components/ui/progress';
+import { toast } from '@/components/ui/toast';
+import { QUERY_KEYS, useApiQuery } from '@/hooks/use-api';
 import { useSession } from '@/hooks/use-session';
 import { modelApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
+import { formatNumber, formatUnits, orPlaceholder } from '@/lib/format';
 
 /** 套餐名称展示映射（业务语言，不暴露内部标识） */
-const PLAN_LABELS: Record<string, string> = {
+const PLAN_LABELS: Readonly<Record<string, string>> = {
   free: '免费版',
   professional: '专业版',
   enterprise: '企业版',
 };
 
-/** 个人中心页：账户信息 + 套餐与用量。 */
+/** 组织角色展示映射 */
+const ROLE_LABELS: Readonly<Record<string, string>> = {
+  owner: '所有者',
+  org_admin: '企业管理员',
+  member: '成员',
+  guest: '访客',
+};
+
+/**
+ * 个人中心页（P-08 深化）。
+ *
+ * 只展示「我是谁、我在哪个企业、我这个月用了多少」，
+ * 不展示任何内部计费细节与技术口径；两段数据（会话资料 / 用量）各自独立三态。
+ *
+ * @returns 个人中心页元素
+ */
 export default function ProfilePage(): React.JSX.Element {
   const session = useSession();
-  const [usage, setUsage] = useState<{
-    period: string;
-    conversation_count: number;
-    document_qa_count: number;
-    quota: {
-      plan_name: string;
-      total_units: number;
-      used_units: number;
-      remaining_units: number;
-    };
-  } | null>(null);
-  const [usageError, setUsageError] = useState('');
-
-  /** 加载用量统计（业务化口径：次数/额度，不展示 token 精确值） */
-  const loadUsage = useCallback(async (): Promise<void> => {
-    setUsageError('');
-    try {
-      setUsage(await modelApi.usage('month'));
-    } catch (error) {
-      setUsageError(toBusinessMessage(error));
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadUsage();
-  }, [loadUsage]);
+  const usageQuery = useApiQuery(QUERY_KEYS.myUsage('month'), () => modelApi.usage('month'), {
+    enabled: Boolean(session.user),
+  });
 
   if (session.loading) {
-    return <LoadingState />;
+    return <LoadingState label="正在加载账户信息…" />;
   }
 
   if (session.errorMessage && !session.user) {
@@ -64,58 +52,79 @@ export default function ProfilePage(): React.JSX.Element {
   }
 
   const user = session.user;
+  if (!user) {
+    return (
+      <EmptyState
+        title="还没有登录"
+        description="登录后可查看账户信息与本月用量"
+        action={
+          <Button type="button" onClick={() => void session.reload()}>
+            重新加载
+          </Button>
+        }
+      />
+    );
+  }
+
+  const usage = usageQuery.data;
   const quota = usage?.quota;
-  const usedPercent =
-    quota && quota.total_units > 0
-      ? Math.min(Math.round((quota.used_units / quota.total_units) * 100), 100)
-      : 0;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>账户信息</CardTitle>
-          <CardDescription>你当前使用的团队与角色</CardDescription>
+          <CardDescription>你当前所在的企业与角色</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <dl className="grid gap-3 sm:grid-cols-2">
             <div>
               <dt className="text-xs text-muted-foreground">姓名</dt>
-              <dd className="text-sm font-medium">{user?.display_name || '—'}</dd>
+              <dd className="text-sm font-medium">{orPlaceholder(user.display_name)}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">邮箱</dt>
-              <dd className="text-sm font-medium">{user?.email || '—'}</dd>
+              <dd className="text-sm font-medium">{orPlaceholder(user.email)}</dd>
             </div>
             <div>
-              <dt className="text-xs text-muted-foreground">所属团队</dt>
-              <dd className="text-sm font-medium">{user?.tenant.name || '—'}</dd>
+              <dt className="text-xs text-muted-foreground">所属企业</dt>
+              <dd className="text-sm font-medium">{orPlaceholder(user.tenant.name)}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">套餐</dt>
-              <dd className="text-sm font-medium">
+              <dd>
                 <Badge variant="secondary">
-                  {PLAN_LABELS[user?.tenant.plan ?? ''] ?? '—'}
+                  {PLAN_LABELS[user.tenant.plan] ?? orPlaceholder(user.tenant.plan)}
                 </Badge>
               </dd>
             </div>
           </dl>
 
-          {user && user.organizations.length > 0 ? (
+          {user.organizations.length > 0 ? (
             <div>
               <p className="mb-2 text-xs text-muted-foreground">我加入的组织</p>
-              <ul className="space-y-1">
+              <ul className="divide-y">
                 {user.organizations.map((org) => (
-                  <li key={org.org_id} className="flex items-center justify-between text-sm">
+                  <li key={org.org_id} className="flex items-center justify-between py-2 text-sm">
                     <span>{org.name}</span>
-                    <Badge variant="outline">{org.role}</Badge>
+                    <Badge variant="outline">{ROLE_LABELS[org.role] ?? org.role}</Badge>
                   </li>
                 ))}
               </ul>
             </div>
-          ) : null}
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              还没有加入任何组织；联系企业管理员邀请后即可协作。
+            </p>
+          )}
 
-          <Button variant="outline" onClick={session.logout}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              session.logout();
+              toast.success('已退出登录');
+            }}
+          >
             退出登录
           </Button>
         </CardContent>
@@ -123,48 +132,63 @@ export default function ProfilePage(): React.JSX.Element {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <CardTitle>本月用量</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => void loadUsage()}>
-              刷新
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={usageQuery.isFetching}
+              onClick={() => void usageQuery.refetch()}
+            >
+              {usageQuery.isFetching ? '刷新中…' : '刷新'}
             </Button>
           </div>
-          <CardDescription>仅展示次数与额度，不展示内部计费细节</CardDescription>
+          <CardDescription>只展示次数与额度，口径与「套餐与账单」一致</CardDescription>
         </CardHeader>
         <CardContent>
-          {usageError ? (
-            <ErrorState message={usageError} onRetry={() => void loadUsage()} />
+          {usageQuery.isLoading ? (
+            <LoadingState label="正在加载用量…" />
+          ) : usageQuery.error ? (
+            <ErrorState
+              message={toBusinessMessage(usageQuery.error)}
+              onRetry={() => void usageQuery.refetch()}
+            />
           ) : usage ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">对话次数</p>
-                  <p className="text-2xl font-semibold">{usage.conversation_count}</p>
+                  <p className="text-2xl font-semibold tabular-nums">
+                    {formatNumber(usage.conversation_count)}
+                  </p>
                 </div>
                 <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">文档问答次数</p>
-                  <p className="text-2xl font-semibold">{usage.document_qa_count}</p>
+                  <p className="text-2xl font-semibold tabular-nums">
+                    {formatNumber(usage.document_qa_count)}
+                  </p>
                 </div>
               </div>
+
               {quota && quota.total_units > 0 ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">
-                      {quota.plan_name || PLAN_LABELS[user?.tenant.plan ?? ''] || '当前套餐'}额度
-                    </span>
-                    <span>{usedPercent}%</span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-full bg-primary transition-all"
-                      style={{ width: `${usedPercent}%` }}
-                    />
-                  </div>
-                </div>
-              ) : null}
+                <QuotaProgress
+                  used={quota.used_units}
+                  total={quota.total_units}
+                  unit="字"
+                  label={`${orPlaceholder(quota.plan_name, PLAN_LABELS[user.tenant.plan] ?? '当前套餐')}额度`}
+                  hint={`剩余 ${formatUnits(quota.remaining_units)}，可在「套餐与账单」中升级`}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  当前套餐未设置额度上限，可放心使用。
+                </p>
+              )}
             </div>
           ) : (
-            <LoadingState />
+            <EmptyState
+              title="还没有用量记录"
+              description="发起一次对话或文档问答后，这里会显示本月用量"
+            />
           )}
         </CardContent>
       </Card>

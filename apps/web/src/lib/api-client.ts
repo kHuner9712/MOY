@@ -18,6 +18,7 @@
 
 import type {
   ActionGroup,
+  AuditLogItem,
   BatchMemberRequest,
   BatchMemberResult,
   BillingInvoiceItem,
@@ -26,6 +27,7 @@ import type {
   BillingUsageDetail,
   ChangeSubscriptionRequest,
   ChangeSubscriptionResult,
+  ChunkPolicy,
   CreateDepartmentRequest,
   CreateDepartmentResult,
   CreateGrantRequest,
@@ -77,6 +79,7 @@ import type {
   UpdateSeatsResult,
   UsageGroupBy,
   VerifyResult,
+  Visibility,
 } from '@/lib/types';
 
 
@@ -397,7 +400,16 @@ export const modelApi = {
     handlers: {
       onStart?: (data: { generation_id: string }) => void;
       onDelta?: (data: { text: string }) => void;
-      onCitation?: (data: { document_name: string; segment_content: string }) => void;
+      onCitation?: (data: {
+        document_name: string;
+        segment_content: string;
+        /** 阶段二加性字段（引用回链用） */
+        document_id?: string;
+        base_id?: string;
+        base_name?: string;
+        segment_id?: string;
+        position?: { page: number | null; paragraph: number | null } | null;
+      }) => void;
       onDone?: (data: {
         finish_reason: string;
         usage: { prompt_units: number; completion_units: number; total_units: number };
@@ -514,10 +526,16 @@ export type KnowledgeBaseItem = KnowledgeBaseDetail;
 
 /** RAG 服务接口 */
 export const knowledgeApi = {
-  /** R1 创建知识库 */
-  createBase(body: { name: string; description?: string; visibility?: 'organization' | 'private' }): Promise<{
+  /** R1 创建知识库（阶段二加性字段：`chunk_policy`、`visibility=restricted`） */
+  createBase(body: {
+    name: string;
+    description?: string;
+    visibility?: Visibility;
+    chunk_policy?: ChunkPolicy;
+  }): Promise<{
     base_id: string;
     name: string;
+    chunk_policy?: ChunkPolicy;
     created_at: string;
   }> {
     return request('POST', '/knowledge/bases', { body });
@@ -768,16 +786,19 @@ export const identityApi = {
     return request('POST', `/identity/organizations/${orgId}/roles`, { body });
   },
 
-  /** U6 审计日志查询 */
+  /** U6 操作记录查询（阶段二加性 query：关键字/动作分组/资源类型/结果/时间范围） */
   auditLogs(body: {
     page?: number;
     page_size?: number;
     actor_id?: string;
+    actor_keyword?: string;
     action?: string;
+    action_group?: string;
     resource_type?: string;
+    result?: 'success' | 'failed';
     start_at?: string;
     end_at?: string;
-  }): Promise<PageResult<Record<string, unknown>>> {
+  }): Promise<PageResult<AuditLogItem>> {
     return request('POST', '/identity/audit-logs', { body });
   },
 };

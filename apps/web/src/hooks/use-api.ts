@@ -78,12 +78,79 @@ export const QUERY_KEYS = {
   ],
   /** 知识库授权清单 */
   knowledgeGrants: (baseId: string, page: number): ApiQueryKey => ['kb', baseId, 'grants', page],
+  /** 引用片段详情（KB4 回链） */
+  segment: (baseId: string, documentId: string, segmentId: string): ApiQueryKey => [
+    'kb',
+    baseId,
+    'documents',
+    documentId,
+    'segments',
+    segmentId,
+  ],
   /** 部门层级树 */
   departments: (orgId: string): ApiQueryKey => ['identity', 'departments', orgId],
   /** 权限点目录 */
   permissions: (): ApiQueryKey => ['identity', 'permissions'],
   /** 角色列表 */
   roles: (orgId: string): ApiQueryKey => ['identity', 'roles', orgId],
+  /** 组织成员列表（U3） */
+  members: (orgId: string, params: Record<string, unknown> = {}): ApiQueryKey => [
+    'identity',
+    'members',
+    orgId,
+    params,
+  ],
+  /** 操作动作目录（ID11） */
+  auditActions: (): ApiQueryKey => ['identity', 'audit-actions'],
+  /** 操作记录查询（U6）；键含查询条件，改筛选即换缓存条目 */
+  auditLogs: (body: Record<string, unknown> = {}): ApiQueryKey => ['identity', 'audit-logs', body],
+
+  // ------------------------------------------------------------------ 工具
+  /** 工具注册表（T1） */
+  tools: (): ApiQueryKey => ['tools', 'registry'],
+  /** 工具调用记录（TL1） */
+  toolExecutions: (params: Record<string, unknown> = {}): ApiQueryKey => [
+    'tools',
+    'executions',
+    params,
+  ],
+
+  // ------------------------------------------------------------------ 计费
+  /** 套餐目录 */
+  plans: (): ApiQueryKey => ['billing', 'plans'],
+  /** 当前订阅（含免费版合成视图） */
+  subscription: (): ApiQueryKey => ['billing', 'subscription'],
+  /** 用量明细（账期 + 分组维度） */
+  billingUsage: (period: string, groupBy: string = 'self'): ApiQueryKey => [
+    'billing',
+    'usage',
+    period,
+    groupBy,
+  ],
+  /** 订单列表（含状态与分页） */
+  billingOrders: (params: Record<string, unknown> = {}): ApiQueryKey => [
+    'billing',
+    'orders',
+    params,
+  ],
+  /** 账单列表 */
+  invoices: (period: string = ''): ApiQueryKey => ['billing', 'invoices', period],
+  /** 个人本月用量（M4，业务化口径） */
+  myUsage: (period: string): ApiQueryKey => ['billing', 'my-usage', period],
+
+  // ------------------------------------------------------------------ 运营
+  /** 运营访问探测（企业账号进入运营页会拿到 20003） */
+  opsAccess: (): ApiQueryKey => ['ops', 'access'],
+  /** 运营-企业列表 */
+  opsTenants: (params: Record<string, unknown> = {}): ApiQueryKey => ['ops', 'tenants', params],
+  /** 运营-企业详情 */
+  opsTenant: (tenantId: string): ApiQueryKey => ['ops', 'tenants', tenantId],
+  /** 运营-订单列表 */
+  opsOrders: (params: Record<string, unknown> = {}): ApiQueryKey => ['ops', 'orders', params],
+  /** 运营-平台统计 */
+  opsMetrics: (range: string): ApiQueryKey => ['ops', 'metrics', range],
+  /** 运营-系统配置 */
+  opsSettings: (): ApiQueryKey => ['ops', 'settings'],
 } as const;
 
 /**

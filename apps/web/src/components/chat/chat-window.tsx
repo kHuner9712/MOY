@@ -1,19 +1,19 @@
 'use client';
 
-import type React from "react";
+import { Quote, RotateCcw, Send, Square } from 'lucide-react';
+import * as React from 'react';
 
-import { Send, Square } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-
+import { CitationDrawer } from '@/components/chat/citation-drawer';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ErrorState } from '@/components/ui/feedback';
 import { Textarea } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import { useChatStream } from '@/hooks/use-chat-stream';
 import { newMessageId, useConversationStore } from '@/hooks/use-conversation-store';
-import type { ModelProfile } from '@/lib/types';
+import type { Citation, ModelProfile } from '@/lib/types';
 
-/** 能力档位展示配置（只展示业务名称，不暴露模型信息） */
+/** 能力档位展示配置（只展示业务名称，不暴露任何内部信息） */
 const PROFILE_LABELS: Record<ModelProfile, string> = {
   general: '通用助手',
   code: '编程助手',
@@ -25,12 +25,13 @@ const PROFILE_LABELS: Record<ModelProfile, string> = {
 const PROFILES: ModelProfile[] = ['general', 'code', 'long_context', 'reasoning'];
 
 /**
- * 对话窗口：消息列表 + 输入区。
+ * 对话窗口：消息列表 + 输入区 + 引用详情抽屉。
  *
- * 设计要点（总方案 3.5）：
+ * 设计要点（总方案 3.5 / 阶段二 P-06）：
  * - 逐字渲染由流式事件驱动，无卡顿；
- * - 引用来源随答案穿插展示（FLOW-02）；
- * - 所有错误使用业务语言提示，不出现任何技术名词。
+ * - 引用随答案穿插展示，**可点击**打开抽屉看片段全文、前后文与位置；旧版本引用给降级提示；
+ * - 流式中断或失败后提供「重新发送」，不用用户重新输入；
+ * - 所有错误使用业务语言提示，不出现任何技术名词与码值。
  *
  * @returns 对话窗口元素
  */
@@ -38,11 +39,13 @@ export default function ChatWindow(): React.JSX.Element {
   const { messages, conversationId, profile, appendMessage, updateLastMessage, setProfile } =
     useConversationStore();
   const stream = useChatStream();
-  const [input, setInput] = useState('');
-  const assistantMessageIdRef = useRef<string>('');
+  const [input, setInput] = React.useState<string>('');
+  const [activeCitation, setActiveCitation] = React.useState<Citation | null>(null);
+  const [drawerOpen, setDrawerOpen] = React.useState<boolean>(false);
+  const assistantMessageIdRef = React.useRef<string>('');
 
   // 流式增量同步到最后一条助手消息（在 effect 中更新，避免渲染期副作用）
-  useEffect(() => {
+  React.useEffect(() => {
     const targetId = assistantMessageIdRef.current;
     if (!targetId || (!stream.text && stream.citations.length === 0)) {
       return;
@@ -55,13 +58,13 @@ export default function ChatWindow(): React.JSX.Element {
   }, [stream.citations, stream.text, updateLastMessage]);
 
   // 流式结束且无内容时给出兜底提示
-  useEffect(() => {
+  React.useEffect(() => {
     if (!stream.streaming && stream.errorMessage) {
       toast.error(stream.errorMessage);
     }
   }, [stream.errorMessage, stream.streaming]);
 
-  const handleSend = useCallback(async () => {
+  const handleSend = React.useCallback(async (): Promise<void> => {
     const content = input.trim();
     if (!content || stream.streaming) {
       return;
@@ -76,6 +79,22 @@ export default function ChatWindow(): React.JSX.Element {
     stream.reset();
     await stream.send({ conversationId, profile, content });
   }, [appendMessage, conversationId, input, profile, stream]);
+
+  /** 重新发送上一次问题（中断 / 失败后） */
+  const handleResend = async (): Promise<void> => {
+    if (stream.streaming || !stream.canResend) return;
+    const assistantId = newMessageId();
+    assistantMessageIdRef.current = assistantId;
+    appendMessage({ id: assistantId, role: 'assistant', content: '', pending: true });
+    await stream.resend();
+  };
+
+  const openCitation = (citation: Citation): void => {
+    setActiveCitation(citation);
+    setDrawerOpen(true);
+  };
+
+  const showResend = !stream.streaming && stream.canResend;
 
   return (
     <div className="mx-auto flex h-full max-w-4xl flex-col">
@@ -116,10 +135,20 @@ export default function ChatWindow(): React.JSX.Element {
                 {message.content || (message.pending ? '正在思考…' : '')}
               </div>
               {message.citations && message.citations.length > 0 ? (
-                <ul className="space-y-1 text-xs text-muted-foreground">
+                <ul className="space-y-1">
                   {message.citations.map((citation, index) => (
-                    <li key={`${citation.document_name}-${index}`}>
-                      引用来源：{citation.document_name}
+                    <li key={`${citation.document_name}-${citation.segment_id ?? index}`}>
+                      <button
+                        type="button"
+                        onClick={() => openCitation(citation)}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        <Quote aria-hidden="true" className="h-3 w-3 shrink-0" />
+                        <span className="truncate">
+                          引用来源：{citation.document_name}
+                          {citation.base_name ? `（${citation.base_name}）` : ''}
+                        </span>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -129,32 +158,57 @@ export default function ChatWindow(): React.JSX.Element {
         )}
       </div>
 
-      <div className="mt-4 flex items-end gap-2">
-        <Textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              void handleSend();
-            }
-          }}
-          placeholder="输入你的问题，Ctrl/⌘ + Enter 发送"
-          className="min-h-[56px]"
-          rows={2}
-        />
-        {stream.streaming ? (
-          <Button variant="outline" size="lg" onClick={stream.abort}>
-            <Square className="h-4 w-4" />
-            停止
-          </Button>
-        ) : (
-          <Button size="lg" onClick={() => void handleSend()} disabled={!input.trim()}>
-            <Send className="h-4 w-4" />
-            发送
-          </Button>
-        )}
+      {stream.errorMessage && !stream.streaming ? (
+        <div className="mt-3">
+          <ErrorState
+            message={stream.errorMessage}
+            onRetry={() => {
+              void handleResend();
+            }}
+          />
+        </div>
+      ) : null}
+
+      <div className="mt-4 space-y-2">
+        {stream.interrupted && !stream.errorMessage ? (
+          <p className="text-xs text-muted-foreground">
+            已停止生成，可以点「重新发送」再问一次，或直接补充新的问题。
+          </p>
+        ) : null}
+        <div className="flex items-end gap-2">
+          <Textarea
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void handleSend();
+              }
+            }}
+            placeholder="输入你的问题，Ctrl/⌘ + Enter 发送"
+            className="min-h-[56px]"
+            rows={2}
+          />
+          {stream.streaming ? (
+            <Button variant="outline" size="lg" onClick={stream.abort}>
+              <Square className="h-4 w-4" />
+              停止
+            </Button>
+          ) : showResend ? (
+            <Button variant="outline" size="lg" onClick={() => void handleResend()}>
+              <RotateCcw className="h-4 w-4" />
+              重新发送
+            </Button>
+          ) : (
+            <Button size="lg" onClick={() => void handleSend()} disabled={!input.trim()}>
+              <Send className="h-4 w-4" />
+              发送
+            </Button>
+          )}
+        </div>
       </div>
+
+      <CitationDrawer open={drawerOpen} onOpenChange={setDrawerOpen} citation={activeCitation} />
     </div>
   );
 }

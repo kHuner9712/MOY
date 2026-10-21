@@ -89,7 +89,7 @@ export function useUpload(): UseUploadResult {
         setState({
           ...INITIAL_UPLOAD_STATE,
           fileName: file.name,
-          errorMessage: '暂不支持该格式的文档',
+          errorMessage: '当前文件类型无法上传，请换用 PDF、Word 或 TXT',
         });
         return;
       }
