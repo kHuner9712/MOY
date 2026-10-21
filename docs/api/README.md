@@ -55,7 +55,7 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 | HTTP 状态码 | 仅承载传输层语义，业务语义一律以 `body.code` 为准 |
 | 鉴权 | 除 `/healthz`、`/readyz` 外均需 `Authorization: Bearer <token>` |
 | 租户 | `X-Tenant-Id` 请求头；私有化模式默认 `default` |
-| 幂等 | 所有写接口必须携带 `Idempotency-Key`（UUID v4，24h 有效） |
+| 幂等 | 所有写接口必须携带 `Idempotency-Key`（UUID v4，24h 有效）；指纹含请求体摘要，同键异体判冲突（详见架构文档 3.0.5） |
 | 链路 | 响应头回写 `X-Trace-Id`，全链路透传 |
 | 版本 | 前缀 `/api/v1`；不兼容变更升 `/api/v2`，禁止在 v1 内破坏契约 |
 
@@ -116,6 +116,8 @@ CI 门禁（`.github/workflows/dependency-scan.yml` + `ci-adapter.yml`）
 | D-02 | 适配层是否持有业务库 | 工具连接凭据、审计存储归属 | T01 不落库，T02 明确边界 |
 | D-03 | 会话与消息的存储归属 | 是否由适配层代理会话 | 上层自持，适配层无状态 |
 | D-07 | `/healthz`、`/readyz` 语义契约 | 编排层探针配置 | `/healthz` 存活、`/readyz` 就绪，待运维确认 |
+| D-06 | 基础设施灰名单组件选型 | Redis/MinIO 协议合规 | 已形成 `docs/adr/0002`，待法务/合规签字 |
+| D-08 | 前端品牌设计令牌基线 | 组件库返工风险 | 已形成 `docs/adr/0003` 占位，待产品经理拍板 |
 
 ---
 
