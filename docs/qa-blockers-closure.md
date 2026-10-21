@@ -306,21 +306,6 @@ Valkey 7.2 的实际二进制名一致（`valkey-cli` 而非 `redis-cli`）—�
 > 修复了这两项，**我已复跑确认现已通过**（见 4.8）。保留原始失败输出是因为
 > 它准确定位了根因，对复盘有价值。
 
-### 4.8 工程师修复后复跑（我实测，2026-10-21 13:30）
-
-```bash
-$ cd apps/web && npm run lint
-> next lint --max-warnings=0
-✔ No ESLint warnings or errors
-===LINT_EXIT:0===
-
-$ npm run typecheck
-> tsc --noEmit
-===TSC_EXIT:0===
-```
-
-**lint 与 typecheck 现已全部通过 ✅**。P1-1 / P1-2 判定为**已修复**。
-
 ### 4.1 npm install
 
 ```bash
@@ -504,6 +489,21 @@ $ grep -rn "fetch(" apps/web/src/ | grep -v api-client.ts
 
 ---
 
+### 4.8 工程师修复后复跑（我实测，2026-10-21 13:30）
+
+```bash
+$ cd apps/web && npm run lint
+> next lint --max-warnings=0
+✔ No ESLint warnings or errors
+===LINT_EXIT:0===
+
+$ npm run typecheck
+> tsc --noEmit
+===TSC_EXIT:0===
+```
+
+**lint 与 typecheck 现已全部通过 ✅**。P1-1 / P1-2 判定为**已修复**。
+
 ## 五、CI 工作流可运行性 —— ❌ 明确不可运行
 
 主理人特别关注的 lockfile 问题，结论如下。
@@ -614,6 +614,8 @@ CI 维持 `working-directory: apps/web`。代价：与 workspaces 语义重复�
 | `759e96e` | 新增适配层依赖门禁并接入 CI | 方向正确 |
 | `6583be2` | 架构文档登记依赖门禁工具与传递依赖声明口径 | 已登记 |
 | `fa735ed` | 修正 MinIO 合成标签 + 建立镜像清单 P0 门禁 | ⚠️ **部分修复** —— 标签已修正，但镜像仓库下架问题未解决，且门禁有盲区（P0-1 / P1-5） |
+| `c8aea2b` | ADR 记录 squid 同型问题与门禁负样本 | ⚠️ 负样本仅入文档，**门禁代码未改**，P1-5 仍开放 |
+| `4fefa4d` | 升级 fastapi/starlette 消除 14 项漏洞 | ✅ **我复跑 417 用例全通过**，P1-4 已处置 |
 
 **BLK-02 因此从"未闭环"升级为"部分闭环"**：lint / typecheck / build 三项现在全部通过，
 **但 `ci-web.yml` 的阻断 2 仍未解除** —— 见下。
@@ -839,6 +841,17 @@ _docker_hub_exists('ubuntu/squid', '5.2-22.04_beta')             = True    ← �
 **即：门禁在"部署必然失败"的配置上给出了 PASS。** 这比没有门禁更危险 ——
 它让人误以为镜像已被守护。建议删除 `name.startswith("minio/")` 特判，
 让 MinIO 走标准 registry 校验路径（该路径已能正确判定 `ubuntu/squid`）。
+
+> **复核（工程师提交 `c8aea2b`「记录 squid 同型问题与门禁负样本验证结果」后）**：
+> 特判**仍然存在** —— `validate_images.py:317` 依旧是
+> `if source == "github" or name.startswith("minio/"):`。
+> 我复跑 `python deploy/validate_images.py` 仍得
+> `[OK] 镜像清单校验通过`（退出码 0）。
+> 工程师在 `c8aea2b` 中把 squid 作为"负样本"写入 ADR，但**门禁代码本身未改**，
+> 负样本仅是文档记录，未固化为可执行断言。**P1-5 仍开放。**
+>
+> 另注：`validate_images.py:195-200` 新增了"minio 必须锁定精确版本线"的校验，
+> 该校验**只能防标签漂移，不能防仓库下架** —— 两者是正交问题。
 
 **同时必须做的决策（超出门禁范畴）**：即使修正了校验路径，
 `minio/minio` 在今天的 Docker Hub 上**依然拉不到**。需在下列方案中选一：
