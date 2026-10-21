@@ -388,3 +388,61 @@ def test_default_plans_match_ddl_seed() -> None:
     assert plans[PLAN_PROFESSIONAL].price_per_seat_month_cents == 3_900
     assert plans[PLAN_ENTERPRISE].price_per_seat_month_cents == 9_900
     assert all(plan.status == PLAN_AVAILABLE for plan in plans.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.p0
+async def test_bl3_upgrade_rejects_seats_below_live_usage() -> None:
+    """BL3 席位判据必须用**实时在册人数**，不得用落库快照（QA-P2-W3-01）。
+
+    复现路径与原缺陷一致：升级到 8 席 → 造 8 名在册成员 → 支付掉升级单 →
+    再以 `seats=5` 升级 → 期望 `15003`，且订阅不得落入 `seats_total < seats_used`。
+    """
+    settings = _settings()
+    store = InMemoryBillingStore()
+    service = _service(settings, store)
+    await service.change(
+        tenant_id=TENANT_ID,
+        actor_id="usr_owner",
+        request=ChangeSubscriptionRequest(plan_code=PLAN_PROFESSIONAL, seats=8, action="upgrade"),
+    )
+    await _link_members(settings, 8)
+    assert await service.seats_used(TENANT_ID) == 8
+    pending = await store.find_pending_order(TENANT_ID)
+    assert pending is not None
+    await store.update_order(TENANT_ID, pending.order_id, status="paid")
+
+    with pytest.raises(ApiError) as excinfo:
+        await service.change(
+            tenant_id=TENANT_ID,
+            actor_id="usr_owner",
+            request=ChangeSubscriptionRequest(
+                plan_code=PLAN_PROFESSIONAL, seats=5, action="upgrade"
+            ),
+        )
+    assert excinfo.value.code is ErrorCode.SEATS_EXHAUSTED
+    record = await store.get_active_subscription(TENANT_ID)
+    assert record is not None
+    assert record.seats_total >= record.seats_used, "不得落入超卖状态"
+
+
+@pytest.mark.asyncio
+@pytest.mark.p0
+async def test_ensure_seat_available_blocks_over_capacity() -> None:
+    """公共席位判据：`已用 + 预留 > 目标` → `15003`；等于目标允许（正好用满）。"""
+    settings = _settings()
+    service = _service(settings, InMemoryBillingStore())
+    await _link_members(settings, 3)
+
+    used = await service.ensure_seat_available(tenant_id=TENANT_ID, target_seats=3)
+    assert used == 3, "等于目标席位时必须放行（把席位从 5 减到 3 是合法操作）"
+
+    with pytest.raises(ApiError) as reduce_too_far:
+        await service.ensure_seat_available(tenant_id=TENANT_ID, target_seats=2)
+    assert reduce_too_far.value.code is ErrorCode.SEATS_EXHAUSTED
+
+    # 邀请会再占 1 席：3 已用 + 1 预留 > 3 → 拒绝（U4 口径）
+    with pytest.raises(ApiError) as invite_full:
+        await service.ensure_seat_available(tenant_id=TENANT_ID, target_seats=3, extra_reserved=1)
+    assert invite_full.value.code is ErrorCode.SEATS_EXHAUSTED
+    assert invite_full.value.message == "成员席位已用满，请先增加席位"

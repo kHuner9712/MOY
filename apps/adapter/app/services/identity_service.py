@@ -290,6 +290,10 @@ class IdentityService:
         适配层扩展能力（身份底座无原生邀请流）：生成邀请令牌 → 建用户 → 落审计。
         邀请令牌由业务能力层签发，适配层仅做转发。
 
+        **席位约束（PRD P2-BL-02 验收 4 / QA-P2-W3-02）**：邀请会占用 1 个席位，
+        席位不足时返回 `15003`，不得「先邀请、后失败」。判据与 BL3/BL4 共用
+        `SubscriptionService.ensure_seat_available()`（唯一出口，避免第三套口径）。
+
         Args:
             org_id: 组织 ID。
             email: 被邀请人邮箱。
@@ -301,10 +305,11 @@ class IdentityService:
             InvitationData: 邀请记录。
 
         Raises:
-            ApiError: 组织不存在（14002）。
+            ApiError: 组织不存在（14002）、席位不足（15003）。
         """
         if not org_id:
             raise ApiError(ErrorCode.ORGANIZATION_NOT_FOUND, internal_detail="empty org_id")
+        await self._ensure_invite_seat(auth.tenant_id)
         logger.info(
             "identity_member_invited",
             org_id=org_id,
@@ -319,6 +324,30 @@ class IdentityService:
             role=role,
             status="pending",
             expires_at="",
+        )
+
+    async def _ensure_invite_seat(self, tenant_id: str) -> None:
+        """校验邀请后席位是否够用（不足 → `15003`）。
+
+        口径：`在册成员数 + 1（本次邀请）+ 待接受邀请数 > seats_total` → 拒绝。
+        当前邀请**没有持久化**（无 invitation 表，`invitation_id` 为现编），
+        因此「待接受邀请数」恒为 0；邀请表落地后把该值加到 `extra_reserved`
+        即可，调用方签名不变（见 `ensure_seat_available` 的文档）。
+
+        Args:
+            tenant_id: 租户 ID。
+
+        Raises:
+            ApiError: 席位不足（15003）。
+        """
+        from app.business.subscription_service import get_subscription_service
+
+        subscriptions = get_subscription_service(self._settings)
+        current = await subscriptions.current(tenant_id=tenant_id)
+        await subscriptions.ensure_seat_available(
+            tenant_id=tenant_id,
+            target_seats=current.seats_total,
+            extra_reserved=1,
         )
 
     # ------------------------------------------------------------------

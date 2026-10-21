@@ -425,7 +425,9 @@ class SubscriptionService:
         plan_code = request.plan_code or PLAN_FREE
         plan = await self._plans.require_purchasable(plan_code)
         record = await self._store.get_active_subscription(tenant_id)
-        seats = await self._resolve_seats(plan=plan, record=record, requested=request.seats)
+        seats = await self._resolve_seats(
+            tenant_id=tenant_id, plan=plan, record=record, requested=request.seats
+        )
         if request.action == "upgrade" and record is not None:
             if plan_rank(plan.plan_code) < plan_rank(record.plan_code):
                 raise ApiError(
@@ -483,11 +485,17 @@ class SubscriptionService:
         )
 
     async def _resolve_seats(
-        self, *, plan: PlanRecord, record: SubscriptionRecord | None, requested: int
+        self,
+        *,
+        tenant_id: str,
+        plan: PlanRecord,
+        record: SubscriptionRecord | None,
+        requested: int,
     ) -> int:
-        """确定本次变更后的席位数（含最小席位校验）。
+        """确定本次变更后的席位数（含最小席位与「不得少于已用」校验）。
 
         Args:
+            tenant_id: 租户 ID（席位判据要读实时在册人数）。
             plan: 目标套餐。
             record: 当前订阅（可能为 None）。
             requested: 请求席位数。
@@ -505,12 +513,52 @@ class SubscriptionService:
                 seats = plan.min_seats
             else:
                 self._plans.require_min_seats(plan, seats)
-        if record is not None and seats < record.seats_used:
+        # 席位判据**一律用实时在册人数**（QA-P2-W3-01）：此前读 `record.seats_used`
+        # 快照，而该快照只在 `_apply_plan` 时刷新、首次开通时为 0，
+        # 导致 BL3 能绕过 15003 并落成「已用 > 总数」的自相矛盾订阅。
+        await self.ensure_seat_available(tenant_id=tenant_id, target_seats=seats)
+        return seats
+
+    async def ensure_seat_available(
+        self, *, tenant_id: str, target_seats: int, extra_reserved: int = 0
+    ) -> int:
+        """校验「已用席位 + 本次将占用」是否超过目标席位（BL3/BL4/U4 的唯一判据）。
+
+        判据：`used + extra_reserved > target_seats` → `15003`。
+
+        | 调用方 | `target_seats` | `extra_reserved` | 语义 |
+        | --- | --- | --- | --- |
+        | BL3 开通/升级、BL4 调席位 | 目标席位数 | `0` | 不新增占用，只校验「不能少于已用」 |
+        | U4 邀请成员 | 当前 `seats_total` | `1`（+ 待接受邀请数） | 邀请会再占 1 席 |
+
+        用 `>`（而非 `>=`）：`已用 == 目标` 是**合法**的「正好用满」状态
+        （例如把席位从 10 减到 8、而正好 8 人在册），不得拒绝。
+
+        `extra_reserved` 是「本次操作将占用 + 待接受邀请」的预留位。当前邀请
+        无持久化（`InvitationData` 未落库、无 invitation 表），因此待接受邀请数
+        恒为 0——邀请表落地后只需把该值加上去，**调用方签名不变**。
+
+        Args:
+            tenant_id: 租户 ID。
+            target_seats: 目标席位数（BL3/BL4 为要设成的值，U4 为当前 seats_total）。
+            extra_reserved: 额外预留席位数（默认 0）。
+
+        Returns:
+            int: 实时已用席位（供调用方复用，避免二次查询）。
+
+        Raises:
+            ApiError: 席位不足（15003）。
+        """
+        used = await self.seats_used(tenant_id)
+        reserved = max(int(extra_reserved), 0)
+        if used + reserved > max(int(target_seats), 0):
             raise ApiError(
                 ErrorCode.SEATS_EXHAUSTED,
-                internal_detail=f"seats={seats} seats_used={record.seats_used}",
+                internal_detail=(
+                    f"target_seats={target_seats} seats_used={used} reserved={reserved}"
+                ),
             )
-        return seats
+        return used
 
     # ------------------------------------------------------------------
     # BL4 调整席位
@@ -537,12 +585,7 @@ class SubscriptionService:
                 message=MESSAGE_FREE_SEATS_FIXED,
                 internal_detail=f"seats update on plan={record.plan_code if record else PLAN_FREE}",
             )
-        seats_used = await self.seats_used(tenant_id)
-        if seats < seats_used:
-            raise ApiError(
-                ErrorCode.SEATS_EXHAUSTED,
-                internal_detail=f"seats={seats} seats_used={seats_used}",
-            )
+        seats_used = await self.ensure_seat_available(tenant_id=tenant_id, target_seats=seats)
         plan = await self._plans.get(record.plan_code)
         order_id = ""
         delta = seats - record.seats_total
