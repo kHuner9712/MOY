@@ -130,3 +130,57 @@
 ---
 
 *报告结束。联调脚本：`apps/adapter/qa_probe/integration_real.py`；Mock LLM：`apps/adapter/qa_probe/mock_llm.py`；决策记录：`docs/decisions/0004-phase1-open-decisions-ratification.md`。*
+
+---
+
+## 附录 B：全组件升级至最新版 · 复核记录（2026-10-21 晚，报告 v1.1）
+
+**触发**：创始人拍板「所有开源组件用最新版，不累积升级债务」（`docs/decisions/0004` 第八章）。
+
+### B.1 升级清单与实跑结论
+
+| 组件 | 原 → 新 | 关键变更与适配 |
+| --- | --- | --- |
+| Dify api/worker/web | 1.0.0 → **1.17.1** | 新增 `worker_beat`（MODE=beat）；sandbox 0.2.15；plugin_daemon 0.0.3→0.6.10；API 大规模重构（见 B.2） |
+| Keycloak | 25.0.6 → **26.8.1** | `KEYCLOAK_ADMIN` 移除 → `KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD` |
+| PostgreSQL | 16 → **18.6** | 18+ 镜像要求卷挂载 `/var/lib/postgresql`（原 `/var/lib/postgresql/data` 会被拒绝启动） |
+| Valkey | 7.2 → **9.2** | 协议兼容，无改动 |
+| Milvus | v2.4.6 → **v3.0.3** | 大版本升级；单机仍 etcd+S3 接线，补 `MINIO_REGION`；旧数据不兼容需清卷重建 |
+| etcd | v3.5.16 → **v3.7.2** | 旧数据目录不兼容（panic），需清卷 |
+| SeaweedFS | 3.80 → **4.48** | S3 根路径对匿名请求返回 403（安全加固），探针改测 master `/cluster/status` |
+| Prometheus | v2.54.0 → **v3.15.0** | v3 大版本，抓取配置兼容 |
+| squid | 5.2-22.04 → **6.13-25.04** | 配置语法兼容 |
+| 适配层 Python | fastapi 0.146 → **0.156.8** 等 | 约束不变，421 测试全过 |
+| 前端 | Next 14.2 / React 18 / ESLint 8 | → **Next 16.4 / React 19.3 / ESLint 9 扁平配置**；`next lint` 移除、`eslint.config.mjs` 迁移、Slot 多态类型修 |
+
+### B.2 升级实跑发现并修复的新缺陷（6 个）
+
+| # | 缺陷 | 根因 | 修复 |
+| --- | --- | --- | --- |
+| INF-09 | PostgreSQL 18 拒绝启动 | 18+ 镜像要求挂载 `/var/lib/postgresql`（数据在子目录），旧路径直接报错退出 | compose 卷挂载路径修正 |
+| INF-10 | etcd 3.7 启动 panic | 读取 3.5 格式数据目录不兼容 | 清卷重建 |
+| INF-11 | SeaweedFS 4.48 恒判 unhealthy | 4.x 对 S3 根路径匿名请求返回 403（安全加固）；原探针测 200 | 探针改测 master `/cluster/status`（同进程 200） |
+| INF-12 | Dify 1.17 引导全流程不可用 | 控制台认证改 Cookie 会话；密码需 Base64；写接口需 `X-CSRF-Token`；提供方凭据路由改 `/credentials`；草稿载荷禁带 `environment_variables` | 引导脚本 `qa_probe/bootstrap_dify.py` 全量适配（13/13 通过） |
+| INF-13 | Milvus 3.0 需显式 region | 3.0 单机编排要求 `MINIO_REGION` | compose 补 `OA_OBJECT_STORE_REGION` |
+| **INT-05** | **M2 流式从未真正工作** | `_build_event` 用 SSE `event:` 行（空）**覆盖**了 data JSON 自带的事件名 → 所有事件名恒为空、转换器全部丢弃 | 改为 JSON 优先、SSE 行名兜底；新增回归用例 |
+| **INT-06** | **DeepSeek V4 推理内容透传用户** | 推理模型的 `<think>…</think>` 与 `<!--dify-deepseek-reasoning-->` 标记混在 answer 中，违反「技术黑盒化」红线 | 新增流式状态机 `_ReasoningFilter`：跨 delta 剥离思考段、`message_end` 时冲洗缓冲；非流式同路径处理；2 个回归用例 |
+
+> INT-05 的教训：此缺陷在 Dify 1.0.0 时期即存在，但被「适配层自身 start 帧」掩盖，
+> 直到本轮升级验证用「事件名断言」才暴露——**验证断言必须校验语义而非仅校验帧数**。
+
+### B.3 升级后验证结果（全栈实跑）
+
+| 验证项 | 结果 |
+| --- | --- |
+| 15+ 容器全栈重建（含新 worker_beat / plugin_daemon 0.6.10） | ✅ 全部 Up，Milvus 3.0.3 healthy |
+| 底座引导（管理员/双应用/插件/凭据/模型绑定） | ✅ **13/13**（`qa_probe/bootstrap_dify.py`，一条命令可重复） |
+| 适配层真实联调（M1 真实 DeepSeek / M2 流式 / A1 工作流 / A3 终态 / U1 / M3 / 幂等） | ✅ **8/8**；M2 输出 `answer='蓝色'`（推理已剥离） |
+| 适配层门禁 | ✅ ruff / format / mypy / **421 passed** |
+| 前端门禁（Next 16） | ✅ tsc / eslint（扁平配置）/ next build（8 路由静态化） |
+| 镜像门禁 | ✅ compose 引用 = images.lock 登记（13 条） |
+
+### B.4 已知限制（升级引入，Sprint 2 处理）
+
+1. **Next 16 的 `react-hooks/set-state-in-effect` 规则**：现有 6 处异步加载器的同步 loading 态被新规则拦截，已显式豁免并登记 TODO（T03 迁移 react-query 后重新开启）；
+2. **Dify 1.17 的可选新服务未引入**：`api_websocket` / `agent_backend` / `local_sandbox` 属新架构可选组件，V1.0 走经典 Service API 与工作流，不引入（编排已注释说明）；
+3. **Milvus 3.0 的向量数据需重建**：旧 2.4 数据卷不兼容，私有化升级需在升级手册中注明「向量库重建 + 文档重新索引」步骤。
