@@ -1,0 +1,93 @@
+# ===========================================================================
+# 前端 CI 门禁（架构文档 9.6）
+#
+# 强制项：ESLint 零 error、tsc 零 error
+# 任一不过禁合并。
+# ===========================================================================
+
+name: CI Web
+
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'release/**', 'hotfix/**']
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/ci-web.yml'
+  pull_request:
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/ci-web.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-web-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: apps/web
+
+jobs:
+  quality-gate:
+    name: Lint / 类型 / 构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+
+      # ------------------------------------------------------------------
+      # 门禁 1：ESLint（零 error）
+      # ------------------------------------------------------------------
+      - name: eslint
+        run: npm run lint
+
+      # ------------------------------------------------------------------
+      # 门禁 2：TypeScript 类型检查（零 error）
+      # ------------------------------------------------------------------
+      - name: tsc --noEmit
+        run: npm run typecheck
+
+      # ------------------------------------------------------------------
+      # 构建校验（确保产物可生成）
+      # ------------------------------------------------------------------
+      - name: next build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXT_PUBLIC_ADAPTER_BASE_URL: http://127.0.0.1:8000
+
+  format-check:
+    name: Prettier 格式校验
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 格式校验
+        run: |
+          npx --yes prettier@3.3.3 --check \
+            "src/**/*.{ts,tsx,css}" \
+            "*.{json,js}" \
+            || (echo "[WARN] 格式问题请执行: npx prettier --write ." && exit 1)

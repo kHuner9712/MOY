@@ -1,0 +1,18 @@
+sequenceDiagram
+    actor U as 终端用户
+    participant W as Web前端
+    participant A as 适配层(ModelService)
+    participant D as Dify底座
+    participant LLM as 大模型
+
+    U->>W: 输入问题并发送
+    W->>A: POST /api/v1/model/generate<br/>Authorization: Bearer token<br/>Idempotency-Key
+    A->>A: 令牌校验 / 参数校验(Pydantic)<br/>幂等键检查(Redis)
+    A->>A: profile → 路由表选择 Dify App
+    A->>D: POST /v1/chat-messages<br/>(response_mode=blocking)
+    D->>LLM: 调用模型生成
+    LLM-->>D: 生成结果 + 用量
+    D-->>A: {answer, metadata.usage, retriever_resources}
+    A->>A: 字段转换<br/>answer→content / tokens→units / retriever→citations<br/>Dify错误→自研错误码+业务语言message
+    A-->>W: {code:0, message:"success", data:{...}}
+    W-->>U: 渲染回答与引用来源

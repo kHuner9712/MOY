@@ -1,0 +1,301 @@
+# SaaS 本地联调编排（DEPLOY_MODE=saas）
+#
+# 与私有化编排的差异（架构文档 1.3）：
+#   - 租户隔离：PostgreSQL 行级安全策略（RLS）+ 应用层 tenant_id 双保险；
+#   - 外网依赖：允许调用闭源模型 API（由适配层路由表配置）；
+#   - 对外暴露：仅暴露 web 与 adapter，底座与基础设施不对公网暴露；
+#   - 容量：本文件为单机联调用，真实生产走 K8s（deploy/k8s，S4）。
+#
+# 用法：docker compose -f docker-compose.saas.yml up -d
+# ===========================================================================
+
+name: officeai-saas
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: oa-saas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${OA_POSTGRES_USER:-officeai}
+      POSTGRES_PASSWORD: ${OA_POSTGRES_PASSWORD:?必须在 .env 中设置}
+      POSTGRES_DB: ${OA_POSTGRES_DB:-officeai}
+      LANG: C.UTF-8
+    volumes:
+      - saas-postgres-data:/var/lib/postgresql/data
+      - ./init-rls.sql:/docker-entrypoint-initdb.d/10-init-rls.sql:ro
+    networks: [officeai]
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${OA_POSTGRES_USER:-officeai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:7.2-alpine
+    container_name: oa-saas-valkey
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${OA_VALKEY_PASSWORD:?必须在 .env 中设置}
+      --maxmemory ${OA_VALKEY_MAXMEMORY:-4gb}
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - saas-valkey-data:/data
+    networks: [officeai]
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a ${OA_VALKEY_PASSWORD} ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.16
+    container_name: oa-saas-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_DATA_DIR: /etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls=http://0.0.0.0:2379
+    volumes:
+      - saas-etcd-data:/etcd
+    networks: [officeai]
+    logging: *default-logging
+
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.16
+    container_name: oa-saas-milvus-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_DATA_DIR: /etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls=http://0.0.0.0:2379
+    volumes:
+      - saas-milvus-etcd-data:/etcd
+    networks: [officeai]
+    logging: *default-logging
+
+  # MinIO 锁定 AGPL 之前的版本线，独立容器运行（⚠️ D-06 待决）
+  milvus-minio:
+    image: minio/minio:RELEASE.2021-04-22T23-11-00Z
+    container_name: oa-saas-milvus-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
+      MINIO_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+    command: minio server /minio_data
+    volumes:
+      - saas-milvus-minio-data:/minio_data
+    networks: [officeai]
+    logging: *default-logging
+
+  milvus:
+    image: milvusdb/milvus:v2.4.6
+    container_name: oa-saas-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+      MINIO_ACCESS_KEY_ID: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
+      MINIO_SECRET_ACCESS_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+    volumes:
+      - saas-milvus-data:/var/lib/milvus
+    ports:
+      - "${OA_MILVUS_PORT:-19530}:19530"
+    depends_on: [milvus-etcd, milvus-minio]
+    networks: [officeai]
+    logging: *default-logging
+
+  minio:
+    image: minio/minio:RELEASE.2021-04-22T23-11-00Z
+    container_name: oa-saas-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
+      MINIO_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+    command: server /data --console-address ":9001"
+    volumes:
+      - saas-minio-data:/data
+    ports:
+      - "${OA_MINIO_API_PORT:-9000}:9000"
+      - "${OA_MINIO_CONSOLE_PORT:-9001}:9001"
+    networks: [officeai]
+    logging: *default-logging
+
+  dify-api:
+    image: langgenius/dify-api:1.0.0
+    container_name: oa-saas-dify-api
+    restart: unless-stopped
+    environment:
+      MODE: api
+      LOG_LEVEL: INFO
+      SECRET_KEY: ${OA_DIFY_SECRET_KEY:?必须在 .env 中设置}
+      CONSOLE_API_URL: http://dify-api:5001
+      CONSOLE_WEB_URL: http://dify-web:3000
+      SERVICE_API_URL: http://dify-api:5001
+      APP_API_URL: http://dify-api:5001
+      FILES_URL: http://dify-api:5001
+      MIGRATION_ENABLED: "true"
+      DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
+      DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?必须在 .env 中设置}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: ${OA_DIFY_DB:-dify}
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${OA_VALKEY_PASSWORD:?必须在 .env 中设置}
+      REDIS_DB: "0"
+      CELERY_BROKER_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/1
+      STORAGE_TYPE: opendal
+      OPENDAL_SCHEME: s3
+      OPENDAL_S3_ENDPOINT: http://minio:9000
+      OPENDAL_S3_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+      OPENDAL_S3_BUCKET: ${OA_DIFY_S3_BUCKET:-dify}
+      VECTOR_STORE: milvus
+      MILVUS_URI: http://milvus:19530
+      SSRF_PROXY_HTTP_URL: ${OA_SSRF_PROXY_URL:-http://ssrf_proxy:3128}
+      SSRF_PROXY_HTTPS_URL: ${OA_SSRF_PROXY_URL:-http://ssrf_proxy:3128}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks: [officeai]
+    logging: *default-logging
+
+  dify-worker:
+    image: langgenius/dify-api:1.0.0
+    container_name: oa-saas-dify-worker
+    restart: unless-stopped
+    environment:
+      MODE: worker
+      SECRET_KEY: ${OA_DIFY_SECRET_KEY:?必须在 .env 中设置}
+      DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
+      DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?必须在 .env 中设置}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: ${OA_DIFY_DB:-dify}
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${OA_VALKEY_PASSWORD:?必须在 .env 中设置}
+      CELERY_BROKER_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/1
+      STORAGE_TYPE: opendal
+      OPENDAL_SCHEME: s3
+      OPENDAL_S3_ENDPOINT: http://minio:9000
+      OPENDAL_S3_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+      VECTOR_STORE: milvus
+      MILVUS_URI: http://milvus:19530
+    depends_on: [postgres, valkey]
+    networks: [officeai]
+    logging: *default-logging
+
+  dify-web:
+    image: langgenius/dify-web:1.0.0
+    container_name: oa-saas-dify-web
+    restart: unless-stopped
+    environment:
+      CONSOLE_API_URL: ""
+      APP_API_URL: ""
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on: [dify-api]
+    networks: [officeai]
+    logging: *default-logging
+
+  ssrf_proxy:
+    image: squidly/squid:5.2
+    container_name: oa-saas-ssrf-proxy
+    restart: unless-stopped
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+    networks: [officeai]
+    logging: *default-logging
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.6
+    container_name: oa-saas-keycloak
+    restart: unless-stopped
+    command: ["start", "--optimized", "--http-enabled=true", "--http-port=8080"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${OA_KEYCLOAK_DB:-keycloak}
+      KC_DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
+      KC_DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?必须在 .env 中设置}
+      KC_HOSTNAME_STRICT: "false"
+      KEYCLOAK_ADMIN: ${OA_KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${OA_KEYCLOAK_ADMIN_PASSWORD:?必须在 .env 中设置}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [officeai]
+    logging: *default-logging
+
+  adapter:
+    build:
+      context: ../apps/adapter
+      dockerfile: Dockerfile
+    image: officeai/adapter:${OA_IMAGE_TAG:-1.0.0}
+    container_name: oa-saas-adapter
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      OA_ENV: production
+      OA_DEPLOY_MODE: saas
+      OA_OFFLINE_MODE: "false"
+      OA_DIFY_BASE_URL: http://dify-api:5001
+      OA_KEYCLOAK_URL: http://keycloak:8080
+      OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
+      OA_DATABASE_URL: postgresql+asyncpg://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD}@postgres:5432/${OA_POSTGRES_DB:-officeai}
+      OA_MILVUS_URI: http://milvus:19530
+      OA_MINIO_ENDPOINT: http://minio:9000
+      # SaaS 模式：允许调用外部闭源模型 API（路由表见 registry/profile_routes.yaml）
+      OA_DOWNSTREAM_ENABLED: "true"
+    ports:
+      - "${OA_ADAPTER_PORT:-8000}:8000"
+    depends_on:
+      valkey:
+        condition: service_healthy
+    networks: [officeai]
+    logging: *default-logging
+
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_ADAPTER_BASE_URL: ${OA_WEB_ADAPTER_BASE_URL:-http://localhost:8000}
+    image: officeai/web:${OA_IMAGE_TAG:-1.0.0}
+    container_name: oa-saas-web
+    restart: unless-stopped
+    ports:
+      - "${OA_WEB_PORT:-3000}:3000"
+    depends_on: [adapter]
+    networks: [officeai]
+    logging: *default-logging
+
+volumes:
+  saas-postgres-data:
+  saas-valkey-data:
+  saas-etcd-data:
+  saas-milvus-etcd-data:
+  saas-milvus-minio-data:
+  saas-milvus-data:
+  saas-minio-data:
+
+networks:
+  officeai:
+    driver: bridge

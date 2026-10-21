@@ -1,0 +1,20 @@
+{
+  "name": "officeai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "企业级跨生态办公 AI 平台 · Monorepo 根工作区",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace apps/web",
+    "build:web": "npm run build --workspace apps/web",
+    "lint:web": "npm run lint --workspace apps/web",
+    "typecheck:web": "npm run typecheck --workspace apps/web",
+    "clean": "node -e \"console.log('清理任务占位：由各子工程自行实现')\""
+  }
+}

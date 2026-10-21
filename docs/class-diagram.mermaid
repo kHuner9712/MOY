@@ -1,0 +1,92 @@
+classDiagram
+    class ApiResponse {
+        +int code
+        +string message
+        +dict data
+        +ok(data) ApiResponse$
+        +fail(code, message) ApiResponse$
+    }
+    class IdempotencyManager {
+        +RedisClient redis
+        +check_or_set(key, ttl) bool
+        +get_result(key) dict
+        +store_result(key, result) void
+    }
+    class AuthContext {
+        +string user_id
+        +string tenant_id
+        +list roles
+        +resolve(token) AuthContext$
+    }
+    class DifyClient {
+        +str base_url
+        +str api_key
+        +post(path, payload, timeout) dict
+        +post_stream(path, payload) AsyncIterator
+        +get(path, params) dict
+        +delete(path) dict
+    }
+    class KeycloakClient {
+        +str base_url
+        +str realm
+        +introspect(token) dict
+        +get_user(user_id) dict
+        +list_group_members(org_id) list
+    }
+    class ModelService {
+        +DifyClient dify
+        +generate(req) dict
+        +generate_stream(req) AsyncIterator
+        +get_catalog() dict
+        +get_usage(ctx) dict
+    }
+    class RagService {
+        +DifyClient dify
+        +create_base(req) dict
+        +upload_document(base_id, file, policy) dict
+        +get_index_status(base_id, doc_id) dict
+        +reindex(base_id, doc_id) dict
+        +search(req) dict
+    }
+    class AgentService {
+        +DifyClient dify
+        +RedisClient redis
+        +create_task(req) dict
+        +get_task(task_id) dict
+        +list_steps(task_id) dict
+        +cancel_task(task_id) dict
+    }
+    class ToolService {
+        +dict tool_registry
+        +list_registry() dict
+        +create_connection(req) dict
+        +execute(req) dict
+    }
+    class IdentityService {
+        +KeycloakClient kc
+        +verify(token, permission, resource) dict
+        +get_profile(ctx) dict
+        +query_audit_logs(req) dict
+    }
+    class ErrorMapper {
+        +to_business_error(dify_status, dify_body) tuple$
+    }
+    ModelService --> DifyClient
+    RagService --> DifyClient
+    AgentService --> DifyClient
+    IdentityService --> KeycloakClient
+    ModelService ..> ApiResponse
+    RagService ..> ApiResponse
+    AgentService ..> ApiResponse
+    ToolService ..> ApiResponse
+    IdentityService ..> ApiResponse
+    ModelService ..> IdempotencyManager
+    AgentService ..> IdempotencyManager
+    ToolService ..> IdempotencyManager
+    ModelService ..> AuthContext
+    AgentService ..> AuthContext
+    ToolService ..> AuthContext
+    IdentityService ..> AuthContext
+    ModelService ..> ErrorMapper
+    RagService ..> ErrorMapper
+    AgentService ..> ErrorMapper

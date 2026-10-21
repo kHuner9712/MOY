@@ -1,0 +1,151 @@
+"""v1 路由汇总（架构文档 6.1 `api/v1/router.py`）。
+
+职责：
+- 把五大服务域的 30 个端点挂载到 `/api/v1` 前缀下；
+- 挂载 2 个免鉴权健康探针（`/healthz`、`/readyz`，架构文档 10.2 D-07）。
+
+端点总览：
+| 域 | 前缀 | 端点数 | 编号 |
+| --- | --- | --- | --- |
+| 模型服务 | `/api/v1/model` | 4 | M1-M4 |
+| RAG 服务 | `/api/v1/knowledge` | 7 | R1-R7 |
+| Agent 服务 | `/api/v1/agent` | 6 | A1-A6 |
+| 工具服务 | `/api/v1/tools` | 7 | T1-T7 |
+| 用户权限 | `/api/v1/identity` | 6 | U1-U6 |
+| 健康检查 | `/healthz` `/readyz` | 2 | 免鉴权 |
+
+不兼容变更必须新增 `/api/v2` 汇总，禁止在 v1 内破坏契约（架构文档第 3 章前言）。
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter
+
+from app.api.v1 import agent, identity, model, rag, tool
+from app.core.config import Settings, get_settings
+from app.core.errors import ApiError, ErrorCode
+from app.core.logging import get_logger
+from app.registry.loader import get_profile_routes, get_tool_registry
+from app.schemas.common import ApiResponse, HealthData, ReadyCheck, ReadyData
+
+logger = get_logger(__name__)
+
+#: 业务端点总数（契约基线，回归测试据此校验）
+TOTAL_BUSINESS_ENDPOINTS: int = 30
+
+#: 健康检查路由（免鉴权，不挂 API 版本前缀）
+health_router = APIRouter(tags=["健康检查"])
+
+
+@health_router.get(
+    "/healthz",
+    response_model=ApiResponse[HealthData],
+    summary="存活探针（免鉴权）",
+    description="进程存活检查，不校验任何依赖。",
+)
+async def healthz() -> ApiResponse[HealthData]:
+    """存活探针。
+
+    Returns:
+        ApiResponse[HealthData]: `code=0` 的健康数据。
+    """
+    settings = get_settings()
+    return ApiResponse[HealthData].ok(
+        HealthData(
+            status="ok",
+            app=settings.app_name,
+            version=settings.app_version,
+            env=settings.env,
+            deploy_mode=settings.deploy_mode,
+            downstream_enabled=settings.downstream_enabled,
+        )
+    )
+
+
+@health_router.get(
+    "/readyz",
+    response_model=ApiResponse[ReadyData],
+    summary="就绪探针（免鉴权）",
+    description="就绪检查：配置加载与注册表解析是否可用。",
+)
+async def readyz() -> ApiResponse[ReadyData]:
+    """就绪探针。
+
+    Returns:
+        ApiResponse[ReadyData]: 就绪状态与检查项明细。
+
+    Raises:
+        ApiError: 配置或注册表不可用（30004），HTTP 状态码 500。
+    """
+    checks: list[ReadyCheck] = [
+        ReadyCheck(
+            name="config",
+            ready=True,
+            detail="配置已加载",
+        )
+    ]
+
+    try:
+        profiles = get_profile_routes().profiles
+        checks.append(
+            ReadyCheck(
+                name="profile_routes",
+                ready=bool(profiles),
+                detail=f"已登记 {len(profiles)} 个能力档位",
+            )
+        )
+    except ApiError:
+        checks.append(ReadyCheck(name="profile_routes", ready=False, detail="档位路由表不可用"))
+
+    try:
+        tools = get_tool_registry().tool_types
+        checks.append(
+            ReadyCheck(
+                name="tool_registry",
+                ready=bool(tools),
+                detail=f"已登记 {len(tools)} 个工具类型",
+            )
+        )
+    except ApiError:
+        checks.append(ReadyCheck(name="tool_registry", ready=False, detail="工具注册表不可用"))
+
+    all_ready = all(check.ready for check in checks)
+    data = ReadyData(status="ready" if all_ready else "not_ready", checks=checks)
+    if all_ready:
+        return ApiResponse[ReadyData].ok(data)
+    raise ApiError(ErrorCode.CONFIG_ERROR, message=data.status, data=data)
+
+
+def include_all_routers(settings: Settings | None = None) -> APIRouter:
+    """构建并返回全部 v1 路由汇总。
+
+    每次调用返回**全新**的路由实例，避免重复挂载导致同一端点注册多次
+    （测试中多次 `create_app()` 的常见陷阱）。
+
+    Args:
+        settings: 可选配置实例，缺省读取全局单例（取 `api_prefix`）。
+
+    Returns:
+        APIRouter: 挂载完成的汇总路由。
+    """
+    conf = settings or get_settings()
+    prefix = conf.api_prefix
+
+    api_router = APIRouter()
+    api_router.include_router(model.router, prefix=prefix)
+    api_router.include_router(rag.router, prefix=prefix)
+    api_router.include_router(agent.router, prefix=prefix)
+    api_router.include_router(tool.router, prefix=prefix)
+    api_router.include_router(identity.router, prefix=prefix)
+    # 健康检查不挂 API 版本前缀，路径固定为 /healthz 与 /readyz
+    api_router.include_router(health_router)
+    return api_router
+
+
+__all__ = [
+    "TOTAL_BUSINESS_ENDPOINTS",
+    "health_router",
+    "healthz",
+    "include_all_routers",
+    "readyz",
+]

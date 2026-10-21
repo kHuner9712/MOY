@@ -1,0 +1,40 @@
+# ===========================================================================
+# 监控指标采集配置
+#
+# 采集目标（仅自研层与基础设施；底座指标由底座自身端点提供）：
+#   - adapter：/healthz、/readyz（免鉴权探针）
+#   - postgres / valkey / milvus：官方 exporter
+# ===========================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: officeai
+    deploy_mode: ${OA_DEPLOY_MODE}
+
+scrape_configs:
+  - job_name: adapter
+    metrics_path: /healthz
+    static_configs:
+      - targets: ['adapter:8000']
+        labels:
+          service: self-built-adapter-layer
+
+  - job_name: valkey
+    static_configs:
+      - targets: ['valkey-exporter:9121']
+        labels:
+          service: cache
+
+  - job_name: postgres
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          service: relational-db
+
+  - job_name: milvus
+    static_configs:
+      - targets: ['milvus:9091']
+        labels:
+          service: vector-db

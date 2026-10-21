@@ -1,0 +1,51 @@
+# ===========================================================================
+# 行尾与文件类型约定（与 .editorconfig 保持一致）
+#
+# 全部文本文件使用 LF 行尾，避免 Windows/macOS/Linux 混编产生无意义 diff。
+# 二进制文件显式声明，禁止被 Git 做行尾转换。
+# ===========================================================================
+
+* text=auto eol=lf
+
+# --- 源码与配置（明确 LF） ---
+*.py        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.mjs       text eol=lf
+*.cjs       text eol=lf
+*.json      text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.md        text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+*.sql       text eol=lf
+*.conf      text eol=lf
+*.sh        text eol=lf
+*.toml      text eol=lf
+Dockerfile  text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+.editorconfig text eol=lf
+
+# --- Windows 专用脚本保留 CRLF ---
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# --- 二进制文件（禁止行尾转换） ---
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.zip       binary
+*.gz        binary
+*.tar       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.eot       binary

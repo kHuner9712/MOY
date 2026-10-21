@@ -1,0 +1,302 @@
+# ===========================================================================
+# 依赖安全扫描（架构文档 9.6 / 总方案 5.3）
+#
+# 两道强制门禁：
+#   1. SCA 协议扫描：发现 GPL/AGPL/SSPL 黑名单协议即失败；
+#   2. 底座直连扫描：apps/web 中出现 dify/milvus/litellm/5001 等字样即失败
+#      （架构文档 1.4 红线的代码级防线）。
+#
+# 触发时机：PR 触发 + 每月全量（cron）。
+# ===========================================================================
+
+name: Dependency Scan
+
+on:
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'deploy/**'
+      - 'package.json'
+      - '.github/workflows/dependency-scan.yml'
+  push:
+    branches: [main, develop]
+  schedule:
+    # 每月 1 日 02:00 UTC 全量扫描
+    - cron: '0 2 1 * *'
+  workflow_dispatch:
+
+concurrency:
+  group: dependency-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # =========================================================================
+  # 门禁 1：底座直连扫描（一票否决级，架构文档 1.4）
+  # =========================================================================
+  base-layer-isolation:
+    name: 底座直连扫描
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 扫描 apps/web 与插件目录中的底座字样
+        run: |
+          echo "::group::扫描前端与插件代码中的底座直连痕迹"
+          # 禁止出现的底座关键词（架构文档 1.4 第 4 条 + 9.6）
+          FORBIDDEN='dify|milvus|litellm|5001|chat-messages|workflow_run|retriever_resources|datasets/|/v1/'
+          TARGETS='apps/web'
+          # 未来插件 SDK 目录加入同一门禁
+          if [ -d 'plugins' ]; then
+            TARGETS="$TARGETS plugins"
+          fi
+
+          MATCHES=$(grep -rniE "$FORBIDDEN" $TARGETS \
+            --exclude-dir=node_modules \
+            --exclude-dir=.next \
+            --exclude-dir=dist \
+            --exclude-dir=coverage \
+            2>/dev/null || true)
+
+          if [ -n "$MATCHES" ]; then
+            echo "::error::前端/插件代码中出现底座直连痕迹（违反架构红线 1.4）"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "::endgroup::"
+          echo "[OK] 前端与插件代码未出现任何底座直连字样"
+
+      - name: 校验前端依赖不含底座 SDK
+        run: |
+          echo "::group::校验前端依赖清单"
+          FORBIDDEN_DEPS='dify|milvus|litellm'
+          MATCHES=$(grep -niE "\"[^\"]*($FORBIDDEN_DEPS)[^\"]*\":" apps/web/package.json 2>/dev/null || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::前端依赖中出现底座 SDK（违反架构红线 1.4）"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "::endgroup::"
+          echo "[OK] 前端依赖清单干净"
+
+      - name: 校验适配层是唯一底座调用出口
+        run: |
+          echo "::group::校验底座调用出口唯一性"
+          # 底座 URL 只允许出现在 core/config.py 与 clients/dify_client.py
+          OFFENDERS=$(grep -rl 'dify-api\|dify_base_url' apps/adapter/app \
+            --include='*.py' \
+            | grep -v 'core/config.py' \
+            | grep -v 'clients/dify_client.py' \
+            || true)
+          if [ -n "$OFFENDERS" ]; then
+            echo "::error::以下文件出现了底座地址配置（违反架构文档 6.2 唯一出口约束）"
+            echo "$OFFENDERS"
+            exit 1
+          fi
+          echo "::endgroup::"
+          echo "[OK] 底座调用出口唯一性校验通过"
+
+  # =========================================================================
+  # 门禁 2：SCA 协议扫描
+  # =========================================================================
+  license-scan:
+    name: 开源协议扫描（SCA）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ------------------------------------------------------------------
+      # Python 依赖协议扫描
+      # ------------------------------------------------------------------
+      - name: 扫描 Python 依赖协议
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-licenses
+          pip install -e "apps/adapter[dev]" --quiet
+          pip-licenses format=markdown --with-urls --with-license-file \
+            > python-licenses.md
+          echo "[OK] Python 依赖清单已生成"
+
+      # ------------------------------------------------------------------
+      # Node 依赖协议扫描
+      # ------------------------------------------------------------------
+      - name: 扫描 Node 依赖协议
+        working-directory: apps/web
+        run: |
+          npm install --no-audit --no-fund --silent
+          npm ls --all --json > /dev/null 2>&1 || true
+          npm install -g license-checker --silent
+          license-checker --json --production > node-licenses.json
+          echo "[OK] Node 依赖清单已生成"
+
+      # ------------------------------------------------------------------
+      # 黑名单协议判定（总方案 5.3）
+      # ------------------------------------------------------------------
+      - name: 协议黑名单判定
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          # 黑名单：GPL / AGPL / SSPL（含各类变体）
+          BLACKLIST = re.compile(
+              r'\b(GPL|AGPL|SSPL|OSL|OSL-3\.0|SSPL-1\.0|AGPL-3\.0|GPL-2\.0|GPL-3\.0)\b',
+              re.IGNORECASE,
+          )
+          # 灰名单：仅可独立进程调用，不可引入核心代码（需人工确认）
+          GREYLIST = re.compile(r'\b(LGPL|MPL|CDDL|EPL)\b', re.IGNORECASE)
+
+          findings = {'black': [], 'grey': []}
+
+          # ---- Python 依赖 ----
+          report = pathlib.Path('python-licenses.md')
+          if report.is_file():
+              for line in report.read_text(encoding='utf-8').splitlines():
+                  if line.startswith('|') and BLACKLIST.search(line):
+                      findings['black'].append(f'[python] {line.strip()}')
+                  elif line.startswith('|') and GREYLIST.search(line):
+                      findings['grey'].append(f'[python] {line.strip()}')
+
+          # ---- Node 依赖 ----
+          node_report = pathlib.Path('apps/web/node-licenses.json')
+          if node_report.is_file():
+              data = json.loads(node_report.read_text(encoding='utf-8'))
+              for name, meta in data.items():
+                  licenses = meta.get('licenses', '')
+                  if isinstance(licenses, list):
+                      licenses = ' '.join(licenses)
+                  if BLACKLIST.search(licenses or ''):
+                      findings['black'].append(f'[node] {name}: {licenses}')
+                  elif GREYLIST.search(licenses or ''):
+                      findings['grey'].append(f'[node] {name}: {licenses}')
+
+          # ---- 基础设施镜像协议复核（⚠️ D-06）----
+          compose_dir = pathlib.Path('deploy')
+          for compose in compose_dir.glob('docker-compose*.yml'):
+              text = compose.read_text(encoding='utf-8')
+              if 'minio/minio' in text:
+                  # 校验是否锁定 AGPL 之前的版本线
+                  locked = re.search(r'minio/minio:RELEASE\.2021-04-22', text)
+                  if locked:
+                      findings['grey'].append(
+                          '[infra] MinIO 锁定 AGPL 之前版本线（RELEASE.2021-04-22 系列），独立容器运行'
+                      )
+                  else:
+                      findings['black'].append(
+                          '[infra] MinIO 未锁定 AGPL 之前的版本线（违反灰名单规则）'
+                      )
+              if 'valkey/valkey' in text:
+                  findings['grey'].append('[infra] 缓存使用 Valkey（BSD-3-Clause），D-06 待决')
+              if 'redis:' in text and 'valkey' not in text:
+                  findings['grey'].append('[infra] 使用 Redis 7（RSALv2/SSPL），须独立进程运行')
+
+          print('=' * 70)
+          print('开源协议扫描结果')
+          print('=' * 70)
+
+          if findings['grey']:
+              print(f'\n[灰名单] 需人工确认（仅可独立进程调用，不可引入核心代码）：{len(findings["grey"])} 项')
+              for item in findings['grey']:
+                  print(f'  - {item}')
+
+          if findings['black']:
+              print(f'\n[黑名单] 禁止引入核心代码库：{len(findings["black"])} 项')
+              for item in findings['black']:
+                  print(f'  - {item}')
+              print('\n[FAIL] 存在黑名单协议依赖，CI 门禁不通过')
+              sys.exit(1)
+
+          print('\n[OK] 未发现黑名单协议依赖')
+          PY
+
+      - name: 上传协议扫描报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-scan-report
+          path: |
+            python-licenses.md
+            apps/web/node-licenses.json
+          retention-days: 30
+
+  # =========================================================================
+  # 门禁 3：依赖清单一致性检查
+  # =========================================================================
+  dependency-manifest:
+    name: 依赖清单架构约束
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 校验依赖版本约束落在架构文档 8 章清单内
+        run: |
+          echo "::group::校验依赖版本约束"
+          python - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          # 架构文档 8.1 / 8.2 允许的核心依赖（非穷举，用于兜底告警）
+          ALLOWED = {
+              'fastapi', 'uvicorn', 'pydantic', 'pydantic-settings', 'httpx', 'redis',
+              'sqlalchemy', 'asyncpg', 'python-jose', 'cryptography', 'tenacity',
+              'structlog', 'slowapi', 'limits', 'deprecated', 'python-multipart',
+              'pyyaml', 'pytest', 'pytest-asyncio', 'pytest-cov', 'coverage', 'ruff', 'mypy',
+              # 前端
+              'next', 'react', 'react-dom', 'typescript', 'tailwindcss', 'tailwindcss-animate',
+              'lucide-react', 'zustand', 'zod', 'sonner', 'date-fns', 'eslint',
+              'prettier', 'postcss', 'autoprefixer', 'class-variance-authority', 'clsx',
+              'tailwind-merge', '@tanstack/react-query', 'react-hook-form', 'zod',
+              '@hookform/resolvers', '@radix-ui/react-dialog', '@radix-ui/react-label',
+              '@radix-ui/react-slot', '@radix-ui/react-toast', 'eslint-config-next',
+              '@types/node', '@types/react', '@types/react-dom',
+          }
+
+          suspicious = []
+          for manifest in ('apps/adapter/pyproject.toml', 'apps/web/package.json'):
+              path = pathlib.Path(manifest)
+              if not path.is_file():
+                  continue
+              text = path.read_text(encoding='utf-8')
+              for line in text.splitlines():
+                  match = re.match(r'\s*"([a-zA-Z0-9@._\-/]+)[\[<>=]', line)
+                  if match:
+                      name = match.group(1)
+                      root = name.split('/')[0] if name.startswith('@') else name
+                      root = root.split('/')[0]
+                      if root.lower() not in {a.lower() for a in ALLOWED}:
+                          suspicious.append(f'{manifest}: {name}')
+
+          if suspicious:
+              print('[WARN] 以下依赖不在架构文档第 8 章清单内，需确认协议合规性：')
+              for item in suspicious:
+                  print(f'  - {item}')
+              print('\n[提示] 新增依赖必须先完成协议审核（总方案 5.3 组件引入流程）')
+          else:
+              print('[OK] 依赖清单与架构文档第 8 章一致')
+          PY
+          echo "::endgroup::"

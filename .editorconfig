@@ -1,0 +1,29 @@
+# 全局代码风格约定：UTF-8 / LF / 缩进 2 空格（Python 4 空格）
+# 详见架构文档 9.1 命名规范与 6.1 目录树。
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.py]
+indent_size = 4
+max_line_length = 100
+
+[*.{ts,tsx,js,jsx,json,yaml,yml,css,scss,less,html}]
+indent_size = 2
+max_line_length = 120
+
+[*.md]
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab
+
+[*.{bat,cmd}]
+end_of_line = crlf

@@ -1,0 +1,118 @@
+# 工具类型注册表（架构文档 3.4.1 / 第 4 章 Q1 数据驱动模式）
+#
+# 核心契约（新增工具零接口改动）：
+#   1. 在本文件登记一条 tools 条目；
+#   2. 在 app/tools/ 新增一个继承 ToolConnector 的连接器实现；
+#   3. T1-T7 端点路径、请求响应结构、错误码**全部不变**。
+#
+# 字段说明：
+#   tool_type       工具类型标识（小写下划线），对外契约的一部分
+#   display_name    业务化展示名（禁止出现第三方产品原始名称之外的实现细节）
+#   category        业务化分类
+#   auth_type       oauth2 / token / none
+#   status          available / unavailable
+#   timeout_ms      超时声明（架构文档 3.0.4：按注册表声明，默认 10s）
+#   connector_impl  连接器实现标识，对应 app/tools/ 下的模块名
+#   operations      能力清单（operation 为操作标识，params_schema 为自研参数描述）
+#
+# 合规说明：本文件不记录任何真实凭据，授权凭据由用户在设置页提交并加密存储。
+
+version: 1
+
+tools:
+  - tool_type: email
+    display_name: 邮箱
+    category: communication
+    auth_type: oauth2
+    status: available
+    timeout_ms: 10000
+    connector_impl: email_connector
+    operations:
+      - operation: send_message
+        display_name: 发送邮件
+        params_schema:
+          type: object
+          required: [to, subject, body]
+          properties:
+            to:
+              type: array
+              description: 收件人邮箱列表
+            subject:
+              type: string
+              description: 邮件主题
+            body:
+              type: string
+              description: 邮件正文
+      - operation: list_messages
+        display_name: 查看邮件
+        params_schema:
+          type: object
+          properties:
+            folder:
+              type: string
+              description: 邮件文件夹
+            limit:
+              type: integer
+              description: 返回条数上限
+      - operation: sync
+        display_name: 同步收件箱
+        params_schema:
+          type: object
+          properties:
+            scope:
+              type: string
+              description: 同步范围
+
+  - tool_type: github
+    display_name: 代码仓库
+    category: development
+    auth_type: oauth2
+    status: available
+    timeout_ms: 15000
+    connector_impl: github_connector
+    operations:
+      - operation: create_pull_request
+        display_name: 创建合并请求
+        params_schema:
+          type: object
+          required: [owner, repo, title, head, base]
+          properties:
+            owner:
+              type: string
+              description: 仓库所属组织
+            repo:
+              type: string
+              description: 仓库名称
+            title:
+              type: string
+              description: 合并请求标题
+            body:
+              type: string
+              description: 合并请求描述
+            head:
+              type: string
+              description: 源分支
+            base:
+              type: string
+              description: 目标分支
+      - operation: create_issue
+        display_name: 创建议题
+        params_schema:
+          type: object
+          required: [owner, repo, title]
+          properties:
+            owner:
+              type: string
+              description: 仓库所属组织
+            repo:
+              type: string
+              description: 仓库名称
+            title:
+              type: string
+              description: 议题标题
+            body:
+              type: string
+              description: 议题内容
+
+# 首批 5 款工具选型（PRD Q1）为待决项，当前按 PRD 建议方向预登记前两款作为契约样例。
+# 新增工具只需追加条目 + 新增连接器，T1-T7 契约零改动（架构文档 4.1）。

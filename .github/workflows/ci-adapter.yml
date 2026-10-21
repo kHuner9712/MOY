@@ -1,0 +1,242 @@
+# ===========================================================================
+# 适配层 CI 门禁（架构文档 9.6）
+#
+# 强制项：ruff（lint + format）、mypy（类型检查）、pytest（覆盖率 ≥ 80%）
+# 任一不过禁合并。
+# ===========================================================================
+
+name: CI Adapter
+
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'release/**', 'hotfix/**']
+    paths:
+      - 'apps/adapter/**'
+      - '.github/workflows/ci-adapter.yml'
+  pull_request:
+    paths:
+      - 'apps/adapter/**'
+      - '.github/workflows/ci-adapter.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-adapter-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: apps/adapter
+
+jobs:
+  quality-gate:
+    name: Lint / 类型 / 测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: apps/adapter/pyproject.toml
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # ------------------------------------------------------------------
+      # 门禁 1：Lint（ruff check）
+      # ------------------------------------------------------------------
+      - name: ruff check
+        run: ruff check . --output-format=github
+
+      # ------------------------------------------------------------------
+      # 门禁 2：格式化校验（ruff format --check）
+      # ------------------------------------------------------------------
+      - name: ruff format --check
+        run: ruff format --check .
+
+      # ------------------------------------------------------------------
+      # 门禁 3：类型检查（mypy 零 error）
+      # ------------------------------------------------------------------
+      - name: mypy
+        run: mypy app
+
+      # ------------------------------------------------------------------
+      # 门禁 4：测试 + 覆盖率 ≥ 80%
+      # 架构文档 9.6：适配层核心接口测试覆盖率 < 80% 禁合并
+      # ------------------------------------------------------------------
+      - name: pytest（含覆盖率门禁）
+        run: |
+          pytest tests -q \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=80
+
+      - name: 上传覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adapter-coverage
+          path: apps/adapter/coverage.xml
+          retention-days: 14
+
+  registry-validation:
+    name: 注册表配置校验
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 校验 YAML/JSON 语法与注册表语义
+        working-directory: .
+        run: |
+          python -m pip install pyyaml
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          import yaml
+
+          root = pathlib.Path('.')
+          failed = False
+
+          # 1) YAML 语法校验
+          for path in sorted(root.glob('**/*.yml')) + sorted(root.glob('**/*.yaml')):
+              if 'node_modules' in path.parts:
+                  continue
+              try:
+                  yaml.safe_load(path.read_text(encoding='utf-8'))
+                  print(f'[OK]   yaml  {path}')
+              except yaml.YAMLError as exc:
+                  print(f'[FAIL] yaml  {path}: {exc}')
+                  failed = True
+
+          # 2) JSON 语法校验
+          for path in sorted(root.glob('**/*.json')):
+              if 'node_modules' in path.parts or '.next' in path.parts:
+                  continue
+              try:
+                  json.loads(path.read_text(encoding='utf-8'))
+                  print(f'[OK]   json  {path}')
+              except json.JSONDecodeError as exc:
+                  print(f'[FAIL] json  {path}: {exc}')
+                  failed = True
+
+          sys.exit(1 if failed else 0)
+          PY
+
+      - name: 校验工具注册表与连接器实现一致
+        run: |
+          cd apps/adapter
+          python - <<'PY'
+          import sys
+
+          from app.registry.loader import get_tool_registry
+          from app.tools.base import ConnectorRegistry
+          import app.tools.email_connector  # noqa: F401
+          import app.tools.github_connector  # noqa: F401
+
+          registry = get_tool_registry()
+          registered = ConnectorRegistry.all()
+          failed = False
+
+          for spec in registry.tools:
+              if spec.connector_impl not in registered:
+                  print(f'[FAIL] 注册条目 {spec.tool_type} 的连接器未实现: {spec.connector_impl}')
+                  failed = True
+                  continue
+              connector_cls = registered[spec.connector_impl]
+              supported = set(getattr(connector_cls, 'SUPPORTED_OPERATIONS', ()))
+              declared = set(spec.operation_names())
+              if not supported:
+                  print(f'[WARN] {spec.tool_type} 未声明 SUPPORTED_OPERATIONS')
+              elif supported != declared:
+                  print(f'[FAIL] {spec.tool_type} 能力清单不一致: 注册表={sorted(declared)} 连接器={sorted(supported)}')
+                  failed = True
+              else:
+                  print(f'[OK]   {spec.tool_type} 能力清单一致')
+
+          sys.exit(1 if failed else 0)
+          PY
+
+  openapi-export:
+    name: 导出 OpenAPI 接口规范
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: quality-gate
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 安装依赖
+        working-directory: apps/adapter
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: 生成 OpenAPI 规范
+        working-directory: apps/adapter
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+
+          from app.main import create_app
+
+          schema = create_app().openapi()
+          output = pathlib.Path('../../docs/api/openapi.json')
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text(
+              json.dumps(schema, ensure_ascii=False, indent=2) + '\n', encoding='utf-8'
+          )
+
+          business = [
+              (method.upper(), path)
+              for path, methods in schema['paths'].items()
+              if path.startswith('/api/v1')
+              for method in methods
+          ]
+          print(f'业务端点数量: {len(business)}')
+          if len(business) != 30:
+              print('[FAIL] 业务端点数量必须为 30')
+              raise SystemExit(1)
+          print('[OK]   业务端点数量为 30')
+
+          text = json.dumps(schema, ensure_ascii=False).lower()
+          leaked = [w for w in ('dify', 'milvus', 'litellm', 'chat-messages') if w in text]
+          if leaked:
+              print(f'[FAIL] 对外文档泄露底座术语: {leaked}')
+              raise SystemExit(1)
+          print('[OK]   对外文档未泄露底座术语')
+          PY
+
+      - name: 上传接口规范
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: docs/api/openapi.json
+          retention-days: 30
