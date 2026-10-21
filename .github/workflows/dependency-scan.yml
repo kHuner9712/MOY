@@ -57,12 +57,11 @@ jobs:
             TARGETS="$TARGETS plugins"
           fi
 
-          MATCHES=$(grep -rniE "$FORBIDDEN" $TARGETS \
-            --exclude-dir=node_modules \
-            --exclude-dir=.next \
-            --exclude-dir=dist \
-            --exclude-dir=coverage \
-            2>/dev/null || true)
+          # 排除构建产物与依赖目录——它们不是本仓库源码，
+          # 且其内容来自上游包，可能合法地包含上述字样（如类型定义中的路径）。
+          EXCLUDE='--exclude-dir=node_modules --exclude-dir=.next --exclude-dir=out --exclude-dir=dist --exclude-dir=coverage --exclude=*.tsbuildinfo --exclude=package-lock.json'
+
+          MATCHES=$(grep -rniE "$FORBIDDEN" $TARGETS $EXCLUDE 2>/dev/null || true)
 
           if [ -n "$MATCHES" ]; then
             echo "::error::前端/插件代码中出现底座直连痕迹（违反架构红线 1.4）"
