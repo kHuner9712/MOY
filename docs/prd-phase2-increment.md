@@ -3,7 +3,32 @@
 > 文档性质：内部交付文档（供交付总监、架构师、研发、QA 消费）
 > 上游输入：`docs/phase2-progress-audit.md`（进度核对报告，逐项代码事实与缺口等级）、`docs/plan-v1.0.md` 第二阶段章节、`docs/prd-v1.0.md`（全量 PRD，本文件为其增量，不重复已交付内容）
 > 端点基线：`docs/architecture-v1.0.md` 第 3 章（30 端点契约 M1-M4 / R1-R7 / A1-A6 / T1-T7 / U1-U6）
-> 作者：许清楚（产品经理） 日期：2026-10-21 状态：待评审
+> 作者：许清楚（产品经理） 日期：2026-10-21 版本：**v1.1** 状态：待评审
+
+---
+
+## 勘误记录（v1.1，2026-10-21）
+
+> 本版仅做判据回写，不改需求范围与验收基线。修订依据：`docs/architecture-phase2.md` 第 7 章裁决 + 第 12 章裁决表（架构师高见远），以及 QA 测试方案编制时发现的 PRD 内部自相矛盾。
+
+| # | 位置 | 原文 | 修订为 | 依据 |
+| --- | --- | --- | --- | --- |
+| 1 | P2-KB-05 第 3/4 条、业务化文案要求、验收标准第 2/4 条（共 5 处） | 凭据轮换/失效返回 `11005`「知识库服务暂时不可用，请稍后重试」 | 返回 **`11007`**，文案统一为「**该知识库暂时无法访问，请联系管理员**」 | `11005` 的文案「检索服务暂时不可用，请重试」已在阶段一冻结，同码多文案会让前端「code → 文案」兜底表失效（该表以 code 为键）；且凭据失效重试无用，必须给用户可执行出路（联系管理员） |
+| 2 | 附录 A.3 错误码表 `15005` | `15005 \| 400 \| 降级将在当前周期结束后生效` | `15005 \| **200** \| 降级将在当前周期结束后生效 \| 非阻断提示，code=0` | 降级是正常业务结果而非错误；返回 400 会让前端 `unwrap()` 抛业务异常并弹错误态，与 P2-BL-02「提示生效日期」直接冲突 |
+| 3 | 附录 A.3 错误码表 `16001` | `16001 \| 403 \| 当前账号没有该操作的权限 \| 运营端点鉴权失败` | **整行删除**，改为一行说明：运营端鉴权失败统一复用 `20003`，不设独立错误码 | `16001` 落在既有错误码分段空隙、注册表无归属，且语义与 `20003` 完全一致；重复码会让前端兜底表出现两套同义文案 |
+| 4 | P2-KB-02 第 6 条与验收标准第 5 条（原文正确，**保留不改**）；附录 A.3 | （无） | 附录 A.3 补一行同码多文案说明：`11006` 处理中删除文档 → 「文档正在处理，请稍后再删除」 | 码值不变，仅同码细分文案（`ApiError` 原生支持 message 覆盖），属允许变更 |
+| 5 | P2-KB-01 `DELETE /knowledge/bases/{base_id}` 错误行 | `20003`（仅 `owner`/`org_admin` 可删） | `20003`（**仅 `owner`/`org_admin`，或该库的创建者可删**），并在验收标准补一条断言 | 与第 6 章权限矩阵 `knowledge:base:delete` 对 member 标 `🔸` 自相矛盾；**以矩阵为准**：成员可删自己创建的库，不可删他人创建或组织公共的库 |
+| 6 | 附录 A.3 错误码表；P2-BL-05 `POST /ops/orders/{order_id}/confirm` 端点行与验收标准 | A.3 漏登 `15009`，核销端点只列请求体、未列错误码，验收标准只覆盖「核销成功」 | A.3 补 `15009 \| 400 \| 订单金额与应付金额不一致，请核对后重试`；端点行补齐 `20004`/`20003`/`15008`/`15009` 并注明「核销前必须校验金额严格相等」；验收标准补一条金额不符断言 | A.3 漏登 `15009` 导致运营核销**缺金额校验断言**——不补则「误核销为任意金额」的漏洞无测试覆盖，属 P0 断言缺口（架构第 7 章已定义该码） |
+| 7 | P2-BL-02 `POST /billing/subscription`、`PATCH /billing/subscription/seats`、P2-BL-03 `GET /billing/usage` 响应结构；A.3 表下使用说明 | 套餐/用量超额场景未定义 `over_quota_warning` 字段；A.3 未说明 `15006` 的适用边界 | 三个响应结构均补 `over_quota_warning: boolean`（超额为 `true`，前端展示提示条、不弹错误态，**此时 `code` 仍为 0**）；A.3 使用说明补第 4 条「`15006` 仅用于 M1/M2/R3/A1 软限制提示，套餐与订单类接口一律用 `data.over_quota_warning`，不得返回非 0 code」；`15006` 文案统一为「本月额度已用完，当前为常规模式，升级套餐可恢复完整能力」 | 架构第 7 章要求 BL3/BL6 走布尔字段而非错误码，否则「降级成功但超额」会被前端 `unwrap()` 当失败并弹错误态，与 P2-BL-02「提示而非报错」直接冲突；文案统一取架构版，因它给出了升级出路，符合「所有错误有解决方案提示」的体验规范 |
+| 8 | 附录 A.3 表下使用说明第 2 条（同码多文案）；P2-ID-03 保护规则与验收标准 | 仅登记了 `11006` 一例；14008 的两个使用场景未成文 | 追加 `14008` 两场景：场景 A 移除或降级自己 →「不能对自己执行该操作，请联系其他管理员」；场景 B 修改同级或更高级成员 →「你没有权限修改该成员」（码值不变，前端兜底表仍以 code 为键） | **裁决：保留 `14008` 不拆新码**——`14001-14004` 为既有权限段、`14005-14008` 为本次新增，再拆 `14009` 会让分段继续膨胀；两场景语义同源（均属「操作对象受保护 / 超出你的管理范围」），用户看到的文案已足够区分 |
+| 9 | P2-BL-01 功能描述、`GET /billing/plans` 响应示例、验收标准；附录 A 开头口径段 | 套餐价格用 `price_per_seat_month`（隐含「元」），与同一文档订单接口的 `amount_cents`（分）单位不一致；架构 BL1 为 `price_per_seat_month_cents` | 全部改为 `price_per_seat_month_cents`（单位：分，¥39=`3900`、¥99=`9900`）；P2-BL-01 新增功能描述第 5 条「金额单位（强制）」；附录 A 开头补全文口径段「所有金额以分传输、字段必带 `_cents`、前端除以 100、禁止后端传元」；验收标准补「专业版返回 3900 时界面显示 ¥39」与「金额字段名均含 `_cents`」两条断言 | 同一文档两套金额单位是 100 倍 bug 温床（¥39 落成 39 分），且测试环境表现为「支付成功」，很难被发现 |
+| 10 | P2-BL-03 `GET /model/usage`（M4）扩展字段；附录 A.2 对应行 | 额度单位标签字段写作 `quota_unit` | 统一为架构命名 **`quota_unit_label`**（M4 与 BL1 同名），并注明「禁止使用裸 `quota_unit`」 | 与架构 BL1 同义不同名会导致前端取值拿到 `undefined`，额度文案整体不显示 |
+| 11 | P2-BL-01 `GET /billing/plans` 响应示例 | 行内 JSON 片段 `"purchasable_quota", true`（冒号误写为逗号，且用 `A\|B` 枚举记法不可解析） | 改为 fenced ```json 代码块，给出 `code/message/data` 完整可解析示例（含 free 与 professional 两个套餐），枚举取值另起一行用文字说明 | 研发直接复制该片段会 JSON 解析失败；改为可解析示例后，`json.loads` 实测通过（见本节末校验记录） |
+| 12 | 附录 A.1 端点表 | 38 行端点表无架构编号，需人工对照架构 BL1-BL10 / OPS1-OPS8 / KB1-KB8 / ID1-ID11 / TL1 | 新增「架构编号」列（逐行 1:1 标注），并在表下补说明「端点与架构为 1:1、需求与端点为 1:N（如 P2-BL-02→BL2/BL3/BL4）」 | 研发与 QA 需在两文档间交叉检索，QA 编制用例时已在踩坑，加一列成本极低 |
+| 13 | 附录 A.3 同码多文案 `14008` 场景 A；P2-ID-03 保护规则与验收标准第 2 条 | 场景 A 文案「不能修改自己的角色，请联系其他管理员」 | 二次修订为「**不能对自己执行该操作，请联系其他管理员**」（场景 B 不变） | 场景 A 实际含「移除自己」与「降级自己」两种动作，用户点的是「移除」，回「不能修改角色」不贴切 |
+| 14 | P2-BL-04 `POST /billing/payments/callback` 端点行 | 只写了「免 Bearer、必须验签、幂等」，未列错误码 | 补 `20001` 验签失败/参数非法、`15008` 订单已处理，并注明「对渠道方统一返回 200 语义，业务侧不重复开通」 | 与架构 BL10 对齐；不写清「对渠道返回 200」会被实现成 4xx，导致渠道无限重推 |
+
+> **v1.1 勘误校验记录（可复现）**：P2-BL-01 的 `json` 示例块经 `python -c "json.loads(...)"` 实测通过（顶层 `code/message/data`，`data.plans` 2 条；`price_per_seat_month_cents=3900` 按 `/100` 显示为 `¥39.00`）。全文金额字段扫描结果：仅 `price_per_seat_month_cents`、`amount_cents`、`paid_amount_cents` 三个，`_cents` 覆盖率 100%；裸 `quota_unit` 0 处。
 
 ---
 
@@ -102,14 +127,15 @@
     - 错误：`11001` 库不存在；`20003` 无权限；`20001` 参数非法
   - `[新增]` `DELETE /api/v1/knowledge/bases/{base_id}`
     - 响应 `data`：`{ "base_id", "deleted": true, "deleted_document_count": 12 }`
-    - 错误：`11001`；`20003`（仅 `owner`/`org_admin` 可删）；`20005` 并发冲突
+    - 错误：`11001`；`20003`（仅 `owner`/`org_admin`，或该库的创建者可删）；`20005` 并发冲突
 - **业务化文案要求**：`chunk_policy` → 「内容切分精细度」；选项文案「标准 · 处理更快，适合手册与说明文档」「精细 · 条款定位更准，适合制度与合同」；**禁止出现**「分块 / chunk / 切片 / 向量 / 索引」。
 - **验收标准（可执行断言）**：
   1. 新建库 `chunk_policy=fine` → `GET /knowledge/bases` 该库返回 `fine`；上传文档不带 `chunk_policy` 时按 `fine` 处理，响应可查。
   2. `PATCH` 改名为空字符串返回 `20001`，界面提示「知识库名称不能为空」。
   3. 无权限账号调用 `PATCH`/`DELETE` 返回 `20003`，前端按钮置灰且 hover 有原因文案。
   4. `DELETE` 后 `GET /knowledge/bases` 不再返回该库；`GET /knowledge/bases/{id}/documents` 返回 `11001`；操作记录中可见「删除知识库」条目。
-  5. 全流程界面无一处出现禁用词（第 7 章清单扫描 0 命中）。
+  5. 删除权限边界：成员 A 删除**自己创建**的库 → 成功；成员 A 删除**成员 B 创建**的库 → `20003`；成员 A 删除组织公共（`visibility=organization` 且非本人创建）的库 → `20003`；组织管理员删除任意库 → 成功。
+  6. 全流程界面无一处出现禁用词（第 7 章清单扫描 0 命中）。
 
 ---
 
@@ -200,20 +226,20 @@
 - **功能描述**：
   1. 每个知识库可绑定独立的底座侧访问凭据（数据源凭据）；未绑定时回落到平台全局凭据（行为与现状一致，保证向后兼容）。
   2. 凭据由运维在配置中登记、以加密形式存储；**任何接口响应、日志、前端页面均不得返回凭据明文或可逆信息**。
-  3. 凭据轮换：换绑后新请求立即使用新凭据，进行中的上传/处理任务失败时按 `11005` 返回并允许重试；轮换全程无需重启服务。
-  4. 凭据失效（401/403）时对用户展示 `11005`「知识库服务暂时不可用，请稍后重试」，不得暴露凭据错误。
+  3. 凭据轮换：换绑后新请求立即使用新凭据，进行中的上传/处理任务失败时按 `11007` 返回并允许重试；轮换全程无需重启服务。
+  4. 凭据失效（401/403）时对用户展示 `11007`「该知识库暂时无法访问，请联系管理员」，不得暴露凭据错误。
   5. 边界条件：凭据读取失败时不得降级到全局凭据（防止跨库数据串用）；一个凭据可被多个库引用，删除引用前需校验。
 - **涉及端点**：
   - `[内部变更]` R1-R7 全部端点的服务端实现改为按 `base_id` 解析凭据；**对外契约零改动**（无新增字段、无新增错误码）
   - `[新增-内部]` `PUT /api/v1/knowledge/bases/{base_id}/credential-binding`（仅运维角色 token 可调用，前端不调用）
     - 请求：`{ "credential_ref": "cred_xxxx" }`（引用标识，非明文）
     - 响应：`{ "base_id", "binding_status": "bound"|"fallback", "updated_at" }`
-- **业务化文案要求**：终端用户界面 **0 处**出现该能力（无任何设置项、无任何提示）；`11005` 文案保持「知识库服务暂时不可用，请稍后重试」。
+- **业务化文案要求**：终端用户界面 **0 处**出现该能力（无任何设置项、无任何提示）；`11007` 文案统一为「该知识库暂时无法访问，请联系管理员」（重试无用，必须给用户可执行的出路）。
 - **验收标准**：
   1. 库 A 绑定凭据 c1、库 B 未绑定：对两库分别上传与检索，均在各自凭据下成功，日志中可区分凭据引用（非明文）。
-  2. 库 A 凭据置为无效：库 A 的 R3/R7 返回 `11005`，库 B 仍正常（故障不扩散）。
+  2. 库 A 凭据置为无效：库 A 的 R3/R7 返回 `11007`「该知识库暂时无法访问，请联系管理员」，库 B 仍正常（故障不扩散）。
   3. 库 A 凭据失效时**不得**回落到全局凭据（检查下游调用凭据标识为 c1）。
-  4. 轮换凭据后不重启服务，下一请求即生效；进行中任务失败返回 `11005` 可重试成功。
+  4. 轮换凭据后不重启服务，下一请求即生效；进行中任务失败返回 `11007` 可重试成功。
   5. 全站接口响应与前端源码禁词扫描（含 `credential`、`api_key`、`dify`）0 命中。
 
 ---
@@ -369,7 +395,7 @@
   1. 成员列表支持按 部门 / 角色 / 状态（已加入 / 待接受 / 已停用） / 关键字 筛选，分页。
   2. 单个成员可：变更角色、调整所属部门（可多部门，主部门单选）、停用/启用、移出团队。
   3. 批量操作：勾选多个成员批量改角色 / 批量移出（单次 ≤ 100）。
-  4. 保护规则：不能移除或降级企业所有者（返回 `14007`「不能移除企业所有者，请先转移所有权」）；不能移除自己；管理员不能修改与自己同级或更高角色的成员（返回 `14008`「你没有权限修改该成员」）。
+  4. 保护规则：不能移除或降级企业所有者（返回 `14007`「不能移除企业所有者，请先转移所有权」）；不能移除或降级自己（返回 `14008`「不能对自己执行该操作，请联系其他管理员」）；管理员不能修改与自己同级或更高角色的成员（返回 `14008`「你没有权限修改该成员」）。
   5. 移出成员时提示其数据处置：「该成员创建的知识库将转交给企业管理员，个人会话不移交」；移出后其个人工具连接失效。
   6. 变更立即生效（≤5s）；所有变更写入操作记录（含变更前后值）。
 - **涉及端点**：
@@ -380,7 +406,7 @@
 - **业务化文案要求**：「变更角色」「调整部门」「移出团队」「停用」；确认文案「移出后该成员将无法访问企业数据，其创建的知识库将转交由企业管理员管理」；**禁止出现**「删除用户 / 撤销 token / 会话失效」等实现语言。
 - **验收标准**：
   1. 把成员 A 从「成员」改为「组织管理员」：A 刷新后出现管理入口；知识库授权判定按新角色生效。
-  2. 尝试移除所有者返回 `14007`；尝试移除自己返回 `14008`。
+  2. 尝试移除所有者返回 `14007`；尝试移除自己返回 `14008`「不能对自己执行该操作，请联系其他管理员」；管理员修改同级成员返回 `14008`「你没有权限修改该成员」。
   3. 批量移出 100 人返回 `succeeded=100`；含 1 名所有者时该员进入 `failed` 且不影响其他成员。
   4. 移出后该成员访问任何企业资源返回 `20003`，登录后无企业数据。
   5. 操作记录中可查到「变更角色：成员 → 组织管理员」含前后值。
@@ -421,14 +447,60 @@
   2. 套餐规则由运营后台配置并驱动前端展示与后端校验，**前端不得硬编码套餐名与额度**。
   3. 展示口径：价格以「¥X / 席位 / 月」呈现；额度以「X 万字数额度 / 席位 / 月」呈现；免费版显示「¥0」而非「免费试用」。
   4. 边界条件：套餐下架后已有订阅不受影响、新购不可选；私有化部署企业额度按 License 定义，与 SaaS 订阅互斥展示。
+  5. **金额单位（强制）**：所有金额字段一律以**分**为单位传输，字段名必须带 `_cents` 后缀；¥39 = `3900`、¥99 = `9900`；前端展示时除以 100 并保留两位小数，**禁止后端传元**。
 - **涉及端点**：
-  - `[新增]` `GET /api/v1/billing/plans` → `{ "plans": [{ "plan_code": "free"|"professional"|"enterprise", "display_name", "price_per_seat_month": 0, "min_seats", "quota_units_per_seat_month", "quota_unit": "字数额度", "purchasable_quota", true, "features": [{ "feature_key": "org_structure", "display_name": "组织架构", "included": true, "limit": null }], "status": "available"|"offline", "trial_days": 14 }] }`
+  - `[新增]` `GET /api/v1/billing/plans`（响应示例，可直接 `json.loads` 校验；`price_per_seat_month_cents` 单位为分：专业版 ¥39 = `3900`、企业版 ¥99 = `9900`）
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "plans": [
+      {
+        "plan_code": "free",
+        "display_name": "免费版",
+        "price_per_seat_month_cents": 0,
+        "currency": "CNY",
+        "min_seats": 3,
+        "quota_units_per_seat_month": 200000,
+        "quota_unit_label": "字数额度",
+        "purchasable_quota": false,
+        "features": [
+          { "feature_key": "org_structure", "display_name": "组织架构", "included": false, "limit": null },
+          { "feature_key": "knowledge_base_count", "display_name": "知识库数量", "included": true, "limit": 3 }
+        ],
+        "status": "available",
+        "trial_days": 0
+      },
+      {
+        "plan_code": "professional",
+        "display_name": "专业版",
+        "price_per_seat_month_cents": 3900,
+        "currency": "CNY",
+        "min_seats": 5,
+        "quota_units_per_seat_month": 3000000,
+        "quota_unit_label": "字数额度",
+        "purchasable_quota": true,
+        "features": [
+          { "feature_key": "org_structure", "display_name": "组织架构", "included": true, "limit": null }
+        ],
+        "status": "available",
+        "trial_days": 14
+      }
+    ]
+  }
+}
+```
+
+  - 枚举约束：`plan_code` ∈ `free` / `professional` / `enterprise`；`status` ∈ `available` / `offline`；`feature_key` 为内部标识，前端按 `display_name` 渲染。
 - **业务化文案要求**：「套餐」「席位」「字数额度」；**严禁出现**「token / 配额 unit / pricing table / plan sku」。额度单位一律「字数额度」。
 - **验收标准**：
   1. `GET /billing/plans` 返回 3 个套餐，字段齐备；前端无硬编码额度（改配置后刷新即变）。
-  2. 免费版 `price_per_seat_month=0` 且界面显示「¥0 / 席位 / 月」。
+  2. 免费版 `price_per_seat_month_cents=0` 且界面显示「¥0 / 席位 / 月」；专业版返回 `3900` 时界面显示「¥39 / 席位 / 月」（验证除以 100 的展示逻辑）。
   3. 套餐置为 `offline` 后前端不再可购买，已订阅用户套餐名仍正常显示。
   4. 页面禁词扫描 0 命中（含 `token`）。
+  5. 所有金额字段名均含 `_cents` 后缀（接口响应字段清单扫描，无裸金额字段）。
 
 ---
 
@@ -438,13 +510,13 @@
 - **功能描述**：
   1. 订阅状态：`trialing`「试用中」/ `active`「生效中」/ `past_due`「待续费」/ `cancelled`「已取消」/ `expired`「已到期」。展示当前套餐、生效时间、到期时间、席位数（已用/总量）、本周期额度。
   2. 操作：开通（免费版一键开通，付费版进入支付）、升级（立即生效，按剩余天数折算差价）、降级（当前周期结束后生效，期间提示「将在 X 月 X 日切换为 X 套餐」）、加/减席位（加席位立即生效，减席位下周期生效且不得低于已用席位）、取消自动续费。
-  3. 约束：降级或减席位导致当前用量超额时，允许变更但提示「当前用量已超出目标套餐额度，切换后将进入额度限制状态」。
+  3. 约束：降级或减席位导致当前用量超额时，允许变更（**不阻断、不报错**），响应 `code=0` 且 `over_quota_warning=true`，界面展示提示条「当前用量已超出目标套餐额度，切换后将进入额度限制状态」——**不得弹错误态**。
   4. 席位校验：新增成员时若席位已满，返回 `15003`「成员席位已用满，请先增加席位」，邀请入口置灰并给「增加席位」跳转。
   5. 边界条件：同一企业同一时刻只有一个有效订阅；`past_due` 状态保留 7 天宽限期（功能可用，顶部提示续费），逾期转 `expired`（保留数据，高消耗能力受限）。
 - **涉及端点**：
   - `[新增]` `GET /api/v1/billing/subscription` → `{ "subscription_id", "plan_code", "plan_name", "status", "seats_total", "seats_used", "started_at", "current_period_end", "quota_units_total", "quota_units_used", "auto_renew": true, "pending_change": { "plan_code", "effective_at" } | null }`
-  - `[新增]` `POST /api/v1/billing/subscription` → 请求 `{ "plan_code", "seats", "action": "subscribe"|"upgrade"|"downgrade"|"cancel_renew" }`；响应 `{ "subscription_id", "status", "effective_at", "order_id"|null }`；错误 `15001`/`15002`/`15004`/`15005`
-  - `[新增]` `PATCH /api/v1/billing/subscription/seats` → 请求 `{ "seats": 25 }`，响应 `{ "seats_total", "seats_used", "effective_at", "order_id"|null }`；错误 `15003`（低于已用席位）
+  - `[新增]` `POST /api/v1/billing/subscription` → 请求 `{ "plan_code", "seats", "action": "subscribe"|"upgrade"|"downgrade"|"cancel_renew" }`；响应 `{ "subscription_id", "status", "effective_at", "order_id"|null, "over_quota_warning": false }`；返回码 `15001`/`15002`/`15004`（错误）+ `15005`（**非阻断提示，HTTP 200 / `code=0`**，见附录 A.3）
+  - `[新增]` `PATCH /api/v1/billing/subscription/seats` → 请求 `{ "seats": 25 }`，响应 `{ "seats_total", "seats_used", "effective_at", "order_id"|null, "over_quota_warning": false }`；错误 `15003`（低于已用席位）
 - **业务化文案要求**：「套餐」「席位」「生效中 / 待续费 / 已到期」「升级立即生效 / 降级将在 X 月 X 日生效」「增加席位」；**禁止出现**「subscription SKU / proration / 计费周期 ID」。
 - **验收标准**：
   1. 免费版开通后 `status=active`，`seats_total=3`。
@@ -452,6 +524,7 @@
   3. 降级请求返回 `effective_at` 为当前周期结束日，期间套餐不变。
   4. 席位用满时新增成员返回 `15003`，前端会员邀请按钮置灰且有提示。
   5. 减席位到低于已用数返回 `15003`。
+  6. 降级到低于当前用量的套餐：`code=0`、`over_quota_warning=true`，界面出现提示条且**无错误态**、无 toast 报错。
 
 ---
 
@@ -465,9 +538,10 @@
   4. 口径一致性：个人视图继续复用 M4（字段不变），M4 内部改为读计量服务，`total_units`/`used_units` 单位即「字数额度」；管理视图走新端点。
   5. 边界条件：计量写入必须幂等（同一 `generation_id`/`document_id` 不重复计）；流式回答按结束时的 `usage` 结算，异常中断按已产出的部分内容折算；计量与适配层计数的对账偏差 ≤ 1%。
 - **涉及端点**：
-  - `[扩展]` `GET /api/v1/model/usage?period=month`（M4）：字段不变，新增 `quota_unit: "字数额度"`；数据源改为计量服务
+  - `[扩展]` `GET /api/v1/model/usage?period=month`（M4）：字段不变，新增 `quota_unit_label: "字数额度"`（与 `GET /billing/plans` 同名，禁止使用裸 `quota_unit`）；数据源改为计量服务
   - `[新增]` `GET /api/v1/billing/usage?period=2026-11&group_by=member|department|capability`
-    - 响应：`{ "period", "quota_units_total", "quota_units_used", "quota_units_remaining", "usage_percent": 63.2, "breakdown": [{ "key", "display_name", "units", "percent" }], "daily_trend": [{ "date", "units" }] }`
+    - 响应：`{ "period", "quota_units_total", "quota_units_used", "quota_units_remaining", "usage_percent": 63.2, "over_quota_warning": false, "breakdown": [{ "key", "display_name", "units", "percent" }], "daily_trend": [{ "date", "units" }] }`
+    - `over_quota_warning`：`true` 表示本周期用量已超出套餐额度（前端展示提示条，**不弹错误态**）；此时 `code` 仍为 0
     - 错误：`20003`（管理视图需 `billing:subscription:read`）
 - **业务化文案要求**：「字数额度」「本月已用 / 剩余」「按成员 / 按部门 / 按功能」；**严禁出现**「token / 消耗量 / 计费单元 / 计量表」。
 - **验收标准**：
@@ -494,7 +568,7 @@
   - `[新增]` `GET /api/v1/billing/orders?status=&page=` → 订单分页
   - `[新增]` `GET /api/v1/billing/orders/{order_id}` → 订单详情（含 `payment_no_masked`、`paid_at`、`invoice_status`）
   - `[新增]` `GET /api/v1/billing/invoices?period=` → `{ "items": [{ "invoice_id", "period", "amount_cents", "status": "issued"|"pending", "download_url" }] }`
-  - `[新增-内部]` `POST /api/v1/billing/payments/callback`（支付渠道回调，**免 Bearer 鉴权但必须验签**，幂等）
+  - `[新增-内部]` `POST /api/v1/billing/payments/callback`（支付渠道回调，**免 Bearer 鉴权但必须验签**，幂等）；错误码：`20001` 验签失败 / 参数非法、`15008` 订单已处理；**对渠道方统一返回 200 语义**（渠道侧只认 HTTP 200，避免其无限重推），业务侧对已处理订单**不重复开通**
 - **业务化文案要求**：「订单」「应付金额」「在线支付 / 对公转账」「支付成功，套餐已生效」「订单已超时关闭，请重新下单」「账单」；**严禁出现**「回调 / webhook / 签名 / 商户号 / 交易流水」。
 - **验收标准**：
   1. 在线支付全流程：下单 → 支付 → 回调 → 订阅生效，界面 3 步内完成且状态正确。
@@ -517,7 +591,7 @@
   5. 边界条件：运营角色为**跨租户**角色，操作必须写操作记录（记录运营人 ID）；运营后台所有接口拒绝企业用户 token（返回 `20003`）；运营不可见用户对话内容与文档原文（只能看数量）。
 - **涉及端点**：
   - `[新增]` `GET /api/v1/ops/tenants?keyword=&status=&page=` / `GET /api/v1/ops/tenants/{tenant_id}` / `PATCH /api/v1/ops/tenants/{tenant_id}`（`{ "status": "active"|"suspended" }`）
-  - `[新增]` `GET /api/v1/ops/orders?tenant_id=&status=&page=` / `POST /api/v1/ops/orders/{order_id}/confirm`（请求 `{ "paid_amount_cents", "remark" }`）
+  - `[新增]` `GET /api/v1/ops/orders?tenant_id=&status=&page=` / `POST /api/v1/ops/orders/{order_id}/confirm`（请求 `{ "paid_amount_cents", "remark" }`；响应 `{ "order_id", "status": "paid", "subscription_status" }`；错误 `20004` 订单不存在 / `20003` 无权限 / `15008` 订单已处理 / **`15009` 金额不符**）：核销前必须校验 `paid_amount_cents` 与订单应付金额严格相等
   - `[新增]` `GET /api/v1/ops/metrics?range=7d|30d` → `{ "tenant_count", "active_tenant_count", "active_user_count", "conversation_count", "document_count", "quota_units_total", "plan_distribution": [...], "top_tenants": [...] }`
   - `[新增]` `GET /api/v1/ops/settings` / `PATCH /api/v1/ops/settings`
   - 鉴权：以上端点要求 token 含 `ops:console:access` 权限点，且 `tenant_id` 为平台租户
@@ -525,9 +599,10 @@
 - **验收标准**：
   1. 企业用户 token 调任一 `/ops/**` 返回 `20003`；运营 token 正常。
   2. 对公订单核销后：订单 `status=paid`、订阅生效、操作记录含运营人与备注。
-  3. 统计接口 `range=30d` 返回数值与 `/billing/usage` 聚合一致（企业维度求和误差 0）。
-  4. 修改预警阈值为 70% 后，达到 70% 的企业收到站内提醒（5 分钟内）。
-  5. 停用企业后该企业成员登录返回 403 且文案为提示语。
+  3. 核销金额校验：核销金额填 99 元（`9900` 分）而订单应付 9,900 元（`990000` 分）→ 返回 `15009`，订单状态不变（仍为 `pending_payment`）、订阅未生效，界面提示「订单金额与应付金额不一致，请核对后重试」。
+  4. 统计接口 `range=30d` 返回数值与 `/billing/usage` 聚合一致（企业维度求和误差 0）。
+  5. 修改预警阈值为 70% 后，达到 70% 的企业收到站内提醒（5 分钟内）。
+  6. 停用企业后该企业成员登录返回 403 且文案为提示语。
 
 ---
 
@@ -601,7 +676,7 @@
   3. 全局兜底：未捕获异常、接口 5xx、流式中断 → 统一 toast + 可重试；**禁止**展示 `code`、堆栈、英文原文。
   4. 错误态重试：点击重试重新发起原请求（不刷新整页）；连续 3 次失败提示「多次尝试未成功，请稍后再试或联系管理员」。
   5. 边界条件：同一错误 3s 内多次出现只提示一次（防刷屏）；离线状态顶部固定提示条「网络连接已断开，请检查网络后重试」。
-- **涉及端点**：无新增；依赖统一响应 `{code,message,data}` 与 `lib/business-errors.ts` 映射表（新增 14005-14008 / 15001-15008 映射，见附录 B）。
+- **涉及端点**：无新增；依赖统一响应 `{code,message,data}` 与 `lib/business-errors.ts` 映射表（新增 `11007` / `14005-14008` / `15001-15009` 映射，见附录 A.3）。
 - **业务化文案要求**：错误态统一句式「<发生了什么>，<怎么办>」，如「知识库暂时无法加载，请重试」；**禁止出现**任何错误码、英文、技术名词。
 - **验收标准**：
   1. 对 10 个页面逐一断网 / 注入 500 / 注入 20003：均展示 ErrorState 且含重试按钮，点击后恢复。
@@ -884,49 +959,53 @@
 ## 附录 A：新增 / 变更端点汇总（供架构师）
 
 > 命名遵循 `/api/v1/{domain}/{resource}` 小写连字符；响应 `{code,message,data}`；字段 `snake_case`；资源 ID 为 `{类型缩写}_ + ULID`。缩写约定：`kb_`（知识库）、`doc_`（文档）、`seg_`（内容片段）、`grnt_`（授权）、`dept_`（部门）、`usr_`（成员）、`role_`（角色）、`sub_`（订阅）、`ord_`（订单）、`bill_`（账单）、`tnt_`（企业）、`cred_`（凭据引用）。
+>
+> **金额与额度口径（强制，全文一致）**：① **所有金额以「分」为单位传输，字段名必须带 `_cents` 后缀**（`price_per_seat_month_cents`、`amount_cents`、`paid_amount_cents`），前端展示时除以 100 并保留两位小数；**禁止后端传元**，也禁止出现无 `_cents` 后缀的金额字段。② 额度字段统一 `quota_units_*`，单位标签字段统一 `quota_unit_label`（禁止裸 `quota_unit`）。
 
 ### A.1 新增端点（38 个，其中知识库域 8 / 工具域 1 / 组织权限域 11 / 计费域 10 / 运营域 8）
 
-| # | 方法 | 路径 | 所属需求 | 关键请求字段 | 关键响应字段 |
-| --- | --- | --- | --- | --- | --- |
-| 1 | PATCH | `/api/v1/knowledge/bases/{base_id}` | P2-KB-01 | name, description, chunk_policy, visibility | base_id, updated_at |
-| 2 | DELETE | `/api/v1/knowledge/bases/{base_id}` | P2-KB-01 | — | deleted, deleted_document_count |
-| 3 | GET | `/api/v1/knowledge/bases/{base_id}/documents` | P2-KB-02 | page, page_size, keyword, stage, sort | items[], meta |
-| 4 | GET | `/api/v1/knowledge/bases/{base_id}/documents/{doc_id}/segments/{segment_id}` | P2-KB-04 | with_context | content, context_before/after, position, status |
-| 5 | GET | `/api/v1/knowledge/bases/{base_id}/grants` | P2-KB-03 | page, page_size | items[], meta |
-| 6 | POST | `/api/v1/knowledge/bases/{base_id}/grants` | P2-KB-03 | subject_type, subject_ids[], permission | created_count, skipped_count |
-| 7 | DELETE | `/api/v1/knowledge/bases/{base_id}/grants/{grant_id}` | P2-KB-03 | — | deleted |
-| 8 | PUT | `/api/v1/knowledge/bases/{base_id}/credential-binding` | P2-KB-05 | credential_ref | binding_status |
-| 9 | GET | `/api/v1/tools/executions` | P2-TL-04 | tool_type, page, page_size | items[], meta |
-| 10 | GET | `/api/v1/identity/organizations/{org_id}/departments` | P2-ID-01 | flat | departments[] |
-| 11 | POST | `/api/v1/identity/organizations/{org_id}/departments` | P2-ID-01 | name, parent_id | department_id, level |
-| 12 | PATCH | `/api/v1/identity/departments/{department_id}` | P2-ID-01 | name, parent_id, manager_id | department_id |
-| 13 | DELETE | `/api/v1/identity/departments/{department_id}` | P2-ID-01 | — | deleted |
-| 14 | GET | `/api/v1/identity/permissions` | P2-ID-02 | — | groups[] |
-| 15 | GET | `/api/v1/identity/organizations/{org_id}/roles` | P2-ID-02 | — | items[] |
-| 16 | DELETE | `/api/v1/identity/organizations/{org_id}/roles/{role_id}` | P2-ID-02 | — | deleted |
-| 17 | PATCH | `/api/v1/identity/organizations/{org_id}/members/{member_id}` | P2-ID-03 | role, department_ids, primary_department_id, status | member_id, role |
-| 18 | DELETE | `/api/v1/identity/organizations/{org_id}/members/{member_id}` | P2-ID-03 | — | removed, transferred_knowledge_base_count |
-| 19 | POST | `/api/v1/identity/organizations/{org_id}/members/batch` | P2-ID-03 | member_ids[], action, role | succeeded, failed[] |
-| 20 | GET | `/api/v1/identity/audit-logs/actions` | P2-ID-04 | — | groups[] |
-| 21 | GET | `/api/v1/billing/plans` | P2-BL-01 | — | plans[] |
-| 22 | GET | `/api/v1/billing/subscription` | P2-BL-02 | — | plan_code, status, seats_*, quota_* |
-| 23 | POST | `/api/v1/billing/subscription` | P2-BL-02 | plan_code, seats, action | status, effective_at, order_id |
-| 24 | PATCH | `/api/v1/billing/subscription/seats` | P2-BL-02 | seats | seats_total, effective_at |
-| 25 | GET | `/api/v1/billing/usage` | P2-BL-03 | period, group_by | quota_*, breakdown[], daily_trend[] |
-| 26 | POST | `/api/v1/billing/orders` | P2-BL-04 | plan_code, seats, order_type, payment_method | order_id, amount_cents, pay_url / bank_info |
-| 27 | GET | `/api/v1/billing/orders` | P2-BL-04 | status, page | items[], meta |
-| 28 | GET | `/api/v1/billing/orders/{order_id}` | P2-BL-04 | — | status, payment_no_masked, paid_at |
-| 29 | GET | `/api/v1/billing/invoices` | P2-BL-04 | period | items[] |
-| 30 | POST | `/api/v1/billing/payments/callback` | P2-BL-04 | 渠道载荷（验签，免 Bearer） | code, message |
-| 31 | GET | `/api/v1/ops/tenants` | P2-BL-05 | keyword, status, page | items[], meta |
-| 32 | GET | `/api/v1/ops/tenants/{tenant_id}` | P2-BL-05 | — | tenant, subscription, usage, recent_orders |
-| 33 | PATCH | `/api/v1/ops/tenants/{tenant_id}` | P2-BL-05 | status | tenant_id, status |
-| 34 | GET | `/api/v1/ops/orders` | P2-BL-05 | tenant_id, status, page | items[], meta |
-| 35 | POST | `/api/v1/ops/orders/{order_id}/confirm` | P2-BL-05 | paid_amount_cents, remark | order_id, status |
-| 36 | GET | `/api/v1/ops/metrics` | P2-BL-05 | range | 指标 + plan_distribution + top_tenants |
-| 37 | GET | `/api/v1/ops/settings` | P2-BL-05 | — | settings |
-| 38 | PATCH | `/api/v1/ops/settings` | P2-BL-05 | 配置项 | settings |
+| # | 架构编号 | 方法 | 路径 | 所属需求 | 关键请求字段 | 关键响应字段 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | KB1 | PATCH | `/api/v1/knowledge/bases/{base_id}` | P2-KB-01 | name, description, chunk_policy, visibility | base_id, updated_at |
+| 2 | KB2 | DELETE | `/api/v1/knowledge/bases/{base_id}` | P2-KB-01 | — | deleted, deleted_document_count |
+| 3 | KB3 | GET | `/api/v1/knowledge/bases/{base_id}/documents` | P2-KB-02 | page, page_size, keyword, stage, sort | items[], meta |
+| 4 | KB4 | GET | `/api/v1/knowledge/bases/{base_id}/documents/{doc_id}/segments/{segment_id}` | P2-KB-04 | with_context | content, context_before/after, position, status |
+| 5 | KB5 | GET | `/api/v1/knowledge/bases/{base_id}/grants` | P2-KB-03 | page, page_size | items[], meta |
+| 6 | KB6 | POST | `/api/v1/knowledge/bases/{base_id}/grants` | P2-KB-03 | subject_type, subject_ids[], permission | created_count, skipped_count |
+| 7 | KB7 | DELETE | `/api/v1/knowledge/bases/{base_id}/grants/{grant_id}` | P2-KB-03 | — | deleted |
+| 8 | KB8 | PUT | `/api/v1/knowledge/bases/{base_id}/credential-binding` | P2-KB-05 | credential_ref | binding_status |
+| 9 | TL1 | GET | `/api/v1/tools/executions` | P2-TL-04 | tool_type, page, page_size | items[], meta |
+| 10 | ID1 | GET | `/api/v1/identity/organizations/{org_id}/departments` | P2-ID-01 | flat | departments[] |
+| 11 | ID2 | POST | `/api/v1/identity/organizations/{org_id}/departments` | P2-ID-01 | name, parent_id | department_id, level |
+| 12 | ID3 | PATCH | `/api/v1/identity/departments/{department_id}` | P2-ID-01 | name, parent_id, manager_id | department_id |
+| 13 | ID4 | DELETE | `/api/v1/identity/departments/{department_id}` | P2-ID-01 | — | deleted |
+| 14 | ID5 | GET | `/api/v1/identity/permissions` | P2-ID-02 | — | groups[] |
+| 15 | ID6 | GET | `/api/v1/identity/organizations/{org_id}/roles` | P2-ID-02 | — | items[] |
+| 16 | ID7 | DELETE | `/api/v1/identity/organizations/{org_id}/roles/{role_id}` | P2-ID-02 | — | deleted |
+| 17 | ID8 | PATCH | `/api/v1/identity/organizations/{org_id}/members/{member_id}` | P2-ID-03 | role, department_ids, primary_department_id, status | member_id, role |
+| 18 | ID9 | DELETE | `/api/v1/identity/organizations/{org_id}/members/{member_id}` | P2-ID-03 | — | removed, transferred_knowledge_base_count |
+| 19 | ID10 | POST | `/api/v1/identity/organizations/{org_id}/members/batch` | P2-ID-03 | member_ids[], action, role | succeeded, failed[] |
+| 20 | ID11 | GET | `/api/v1/identity/audit-logs/actions` | P2-ID-04 | — | groups[] |
+| 21 | BL1 | GET | `/api/v1/billing/plans` | P2-BL-01 | — | plans[] |
+| 22 | BL2 | GET | `/api/v1/billing/subscription` | P2-BL-02 | — | plan_code, status, seats_*, quota_* |
+| 23 | BL3 | POST | `/api/v1/billing/subscription` | P2-BL-02 | plan_code, seats, action | status, effective_at, order_id, over_quota_warning |
+| 24 | BL4 | PATCH | `/api/v1/billing/subscription/seats` | P2-BL-02 | seats | seats_total, effective_at, over_quota_warning |
+| 25 | BL5 | GET | `/api/v1/billing/usage` | P2-BL-03 | period, group_by | quota_*, over_quota_warning, breakdown[], daily_trend[] |
+| 26 | BL6 | POST | `/api/v1/billing/orders` | P2-BL-04 | plan_code, seats, order_type, payment_method | order_id, amount_cents, pay_url / bank_info |
+| 27 | BL7 | GET | `/api/v1/billing/orders` | P2-BL-04 | status, page | items[], meta |
+| 28 | BL8 | GET | `/api/v1/billing/orders/{order_id}` | P2-BL-04 | — | status, payment_no_masked, paid_at |
+| 29 | BL9 | GET | `/api/v1/billing/invoices` | P2-BL-04 | period | items[] |
+| 30 | BL10 | POST | `/api/v1/billing/payments/callback` | P2-BL-04 | 渠道载荷（验签，免 Bearer） | code, message |
+| 31 | OPS1 | GET | `/api/v1/ops/tenants` | P2-BL-05 | keyword, status, page | items[], meta |
+| 32 | OPS2 | GET | `/api/v1/ops/tenants/{tenant_id}` | P2-BL-05 | — | tenant, subscription, usage, recent_orders |
+| 33 | OPS3 | PATCH | `/api/v1/ops/tenants/{tenant_id}` | P2-BL-05 | status | tenant_id, status |
+| 34 | OPS4 | GET | `/api/v1/ops/orders` | P2-BL-05 | tenant_id, status, page | items[], meta |
+| 35 | OPS5 | POST | `/api/v1/ops/orders/{order_id}/confirm` | P2-BL-05 | paid_amount_cents, remark | order_id, status |
+| 36 | OPS6 | GET | `/api/v1/ops/metrics` | P2-BL-05 | range | 指标 + plan_distribution + top_tenants |
+| 37 | OPS7 | GET | `/api/v1/ops/settings` | P2-BL-05 | — | settings |
+| 38 | OPS8 | PATCH | `/api/v1/ops/settings` | P2-BL-05 | 配置项 | settings |
+
+> **「架构编号」列用法**：与 `docs/architecture-phase2.md` 第 4 章（KB1-KB8 / TL1 / ID1-ID11 / BL1-BL10 / OPS1-OPS8）一一对应，研发与 QA 可直接按编号交叉检索。本表行与架构端点**为 1:1**；**需求与端点为 1:N**（例：P2-BL-02 → BL2/BL3/BL4；P2-BL-05 → OPS1-OPS8；P2-ID-01 → ID1-ID4），写用例时按「所属需求」列聚合即可。
 
 > 说明：上表 38 项为本阶段 P0 必需端点；P1 另需 `/billing/usage/export`、`GET /identity/organizations/{org_id}/invitations`、`DELETE .../invitations/{invitation_id}` 约 3 个。最终数量与归属以架构师拆分口径为准，本表为产品侧标准清单；**适配层原 30 端点基线保持不变**，本表端点归「业务域端点基线」。
 
@@ -940,13 +1019,14 @@
 | R4 `GET .../documents/{doc_id}` | 新增 `stage`、`estimated_remaining_seconds`、`file_size`、`uploaded_at` | 兼容 |
 | R7 `POST /knowledge/search` | `segments[]` 新增 `base_id`、`base_name`、`segment_id`；P1 支持 `base_ids` | 兼容 |
 | M1/M2 | `citations`/`citation` 事件新增 `base_id`、`base_name`、`segment_id`、`position` | 兼容 |
-| M4 `GET /model/usage` | 新增 `quota_unit`；数据源改为计量服务（字段不变） | 兼容 |
+| M4 `GET /model/usage` | 新增 `quota_unit_label`（与 BL1 同名，不使用裸 `quota_unit`）；数据源改为计量服务（字段不变） | 兼容 |
 | U3 / U6 | U3 成员项新增部门与状态字段、筛选参数；U6 请求新增筛选维度、响应新增 `action_display_name` 等 | 兼容 |
 
-### A.3 新增错误码（建议，需架构师并入 3.0.3）
+### A.3 新增错误码（v1.1：已与架构裁决对齐——新增 `11007`/`15009`、`15005` 改 HTTP 200、`15006` 文案统一、`16001` 废弃）
 
 | code | HTTP | message（用户可见） | 内部含义 |
 | --- | --- | --- | --- |
+| 11007 | 200 | 该知识库暂时无法访问，请联系管理员 | 知识库已绑定凭据但解析失败（缺失/失效/解密失败）；**严禁回落全局凭据** |
 | 14005 | 404 | 该部门不存在或已被删除 | 部门不存在 |
 | 14006 | 400 | 该部门下仍有成员或子部门，请先迁移后再删除 | 部门层级冲突 / 不可删 |
 | 14007 | 400 | 不能移除企业所有者，请先转移所有权 | 所有者保护 |
@@ -955,11 +1035,20 @@
 | 15002 | 400 | 该套餐已下架，请选择其他套餐 | 套餐不可购 |
 | 15003 | 400 | 成员席位已用满，请先增加席位 | 席位不足（邀请/加成员） |
 | 15004 | 409 | 当前账户有未完成订单，请先完成支付 | 重复下单 |
-| 15005 | 400 | 降级将在当前周期结束后生效 | 变更生效时点 |
-| 15006 | 200 | 本次用量已超出当前额度，已进入常规模式 | 额度用尽 |
+| 15005 | 200 | 降级将在当前周期结束后生效 | 非阻断提示，`code=0`：降级是正常业务结果，不是错误 |
+| 15006 | 200 | 本月额度已用完，当前为常规模式，升级套餐可恢复完整能力 | 额度用尽（软限制，不停服）；**仅**用于 M1/M2/R3/A1，见下方说明 4 |
 | 15007 | 200 | 支付未完成，请重新支付 | 支付失败/超时 |
 | 15008 | 409 | 该订单已处理，请勿重复操作 | 重复核销/重复回调 |
-| 16001 | 403 | 当前账号没有该操作的权限 | 运营端点鉴权失败（复用 20003 亦可） |
+| 15009 | 400 | 订单金额与应付金额不一致，请核对后重试 | 运营核销金额校验失败（`paid_amount_cents` 与应付不等） |
+
+**四条使用说明（前端必须遵守）**
+
+1. **`15005` 不弹错误态**：降级是正常业务结果，前端按**成功**提示展示生效日期（「降级将在 X 月 X 日生效」），禁止调用错误态组件。
+2. **同码多文案（允许的例外）**，以下两个码各有两种细分文案，码值不变、前端兜底表仍以 code 为键，不构成冲突：
+   - `11006`：通用场景「文档正在处理，无法重复操作」；**处理中删除文档**场景「文档正在处理，请稍后再删除」。
+   - `14008`：场景 A 移除或降级自己 →「不能对自己执行该操作，请联系其他管理员」；场景 B 修改同级或更高级成员 →「你没有权限修改该成员」。
+3. **运营端鉴权失败统一复用 `20003`**（「当前账号没有该操作的权限」），**不设独立错误码**（原建议的 `16001` 已废弃），避免前端兜底表出现两套同义文案。
+4. **`15006` 的使用范围（易错点）**：`15006` **仅**用于对话/检索/自动化任务（M1/M2/R3/A1）的软限制提示；**套餐与订单类接口**（`POST /billing/subscription`、`PATCH /billing/subscription/seats`、`GET /billing/usage`）一律用 `data.over_quota_warning: boolean` 表达超额，**不得返回非 0 code**——否则前端 `unwrap()` 会把「降级成功但超额」当成失败，用户看到的将是错误态而不是提示条。
 
 ---
 

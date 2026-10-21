@@ -1,0 +1,205 @@
+%% ===========================================================================
+%% 阶段二关键链路时序图（docs/architecture-phase2.md 第 6 章）
+%% 4 张：① R3 上传（per-kb 凭据）② M1/M2 生成 + 计量 + M4 同源
+%%       ③ 知识库授权校验（restricted）④ 计费订阅变更 + 支付回调幂等
+%% ===========================================================================
+
+%% ---------------------------------------------------------------------------
+%% ① R3 上传文档（含 per-kb 凭据解析，D-10）
+%% ---------------------------------------------------------------------------
+sequenceDiagram
+    autonumber
+    actor U as 终端用户
+    participant W as Web
+    participant API as "api/v1/rag (R3)"
+    participant IDM as "幂等/限流 (Valkey)"
+    participant SVC as RagService
+    participant POL as PolicyService
+    participant CR as CredentialResolver
+    participant DB as PostgreSQL
+    participant DIFY as 底座
+
+    U->>W: 选择文件 + 内容切分精细度
+    W->>API: POST /knowledge/bases/{base_id}/documents<br/>multipart + Idempotency-Key
+    API->>API: 鉴权 → 租户收敛 → 限流（不解密）
+    API->>IDM: acquire(指纹 = method|path|tenant|user|sha256(file))
+    alt 幂等命中且指纹一致
+        IDM-->>API: 首次结果
+        API-->>W: code=20007「重复的请求已被忽略」（回放首次 data）
+    else 首次
+        API->>SVC: upload_document(base_id, file, chunk_policy, auth)
+        SVC->>POL: assert_permission(knowledge:document:upload, {knowledge_base, base_id})
+        POL->>DB: 查 kb_meta + grant（缓存 TTL 5s）
+        alt 无权
+            POL-->>SVC: 抛 20003
+        else 有权
+            SVC->>DB: 取 kb_meta.chunk_policy（请求未覆盖时作为默认）
+            SVC->>CR: resolve(tenant_id, base_id)
+            alt 未绑定 credential_ref
+                CR-->>SVC: Resolved(source=global, api_key=全局)
+            else 已绑定且解析成功
+                CR->>CR: Valkey 取密文 → AES-256-GCM 解密（明文仅在内存）
+                CR-->>SVC: Resolved(source=bound, api_key=绑定值)
+            else 已绑定但解析失败
+                CR-->>SVC: 抛 11007（严禁回落全局凭据）
+            end
+            SVC->>DIFY: POST /v1/files/upload（api_key=resolved）
+            SVC->>DIFY: POST /v1/datasets/{ds}/documents（api_key=resolved）
+            SVC->>DB: 事务内：INSERT document_meta(stage=uploaded)<br/>UPDATE kb_meta.document_count+1<br/>INSERT audit_log(document.uploaded)
+            SVC->>IDM: store_result(首次结果)
+            SVC-->>API: {document_id, index_status=processing, stage=uploaded, progress=0}
+            API-->>W: code=0
+        end
+    end
+    W-->>U: 文档出现在列表，进入「已上传」
+
+%% ---------------------------------------------------------------------------
+%% ② M1/M2 生成 + 用量事件落库 + M4 同源读（D-12 / D-11）
+%% ---------------------------------------------------------------------------
+sequenceDiagram
+    autonumber
+    actor U as 终端用户
+    participant W as Web
+    participant API as "api/v1/model"
+    participant MS as ModelService
+    participant POL as PolicyService
+    participant SEG as SegmentService
+    participant DIFY as 底座
+    participant US as UsageService
+    participant DB as PostgreSQL
+
+    U->>W: 提问（可携带 knowledge_base_ids）
+    W->>API: POST /model/generate/stream
+    API->>MS: generate_stream(req, auth)
+    MS->>POL: visible_base_ids(auth)
+    alt 请求含未授权库
+        POL-->>MS: 静默剔除（不报错、不引用）
+    end
+    MS->>DIFY: POST /v1/chat-messages（streaming，api_key）
+    loop 每个流事件
+        DIFY-->>MS: message / message_file / message_end
+        MS-->>W: event: delta（增量文本）
+        MS->>SEG: record_hits（旁路异步，不阻塞流）
+        MS-->>W: event: citation{document_name, segment_content,<br/>base_id, base_name, segment_id, position}
+        SEG->>DB: UPSERT segment_map(status=valid)
+    end
+    DIFY-->>MS: message_end{usage}
+    MS-->>W: event: done{finish_reason, usage}
+    Note over MS,US: 结算时点 = message_end（不是逐 delta）
+    MS->>US: record(capability=chat, idem=generation_id,<br/>units=total_units, source=settled)
+    US->>DB: 同一事务：<br/>INSERT usage_event（唯一键幂等，冲突即忽略）<br/>UPSERT usage_monthly(tenant)<br/>UPSERT usage_monthly(member)<br/>UPSERT usage_monthly(department)
+    Note over MS,US: 中断/超时路径：finally 中<br/>record(source=estimated, units=已产出折算)
+
+    U->>W: 打开个人中心 / 管理员打开计费页
+    W->>API: GET /model/usage（M4）／ GET /billing/usage（BL5）
+    API->>US: snapshot(tenant_id, user_id, period)
+    US->>DB: SELECT units FROM usage_monthly<br/>WHERE scope_type='member' AND scope_id=:uid
+    DB-->>US: 同一行数据
+    US-->>API: {total_units(套餐), used_units(同一聚合), quota_unit="字数额度"}
+    API-->>W: M4 与 BL5 数字必然一致（同函数读同表）
+
+%% ---------------------------------------------------------------------------
+%% ③ 知识库授权校验（restricted 可见性，三处同一套判定）
+%% ---------------------------------------------------------------------------
+sequenceDiagram
+    autonumber
+    actor B as 成员B（未授权）
+    actor A as 管理员A
+    participant W as Web
+    participant API as "knowledge_ext / rag"
+    participant POL as PolicyService
+    participant GS as GrantService
+    participant DB as PostgreSQL
+    participant VK as Valkey
+
+    A->>API: POST /knowledge/bases/{id}/grants<br/>{subject_type:department, subject_ids:[dept_x], permission:viewer}
+    API->>GS: batch_create(...)
+    GS->>DB: INSERT knowledge_base_grant ON CONFLICT(uq_grant_active) DO NOTHING
+    GS->>DB: UPDATE knowledge_base_meta SET visibility='restricted'
+    GS->>DB: INSERT audit_log(knowledge.grant_changed, change_summary)
+    GS->>VK: DEL oa:perm:v1:{tenant}:*:{knowledge:base:read}:kb_{id}
+    GS-->>API: {created_count, skipped_count}
+    API-->>A: 授权成功（≤5s 全站生效）
+
+    B->>API: GET /knowledge/bases（列表）
+    API->>POL: visible_base_ids(auth)
+    POL->>VK: GET oa:perm:v1:{tenant}:{B}:visible_bases
+    alt 缓存未命中
+        POL->>DB: SELECT base_id FROM kb_meta WHERE owner=B OR visibility='organization'<br/>UNION SELECT base_id FROM grant WHERE subject_type='user' AND subject_id=B<br/>OR subject_id IN (B 的部门及子部门) OR subject_id IN (B 的角色)
+        POL->>VK: SET TTL 5s
+    end
+    POL-->>API: 集合不含 kb_{id}
+    API-->>B: 列表不含该库（静默过滤，不报错）
+
+    B->>API: GET /knowledge/bases/{id}/documents（直接访问）
+    API->>POL: can_read_base(auth, kb_id)
+    POL-->>API: false
+    API-->>B: code=20003「当前账号没有该操作的权限」
+
+    B->>API: POST /knowledge/search {base_id: kb_{id}}
+    API->>POL: can_read_base(...)
+    POL-->>API: false
+    API-->>B: code=20003
+
+    B->>API: POST /model/generate {knowledge_base_ids:[kb_{id}, kb_ok]}
+    API->>POL: 过滤授权库
+    POL-->>API: [kb_ok]（未授权库静默跳过）
+    API-->>B: 正常生成（引用中无 kb_{id}）
+
+%% ---------------------------------------------------------------------------
+%% ④ 计费订阅变更 + 订单支付回调幂等（D-12 / 部分唯一索引）
+%% ---------------------------------------------------------------------------
+sequenceDiagram
+    autonumber
+    actor A as 企业管理员
+    participant W as Web
+    participant API as "api/v1/billing"
+    participant ORD as OrderService
+    participant SUB as SubscriptionService
+    participant PG as PaymentGateway
+    participant CH as 支付渠道
+    participant DB as PostgreSQL
+    participant US as UsageService
+
+    A->>W: 选择专业版 + 10 席位
+    W->>API: POST /billing/orders {plan_code, seats, order_type:upgrade, payment_method:online}
+    API->>ORD: create(req, auth)
+    ORD->>DB: 校验 plan.status='available'（否则 15002）
+    ORD->>DB: INSERT billing_order(status=pending_payment, expires_at=now+30min)
+    Note over ORD,DB: uq_order_pending 唯一索引兜底：已有待支付 → 15004
+    ORD->>PG: create_payment(order)
+    PG->>CH: 下单（扫码）
+    CH-->>PG: pay_url + 渠道流水号
+    ORD->>DB: UPDATE billing_order SET pay_url, payment_no_masked<br/>INSERT audit_log(billing.order_created)
+    ORD-->>API: {order_id, amount_cents, pay_url, expires_at}
+    API-->>W: 展示二维码
+
+    A->>CH: 完成支付
+    CH->>API: POST /billing/payments/callback（免 Bearer）
+    API->>PG: verify_callback(payload)（必须验签，不得只看金额）
+    alt 验签失败
+        PG-->>API: 失败
+        API->>DB: INSERT payment_callback_log(signature_ok=false)
+        API-->>CH: 业务失败（留痕）
+    else 验签通过
+        API->>DB: INSERT payment_callback_log(external_txn_id 唯一)
+        alt 唯一键冲突（重复回调）
+            DB-->>API: 已处理
+            API-->>CH: 200（幂等成功，不重复开通）
+        else 首次
+            API->>ORD: confirm_by_callback(order_id, amount_cents)
+            ORD->>DB: 事务内：<br/>UPDATE order SET status='paid', paid_at=now()<br/>UPDATE subscription SET plan_code/seats/status='active'<br/>INSERT billing_invoice(status='issued')<br/>INSERT audit_log(billing.order_paid)
+            ORD-->>API: {order_id, status:paid}
+            API-->>CH: 200
+            API-->>W: 支付成功，套餐已生效
+        end
+    end
+
+    Note over ORD,DB: 30 分钟未支付：close_expired() 定时任务<br/>UPDATE status='closed' WHERE pending AND expires_at<now()
+
+    A->>W: 打开账单页
+    W->>API: GET /billing/subscription + GET /billing/usage
+    API->>SUB: get(tenant_id)
+    SUB->>US: snapshot(tenant_id, period)
+    US->>DB: usage_monthly(tenant) 行
+    SUB-->>API: seats_total / seats_used / quota_units_used（与 M4 同源）

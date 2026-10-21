@@ -1,0 +1,262 @@
+%% ===========================================================================
+%% 阶段二增量类图（docs/architecture-phase2.md 第 5 章）
+%% 关系约定：实线箭头 = 调用依赖；..> = 使用（弱依赖）；--|> = 继承
+%% 依赖方向铁律：api → services → business → db；禁止 business → services，禁止 db → business
+%% ===========================================================================
+classDiagram
+    %% ---------- 既有（阶段一，仅扩展） ----------
+    class ModelService {
+        +generate(req) GenerateData
+        +generate_stream(req) AsyncIterator
+        +get_catalog() CatalogData
+        +get_usage(auth, period) UsageData
+    }
+    class RagService {
+        +create_base(req, auth) CreateBaseData
+        +list_bases(query, auth) PageResult
+        +upload_document(base_id, file, policy, auth) UploadDocumentData
+        +get_index_status(base_id, doc_id) IndexStatusData
+        +reindex(base_id, doc_id) ReindexData
+        +delete_document(base_id, doc_id) str
+        +search(req, auth) SearchData
+    }
+    class AgentService {
+        +create_task(req) dict
+        +get_task(task_id) dict
+        +list_steps(task_id) dict
+        +cancel_task(task_id) dict
+    }
+    class ToolService {
+        +list_registry(auth) RegistryData
+        +create_connection(req, auth) dict
+        +list_connections(query, auth) PageResult
+        +delete_connection(conn_id, auth) str
+        +execute(req, auth) ExecutionData
+    }
+    class IdentityService {
+        +verify(req, auth) VerifyData
+        +get_profile(auth) ProfileData
+        +list_members(org_id, query, auth) PageResult
+        +query_audit_logs(req, auth) PageResult
+    }
+    class DifyClient {
+        +str base_url
+        +str api_key
+        +post(path, payload, api_key) DifyResponse
+        +post_stream(path, payload, api_key) AsyncIterator
+        +get(path, params, api_key) DifyResponse
+        +delete(path, api_key) DifyResponse
+    }
+
+    %% ---------- 新增：数据访问层 db/ ----------
+    class DbEngineFactory {
+        +AsyncEngine engine
+        +async_sessionmaker session_factory
+        +init() void
+        +dispose() void
+    }
+    class UnitOfWork {
+        +str tenant_id
+        +AsyncSession session
+        +set_tenant_scope(tenant_id, allow_platform) void
+        +commit() void
+        +rollback() void
+    }
+    class BaseRepository {
+        +AsyncSession session
+        +str tenant_id
+        +_tenant_clause() ColumnElement
+    }
+    class KnowledgeBaseRepository
+    class DocumentRepository
+    class GrantRepository
+    class SegmentRepository
+    class CredentialRepository
+    class ToolRepository
+    class UsageRepository
+    class OrgRepository
+    class RoleRepository
+    class AuditRepository
+    class BillingRepository
+
+    %% ---------- 新增：业务层 business/ ----------
+    class ResolvedCredential {
+        <<frozen>>
+        +str api_key
+        +str source
+        +str credential_ref
+    }
+    class CredentialResolver {
+        -CredentialRepository repo
+        -KnowledgeBaseRepository kb_repo
+        +resolve(tenant_id, base_id) ResolvedCredential
+        +invalidate(tenant_id, credential_ref) void
+    }
+    class KnowledgeBaseService {
+        +create(req, auth) CreateBaseData
+        +list(query, auth) PageResult
+        +update(base_id, req, auth) dict
+        +soft_delete(base_id, auth) dict
+        +resolve_visible_bases(auth) set
+    }
+    class DocumentService {
+        +register_document(base_id, file, policy, auth) dict
+        +list_documents(base_id, query, auth) PageResult
+        +map_stage(native_status, progress) StageView
+    }
+    class GrantService {
+        +list_grants(base_id, query, auth) PageResult
+        +batch_create(base_id, req, auth) dict
+        +revoke(base_id, grant_id, auth) dict
+    }
+    class SegmentService {
+        +build_key(document_id, index, content) str
+        +record_hits(tenant_id, base_id, doc_id, run_id, hits) void
+        +fetch(base_id, doc_id, segment_key, with_context) dict
+        +mark_stale(document_id, new_run_id) int
+    }
+    class PolicyService {
+        +can_read_base(auth, base_id) bool
+        +visible_base_ids(auth) set
+        +assert_permission(auth, permission, resource) void
+    }
+    class UsageService {
+        +record(ctx) void
+        +snapshot(tenant_id, user_id, period) UsageSnapshot
+        +breakdown(tenant_id, period, group_by) list
+    }
+    class DepartmentService {
+        +tree(org_id, flat, auth) list
+        +create(org_id, req, auth) dict
+        +move(department_id, req, auth) dict
+        +delete(department_id, auth) dict
+    }
+    class RoleService {
+        +catalog() list
+        +list_roles(org_id, auth) list
+        +delete_role(org_id, role_id, auth) dict
+    }
+    class MemberService {
+        +update_member(org_id, member_id, req, auth) dict
+        +remove_member(org_id, member_id, auth) dict
+        +batch(org_id, req, auth) dict
+    }
+    class KcProjectionService {
+        +enqueue(kind, payload) void
+        +flush_due(limit) int
+    }
+    class AuditService {
+        +write(action, resource, result, change, auth) void
+        +query(req, auth) PageResult
+        +action_catalog() list
+    }
+    class PlanService {
+        +list_plans(include_offline) list
+    }
+    class SubscriptionService {
+        +get(tenant_id) dict
+        +change(req, auth) dict
+        +change_seats(seats, auth) dict
+        +check_seat_available(tenant_id) bool
+    }
+    class OrderService {
+        +create(req, auth) dict
+        +list(query, auth) PageResult
+        +detail(order_id, auth) dict
+        +confirm_by_callback(order_id, amount) dict
+        +confirm_by_operator(order_id, req, operator) dict
+        +close_expired() int
+    }
+    class PaymentGateway {
+        <<interface>>
+        +create_payment(order) PayResult
+        +verify_callback(payload) VerifyResult
+        +parse_callback(payload) CallbackEvent
+    }
+    class WechatPayGateway {
+        +create_payment(order) PayResult
+        +verify_callback(payload) VerifyResult
+    }
+    class FakeGateway {
+        +create_payment(order) PayResult
+        +verify_callback(payload) VerifyResult
+    }
+    class OpsService {
+        +list_tenants(query) PageResult
+        +tenant_detail(tenant_id) dict
+        +set_status(tenant_id, status, operator) dict
+        +metrics(range) dict
+        +get_settings() dict
+        +patch_settings(patch, operator) dict
+    }
+
+    %% ---------- services → business（唯一允许方向） ----------
+    RagService --> KnowledgeBaseService
+    RagService --> DocumentService
+    RagService --> GrantService
+    RagService --> SegmentService
+    RagService --> PolicyService
+    RagService --> CredentialResolver
+    RagService --> DifyClient
+    ModelService --> UsageService
+    ModelService --> SegmentService
+    ModelService --> PolicyService
+    ModelService --> DifyClient
+    AgentService --> UsageService
+    ToolService --> ToolRepository
+    ToolService --> AuditService
+    IdentityService --> PolicyService
+    IdentityService --> MemberService
+    IdentityService --> RoleService
+    IdentityService --> AuditService
+
+    %% ---------- business → db（唯一允许方向） ----------
+    KnowledgeBaseService --> KnowledgeBaseRepository
+    KnowledgeBaseService --> GrantRepository
+    KnowledgeBaseService --> AuditService
+    DocumentService --> DocumentRepository
+    DocumentService --> UsageService
+    GrantService --> GrantRepository
+    GrantService --> OrgRepository
+    GrantService --> AuditService
+    SegmentService --> SegmentRepository
+    UsageService --> UsageRepository
+    DepartmentService --> OrgRepository
+    DepartmentService --> KcProjectionService
+    DepartmentService --> AuditService
+    RoleService --> RoleRepository
+    MemberService --> RoleRepository
+    MemberService --> OrgRepository
+    MemberService --> KnowledgeBaseRepository
+    PlanService --> BillingRepository
+    SubscriptionService --> BillingRepository
+    SubscriptionService --> UsageService
+    OrderService --> BillingRepository
+    OrderService --> SubscriptionService
+    OrderService --> PaymentGateway
+    OrderService --> AuditService
+    OpsService --> BillingRepository
+    OpsService --> UsageService
+    OpsService --> AuditService
+    CredentialResolver --> CredentialRepository
+    CredentialResolver --> KnowledgeBaseRepository
+    CredentialResolver ..> ResolvedCredential
+
+    %% ---------- 继承 ----------
+    KnowledgeBaseRepository --|> BaseRepository
+    DocumentRepository --|> BaseRepository
+    GrantRepository --|> BaseRepository
+    SegmentRepository --|> BaseRepository
+    CredentialRepository --|> BaseRepository
+    ToolRepository --|> BaseRepository
+    UsageRepository --|> BaseRepository
+    OrgRepository --|> BaseRepository
+    RoleRepository --|> BaseRepository
+    AuditRepository --|> BaseRepository
+    BillingRepository --|> BaseRepository
+    BaseRepository --> UnitOfWork
+    UnitOfWork --> DbEngineFactory
+
+    %% ---------- 支付渠道实现 ----------
+    WechatPayGateway ..|> PaymentGateway
+    FakeGateway ..|> PaymentGateway
