@@ -8,12 +8,12 @@
 #   - 自研层：adapter（统一适配层）/ web（前端交互层）
 #
 # 合规说明（总方案 5.3 / 架构文档 2.1）：
-#   - Redis 使用 **Valkey**（BSD-3-Clause）。原 Redis 7 为 RSALv2/SSPL 双许可，
-#     按灰名单规则「仅独立进程调用」处理；此处直接选用 Valkey 以规避协议风险。
-#     ⚠️ 待决项 D-06：Redis 与 Valkey 的最终选型需主理人与法务/合规确认。
-#   - MinIO 锁定 **AGPL 之前的版本线**（RELEASE.2021-04-22 系列，Apache-2.0），
-#     并以**独立容器**方式运行，不引入其代码到核心代码库。
-#     ⚠️ 待决项 D-06：MinIO 版本线与运行方式的最终方案需合规确认。
+#   - 缓存使用 **Valkey**（BSD-3-Clause 白名单）。原 Redis 7 为 RSALv2/SSPL
+#     双许可（黑名单），直接选用协议兼容的 Valkey 以规避协议风险。
+#     ✅ D-06 已于 2026-10-21 由创始人授权主理人正式批准（docs/decisions/0004）。
+#   - 对象存储使用 **SeaweedFS**（Apache-2.0 白名单，独立容器运行）——MinIO
+#     上游 Docker Hub 仓库已整体下架，制品不可获取，ADR-0002 v1.3 已决策替换。
+#     ✅ D-06 已于 2026-10-21 由创始人授权主理人正式批准（docs/decisions/0004）。
 #   - 其余组件协议：PostgreSQL（类 BSD/MIT）、Milvus（Apache-2.0）、
 #     Keycloak（Apache-2.0）、Dify（Apache-2.0）。
 #
@@ -44,6 +44,8 @@ services:
       LANG: C.UTF-8
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # 首次启动（空数据目录）时创建 dify / keycloak 逻辑库
+      - ./init-databases.sql:/docker-entrypoint-initdb.d/00-init-databases.sql:ro
     networks: [officeai]
     logging: *default-logging
     healthcheck:
@@ -52,7 +54,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # Redis 的 BSD-3 替代实现（⚠️ D-06 待决）
+  # Redis 的 BSD-3 替代实现（✅ D-06 已批准）
   valkey:
     image: valkey/valkey:7.2-alpine
     container_name: oa-valkey
@@ -109,8 +111,11 @@ services:
       - milvus-object-store-data:/data
     networks: [officeai]
     logging: *default-logging
+    # 镜像为 BusyBox 基础，无 curl（2026-10-21 实跑修正：原 curl 探针
+    # 令容器恒判 unhealthy，实际 S3 网关跨容器可达）；必须显式用
+    # 127.0.0.1，busybox wget 解析 localhost 会优先走 IPv6 而误报失败
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8333/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/ || exit 1"]
       interval: 20s
       timeout: 10s
       start_period: 20s
@@ -177,8 +182,11 @@ services:
       - "${OA_OBJECT_STORE_ADMIN_PORT:-23646}:23646"
     networks: [officeai]
     logging: *default-logging
+    # 镜像为 BusyBox 基础，无 curl（2026-10-21 实跑修正：原 curl 探针
+    # 令容器恒判 unhealthy，实际 S3 网关跨容器可达）；必须显式用
+    # 127.0.0.1，busybox wget 解析 localhost 会优先走 IPv6 而误报失败
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8333/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/ || exit 1"]
       interval: 20s
       timeout: 10s
       start_period: 20s
@@ -216,9 +224,10 @@ services:
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: s3
       OPENDAL_S3_ENDPOINT: http://object-store:8333
-      OPENDAL_S3_ACCESS_KEY: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
-      OPENDAL_S3_SECRET_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
       OPENDAL_S3_BUCKET: ${OA_DIFY_S3_BUCKET:-dify}
+      OPENDAL_S3_REGION: ${OA_OBJECT_STORE_REGION:-us-east-1}
       VECTOR_STORE: milvus
       MILVUS_URI: http://milvus:19530
       CODE_EXECUTION_ENDPOINT: http://dify-sandbox:8194
@@ -227,6 +236,10 @@ services:
       CONSOLE_CORS_ALLOW_ORIGINS: "*"
       SSRF_PROXY_HTTP_URL: ${OA_SSRF_PROXY_URL:-http://ssrf_proxy:3128}
       SSRF_PROXY_HTTPS_URL: ${OA_SSRF_PROXY_URL:-http://ssrf_proxy:3128}
+      PLUGIN_DAEMON_URL: ${OA_PLUGIN_DAEMON_URL:-http://plugin_daemon:5002}
+      PLUGIN_DAEMON_KEY: ${OA_PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpCjf+Sjc3ZtU+qUEi}
+      PLUGIN_DIFY_INNER_API_URL: http://dify-api:5001
+      PLUGIN_DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
     depends_on:
       postgres:
         condition: service_healthy
@@ -255,8 +268,10 @@ services:
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: s3
       OPENDAL_S3_ENDPOINT: http://object-store:8333
-      OPENDAL_S3_ACCESS_KEY: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
-      OPENDAL_S3_SECRET_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_BUCKET: ${OA_DIFY_S3_BUCKET:-dify}
+      OPENDAL_S3_REGION: ${OA_OBJECT_STORE_REGION:-us-east-1}
       VECTOR_STORE: milvus
       MILVUS_URI: http://milvus:19530
     depends_on:
@@ -302,11 +317,54 @@ services:
   # ---------------------------------------------------------------------
   # 业务能力层：身份与权限（Keycloak，Apache-2.0）
   # ---------------------------------------------------------------------
+  # ---------------------------------------------------------------------
+  # 底座层：插件守护进程（Dify 1.0 模型提供方管理的必需组件）
+  #
+  # 背景（2026-10-21 实跑发现）：Dify 1.0 的模型提供方配置 API
+  # （/console/api/workspaces/current/model-providers）由插件守护进程
+  # 代理实现，缺失该服务时提供方列表返回 500（PluginDaemonInnerError）。
+  # 官方 1.0.0 docker-compose 同款配置：0.0.3-local，端口 5002，
+  # 独立库 dify_plugin，本地卷 /app/storage。
+  # ---------------------------------------------------------------------
+  plugin_daemon:
+    image: langgenius/dify-plugin-daemon:0.0.3-local
+    container_name: oa-plugin-daemon
+    restart: unless-stopped
+    environment:
+      # 共享配置（与 api/worker 对齐）
+      LOG_LEVEL: INFO
+      SECRET_KEY: ${OA_DIFY_SECRET_KEY:?必须在 .env 中设置}
+      DEPLOY_ENV: PRODUCTION
+      # 独立库（init-databases.sql 创建）
+      DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
+      DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?必须在 .env 中设置}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: dify_plugin
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${OA_VALKEY_PASSWORD:?必须在 .env 中设置}
+      REDIS_DB: "2"
+      # 守护进程自身
+      SERVER_PORT: "5002"
+      SERVER_KEY: ${OA_PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpCjf+Sjc3ZtU+qUEi}
+      # 回呼 Dify api（注意服务名是本栈的 dify-api，非官方的 api）
+      DIFY_INNER_API_URL: http://dify-api:5001
+      DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
+      PLUGIN_REMOTE_INSTALLING_HOST: 0.0.0.0
+      PLUGIN_REMOTE_INSTALLING_PORT: "5003"
+      PLUGIN_WORKING_PATH: /app/storage/cwd
+      FORCE_VERIFYING_SIGNATURE: "false"
+    volumes:
+      - plugin-daemon-data:/app/storage
+    networks: [officeai]
+    logging: *default-logging
+
   keycloak:
     image: quay.io/keycloak/keycloak:25.0.6
     container_name: oa-keycloak
     restart: unless-stopped
-    command: ["start", "--optimized", "--http-enabled=true", "--http-port=8080"]
+    command: ["start", "--http-enabled=true", "--http-port=8080"]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/${OA_KEYCLOAK_DB:-keycloak}
@@ -346,6 +404,10 @@ services:
       OA_DATABASE_URL: postgresql+asyncpg://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD}@postgres:5432/${OA_POSTGRES_DB:-officeai}
       OA_MILVUS_URI: http://milvus:19530
       OA_OBJECT_STORE_ENDPOINT: http://object-store:8333
+      # 私有化部署面向本机 Dify，必须真实联调（T01 桩模式仅用于无底座开发）
+      OA_DOWNSTREAM_ENABLED: "true"
+      # 底座默认应用密钥（安装时由部署工具注入，仅适配层可见）
+      OA_DIFY_DEFAULT_APP_KEY: ${OA_DIFY_DEFAULT_APP_KEY:-}
     ports:
       - "${OA_ADAPTER_PORT:-8000}:8000"
     depends_on:
@@ -406,6 +468,7 @@ volumes:
   milvus-data:
   object-store-data:
   prometheus-data:
+  plugin-daemon-data:
 
 networks:
   officeai:

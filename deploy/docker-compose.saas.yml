@@ -29,6 +29,7 @@ services:
       LANG: C.UTF-8
     volumes:
       - saas-postgres-data:/var/lib/postgresql/data
+      - ./init-databases.sql:/docker-entrypoint-initdb.d/00-init-databases.sql:ro
       - ./init-rls.sql:/docker-entrypoint-initdb.d/10-init-rls.sql:ro
     networks: [officeai]
     logging: *default-logging
@@ -180,9 +181,10 @@ services:
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: s3
       OPENDAL_S3_ENDPOINT: http://object-store:8333
-      OPENDAL_S3_ACCESS_KEY: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
-      OPENDAL_S3_SECRET_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
       OPENDAL_S3_BUCKET: ${OA_DIFY_S3_BUCKET:-dify}
+      OPENDAL_S3_REGION: ${OA_OBJECT_STORE_REGION:-us-east-1}
       VECTOR_STORE: milvus
       MILVUS_URI: http://milvus:19530
       SSRF_PROXY_HTTP_URL: ${OA_SSRF_PROXY_URL:-http://ssrf_proxy:3128}
@@ -214,8 +216,10 @@ services:
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: s3
       OPENDAL_S3_ENDPOINT: http://object-store:8333
-      OPENDAL_S3_ACCESS_KEY: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
-      OPENDAL_S3_SECRET_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_BUCKET: ${OA_DIFY_S3_BUCKET:-dify}
+      OPENDAL_S3_REGION: ${OA_OBJECT_STORE_REGION:-us-east-1}
       VECTOR_STORE: milvus
       MILVUS_URI: http://milvus:19530
     depends_on: [postgres, valkey]
@@ -247,7 +251,7 @@ services:
     image: quay.io/keycloak/keycloak:25.0.6
     container_name: oa-saas-keycloak
     restart: unless-stopped
-    command: ["start", "--optimized", "--http-enabled=true", "--http-port=8080"]
+    command: ["start", "--http-enabled=true", "--http-port=8080"]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/${OA_KEYCLOAK_DB:-keycloak}
