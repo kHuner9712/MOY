@@ -10,7 +10,7 @@
 
 import { BusinessError } from './api-client';
 
-/** 错误码 → 业务语言文案（与架构文档 3.0.3 逐条一致） */
+/** 错误码 → 业务语言文案（与架构文档 3.0.3 逐条一致，共 52 个码） */
 export const BUSINESS_ERROR_MESSAGES: Readonly<Record<number, string>> = Object.freeze({
   // 通用业务错误 20001-20008
   20001: '请求内容不完整，请检查后重试',
@@ -86,12 +86,89 @@ export const BUSINESS_ERROR_MESSAGES: Readonly<Record<number, string>> = Object.
 export const UNKNOWN_ERROR_MESSAGE = '操作未完成，请稍后再试';
 
 /**
+ * 同码多文案的「上下文键」。
+ *
+ * 后端在个别场景用 `ApiError(message=...)` 覆盖默认文案而**不改码值**
+ * （架构文档 §7.1「同码多文案」表）。前端在已知上下文里可以主动选用更贴切的文案，
+ * 但**绝不能**把码值展示给用户：文案始终是业务语言。
+ */
+export type ErrorContext =
+  | 'department.level_exceeded'
+  | 'department.move_into_subtree'
+  | 'department.delete_non_empty'
+  | 'document.delete_processing'
+  | 'role.delete_referenced'
+  | 'grant.guest_editor'
+  | 'audit.range_exceeded'
+  | 'member.batch_limit'
+  | 'contact.batch_limit';
+
+/**
+ * 同码多文案映射：`code → 上下文 → 文案`。
+ *
+ * 与架构文档 §7.1 的 9 条覆盖逐条对应；未命中的上下文回落到默认文案。
+ */
+export const CONTEXT_ERROR_MESSAGES: Readonly<
+  Record<number, Readonly<Partial<Record<ErrorContext, string>>>>
+> = Object.freeze({
+  // 部门层级冲突：建第 6 层 / 移动到自身子树 / 删除非空部门
+  14006: Object.freeze({
+    'department.level_exceeded': '组织层级最多 5 层，请调整后重试',
+    'department.move_into_subtree': '不能把部门移动到自己的下级部门',
+    'department.delete_non_empty': '该部门下仍有成员或子部门，请先迁移后再删除',
+  }),
+  // 文档仍在处理中时删除
+  11006: Object.freeze({
+    'document.delete_processing': '文档正在处理，请稍后再删除',
+  }),
+  // 角色被成员引用不可删除
+  20005: Object.freeze({
+    'role.delete_referenced': '该角色下还有成员，请先调整成员角色',
+  }),
+  // 参数类覆盖文案
+  20001: Object.freeze({
+    'grant.guest_editor': '访客只能查看，不能上传或管理文档',
+    'audit.range_exceeded': '查询时间范围最长 90 天，请缩小范围',
+    'member.batch_limit': '一次最多处理 100 位成员，请分批操作',
+    'contact.batch_limit': '一次最多发送给 200 人，请分批发送',
+  }),
+});
+
+/** 错误码分段（用于核对兜底表覆盖率，口径与适配层注册表一致） */
+export const BUSINESS_ERROR_SEGMENTS: Readonly<Record<string, readonly [number, number]>> =
+  Object.freeze({
+    common: [20001, 20008],
+    model: [10001, 10005],
+    knowledge: [11001, 11007],
+    task: [12001, 12005],
+    tool: [13001, 13006],
+    identity: [14001, 14008],
+    billing: [15001, 15009],
+    system: [30001, 30004],
+  });
+
+/**
+ * 找出兜底表里缺失的码（用于门禁核对后端注册表是否有新增码未同步）。
+ *
+ * @param codes - 后端注册表里的全部业务错误码
+ * @returns 未登记的码列表；空数组表示覆盖完整
+ */
+export function findMissingErrorCodes(codes: readonly number[]): number[] {
+  return codes.filter((code) => BUSINESS_ERROR_MESSAGES[code] === undefined);
+}
+
+/**
  * 按错误码取业务语言文案。
  *
  * @param code - 业务错误码
+ * @param context - 可选上下文；提供时优先返回同码多文案里的贴切写法
  * @returns 面向用户的业务语言提示
  */
-export function messageOf(code: number): string {
+export function messageOf(code: number, context?: ErrorContext): string {
+  if (context) {
+    const scoped = CONTEXT_ERROR_MESSAGES[code]?.[context];
+    if (scoped) return scoped;
+  }
   return BUSINESS_ERROR_MESSAGES[code] ?? UNKNOWN_ERROR_MESSAGE;
 }
 
@@ -99,14 +176,15 @@ export function messageOf(code: number): string {
  * 归一化任意异常为业务语言文案。
  *
  * 适配层已给出 message 时优先使用（保证与后端口径一致）；
- * message 缺失时按 code 回落；两者皆无则使用通用兜底文案。
+ * message 缺失时按 code + 上下文回落；两者皆无则使用通用兜底文案。
  *
  * @param error - 捕获到的异常
+ * @param context - 可选上下文（同码多文案场景）
  * @returns 面向用户的业务语言提示
  */
-export function toBusinessMessage(error: unknown): string {
+export function toBusinessMessage(error: unknown, context?: ErrorContext): string {
   if (error instanceof BusinessError) {
-    return error.message || messageOf(error.code);
+    return error.message || messageOf(error.code, context);
   }
   if (error instanceof Error && error.message) {
     return error.message;
@@ -131,7 +209,10 @@ export function shouldReauthenticate(error: unknown): boolean {
  * @returns 命中资源不存在类错误时返回 true
  */
 export function isNotFound(error: unknown): boolean {
-  return error instanceof BusinessError && [20004, 11001, 12001, 14001, 14002].includes(error.code);
+  return (
+    error instanceof BusinessError &&
+    [20004, 11001, 12001, 14001, 14002, 14005].includes(error.code)
+  );
 }
 
 /**

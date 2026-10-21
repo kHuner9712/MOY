@@ -77,6 +77,49 @@ jobs:
           NEXT_TELEMETRY_DISABLED: '1'
           NEXT_PUBLIC_ADAPTER_BASE_URL: http://127.0.0.1:8000
 
+  terminology-gate:
+    name: 术语门禁（G-14 / G-15）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ------------------------------------------------------------------
+      # G-14：禁词扫描（用户可见文案零命中，退出码必须为 0）
+      # ------------------------------------------------------------------
+      - name: G-14 禁词扫描（零命中）
+        run: npm run scan:banned --workspace apps/web
+
+      # ------------------------------------------------------------------
+      # G-14 词表一致性：脚本内词表必须与 PRD 第 7 章同步（漂移退出码 3）
+      # ------------------------------------------------------------------
+      - name: G-14 词表与 PRD 一致性
+        run: npm run scan:words --workspace apps/web
+
+      # ------------------------------------------------------------------
+      # G-15：扫描器自检。**退出码 1 表示自检通过**（12 条负样本全部命中）。
+      # 注意：不用管道（`| tee` 之类会吞掉退出码），先重定向再判状态。
+      # ------------------------------------------------------------------
+      - name: G-15 扫描器自检（期望退出码 1）
+        run: |
+          set +e
+          npm run scan:self-test --workspace apps/web > scan-self-test.log 2>&1
+          status=$?
+          set -e
+          cat scan-self-test.log
+          if [ "$status" -ne 1 ]; then
+            echo "[FAIL] 自检退出码 $status，期望 1（0/2/3 均说明扫描器或词表异常）"
+            exit 1
+          fi
+          echo "[PASS] 自检命中全部负样本，退出码 1 符合约定"
+
   format-check:
     name: Prettier 格式校验
     runs-on: ubuntu-latest

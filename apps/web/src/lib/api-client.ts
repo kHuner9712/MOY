@@ -17,15 +17,65 @@
 // ---------------------------------------------------------------------------
 
 import type {
+  ActionGroup,
+  BatchMemberRequest,
+  BatchMemberResult,
+  BillingInvoiceItem,
+  BillingOrderDetail,
+  BillingOrderItem,
+  BillingUsageDetail,
+  ChangeSubscriptionRequest,
+  ChangeSubscriptionResult,
+  CreateDepartmentRequest,
+  CreateDepartmentResult,
+  CreateGrantRequest,
+  CreateGrantResult,
+  CreateOrderRequest,
+  CreateOrderResult,
+  CredentialBindingResult,
   CurrentUser,
+  DeleteBaseResult,
+  DeleteDepartmentResult,
+  DeleteGrantResult,
+  DepartmentNode,
+  DocumentListQuery,
+  FlatPageResult,
   GenerateRequest,
   GenerateResult,
+  GrantItem,
+  KnowledgeBaseDetail,
+  KnowledgeDocumentItem,
+  OpsConfirmOrderResult,
+  OpsMetrics,
+  OpsMetricsRange,
+  OpsOrderItem,
+  OpsSettings,
+  OpsTenantDetail,
+  OpsTenantItem,
+  OpsTenantStatusResult,
   OrganizationMember,
+  PaymentCallbackResult,
+  PermissionGroup,
+  PlanItem,
   ProfileItem,
+  RemoveMemberResult,
+  RoleItem,
+  SegmentDetail,
+  SubscriptionDetail,
   TaskItem,
   TaskStep,
   ToolConnection,
+  ToolExecutionItem,
   ToolSpec,
+  UpdateBaseRequest,
+  UpdateBaseResult,
+  UpdateDepartmentRequest,
+  UpdateDepartmentResult,
+  UpdateMemberRequest,
+  UpdateMemberResult,
+  UpdateOpsSettingsRequest,
+  UpdateSeatsResult,
+  UsageGroupBy,
   VerifyResult,
 } from '@/lib/types';
 
@@ -220,10 +270,18 @@ async function unwrap<T>(response: Response): Promise<T> {
   throw new BusinessError(payload.code, payload.message);
 }
 
+/**
+ * 查询参数值类型。
+ *
+ * 允许直接传入接口定义的查询对象（interface 不带索引签名），
+ * 序列化时统一 `String(value)`，因此不做类型收窄要求。
+ */
+type QueryParams = Record<string, unknown>;
+
 /** 请求选项 */
 interface RequestOptions {
   /** 查询参数 */
-  query?: Record<string, string | number | boolean | undefined>;
+  query?: QueryParams;
   /** 请求体（对象，自动 JSON 序列化） */
   body?: unknown;
   /** 是否携带幂等键，默认写接口自动携带 */
@@ -446,15 +504,13 @@ function dispatchFrame(rawFrame: string, handlers: Record<string, ((data: never)
 // RAG 服务 R1-R7
 // ---------------------------------------------------------------------------
 
-/** 知识库条目 */
-export interface KnowledgeBaseItem {
-  base_id: string;
-  name: string;
-  description: string;
-  visibility: 'organization' | 'private';
-  document_count: number;
-  created_at: string;
-}
+/**
+ * 知识库条目（R2 列表元素）。
+ *
+ * 阶段二为加性扩展（`chunk_policy` / `my_role` / `updated_at`），
+ * 字段定义统一归档在 `lib/types.ts`，此处只保留别名以兼容既有引用。
+ */
+export type KnowledgeBaseItem = KnowledgeBaseDetail;
 
 /** RAG 服务接口 */
 export const knowledgeApi = {
@@ -723,6 +779,292 @@ export const identityApi = {
     end_at?: string;
   }): Promise<PageResult<Record<string, unknown>>> {
     return request('POST', '/identity/audit-logs', { body });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 知识库扩展 KB1-KB8（架构文档 §4.2）
+// ---------------------------------------------------------------------------
+
+/**
+ * 知识库扩展接口。
+ *
+ * 覆盖阶段二 KB1-KB8 共 8 个端点。字段口径与 `docs/architecture-phase2.md`
+ * §4.2 表逐条一致（snake_case，不做驼峰转换）。
+ */
+export const knowledgeExtApi = {
+  /** KB1 修改知识库设置（名称/描述/内容切分精细度/可见范围，至少一项） */
+  updateBase(baseId: string, body: UpdateBaseRequest): Promise<UpdateBaseResult> {
+    return request('PATCH', `/knowledge/bases/${baseId}`, { body });
+  },
+
+  /** KB2 删除知识库（返回随库一并移除的文档数量，供二次确认展示） */
+  deleteBase(baseId: string): Promise<DeleteBaseResult> {
+    return request('DELETE', `/knowledge/bases/${baseId}`);
+  },
+
+  /** KB3 文档清单（分页 + 关键字 + 处理阶段筛选 + 排序） */
+  listDocuments(
+    baseId: string,
+    params: DocumentListQuery = {},
+  ): Promise<PageResult<KnowledgeDocumentItem>> {
+    return request('GET', `/knowledge/bases/${baseId}/documents`, { query: params });
+  },
+
+  /**
+   * KB4 引用片段详情（回链）。
+   *
+   * 注意：`status=stale` 属于**正常响应**（HTTP 200 + `code=0`），
+   * 前端据此提示「该引用来自旧版本内容，原文已更新」，不得当错误处理。
+   */
+  segmentDetail(
+    baseId: string,
+    documentId: string,
+    segmentId: string,
+    withContext = true,
+  ): Promise<SegmentDetail> {
+    return request(
+      'GET',
+      `/knowledge/bases/${baseId}/documents/${documentId}/segments/${segmentId}`,
+      { query: { with_context: withContext } },
+    );
+  },
+
+  /** KB5 知识库授权清单（分页） */
+  listGrants(
+    baseId: string,
+    params: { page?: number; page_size?: number } = {},
+  ): Promise<PageResult<GrantItem>> {
+    return request('GET', `/knowledge/bases/${baseId}/grants`, { query: params });
+  },
+
+  /** KB6 批量添加成员授权（对象 ≤50，重复对象计入跳过） */
+  createGrants(baseId: string, body: CreateGrantRequest): Promise<CreateGrantResult> {
+    return request('POST', `/knowledge/bases/${baseId}/grants`, { body });
+  },
+
+  /** KB7 撤销成员授权 */
+  revokeGrant(baseId: string, grantId: string): Promise<DeleteGrantResult> {
+    return request('DELETE', `/knowledge/bases/${baseId}/grants/${grantId}`);
+  },
+
+  /**
+   * KB8 更新知识库的存储通道绑定。
+   *
+   * 权限点为 `ops:console:access`，**业务界面不得调用**（仅运维控制台使用）。
+   * 保留本方法是为了让 38 个端点在请求层有唯一出口，避免别处直接 fetch。
+   */
+  bindStorageChannel(baseId: string, credentialRef: string): Promise<CredentialBindingResult> {
+    return request('PUT', `/knowledge/bases/${baseId}/credential-binding`, {
+      body: { credential_ref: credentialRef },
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 工具扩展 TL1（架构文档 §4.3）
+// ---------------------------------------------------------------------------
+
+/** 工具扩展接口 */
+export const toolsExtApi = {
+  /** TL1 工具调用记录（按工具类型筛选，分页） */
+  listExecutions(
+    params: { tool_type?: string; page?: number; page_size?: number } = {},
+  ): Promise<PageResult<ToolExecutionItem>> {
+    return request('GET', '/tools/executions', { query: params });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 组织与权限扩展 ID1-ID11（架构文档 §4.4）
+// ---------------------------------------------------------------------------
+
+/** 组织与权限扩展接口 */
+export const identityExtApi = {
+  /** ID1 部门层级（`flat=true` 返回平铺数组） */
+  listDepartments(orgId: string, flat = false): Promise<{ departments: DepartmentNode[] }> {
+    return request('GET', `/identity/organizations/${orgId}/departments`, { query: { flat } });
+  },
+
+  /** ID2 新建部门（超 5 层返回 14006） */
+  createDepartment(
+    orgId: string,
+    body: CreateDepartmentRequest,
+  ): Promise<CreateDepartmentResult> {
+    return request('POST', `/identity/organizations/${orgId}/departments`, { body });
+  },
+
+  /** ID3 修改或移动部门 */
+  updateDepartment(
+    departmentId: string,
+    body: UpdateDepartmentRequest,
+  ): Promise<UpdateDepartmentResult> {
+    return request('PATCH', `/identity/departments/${departmentId}`, { body });
+  },
+
+  /** ID4 删除部门（仍有成员或子部门时返回 14006） */
+  deleteDepartment(departmentId: string): Promise<DeleteDepartmentResult> {
+    return request('DELETE', `/identity/departments/${departmentId}`);
+  },
+
+  /** ID5 权限点目录（按分组返回，20 个权限点） */
+  listPermissions(): Promise<{ groups: PermissionGroup[] }> {
+    return request('GET', '/identity/permissions');
+  },
+
+  /** ID6 角色列表（含内置角色与权限点集合） */
+  listRoles(orgId: string): Promise<{ items: RoleItem[] }> {
+    return request('GET', `/identity/organizations/${orgId}/roles`);
+  },
+
+  /** ID7 删除角色（被引用时返回 20005） */
+  deleteRole(orgId: string, roleId: string): Promise<{ role_id: string; deleted: boolean }> {
+    return request('DELETE', `/identity/organizations/${orgId}/roles/${roleId}`);
+  },
+
+  /** ID8 修改成员（角色/部门/主部门/在册状态） */
+  updateMember(
+    orgId: string,
+    memberId: string,
+    body: UpdateMemberRequest,
+  ): Promise<UpdateMemberResult> {
+    return request('PATCH', `/identity/organizations/${orgId}/members/${memberId}`, { body });
+  },
+
+  /** ID9 移出成员（其知识库转交企业管理员） */
+  removeMember(orgId: string, memberId: string): Promise<RemoveMemberResult> {
+    return request('DELETE', `/identity/organizations/${orgId}/members/${memberId}`);
+  },
+
+  /** ID10 批量变更成员（单批 ≤100） */
+  batchMembers(orgId: string, body: BatchMemberRequest): Promise<BatchMemberResult> {
+    return request('POST', `/identity/organizations/${orgId}/members/batch`, { body });
+  },
+
+  /** ID11 操作动作目录（筛选项文案来源） */
+  listAuditActions(): Promise<{ groups: ActionGroup[] }> {
+    return request('GET', '/identity/audit-logs/actions');
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 计费域 BL1-BL10（架构文档 §4.5）
+// ---------------------------------------------------------------------------
+
+/** 计费接口 */
+export const billingApi = {
+  /** BL1 套餐目录 */
+  listPlans(): Promise<{ plans: PlanItem[] }> {
+    return request('GET', '/billing/plans');
+  },
+
+  /** BL2 订阅详情（无订阅时返回免费版合成视图，不返回 404） */
+  getSubscription(): Promise<SubscriptionDetail> {
+    return request('GET', '/billing/subscription');
+  },
+
+  /** BL3 变更套餐（订阅/升级/降级/取消续费） */
+  changeSubscription(body: ChangeSubscriptionRequest): Promise<ChangeSubscriptionResult> {
+    return request('POST', '/billing/subscription', { body });
+  },
+
+  /** BL4 调整席位 */
+  updateSeats(seats: number): Promise<UpdateSeatsResult> {
+    return request('PATCH', '/billing/subscription/seats', { body: { seats } });
+  },
+
+  /** BL5 用量明细（`group_by` 为管理视图，需管理员） */
+  getUsage(params: { period?: string; group_by?: UsageGroupBy } = {}): Promise<BillingUsageDetail> {
+    return request('GET', '/billing/usage', { query: params });
+  },
+
+  /** BL6 创建订单（已有待支付订单时返回 15004） */
+  createOrder(body: CreateOrderRequest): Promise<CreateOrderResult> {
+    return request('POST', '/billing/orders', { body });
+  },
+
+  /** BL7 订单列表 */
+  listOrders(
+    params: { status?: string; page?: number; page_size?: number } = {},
+  ): Promise<PageResult<BillingOrderItem>> {
+    return request('GET', '/billing/orders', { query: params });
+  },
+
+  /** BL8 订单详情 */
+  getOrder(orderId: string): Promise<BillingOrderDetail> {
+    return request('GET', `/billing/orders/${orderId}`);
+  },
+
+  /** BL9 账单列表 */
+  listInvoices(period = ''): Promise<{ items: BillingInvoiceItem[] }> {
+    return request('GET', '/billing/invoices', { query: { period } });
+  },
+
+  /**
+   * BL10 支付结果回调。
+   *
+   * 该端点是**支付渠道服务端**调用的入口（免 Bearer、验签 + 流水号幂等），
+   * 业务界面不得调用；保留方法只为让 38 个端点都有唯一出口。
+   */
+  paymentCallback(payload: Record<string, unknown>): Promise<PaymentCallbackResult> {
+    return request('POST', '/billing/payments/callback', { body: payload, idempotent: false });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 运营域 OPS1-OPS8（架构文档 §4.6）
+// ---------------------------------------------------------------------------
+
+/** 运营接口（仅运营账号可用；企业账号调用一律 20003） */
+export const opsApi = {
+  /** OPS1 企业列表 */
+  listTenants(
+    params: { keyword?: string; status?: string; page?: number; page_size?: number } = {},
+  ): Promise<FlatPageResult<OpsTenantItem>> {
+    return request('GET', '/ops/tenants', { query: params });
+  },
+
+  /** OPS2 企业详情（企业信息 + 订阅摘要 + 用量摘要 + 近期订单） */
+  getTenant(tenantId: string): Promise<OpsTenantDetail> {
+    return request('GET', `/ops/tenants/${tenantId}`);
+  },
+
+  /** OPS3 启用或停用企业 */
+  updateTenantStatus(
+    tenantId: string,
+    body: { status: 'active' | 'suspended'; reason?: string },
+  ): Promise<OpsTenantStatusResult> {
+    return request('PATCH', `/ops/tenants/${tenantId}`, { body });
+  },
+
+  /** OPS4 订单列表 */
+  listOrders(
+    params: { tenant_id?: string; status?: string; page?: number; page_size?: number } = {},
+  ): Promise<FlatPageResult<OpsOrderItem>> {
+    return request('GET', '/ops/orders', { query: params });
+  },
+
+  /** OPS5 订单核销（金额不符返回 15009，已处理返回 15008） */
+  confirmOrder(
+    orderId: string,
+    body: { paid_amount_cents: number; remark?: string },
+  ): Promise<OpsConfirmOrderResult> {
+    return request('POST', `/ops/orders/${orderId}/confirm`, { body });
+  },
+
+  /** OPS6 平台统计 */
+  getMetrics(range: OpsMetricsRange = '7d'): Promise<OpsMetrics> {
+    return request('GET', '/ops/metrics', { query: { range } });
+  },
+
+  /** OPS7 读取系统配置 */
+  getSettings(): Promise<OpsSettings> {
+    return request('GET', '/ops/settings');
+  },
+
+  /** OPS8 修改系统配置（只改传入项） */
+  updateSettings(body: UpdateOpsSettingsRequest): Promise<OpsSettings> {
+    return request('PATCH', '/ops/settings', { body });
   },
 };
 

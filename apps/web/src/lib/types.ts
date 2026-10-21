@@ -138,8 +138,13 @@ export type ModelStreamEvent = 'start' | 'delta' | 'citation' | 'done' | 'error'
 // RAG 服务
 // ---------------------------------------------------------------------------
 
-/** 知识库可见性 */
-export type Visibility = 'organization' | 'private';
+/**
+ * 知识库可见性。
+ *
+ * 阶段二新增 `restricted`（指定成员可见），属**加性加宽**：
+ * 旧前端未识别该值时由组件层映射表兜底展示「指定成员可见」。
+ */
+export type Visibility = 'organization' | 'private' | 'restricted';
 
 /** 分块策略 */
 export type ChunkPolicy = 'default' | 'fine';
@@ -333,6 +338,645 @@ export interface VerifyResult {
   user_id: string;
   tenant_id: string;
   roles: string[];
+}
+
+// ---------------------------------------------------------------------------
+// 阶段二：知识库扩展（KB1-KB8，架构文档 §4.2）
+// ---------------------------------------------------------------------------
+
+/** 平铺分页数据（运营域部分端点直接返回页码字段，不包 `meta`） */
+export interface FlatPageResult<T> {
+  items: T[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
+/** 当前用户在某知识库上的角色（R2 `my_role`） */
+export type KnowledgeBaseRole = 'owner' | 'editor' | 'viewer';
+
+/** 文档处理阶段（五态，与三态 `index_status` 语义对齐） */
+export type DocumentStage = 'uploaded' | 'parsing' | 'preparing' | 'completed' | 'failed';
+
+/** 知识库条目（R2，阶段二加性字段：`chunk_policy` / `my_role` / `updated_at`） */
+export interface KnowledgeBaseDetail extends KnowledgeBase {
+  /** 内容切分精细度（仅对之后上传的文档生效） */
+  chunk_policy?: ChunkPolicy;
+  /** 当前用户在该库上的角色 */
+  my_role?: KnowledgeBaseRole;
+  /** 最近更新时间 */
+  updated_at?: string;
+}
+
+/** KB1 修改知识库设置请求（至少一项） */
+export interface UpdateBaseRequest {
+  name?: string;
+  description?: string;
+  chunk_policy?: ChunkPolicy;
+  visibility?: Visibility;
+}
+
+/** KB1 修改知识库设置响应 */
+export interface UpdateBaseResult {
+  base_id: string;
+  name: string;
+  description: string;
+  chunk_policy: ChunkPolicy;
+  visibility: Visibility;
+  updated_at: string;
+}
+
+/** KB2 删除知识库响应 */
+export interface DeleteBaseResult {
+  base_id: string;
+  deleted: boolean;
+  deleted_document_count: number;
+}
+
+/** KB3 文档清单条目 */
+export interface KnowledgeDocumentItem {
+  document_id: string;
+  file_name: string;
+  /** 文件大小（字节） */
+  file_size: number;
+  uploader_name: string;
+  uploaded_at: string;
+  index_status: IndexStatus;
+  stage: DocumentStage;
+  /** 阶段的用户可见文案（后端直出，避免前端漏映射） */
+  stage_display_name: string;
+  progress: number;
+  /** 预估剩余秒数；无法预估时为 null */
+  estimated_remaining_seconds: number | null;
+  segment_count: number;
+  /** 处理未成功的原因（业务语言） */
+  error_message: string | null;
+}
+
+/**
+ * KB3 文档清单查询参数。
+ *
+ * 声明为类型别名（而非 interface）以便直接传给查询串构造器：
+ * 类型别名具备隐式索引签名，interface 不具备。
+ */
+export type DocumentListQuery = {
+  page?: number;
+  page_size?: number;
+  keyword?: string;
+  stage?: DocumentStage;
+  /** 排序串，形如 `uploaded_at:desc` */
+  sort?: string;
+};
+
+/** KB4 引用片段可定位状态（`stale` 是正常响应，不是错误） */
+export type SegmentStatus = 'valid' | 'stale';
+
+/** KB4 引用片段详情 */
+export interface SegmentDetail {
+  segment_id: string;
+  document_id: string;
+  document_name: string;
+  base_id: string;
+  base_name: string;
+  /** 片段正文；不可展示时为 null */
+  content: string | null;
+  context_before: string | null;
+  context_after: string | null;
+  position: { page: number | null; paragraph: number | null } | null;
+  status: SegmentStatus;
+}
+
+/** 授权对象类型（成员 / 部门 / 角色） */
+export type GrantSubjectType = 'user' | 'department' | 'role';
+
+/** 授权级别（可提问 / 可上传与管理） */
+export type GrantPermission = 'viewer' | 'editor';
+
+/** KB5 授权清单条目 */
+export interface GrantItem {
+  grant_id: string;
+  subject_type: GrantSubjectType;
+  subject_id: string;
+  subject_name: string;
+  permission: GrantPermission;
+  granted_by_name: string;
+  granted_at: string;
+}
+
+/** KB6 批量授权请求 */
+export interface CreateGrantRequest {
+  subject_type: GrantSubjectType;
+  /** 授权对象 ID 列表（1-50 个，重复对象计入跳过） */
+  subject_ids: string[];
+  permission: GrantPermission;
+}
+
+/** KB6 批量授权响应 */
+export interface CreateGrantResult {
+  created_count: number;
+  skipped_count: number;
+}
+
+/** KB7 撤销授权响应 */
+export interface DeleteGrantResult {
+  grant_id: string;
+  deleted: boolean;
+}
+
+/** KB8 更新知识库凭据绑定响应（运维通道专用，业务界面不调用） */
+export interface CredentialBindingResult {
+  base_id: string;
+  bound: boolean;
+  updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// 阶段二：工具扩展（TL1，架构文档 §4.3）
+// ---------------------------------------------------------------------------
+
+/** 工具调用结果 */
+export type ToolExecutionStatus = 'success' | 'failed';
+
+/** TL1 工具调用记录条目 */
+export interface ToolExecutionItem {
+  execution_id: string;
+  tool_type: string;
+  tool_display_name: string;
+  operation: string;
+  operation_display_name: string;
+  status: ToolExecutionStatus;
+  /** 失败原因（业务语言）；成功时为 null */
+  error_message: string | null;
+  executed_at: string;
+  operator_name: string;
+}
+
+// ---------------------------------------------------------------------------
+// 阶段二：组织与权限域（ID1-ID11，架构文档 §4.4）
+// ---------------------------------------------------------------------------
+
+/** 组织层级上限（第 6 层不允许创建） */
+export const DEPARTMENT_MAX_LEVEL = 5;
+
+/** 部门树节点（`level` 1-5） */
+export interface DepartmentNode {
+  department_id: string;
+  name: string;
+  /** 上级部门 ID；一级部门为空串 */
+  parent_id: string;
+  /** 从根到本部门的名称链 */
+  path_names: string[];
+  level: number;
+  manager_name: string;
+  member_count: number;
+  children: DepartmentNode[];
+}
+
+/** ID2 新建部门请求 */
+export interface CreateDepartmentRequest {
+  name: string;
+  /** 上级部门 ID；留空为一级部门 */
+  parent_id?: string;
+}
+
+/** ID2 新建部门响应 */
+export interface CreateDepartmentResult {
+  department_id: string;
+  name: string;
+  parent_id: string;
+  level: number;
+}
+
+/** ID3 修改/移动部门请求（三项至少一项） */
+export interface UpdateDepartmentRequest {
+  name?: string;
+  parent_id?: string;
+  manager_id?: string;
+}
+
+/** ID3 修改/移动部门响应 */
+export interface UpdateDepartmentResult {
+  department_id: string;
+  name: string;
+  parent_id: string;
+  level: number;
+  manager_name: string;
+  updated_at: string;
+}
+
+/** ID4 删除部门响应 */
+export interface DeleteDepartmentResult {
+  department_id: string;
+  deleted: boolean;
+}
+
+/** 权限点条目 */
+export interface PermissionItem {
+  permission: string;
+  display_name: string;
+  description: string;
+}
+
+/** 权限点分组 */
+export interface PermissionGroup {
+  group: string;
+  group_name: string;
+  permissions: PermissionItem[];
+}
+
+/** ID6 角色条目 */
+export interface RoleItem {
+  role_id: string;
+  role_key: string;
+  display_name: string;
+  /** 内置角色不可删除 */
+  is_builtin: boolean;
+  member_count: number;
+  permissions: string[];
+}
+
+/** 成员在册状态 */
+export type MemberStatus = 'active' | 'invited' | 'disabled';
+
+/** ID8 修改成员请求（四项至少一项） */
+export interface UpdateMemberRequest {
+  role?: string;
+  department_ids?: string[];
+  primary_department_id?: string;
+  status?: MemberStatus;
+}
+
+/** ID8 修改成员响应 */
+export interface UpdateMemberResult {
+  member_id: string;
+  role: string;
+  department_ids: string[];
+  status: string;
+  updated_at: string;
+}
+
+/** ID9 移出成员响应 */
+export interface RemoveMemberResult {
+  member_id: string;
+  removed: boolean;
+  /** 转交给企业管理员的库数量 */
+  transferred_knowledge_base_count: number;
+}
+
+/** 批量成员动作 */
+export type BatchMemberAction = 'update_role' | 'remove';
+
+/** ID10 批量成员操作请求 */
+export interface BatchMemberRequest {
+  /** 成员 ID 列表（1-100） */
+  member_ids: string[];
+  action: BatchMemberAction;
+  role?: string;
+}
+
+/** ID10 批量成员操作的失败原因 */
+export interface BatchMemberFailure {
+  member_id: string;
+  reason: string;
+}
+
+/** ID10 批量成员操作响应 */
+export interface BatchMemberResult {
+  succeeded: number;
+  failed: BatchMemberFailure[];
+}
+
+/** 操作动作条目（ID11） */
+export interface ActionItem {
+  action: string;
+  display_name: string;
+}
+
+/** 操作动作分组（ID11） */
+export interface ActionGroup {
+  group: string;
+  group_name: string;
+  actions: ActionItem[];
+}
+
+// ---------------------------------------------------------------------------
+// 阶段二：计费域（BL1-BL10，架构文档 §4.5）
+// ---------------------------------------------------------------------------
+
+/** 套餐功能开关 */
+export interface PlanFeatureItem {
+  feature_key: string;
+  display_name: string;
+  included: boolean;
+  /** 数量上限；null 表示不限 */
+  limit: number | null;
+}
+
+/** 套餐条目 */
+export interface PlanItem {
+  plan_code: string;
+  display_name: string;
+  /** 每席位每月价格（分） */
+  price_per_seat_month_cents: number;
+  currency: string;
+  min_seats: number;
+  quota_units_per_seat_month: number;
+  quota_unit_label: string;
+  purchasable_quota: boolean;
+  features: PlanFeatureItem[];
+  status: string;
+  trial_days: number;
+}
+
+/** 待生效的套餐变更 */
+export interface PendingPlanChange {
+  plan_code: string;
+  effective_at: string;
+}
+
+/** BL2 订阅详情（无订阅时返回免费版合成视图，不是 404） */
+export interface SubscriptionDetail {
+  subscription_id: string;
+  plan_code: string;
+  plan_name: string;
+  status: string;
+  seats_total: number;
+  seats_used: number;
+  started_at: string;
+  current_period_end: string;
+  quota_units_total: number;
+  quota_units_used: number;
+  auto_renew: boolean;
+  pending_change: PendingPlanChange | null;
+}
+
+/** 套餐变更动作 */
+export type SubscriptionAction = 'subscribe' | 'upgrade' | 'downgrade' | 'cancel_renew';
+
+/** BL3 套餐变更请求 */
+export interface ChangeSubscriptionRequest {
+  plan_code: string;
+  seats: number;
+  action: SubscriptionAction;
+}
+
+/** BL3 套餐变更响应 */
+export interface ChangeSubscriptionResult {
+  subscription_id: string;
+  status: string;
+  effective_at: string;
+  /** 关联订单；无需支付时为空串 */
+  order_id: string;
+  over_quota_warning: boolean;
+  /** 非阻断提示码（15005 = 降级周期末生效），仅用于选文案，不展示给用户 */
+  notice_code: number;
+  notice_message: string;
+}
+
+/** BL4 调整席位响应 */
+export interface UpdateSeatsResult {
+  seats_total: number;
+  seats_used: number;
+  effective_at: string;
+  order_id: string;
+  over_quota_warning: boolean;
+}
+
+/** BL5 分组维度 */
+export type UsageGroupBy = 'member' | 'department' | 'capability';
+
+/** BL5 用量分项 */
+export interface UsageBreakdownItem {
+  key: string;
+  display_name: string;
+  units: number;
+  percent: number;
+}
+
+/** BL5 按日用量点 */
+export interface UsageDailyTrendItem {
+  date: string;
+  units: number;
+}
+
+/** BL5 用量明细 */
+export interface BillingUsageDetail {
+  period: string;
+  quota_units_total: number;
+  quota_units_used: number;
+  quota_units_remaining: number;
+  usage_percent: number;
+  over_quota_warning: boolean;
+  quota_unit: string;
+  breakdown: UsageBreakdownItem[];
+  daily_trend: UsageDailyTrendItem[];
+}
+
+/** 订单类型 */
+export type OrderType = 'new' | 'renew' | 'upgrade' | 'seats';
+
+/** 支付方式 */
+export type PaymentMethod = 'online' | 'offline_transfer';
+
+/** BL6 下单请求 */
+export interface CreateOrderRequest {
+  plan_code: string;
+  seats: number;
+  order_type: OrderType;
+  payment_method: PaymentMethod;
+}
+
+/** BL6 下单响应 */
+export interface CreateOrderResult {
+  order_id: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  payment_method: string;
+  /** 在线支付跳转地址；对公转账时为空串 */
+  pay_url: string;
+  /** 对公转账收款信息；在线支付时为 null */
+  bank_info: Record<string, unknown> | null;
+  expires_at: string;
+}
+
+/** BL7 订单列表条目 */
+export interface BillingOrderItem {
+  order_id: string;
+  order_type: string;
+  plan_code: string;
+  seats: number;
+  amount_cents: number;
+  status: string;
+  payment_method: string;
+  created_at: string;
+}
+
+/** BL8 订单详情 */
+export interface BillingOrderDetail {
+  order_id: string;
+  status: string;
+  amount_cents: number;
+  payment_no_masked: string;
+  paid_at: string;
+  invoice_status: string;
+  plan_code: string;
+  seats: number;
+  created_at: string;
+  expires_at: string;
+}
+
+/** BL9 账单条目 */
+export interface BillingInvoiceItem {
+  invoice_id: string;
+  period: string;
+  amount_cents: number;
+  status: string;
+  download_url: string;
+}
+
+/** BL10 支付回调应答（对渠道方语义，业务界面不调用） */
+export interface PaymentCallbackResult {
+  code: string;
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
+// 阶段二：运营域（OPS1-OPS8，架构文档 §4.6）
+// ---------------------------------------------------------------------------
+
+/** 统计区间 */
+export type OpsMetricsRange = '7d' | '30d';
+
+/** 企业状态 */
+export type OpsTenantStatus = 'active' | 'suspended';
+
+/** OPS1 企业列表条目（不含邮箱明文与任何内容字段） */
+export interface OpsTenantItem {
+  tenant_id: string;
+  name: string;
+  plan_code: string;
+  seats_total: number;
+  seats_used: number;
+  status: string;
+  created_at: string;
+  quota_units_used: number;
+}
+
+/** OPS2 企业基本信息 */
+export interface OpsTenantProfile {
+  tenant_id: string;
+  name: string;
+  status: string;
+  plan_code: string;
+  deploy_mode: string;
+  created_at: string;
+  suspended_reason: string;
+}
+
+/** OPS2 订阅摘要 */
+export interface OpsSubscriptionSummary {
+  plan_code: string;
+  plan_name: string;
+  status: string;
+  seats_total: number;
+  seats_used: number;
+  current_period_end: string;
+  auto_renew: boolean;
+}
+
+/** OPS2 用量摘要（只有聚合数字） */
+export interface OpsUsageSummary {
+  period: string;
+  quota_units_total: number;
+  quota_units_used: number;
+  usage_percent: number;
+  member_count: number;
+}
+
+/** 运营订单条目（OPS2 `recent_orders` 与 OPS4 `items` 共用） */
+export interface OpsOrderItem {
+  order_id: string;
+  tenant_id: string;
+  tenant_name: string;
+  order_type: string;
+  plan_code: string;
+  seats: number;
+  amount_cents: number;
+  status: string;
+  payment_method: string;
+  created_at: string;
+  paid_at: string;
+}
+
+/** OPS2 企业详情 */
+export interface OpsTenantDetail {
+  tenant: OpsTenantProfile;
+  subscription: OpsSubscriptionSummary;
+  usage: OpsUsageSummary;
+  recent_orders: OpsOrderItem[];
+}
+
+/** OPS3 启用/停用企业响应 */
+export interface OpsTenantStatusResult {
+  tenant_id: string;
+  status: string;
+  updated_at: string;
+}
+
+/** OPS5 核销结果 */
+export interface OpsConfirmOrderResult {
+  order_id: string;
+  status: string;
+  subscription_status: string;
+}
+
+/** OPS6 套餐分布条目 */
+export interface OpsPlanDistributionItem {
+  plan_code: string;
+  plan_name: string;
+  tenant_count: number;
+}
+
+/** OPS6 用量 Top 企业条目 */
+export interface OpsTopTenantItem {
+  tenant_id: string;
+  name: string;
+  plan_code: string;
+  quota_units_used: number;
+}
+
+/** OPS6 平台统计 */
+export interface OpsMetrics {
+  range: string;
+  tenant_count: number;
+  active_tenant_count: number;
+  active_user_count: number;
+  conversation_count: number;
+  document_count: number;
+  quota_units_total: number;
+  plan_distribution: OpsPlanDistributionItem[];
+  top_tenants: OpsTopTenantItem[];
+}
+
+/** OPS7 / OPS8 系统配置 */
+export interface OpsSettings {
+  quota_warn_threshold: number;
+  trial_days: number;
+  quota_unit_label: string;
+  announcement: string;
+  plan_status: Record<string, string>;
+  updated_by: string;
+  updated_at: string;
+}
+
+/** OPS8 修改系统配置请求（只改传入项） */
+export interface UpdateOpsSettingsRequest {
+  quota_warn_threshold?: number;
+  trial_days?: number;
+  quota_unit_label?: string;
+  announcement?: string;
 }
 
 // ---------------------------------------------------------------------------

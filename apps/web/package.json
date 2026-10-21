@@ -9,7 +9,10 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint . --max-warnings=0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "scan:banned": "node scripts/check-banned-terms.mjs",
+    "scan:words": "node scripts/check-banned-terms.mjs --check-words",
+    "scan:self-test": "node scripts/check-banned-terms.mjs --self-test"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
