@@ -5,24 +5,27 @@
 
 1. **架构 → 后端**：``docs/architecture-phase2.md`` §7.1「新增错误码」表中的每一个码，
    都必须已在 ``app/core/errors.py`` 的 ``ErrorCode`` 中落地。
-   B08/B09 尚未实现的码（权限域 14005-14008、计费域 15001-15009）通过
-   ``--allow-pending b08,b09``（默认值）显式放行，并逐条打印 ``[PENDING]``；
+   尚未实现的码通过 ``--allow-pending <批次>`` 显式放行，并逐条打印 ``[PENDING]``；
    传 ``--strict`` 或 ``--allow-pending none`` 时要求 100% 落地（阶段门用）。
+
+   **当前默认值 = ``b09``**：权限域 14005-14008 已随 B08 落地，因此**不得**再放行
+   ``b08``——继续放行会让该域未来真正缺失的码被静默掩盖成绿（门禁失去信号价值）。
+   计费域 15001-15009 属 B09，未落地前放行；B09 落地后必须改为 ``none``/``--strict``。
 2. **后端 → 前端**：``apps/web/src/lib/business-errors.ts`` 的键集合必须是
    ``errors.py`` 码集合的**超集**（前端兜底表漏码 → 用户看到空白文案）。
 3. **码 → 注册表**：``ErrorCode`` 每个成员都必须在 ``ERROR_REGISTRY`` 中有
    ``ErrorSpec``（漏注册 → 运行时 ``KeyError``）。
 
-设计口径（为什么默认放行 b08/b09 而不是默认失败）：
+设计口径（为什么允许「按批次放行」而不是一律默认失败）：
 
-- G-13 的判据是「已登记的码不得漂移」，B08/B09 的码属**尚未开始的批次**，
-  默认失败会让 B05/B06 的修复回归永远红着，失去信号价值；
+- G-13 的判据是「已登记的码不得漂移」，**尚未开始批次**的码默认失败会让上一批的
+  修复回归永远红着，失去信号价值；
 - 但放行必须是**显式且可见**的：默认值写在代码里、每次运行打印 ``[PENDING]``
-  逐条清单、批次落地后自动消失，杜绝「悄悄放宽」。
+  逐条清单、批次落地后**必须立刻从默认值里移除**，杜绝「悄悄放宽」。
 
 用法::
 
-    python scripts/check_error_catalog.py                      # 默认放行 b08,b09
+    python scripts/check_error_catalog.py                      # 默认放行 b09
     python scripts/check_error_catalog.py --allow-pending none  # 要求全量落地
     python scripts/check_error_catalog.py --strict             # 同 none
 
@@ -51,11 +54,13 @@ ERRORS_PY = ADAPTER_ROOT / "app" / "core" / "errors.py"
 #: 前端错误码兜底文案表
 BUSINESS_ERRORS_TS = REPO_ROOT / "apps" / "web" / "src" / "lib" / "business-errors.ts"
 
-#: 默认允许「尚未落地」的批次（显式、可见、可关闭）
-DEFAULT_PENDING = "b08,b09"
+#: 默认允许「尚未落地」的批次（显式、可见、可关闭）。
+#: B08（权限域 14005-14008）已落地 → 已从默认值移除，避免该域缺失码被静默掩盖。
+DEFAULT_PENDING = "b09"
 
 #: 批次 → 架构 §7.1 表中的「域」列取值。
-#: B08 组织权限域的 14005-14008 与 B09 计费域的 15001-15009 分属两个批次。
+#: B08 组织权限域的 14005-14008（已落地）与 B09 计费域的 15001-15009 分属两个批次。
+#: 保留 b08 键仅为「历史命令可解释」，默认值不再包含它。
 PENDING_DOMAINS: dict[str, tuple[str, ...]] = {
     "b08": ("权限",),
     "b09": ("计费",),
@@ -379,7 +384,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-pending",
         default=DEFAULT_PENDING,
-        help=("允许尚未落地的批次（逗号分隔，默认 b08,b09）；传 none 或空串表示要求全量落地"),
+        help=("允许尚未落地的批次（逗号分隔，默认 b09）；传 none 或空串表示要求全量落地"),
     )
     parser.add_argument(
         "--strict",

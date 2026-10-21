@@ -78,7 +78,7 @@ jobs:
       # 批次落地后自动消失；阶段门复跑时改用 --strict 要求全量落地。
       # ------------------------------------------------------------------
       - name: 错误码三处一致（G-13）
-        run: python scripts/check_error_catalog.py --allow-pending b08,b09
+        run: python scripts/check_error_catalog.py --allow-pending b09
 
       # ------------------------------------------------------------------
       # 门禁 5：测试 + 覆盖率 ≥ 85%（G-05 硬地板）
