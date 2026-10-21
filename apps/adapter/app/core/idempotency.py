@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
@@ -27,6 +28,9 @@ IDEMPOTENCY_HEADER: Final[str] = "Idempotency-Key"
 
 #: 默认 TTL：24 小时（架构文档 3.0.4）
 DEFAULT_TTL_SECONDS: Final[int] = 86_400
+
+#: 空请求体的规范化固定摘要（架构文档 3.0.5：不得跳过请求体摘要项）
+EMPTY_BODY_SHA256: Final[str] = hashlib.sha256(b"").hexdigest()
 
 
 @dataclass(slots=True)
@@ -474,41 +478,68 @@ def build_fingerprint(
     path: str,
     tenant_id: str,
     user_id: str,
-    body_hash: str = "",
+    canonical_body_sha256: str = "",
 ) -> str:
-    """构造请求指纹。
+    """构造幂等指纹（架构文档 3.0.5 实现强制口径）。
 
-    同一幂等键若被用于不同请求（指纹不一致），视为键复用冲突（20005）。
+    口径为**唯一正确实现**，任何偏离即视为契约违规：
 
-    指纹必须包含**请求体摘要**（QA BUG-05）：否则同一幂等键配同一路径但不同请求体时
-    （例如先建「知识库 A」再建「知识库 B」）会被误判为重复请求，
-    静默回放首次结果，造成数据丢失。
+    ```
+    fingerprint = SHA256(
+        method + "\\n" +
+        path + "\\n" +
+        tenant_id + "\\n" +
+        user_id + "\\n" +
+        canonical_body_sha256
+    )
+    ```
+
+    其中 `canonical_body_sha256` 为**请求体规范化 JSON 的 SHA-256 十六进制摘要**
+    （键按字典序排序、无多余空白、UTF-8 编码）。
+
+    指纹必须包含请求体摘要（QA BUG-05）：否则同一 `Idempotency-Key` 配同 method/path/
+    tenant/user 但不同请求体时会被误判为重复请求并**静默回放首次结果**，
+    造成「用户看到成功但数据未变更」的静默数据丢失。
 
     Args:
-        method: HTTP 方法。
-        path: 请求路径。
-        tenant_id: 租户 ID。
-        user_id: 用户 ID。
-        body_hash: 请求体摘要（建议 sha256 十六进制，缺省为空串）。
+        method: HTTP 方法（大写参与计算）。
+        path: 规范化后的请求路径（去除查询串）。
+        tenant_id: 解析后的租户 ID（私有化模式恒为 `default`）。
+        user_id: 解析后的用户 ID。
+        canonical_body_sha256: 请求体规范化摘要；缺省为空体固定摘要。
 
     Returns:
-        str: 指纹字符串。
+        str: 指纹十六进制串。
     """
-    return f"{method.upper()}:{path}:{tenant_id}:{user_id}:{body_hash}"
+    payload = "\n".join(
+        [method.upper(), path, tenant_id, user_id, canonical_body_sha256 or EMPTY_BODY_SHA256]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def hash_request_body(body: bytes | str | None) -> str:
-    """计算请求体摘要（用于幂等指纹）。
+    """计算请求体的**规范化** SHA-256 摘要（架构文档 3.0.5）。
 
-    采用 sha256 十六进制摘要，**不**记录原文——避免敏感内容进入日志或内存驻留。
+    规范化规则：JSON 解析 → 键按字典序排序 → 去除多余空白 → UTF-8 编码。
+    请求体为空时返回空体固定摘要 `EMPTY_BODY_SHA256`（**不得跳过该项**）。
+
+    采用摘要而非原文，避免敏感内容进入日志或内存驻留。
 
     Args:
         body: 请求体字节或字符串。
 
     Returns:
-        str: 摘要十六进制串；请求体为空时返回空串。
+        str: 摘要十六进制串。
     """
     if not body:
-        return ""
+        return EMPTY_BODY_SHA256
     raw = body.encode("utf-8") if isinstance(body, str) else body
-    return hashlib.sha256(raw).hexdigest()
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        # 非 JSON 请求体（如 multipart）：退化为原始字节摘要
+        return hashlib.sha256(raw).hexdigest()
+    canonical = json.dumps(
+        parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()

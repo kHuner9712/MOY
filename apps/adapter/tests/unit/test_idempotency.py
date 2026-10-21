@@ -252,30 +252,70 @@ async def test_execute_detects_key_reuse_conflict(manager: IdempotencyManager) -
 
 def test_build_fingerprint_is_stable() -> None:
     """请求指纹构造稳定且含四元组信息。"""
-    assert build_fingerprint("post", "/x", "tnt_1", "usr_1") == "POST:/x:tnt_1:usr_1:"
+    fingerprint = build_fingerprint("post", "/x", "tnt_1", "usr_1")
+    assert len(fingerprint) == 64, "指纹应为 SHA-256 十六进制摘要"
+    assert fingerprint == build_fingerprint("POST", "/x", "tnt_1", "usr_1")
+
+
+def test_build_fingerprint_matches_architecture_spec() -> None:
+    """指纹严格符合架构文档 3.0.5 的实现强制口径。
+
+    口径：`SHA256(method + "\n" + path + "\n" + tenant_id + "\n" + user_id + "\n" + body_sha256)`
+    """
+    import hashlib
+
+    body_sha = hash_request_body('{"name":"知识库 A"}')
+    expected = hashlib.sha256(
+        "\n".join(["POST", "/api/v1/knowledge/bases", "tnt_1", "usr_1", body_sha]).encode("utf-8")
+    ).hexdigest()
+    actual = build_fingerprint("POST", "/api/v1/knowledge/bases", "tnt_1", "usr_1", body_sha)
+    assert actual == expected, "指纹必须与架构文档 3.0.5 口径逐字节一致"
+
+
+def test_build_fingerprint_uses_empty_body_fixed_digest() -> None:
+    """请求体为空时摘要取固定值，不得跳过该项（架构文档 3.0.5）。"""
+    import hashlib
+
+    empty_sha = hashlib.sha256(b"").hexdigest()
+    expected = hashlib.sha256(
+        "\n".join(["POST", "/x", "tnt_1", "usr_1", empty_sha]).encode("utf-8")
+    ).hexdigest()
+    assert build_fingerprint("POST", "/x", "tnt_1", "usr_1") == expected
+    assert build_fingerprint("POST", "/x", "tnt_1", "usr_1", "") == expected
 
 
 def test_build_fingerprint_includes_body_hash() -> None:
     """指纹必须包含请求体摘要（QA BUG-05：否则同键不同体被静默回放）。"""
     same = build_fingerprint("POST", "/x", "tnt_1", "usr_1", "hash-abc")
-    assert same == "POST:/x:tnt_1:usr_1:hash-abc"
     different = build_fingerprint("POST", "/x", "tnt_1", "usr_1", "hash-xyz")
-    assert different != same, "不同请求体必须产生不同指纹"
+    assert same != different, "不同请求体必须产生不同指纹"
 
 
-def test_hash_request_body_is_stable_and_hides_content() -> None:
-    """请求体摘要稳定且不泄露原文。"""
-    first = hash_request_body('{"name":"知识库 A"}')
-    second = hash_request_body('{"name":"知识库 A"}')
-    third = hash_request_body('{"name":"知识库 B"}')
-    assert first == second
-    assert first != third
-    assert "知识库" not in first
-    assert len(first) == 64, "应为 sha256 十六进制摘要"
+def test_hash_request_body_is_canonical() -> None:
+    """请求体摘要按规范化 JSON 计算：键序与空白不影响结果。"""
+    first = hash_request_body('{"name":"知识库 A","visibility":"organization"}')
+    second = hash_request_body('{"visibility":"organization","name":"知识库 A"}')
+    third = hash_request_body('{"visibility": "organization", "name": "知识库 A"}')
+    assert first == second == third, "键序与空白差异必须归一化"
+
+
+def test_hash_request_body_differs_for_different_content() -> None:
+    """不同请求体必须产生不同摘要。"""
+    assert hash_request_body('{"name":"库A"}') != hash_request_body('{"name":"库B"}')
+
+
+def test_hash_request_body_hides_content() -> None:
+    """摘要不泄露原文。"""
+    digest = hash_request_body('{"name":"知识库 A"}')
+    assert "知识库" not in digest
+    assert len(digest) == 64, "应为 sha256 十六进制摘要"
 
 
 def test_hash_request_body_handles_empty() -> None:
-    """空请求体返回空串。"""
-    assert hash_request_body(None) == ""
-    assert hash_request_body(b"") == ""
-    assert hash_request_body("") == ""
+    """空请求体返回空体固定摘要（不得跳过该项）。"""
+    import hashlib
+
+    fixed = hashlib.sha256(b"").hexdigest()
+    assert hash_request_body(None) == fixed
+    assert hash_request_body(b"") == fixed
+    assert hash_request_body("") == fixed

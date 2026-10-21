@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import APIRouter, Depends, File, Form, Path, Query, Request, UploadFile
 
 from app.core.config import get_request_settings
@@ -162,7 +164,15 @@ async def upload_document(
             auth=context.auth,
         )
 
-    result, replayed = await run_idempotent(request, context, factory, manager)
+    # multipart 请求体已被表单解析器消费，无法二次读取；
+    # 以「文件名 + 文件内容摘要」作为幂等指纹的请求体摘要项（架构文档 3.0.5）
+    file_digest = hashlib.sha256(
+        f"{file_name}:{file_size}:{hashlib.sha256(payload).hexdigest()}".encode()
+    ).hexdigest()
+
+    result, replayed = await run_idempotent(
+        request, context, factory, manager, body_digest=file_digest
+    )
     if replayed:
         return ApiResponse[UploadDocumentData].fail(
             code=int(ErrorCode.IDEMPOTENT_DUPLICATE),

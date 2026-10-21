@@ -417,10 +417,12 @@ async def run_idempotent(
     context: RequestContext,
     factory: Callable[[], Awaitable[Any]],
     manager: Any | None = None,
+    body_digest: str | None = None,
 ) -> tuple[Any, bool]:
     """执行带幂等保护的写操作。
 
-    幂等指纹包含**请求体摘要**（QA BUG-05）：同一幂等键配同一路径但不同请求体时，
+    幂等指纹按架构文档 3.0.5 的**唯一正确口径**构造，含请求体规范化 SHA-256 摘要：
+    同一 `Idempotency-Key` 配同 method/path/tenant/user 但不同请求体时，
     会被识别为键复用冲突（20005）而非静默回放首次结果。
 
     Args:
@@ -428,6 +430,8 @@ async def run_idempotent(
         context: 请求上下文。
         factory: 无参异步可调用对象，返回业务数据。
         manager: 可选的幂等管理器，缺省取全局单例。
+        body_digest: 可选的请求体摘要覆盖值。文件上传（multipart）场景由路由层
+            传入文件内容摘要——multipart 请求体已被表单解析器消费，无法二次读取。
 
     Returns:
         tuple[Any, bool]: `(结果, 是否重复请求)`。
@@ -439,35 +443,32 @@ async def run_idempotent(
 
     effective = manager or get_idempotency_manager()
     key = request.headers.get(IDEMPOTENCY_HEADER, "")
-    body_hash = await _read_body_hash(request)
+    digest = body_digest if body_digest is not None else await _read_body_digest(request)
     fingerprint = build_fingerprint(
         request.method,
         request.url.path,
         context.tenant_id,
         context.user_id,
-        body_hash,
+        digest,
     )
     return await effective.execute(key, fingerprint, factory)
 
 
-async def _read_body_hash(request: Request) -> str:
-    """读取请求体并计算摘要（用于幂等指纹）。
+async def _read_body_digest(request: Request) -> str:
+    """读取请求体并计算规范化摘要（架构文档 3.0.5）。
 
     请求体在 FastAPI 解析后已被缓存于 `request._body`，此处安全读取。
-    文件上传（multipart）场景不参与摘要计算（内容已由业务层校验），
-    此时返回空串，指纹退化为「方法 + 路径 + 租户 + 用户」。
+    文件上传（multipart）场景的请求体已被表单解析器消费，无法二次读取，
+    由路由层显式传入 `body_digest`。
 
     Args:
         request: FastAPI 请求对象。
 
     Returns:
-        str: 摘要十六进制串；无法获取请求体时为空串。
+        str: 规范化摘要十六进制串。
     """
     from app.core.idempotency import hash_request_body
 
-    content_type = request.headers.get("content-type", "")
-    if content_type.startswith("multipart/form-data"):
-        return ""
     try:
         body = await request.body()
     except Exception:
