@@ -29,8 +29,7 @@ from app.business.audit_service import (
     ACTION_PAYMENT_CALLBACK_REJECTED,
     AuditService,
 )
-from app.business.order_service import OrderService
-from app.business.order_service import REJECTED_TXN_PREFIX
+from app.business.order_service import REJECTED_TXN_PREFIX, OrderService
 from app.business.payment_gateway import FakeGateway, payload_digest
 from app.business.plan_service import PlanService
 from app.core.config import Settings, reset_settings_cache

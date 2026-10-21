@@ -98,6 +98,7 @@ def test_plans_requires_auth(client: TestClient) -> None:
     assert response.json()["code"] == int(ErrorCode.UNAUTHORIZED)
 
 
+@pytest.mark.p0
 def test_plans_returns_three_catalog_entries(client: TestClient, settings: Settings) -> None:
     """BL1 返回三个套餐，价格与额度为「分」与「字数额度」，无技术术语。"""
     response = client.get(PLANS_PATH, headers=_headers(settings))
@@ -326,6 +327,7 @@ def test_only_callback_is_auth_exempt(app: FastAPI) -> None:
     assert not unchecked, f"以下路由未能验证鉴权：{unchecked}"
 
 
+@pytest.mark.p0
 def test_usage_endpoint_still_consistent_with_subscription(
     client: TestClient, settings: Settings
 ) -> None:

@@ -125,6 +125,7 @@ async def _seed_tenant(settings: Settings, tenant_id: str, name: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.p0
 async def test_ops_tenants_list_and_detail(ops_client: TestClient, saas_settings: Settings) -> None:
     """OPS1 / OPS2：企业列表与详情字段齐备。"""
     await _seed_tenant(saas_settings, TENANT_A, "甲公司")

@@ -396,3 +396,101 @@ def test_mask_payment_no_keeps_tail_only() -> None:
     assert mask_payment_no("4200001234567890") == "****7890"
     assert mask_payment_no("12") == "****12"
     assert mask_payment_no("") == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.p0
+async def test_offline_plan_cannot_be_purchased() -> None:
+    """BL-01 验收 3：套餐下架后不可购买（`15002`），已订阅用户的套餐名仍可展示。
+
+    对应 QA `TC-P2-BL01-03`：下架只影响「新购」，不得让存量订阅的 `plan_name` 变空。
+    """
+    settings = _settings()
+    store = _OfflinePlanStore(PLAN_PROFESSIONAL)
+    service = OrderService(
+        settings=settings,
+        store=store,
+        plans=PlanService(settings, store),
+        gateway=FakeGateway(FAKE_KEY),
+    )
+    with pytest.raises(ApiError) as excinfo:
+        await service.create(
+            tenant_id=TENANT_ID,
+            actor_id="usr_owner",
+            request=CreateOrderRequest(plan_code=PLAN_PROFESSIONAL, seats=5),
+        )
+    assert excinfo.value.code is ErrorCode.PLAN_NOT_PURCHASABLE
+    assert "已下架" in excinfo.value.message
+    assert store.counts()["orders"] == 0, "不可购时不得产生订单"
+
+
+@pytest.mark.asyncio
+@pytest.mark.p0
+async def test_concurrent_subscribe_keeps_single_active() -> None:
+    """BL-02 功能 5：并发开通只产生 1 个有效订阅 + 1 个待支付订单（部分唯一索引兜底）。
+
+    对应 QA `TC-P2-BL02-06`：5 个并发 `subscribe` 里恰好 1 个成功，
+    其余被 `15004`（已有待支付订单）拦下；订阅表只有一条。
+    """
+    import asyncio
+
+    from app.business.subscription_service import SubscriptionService
+    from app.schemas.billing import ChangeSubscriptionRequest
+
+    settings = _settings()
+    store = InMemoryBillingStore()
+    plans = PlanService(settings, store)
+    subscriptions = SubscriptionService(settings, store, plans=plans)
+
+    async def subscribe() -> str:
+        """发起一次升级（并发场景下的单次调用）。
+
+        Returns:
+            str: `ok` 或错误码字符串。
+        """
+        try:
+            await subscriptions.change(
+                tenant_id=TENANT_ID,
+                actor_id="usr_owner",
+                request=ChangeSubscriptionRequest(
+                    plan_code=PLAN_PROFESSIONAL, seats=5, action="upgrade"
+                ),
+            )
+        except ApiError as exc:
+            return str(int(exc.code))
+        return "ok"
+
+    results = await asyncio.gather(*(subscribe() for _ in range(5)))
+    assert results.count("ok") == 1, f"并发只允许 1 次成功，实际 {results}"
+    assert results.count(str(int(ErrorCode.PENDING_ORDER_EXISTS))) == 4
+    assert store.counts()["subscriptions"] == 1, "有效订阅只能有 1 条"
+    assert store.counts()["orders"] == 1, "待支付订单只能有 1 条"
+
+
+class _OfflinePlanStore(InMemoryBillingStore):
+    """把指定套餐标记为已下架的内存存储（构造 `15002` 场景，不动私有状态）。"""
+
+    def __init__(self, offline_plan: str) -> None:
+        """初始化。
+
+        Args:
+            offline_plan: 需要下架的套餐标识。
+        """
+        super().__init__()
+        self._offline_plan = offline_plan
+
+    async def get_plan(self, plan_code: str) -> object | None:
+        """读取套餐（命中目标时返回下架版本）。
+
+        Args:
+            plan_code: 套餐标识。
+
+        Returns:
+            object | None: 套餐记录。
+        """
+        from dataclasses import replace as _replace
+
+        plan = await super().get_plan(plan_code)
+        if plan is None or plan_code != self._offline_plan:
+            return plan
+        return _replace(plan, status="offline")
