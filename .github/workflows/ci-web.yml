@@ -28,7 +28,10 @@ permissions:
 
 defaults:
   run:
-    working-directory: apps/web
+    # monorepo 采用 npm workspaces（workspaces: apps/*）：
+    # package-lock.json 与 npm ci 均在仓库根，工作目录必须为根，
+    # 否则 npm ci 找不到 lock 文件、CI 直接失败。
+    working-directory: .
 
 jobs:
   quality-gate:
@@ -45,28 +48,31 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: apps/web/package-lock.json
+          # monorepo 采用 npm workspaces：lock 文件在仓库根，workspaces 声明为 apps/*
+          # （此前误指向 apps/web/package-lock.json —— 该文件不存在，会导致
+          #   setup-node 的缓存步骤直接失败，CI 无法运行）
+          cache-dependency-path: package-lock.json
 
-      - name: 安装依赖
+      - name: 安装依赖（根目录 workspaces 安装）
         run: npm ci --no-audit --no-fund
 
       # ------------------------------------------------------------------
       # 门禁 1：ESLint（零 error）
       # ------------------------------------------------------------------
       - name: eslint
-        run: npm run lint
+        run: npm run lint:web
 
       # ------------------------------------------------------------------
       # 门禁 2：TypeScript 类型检查（零 error）
       # ------------------------------------------------------------------
       - name: tsc --noEmit
-        run: npm run typecheck
+        run: npm run typecheck:web
 
       # ------------------------------------------------------------------
       # 构建校验（确保产物可生成）
       # ------------------------------------------------------------------
       - name: next build
-        run: npm run build
+        run: npm run build:web
         env:
           NEXT_TELEMETRY_DISABLED: '1'
           NEXT_PUBLIC_ADAPTER_BASE_URL: http://127.0.0.1:8000
@@ -88,6 +94,6 @@ jobs:
       - name: 格式校验
         run: |
           npx --yes prettier@3.3.3 --check \
-            "src/**/*.{ts,tsx,css}" \
-            "*.{json,js}" \
+            "apps/web/src/**/*.{ts,tsx,css}" \
+            "apps/web/*.{json,js}" \
             || (echo "[WARN] 格式问题请执行: npx prettier --write ." && exit 1)

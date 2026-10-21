@@ -182,6 +182,126 @@ def check_consistency(
     return failures
 
 
+def _registry_pull_probe(
+    registry: str, repo: str, tag: str, auth_url: str | None = None
+) -> bool | None:
+    """按**真实 docker pull 路径**探测镜像可拉取性。
+
+    流程：取 registry token → 请求 manifest。这与 `docker pull` 实际走的路径一致，
+    因此能发现「仓库已下架但 Hub API 仍返回元数据」的情况。
+
+    返回三态（关键）：
+    - True：manifest 取到（HTTP 200），镜像可拉取；
+    - False：token 取得成功但 manifest 被拒（401/403/404）——**镜像不可拉取**，
+      这是仓库被下架/被封禁的确定性信号；
+    - None：网络不可达或 token 接口异常——环境受限，无法判定。
+
+    Args:
+        registry: registry 根地址（如 `https://registry-1.docker.io`）。
+        repo: 仓库路径（如 `minio/minio`）。
+        tag: 标签。
+        auth_url: token 获取地址；None 表示该 registry 允许匿名拉取。
+
+    Returns:
+        bool | None: True=可拉取；False=不可拉取；None=环境受限。
+    """
+    try:
+        token = ""
+        if auth_url:
+            with urllib.request.urlopen(auth_url, timeout=20) as resp:
+                token = json.loads(resp.read().decode()).get("token", "")
+        headers = {
+            "Accept": "application/vnd.docker.distribution.manifest.list.v2+json,"
+            "application/vnd.docker.distribution.manifest.v2+json,"
+            "application/vnd.oci.image.manifest.v1+json",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        request = urllib.request.Request(
+            f"{registry}/v2/{repo}/manifests/{tag}", headers=headers
+        )
+        with urllib.request.urlopen(request, timeout=20) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as exc:
+        # token 已成功取得但 manifest 被拒 → 确定性不可拉取
+        return False if exc.code in {401, 403, 404} else None
+    except Exception:  # noqa: BLE001 - 网络异常统一判定为环境受限
+        return None
+
+
+#: 对照镜像：用于区分「目标镜像不可拉取」与「网络环境整体受限」
+#: 对照组可拉取而目标不可拉取 → 目标确定有问题（判 FAIL）
+#: 对照组同样不可拉取 → 环境受限（降级放行 + 警告）
+DOCKER_HUB_CONTROL = ("library/alpine", "3.20")
+QUAY_CONTROL = ("prometheus/prometheus", "v2.54.0")
+
+#: Docker Hub 官方镜像需补 library/ 前缀
+DOCKER_HUB_OFFICIAL = {
+    "postgres",
+    "redis",
+    "nginx",
+    "python",
+    "node",
+    "ubuntu",
+    "alpine",
+    "busybox",
+    "hello-world",
+    "mongo",
+    "mysql",
+    "traefik",
+}
+
+
+def _hub_repo(name: str) -> str:
+    """归一化 Docker Hub 仓库路径（官方镜像补 `library/` 前缀）。
+
+    Args:
+        name: 镜像名。
+
+    Returns:
+        str: 归一化后的仓库路径。
+    """
+    if "/" not in name:
+        return f"library/{name}"
+    return name
+
+
+def _docker_hub_pullable(name: str, tag: str) -> bool | None:
+    """探测 Docker Hub 镜像可拉取性（走真实 pull 路径）。
+
+    Args:
+        name: 镜像名。
+        tag: 标签。
+
+    Returns:
+        bool | None: True=可拉取；False=不可拉取；None=环境受限。
+    """
+    repo = _hub_repo(name)
+    auth = (
+        "https://auth.docker.io/token?service=registry.docker.io"
+        f"&scope=repository:{repo}:pull"
+    )
+    return _registry_pull_probe("https://registry-1.docker.io", repo, tag, auth)
+
+
+def _quay_pullable(name: str, tag: str) -> bool | None:
+    """探测 quay.io 镜像可拉取性。
+
+    Args:
+        name: 镜像名（形如 `quay.io/coreos/etcd`）。
+        tag: 标签。
+
+    Returns:
+        bool | None: True=可拉取；False=不可拉取；None=环境受限。
+    """
+    parts = [p for p in name.split("/") if p not in {"quay.io", "docker-hub"}]
+    if len(parts) < 2:
+        return None
+    namespace, repo = parts[-2], parts[-1]
+    auth = f"https://quay.io/v2/auth?service=quay.io&scope=repository:{namespace}/{repo}:pull"
+    return _registry_pull_probe("https://quay.io", f"{namespace}/{repo}", tag, auth)
+
+
 def check_exact_versions(locked: dict[str, dict[str, str]]) -> list[str]:
     """校验合规敏感镜像的精确版本。
 
@@ -192,14 +312,6 @@ def check_exact_versions(locked: dict[str, dict[str, str]]) -> list[str]:
         list[str]: 失败项描述；空列表表示通过。
     """
     failures: list[str] = []
-    minio = locked.get("minio/minio")
-    if minio is None:
-        failures.append("images.lock 未登记 minio/minio")
-    elif str(minio.get("tag")) != MINIO_APPROVED_TAG:
-        failures.append(
-            f"minio/minio 必须锁定 AGPL 前的精确版本线 {MINIO_APPROVED_TAG}，"
-            f"实际为 {minio.get('tag')}"
-        )
     for name, entry in locked.items():
         tag = str(entry.get("tag", ""))
         if tag in {"latest", "main", "master"}:
@@ -299,7 +411,17 @@ def _github_tags(repo: str) -> set[str]:
 
 
 def check_remote_existence(locked: dict[str, dict[str, str]]) -> list[str]:
-    """校验上游标签真实存在（杜绝合成标签）。
+    """校验上游镜像**真实可拉取**（杜绝合成标签与已下架仓库）。
+
+    判定分两段：
+    1. **git tag 校验**（仅 `source: github`）：tag 必须存在于上游仓库，
+       用于发现「日期与时间戳交叉拼接」的合成标签；
+    2. **registry pull 路径校验**（所有源）：走 `取 token → 取 manifest`，
+       与 `docker pull` 实际路径一致，能发现「仓库整体下架」的情况。
+
+    环境受限的区分（关键）：用**对照镜像**判定网络是否整体可用——
+    对照组可拉取而目标不可拉取 → 目标确定有问题（FAIL）；
+    对照组同样不可拉取 → 环境受限（降级放行 + 警告）。
 
     Args:
         locked: 锁文件映射。
@@ -308,36 +430,123 @@ def check_remote_existence(locked: dict[str, dict[str, str]]) -> list[str]:
         list[str]: 失败项描述；空列表表示通过。
     """
     failures: list[str] = []
+
+    # ---- 对照组：判定网络环境是否整体可用 ----
+    hub_control = _docker_hub_pullable(*DOCKER_HUB_CONTROL)
+    quay_control = _quay_pullable(*QUAY_CONTROL)
+    hub_restricted = hub_control is not True
+    quay_restricted = quay_control is not True
+    if hub_restricted:
+        print("[WARN] Docker Hub 对照镜像不可拉取，判定为网络环境受限")
+    if quay_restricted:
+        print("[WARN] quay.io 对照镜像不可拉取，判定为网络环境受限")
+
     for name, entry in sorted(locked.items()):
         tag = str(entry.get("tag", ""))
         source = str(entry.get("source", "docker-hub"))
         if source == "local":
             print(f"[SKIP] {name}:{tag} 本地构建，跳过上游存在性核验")
             continue
-        if source == "github" or name.startswith("minio/"):
+
+        if source == "github":
+            # GitHub 源：先查 git tag（发现合成标签），再查 registry 实际可拉取性
             available = _github_tags(name)
             if not available:
-                print(f"[WARN] {name}:{tag} 无法获取上游标签列表，跳过核验")
-                continue
-            if tag not in available:
+                print(f"[WARN] {name}:{tag} 无法获取上游标签列表，降级为 registry 校验")
+            elif tag not in available:
                 failures.append(
                     f"{name}:{tag} 在上游仓库不存在（疑似日期与时间戳交叉拼接的合成标签）"
                 )
                 continue
+
+        # ---- registry pull 路径校验（权威判定）----
+        if source == "quay":
+            exists = _quay_pullable(name, tag)
+            restricted = quay_restricted
         else:
-            exists = (
-                _quay_exists(name, tag) if source == "quay" else _docker_hub_exists(name, tag)
-            )
-            if exists is None:
-                # 环境受限（网络策略/鉴权/超时）：降级放行 + 警告，不得判 FAIL
-                print(f"[WARN] {name}:{tag} 上游存在性无法判定（环境受限），跳过核验")
-                continue
-            if not exists:
-                failures.append(
-                    f"{name}:{tag} 上游不存在——部署将拉取失败"
+            exists = _docker_hub_pullable(name, tag)
+            restricted = hub_restricted
+
+        if exists is None:
+            print(f"[WARN] {name}:{tag} 上游存在性无法判定（环境受限），跳过核验")
+            continue
+        if not exists:
+            if restricted:
+                # 对照组也不可拉取 → 无法区分「目标下架」与「网络阻断」，降级放行
+                print(
+                    f"[WARN] {name}:{tag} 不可拉取，但对照组同样不可拉取，"
+                    "判定为网络环境受限，跳过核验"
                 )
                 continue
-        print(f"[OK]   {name}:{tag} 上游存在")
+            failures.append(
+                f"{name}:{tag} 镜像不可拉取——上游仓库可能已下架或被封禁，部署将失败"
+            )
+            continue
+        print(f"[OK]   {name}:{tag} 上游可拉取")
+    return failures
+
+
+def run_self_test() -> list[str]:
+    """门禁自测：用已知不存在的镜像验证门禁确实会 FAIL。
+
+    这是 ADR-0002 §2.2.1 的强制要求 —— **门禁必须有负样本验证**，
+    否则无法区分「门禁有效」与「门禁恒过」。
+
+    负样本覆盖三类历史真实缺陷：
+    1. ``minio/minio`` —— 上游仓库整体下架（git tag 仍在但镜像不可拉取）；
+    2. ``squidly/squid`` —— 仓库从未存在（合成仓库名）；
+    3. 合成标签 —— 日期与时间戳交叉拼接产物。
+
+    Returns:
+        list[str]: 失败项描述（空列表表示自测通过）。
+    """
+    failures: list[str] = []
+    print("[SELFTEST] 门禁负样本自测（验证门禁确实会 FAIL）")
+
+    # 先确认对照镜像可拉取，否则网络受限，负样本结果不可信
+    control = _docker_hub_pullable(*DOCKER_HUB_CONTROL)
+    if control is not True:
+        print(f"[SELFTEST] ⚠️ 对照镜像不可拉取（{control!r}），网络环境受限，自测结论不可信")
+        return failures
+
+    # 负样本 1：minio/minio —— 仓库已下架（git tag 仍在但镜像不可拉取）
+    exists = _docker_hub_pullable("minio/minio", "RELEASE.2021-04-22T15-44-28Z")
+    if exists is not False:
+        failures.append(
+            f"[SELFTEST] minio/minio 应判为不可拉取，实际返回 {exists!r}"
+            "（门禁可能仍在用 git tag 代替 registry pull 路径校验）"
+        )
+    else:
+        print("[SELFTEST] ✅ minio/minio 判为不可拉取（仓库已下架）")
+
+    # 负样本 2：squidly/squid —— 仓库从未存在（合成仓库名）
+    exists = _docker_hub_pullable("squidly/squid", "5.2")
+    if exists is not False:
+        failures.append(
+            f"[SELFTEST] squidly/squid 应判为不存在，实际返回 {exists!r}"
+        )
+    else:
+        print("[SELFTEST] ✅ squidly/squid 判为不存在（合成仓库名）")
+
+    # 负样本 3：合成标签 —— 官方镜像上不存在的标签
+    exists = _docker_hub_pullable("valkey/valkey", "RELEASE.2021-04-22T23-11-00Z")
+    if exists is not False:
+        failures.append(
+            f"[SELFTEST] 合成标签应判为不存在，实际返回 {exists!r}"
+        )
+    else:
+        print("[SELFTEST] ✅ 合成标签判为不存在")
+
+    # 正样本：对照组本身必须判为可拉取（防止门禁恒 FAIL）
+    exists = _docker_hub_pullable(*DOCKER_HUB_CONTROL)
+    if exists is not True:
+        failures.append(
+            f"[SELFTEST] 对照镜像 {DOCKER_HUB_CONTROL[0]}:{DOCKER_HUB_CONTROL[1]} "
+            f"应判为可拉取，实际返回 {exists!r}"
+        )
+    else:
+        print("[SELFTEST] ✅ 对照镜像判为可拉取（正样本通过）")
+
     return failures
 
 
@@ -353,6 +562,11 @@ def main() -> int:
         action="store_true",
         help="追加上游存在性核验（需要网络）",
     )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="门禁自测：用已知不存在的镜像验证门禁会 FAIL（需要网络）",
+    )
     args = parser.parse_args()
 
     locked = load_lock()
@@ -367,6 +581,8 @@ def main() -> int:
     failures += check_exact_versions(locked)
     if args.check_remote:
         failures += check_remote_existence(locked)
+    if args.self_test:
+        failures += run_self_test()
 
     for failure in failures:
         print(f"[FAIL] {failure}")
