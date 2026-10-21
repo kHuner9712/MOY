@@ -23,12 +23,25 @@ from typing import Any, Final, Protocol
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
-from app.db.session import tenant_scope
+from app.db.session import platform_scope, tenant_scope
+from app.db.tenant import PLATFORM_TENANT
 
 logger = get_logger(__name__)
 
 #: 审计表名
 AUDIT_TABLE: Final[str] = "audit_log"
+
+#: 审计写入 SQL（租户作用域与平台作用域共用，避免两份定义漂移）
+_AUDIT_INSERT_SQL: Final[str] = f"""
+    INSERT INTO {AUDIT_TABLE} (
+        tenant_id, actor_id, action, resource_type, resource_id, result,
+        actor_role, action_display_name, change_summary, trace_id, occurred_at
+    ) VALUES (
+        :tenant_id, :actor_id, :action, :resource_type, :resource_id, :result,
+        :actor_role, :action_display_name, CAST(:change_summary AS jsonb),
+        :trace_id, now()
+    )
+    """
 
 #: 资源类型：知识库
 RESOURCE_KNOWLEDGE_BASE: Final[str] = "knowledge_base"
@@ -123,6 +136,17 @@ ACTION_ORDER_CONFIRMED: Final[str] = "ops.order_confirm"
 #: 操作：修改系统配置（B10，OPS8）
 ACTION_SETTINGS_UPDATE: Final[str] = "ops.settings_update"
 
+#: 资源类型：支付回调（B09 安全加固）
+RESOURCE_PAYMENT_CALLBACK: Final[str] = "payment_callback"
+
+#: 操作：支付回调被拒绝（签名/金额/订单状态校验未通过，B09 安全加固）
+#:
+#: 拒绝事件**必须**进审计：`payment_callback_log` 只记「已接受并处理」的回调，
+#: 若把未验签的载荷写进去，攻击者只要带上真实 `transaction_id` 就能占掉幂等键，
+#: 让真实支付永远无法开通（P0-07）。因此拒绝事件只有 `audit_log` 一份归属，
+#: 且未验签的渠道流水号**不进入**幂等键空间。
+ACTION_PAYMENT_CALLBACK_REJECTED: Final[str] = "billing.payment_callback_rejected"
+
 #: 操作 → 用户可见名称（写入 `action_display_name`，供操作记录页直接展示）
 ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_KB_CREATE: "创建知识库",
@@ -146,6 +170,7 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_TENANT_STATUS: "启用或停用企业",
     ACTION_ORDER_CONFIRMED: "订单核销",
     ACTION_SETTINGS_UPDATE: "修改系统配置",
+    ACTION_PAYMENT_CALLBACK_REJECTED: "支付回调被拒绝",
 }
 
 
@@ -298,31 +323,27 @@ class PostgresAuditRecorder:
 
         payload = entry if entry.occurred_at else _with_defaults(entry)
         summary = json.dumps(payload.change_summary, ensure_ascii=False, sort_keys=True)
-        async with tenant_scope(payload.tenant_id, settings=self._settings) as uow:
-            await uow.execute(
-                f"""
-                INSERT INTO {AUDIT_TABLE} (
-                    tenant_id, actor_id, action, resource_type, resource_id, result,
-                    actor_role, action_display_name, change_summary, trace_id, occurred_at
-                ) VALUES (
-                    :tenant_id, :actor_id, :action, :resource_type, :resource_id, :result,
-                    :actor_role, :action_display_name, CAST(:change_summary AS jsonb),
-                    :trace_id, now()
-                )
-                """,
-                {
-                    "tenant_id": payload.tenant_id,
-                    "actor_id": payload.actor_id,
-                    "action": payload.action,
-                    "resource_type": payload.resource_type,
-                    "resource_id": payload.resource_id,
-                    "result": payload.result,
-                    "actor_role": payload.actor_role,
-                    "action_display_name": payload.display_name,
-                    "change_summary": summary,
-                    "trace_id": payload.trace_id,
-                },
-            )
+        parameters = {
+            "tenant_id": payload.tenant_id,
+            "actor_id": payload.actor_id,
+            "action": payload.action,
+            "resource_type": payload.resource_type,
+            "resource_id": payload.resource_id,
+            "result": payload.result,
+            "actor_role": payload.actor_role,
+            "action_display_name": payload.display_name,
+            "change_summary": summary,
+            "trace_id": payload.trace_id,
+        }
+        # 平台级安全事件（如未验签的支付回调）以 `__platform__` 落库：
+        # `tenant_scope()` 会因平台哨兵未声明 allow_platform 而拒绝（30003），
+        # 故显式分流到 `platform_scope()`——它不是「绕过隔离」，而是「平台视角专线」。
+        if payload.tenant_id == PLATFORM_TENANT:
+            async with platform_scope(self._settings) as uow:
+                await uow.execute(_AUDIT_INSERT_SQL, parameters)
+        else:
+            async with tenant_scope(payload.tenant_id, settings=self._settings) as uow:
+                await uow.execute(_AUDIT_INSERT_SQL, parameters)
         return payload
 
     async def recent(
@@ -579,6 +600,7 @@ __all__: list[str] = [
     "ACTION_ORDER_CONFIRMED",
     "ACTION_ORDER_CREATED",
     "ACTION_ORDER_PAID",
+    "ACTION_PAYMENT_CALLBACK_REJECTED",
     "ACTION_RECONCILE_MISMATCH",
     "ACTION_ROLE_DELETE",
     "ACTION_SETTINGS_UPDATE",
@@ -591,6 +613,7 @@ __all__: list[str] = [
     "RESOURCE_KNOWLEDGE_BASE",
     "RESOURCE_MEMBER",
     "RESOURCE_ORDER",
+    "RESOURCE_PAYMENT_CALLBACK",
     "RESOURCE_ROLE",
     "RESOURCE_SETTINGS",
     "RESOURCE_SUBSCRIPTION",

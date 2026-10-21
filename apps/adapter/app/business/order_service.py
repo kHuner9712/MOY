@@ -29,7 +29,9 @@ from typing import Any, Final
 from app.business.audit_service import (
     ACTION_ORDER_CREATED,
     ACTION_ORDER_PAID,
+    ACTION_PAYMENT_CALLBACK_REJECTED,
     RESOURCE_ORDER,
+    RESOURCE_PAYMENT_CALLBACK,
     AuditService,
 )
 from app.business.payment_gateway import (
@@ -51,6 +53,7 @@ from app.db.repositories.billing_repo import (
     ORDER_PENDING,
     PAYMENT_OFFLINE,
     PLAN_FREE,
+    PLATFORM_TENANT,
     BillingStore,
     CallbackLogRecord,
     InvoiceRecord,
@@ -457,6 +460,15 @@ class OrderService:
         幂等语义：同一 `(channel, transaction_id)` 第二次及以后直接返回成功语义
         （渠道要求 200），**但不重复开通、不重复开票**。
 
+        **校验一律先于「领取幂等键」**（P0-07 安全加固）：只有「验签通过 + 订单存在
+        + 待支付 + 交易成功 + 金额相符」才写 `payment_callback_log`（幂等键）。
+        任何一项不通过都**不占用** `(channel, external_txn_id)`——否则一个签名错误的
+        垃圾载荷只要带上真实流水号，就能把幂等键占了，让真实支付此后永远走
+        「重复回调 → 直接返回成功」而**永不开通**（且渠道收到 200 后不再重试）。
+
+        拒绝事件改由 `audit_log` 承载（`billing.payment_callback_rejected`），
+        含 `payload_sha256`、拒绝原因与订单号（若可解），既不丢取证也不污染幂等键。
+
         Args:
             payload: 渠道回调载荷。
 
@@ -465,28 +477,29 @@ class OrderService:
 
         Raises:
             ApiError: 验签失败（20001）、订单不存在（20004）、
-                订单已关闭（15008）、金额不一致（15009）、渠道未配置（30004）。
+                订单已关闭（15008）、金额不一致（15009）、
+                交易未成功（15007）、渠道未配置（30004）。
         """
         notification = self._gateway.verify_and_parse(payload)
         digest = payload_digest(payload)
+        channel = self._gateway.channel or DEFAULT_CHANNEL
+
+        # ---- 1. 验签：不通过则连载荷都不可信，直接拒绝且不落幂等键 ----
         if not notification.signature_ok or not notification.external_txn_id:
-            await self._store.append_callback(
-                CallbackLogRecord(
-                    tenant_id="__platform__",
-                    callback_id=new_resource_id(CALLBACK_ID_PREFIX),
-                    channel=self._gateway.channel or DEFAULT_CHANNEL,
-                    external_txn_id=notification.external_txn_id or digest[:32],
-                    order_id=notification.order_id,
-                    amount_cents=notification.amount_cents,
-                    signature_ok=False,
-                    payload_sha256=digest,
-                    processed=False,
-                )
-            )
             logger.warning(
                 "payment_callback_signature_invalid",
                 order_id=notification.order_id,
                 amount_cents=notification.amount_cents,
+            )
+            await self._record_rejection(
+                tenant_id="",
+                order_id=notification.order_id,
+                reason="signature_invalid",
+                digest=digest,
+                detail=(
+                    f"signature verification failed order={notification.order_id} "
+                    f"txn={notification.external_txn_id}"
+                ),
             )
             raise ApiError(
                 ErrorCode.PARAM_INVALID,
@@ -497,53 +510,63 @@ class OrderService:
                 ),
             )
 
+        # ---- 2. 订单归属：找不到订单也不落幂等键 ----
         order = await self._store.find_order_by_id(notification.order_id)
         if order is None:
             logger.warning("payment_callback_order_missing", order_id=notification.order_id)
+            await self._record_rejection(
+                tenant_id="",
+                order_id=notification.order_id,
+                reason="order_unknown",
+                digest=digest,
+                detail=f"order_id={notification.order_id}",
+            )
             raise ApiError(
                 ErrorCode.RESOURCE_NOT_FOUND,
                 message=MESSAGE_ORDER_UNKNOWN,
                 internal_detail=f"order_id={notification.order_id}",
             )
 
-        appended = await self._store.append_callback(
-            CallbackLogRecord(
-                tenant_id=order.tenant_id,
-                callback_id=new_resource_id(CALLBACK_ID_PREFIX),
-                channel=self._gateway.channel or DEFAULT_CHANNEL,
-                external_txn_id=notification.external_txn_id,
-                order_id=order.order_id,
-                amount_cents=notification.amount_cents,
-                signature_ok=True,
-                payload_sha256=digest,
-                processed=False,
-            )
-        )
-        if not appended:
-            # 重复回调：渠道要求 200，但**不重复开通**（幂等核心）
+        # ---- 3. 重复回调：只读判定，不领取新键 ----
+        existing = await self._store.get_callback(channel, notification.external_txn_id)
+        if existing is not None and existing.processed:
             logger.info(
                 "payment_callback_duplicated",
                 order_id=order.order_id,
                 txn=notification.external_txn_id,
             )
             return PaymentCallbackData(code=CALLBACK_SUCCESS, message=CALLBACK_MESSAGE)
-
         if order.is_paid:
-            await self._store.mark_callback_processed(
-                self._gateway.channel or DEFAULT_CHANNEL, notification.external_txn_id
-            )
+            # 已支付（可能由运营核销完成）：不再生效，也不再占用幂等键
+            logger.info("payment_callback_order_already_paid", order_id=order.order_id)
             return PaymentCallbackData(code=CALLBACK_SUCCESS, message=CALLBACK_MESSAGE)
+
+        # ---- 4. 业务校验：全部通过后才允许领取幂等键 ----
         if order.status != ORDER_PENDING:
             logger.warning(
                 "payment_callback_order_not_pending",
                 order_id=order.order_id,
                 status=order.status,
             )
+            await self._record_rejection(
+                tenant_id=order.tenant_id,
+                order_id=order.order_id,
+                reason="order_not_pending",
+                digest=digest,
+                detail=f"order_id={order.order_id} status={order.status}",
+            )
             raise ApiError(
                 ErrorCode.ORDER_ALREADY_PROCESSED,
                 internal_detail=f"order_id={order.order_id} status={order.status}",
             )
         if not notification.is_success:
+            await self._record_rejection(
+                tenant_id=order.tenant_id,
+                order_id=order.order_id,
+                reason="trade_not_success",
+                digest=digest,
+                detail=f"trade_state={notification.trade_state}",
+            )
             raise ApiError(
                 ErrorCode.PAYMENT_INCOMPLETE,
                 internal_detail=f"trade_state={notification.trade_state}",
@@ -555,6 +578,16 @@ class OrderService:
                 expected=order.amount_cents,
                 actual=notification.amount_cents,
             )
+            await self._record_rejection(
+                tenant_id=order.tenant_id,
+                order_id=order.order_id,
+                reason="amount_mismatch",
+                digest=digest,
+                detail=(
+                    f"order_id={order.order_id} expected={order.amount_cents} "
+                    f"actual={notification.amount_cents}"
+                ),
+            )
             raise ApiError(
                 ErrorCode.ORDER_AMOUNT_MISMATCH,
                 internal_detail=(
@@ -563,6 +596,29 @@ class OrderService:
                 ),
             )
 
+        # ---- 5. 领取幂等键（唯一约束兜底并发）：失败即并发重放，按成功应答 ----
+        claimed = await self._store.append_callback(
+            CallbackLogRecord(
+                tenant_id=order.tenant_id,
+                callback_id=new_resource_id(CALLBACK_ID_PREFIX),
+                channel=channel,
+                external_txn_id=notification.external_txn_id,
+                order_id=order.order_id,
+                amount_cents=notification.amount_cents,
+                signature_ok=True,
+                payload_sha256=digest,
+                processed=False,
+            )
+        )
+        if not claimed:
+            logger.info(
+                "payment_callback_duplicated",
+                order_id=order.order_id,
+                txn=notification.external_txn_id,
+            )
+            return PaymentCallbackData(code=CALLBACK_SUCCESS, message=CALLBACK_MESSAGE)
+
+        # ---- 6. 生效 + 标记已处理 ----
         await self._apply_payment(
             order=order,
             paid_amount_cents=notification.amount_cents,
@@ -570,10 +626,50 @@ class OrderService:
             remark="在线支付回调",
             payment_no=notification.external_txn_id,
         )
-        await self._store.mark_callback_processed(
-            self._gateway.channel or DEFAULT_CHANNEL, notification.external_txn_id
-        )
+        await self._store.mark_callback_processed(channel, notification.external_txn_id)
         return PaymentCallbackData(code=CALLBACK_SUCCESS, message=CALLBACK_MESSAGE)
+
+    async def _record_rejection(
+        self,
+        *,
+        tenant_id: str,
+        order_id: str,
+        reason: str,
+        digest: str,
+        detail: str,
+    ) -> None:
+        """记录一次被拒绝的支付回调（审计 + 结构化日志，不占幂等键）。
+
+        Args:
+            tenant_id: 归属租户；未知（订单无法解析）时为空串 → 落平台哨兵。
+            order_id: 回调声明的订单号（未验签时不可信，仅作取证线索）。
+            reason: 拒绝原因（`signature_invalid` / `order_unknown` /
+                `order_not_pending` / `trade_not_success` / `amount_mismatch`）。
+            digest: 载荷摘要（**不落原文**，避免用户标识等敏感字段入业务库）。
+            detail: 内部诊断信息（只进日志与审计摘要，不含堆栈）。
+        """
+        tenant = tenant_id or PLATFORM_TENANT
+        logger.warning(
+            "payment_callback_rejected",
+            reason=reason,
+            order_id=order_id,
+            tenant_id=tenant,
+        )
+        await self._audit.record(
+            tenant_id=tenant,
+            actor_id=SYSTEM_ACTOR,
+            action=ACTION_PAYMENT_CALLBACK_REJECTED,
+            resource_type=RESOURCE_PAYMENT_CALLBACK,
+            resource_id=order_id,
+            result="failure",
+            change_summary={
+                "reason": reason,
+                "order_id": order_id,
+                "payload_sha256": digest,
+                "signature_ok": reason != "signature_invalid",
+                "detail": detail,
+            },
+        )
 
     # ------------------------------------------------------------------
     # 支付生效（回调 / 运营核销共用）
