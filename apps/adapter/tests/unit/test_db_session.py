@@ -23,7 +23,13 @@ import pytest
 
 from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
-from app.db.engine import get_engine, normalize_database_url, validate_business_store
+from app.db.engine import (
+    BYPASSRLS_CHECK_SQL,
+    check_engine_privilege,
+    get_engine,
+    normalize_database_url,
+    validate_business_store,
+)
 from app.db.repositories.base import assert_identifier
 from app.db.session import (
     SET_READ_ONLY_SQL,
@@ -394,7 +400,116 @@ async def test_memory_mode_tenant_scope_raises_config_error() -> None:
 
 
 # ===========================================================================
-# 6. 连接串规范化与 SQL 标识符校验
+# 6. 数据库权限自检（G-25：连接账号不得带 BYPASSRLS）
+# ===========================================================================
+class _FakeScalarResult:
+    """模拟 SQLAlchemy 结果对象的 `scalar()`。"""
+
+    def __init__(self, value: Any) -> None:
+        """初始化。
+
+        Args:
+            value: 标量值。
+        """
+        self._value = value
+
+    def scalar(self) -> Any:
+        """返回标量值。"""
+        return self._value
+
+
+class _FakeConnection:
+    """模拟数据库连接：按 SQL 关键字返回不同结果。"""
+
+    def __init__(self, *, bypass_rls: Any, raise_on_privilege: bool = False) -> None:
+        """初始化。
+
+        Args:
+            bypass_rls: `pg_roles` 查询应返回的值（True/False/None）。
+            raise_on_privilege: 权限查询是否抛错。
+        """
+        self._bypass_rls = bypass_rls
+        self._raise = raise_on_privilege
+        self.statements: list[str] = []
+
+    async def __aenter__(self) -> _FakeConnection:
+        """进入上下文。"""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        """退出上下文。"""
+        return False
+
+    async def execute(self, statement: Any, parameters: Any = None) -> _FakeScalarResult:
+        """执行语句（仅识别本用例关心的两类查询）。"""
+        sql = str(statement)
+        self.statements.append(sql)
+        if "pg_roles" in sql:
+            if self._raise:
+                raise RuntimeError("permission denied")
+            return _FakeScalarResult(self._bypass_rls)
+        return _FakeScalarResult(1)
+
+
+class _FakeEngine:
+    """模拟异步引擎（`connect()` 返回异步上下文管理器）。"""
+
+    def __init__(self, *, bypass_rls: Any, raise_on_privilege: bool = False) -> None:
+        """初始化。
+
+        Args:
+            bypass_rls: 权限查询返回值。
+            raise_on_privilege: 权限查询是否抛错。
+        """
+        self.connection = _FakeConnection(
+            bypass_rls=bypass_rls, raise_on_privilege=raise_on_privilege
+        )
+
+    def connect(self) -> _FakeConnection:
+        """返回连接（本身即异步上下文管理器）。"""
+        return self.connection
+
+
+async def test_privilege_check_passes_for_non_superuser() -> None:
+    """`rolbypassrls=false` → 权限自检通过，且确实查了 pg_roles。"""
+    engine = _FakeEngine(bypass_rls=False)
+    assert await check_engine_privilege(engine) is True  # type: ignore[arg-type]
+    assert any("pg_roles" in sql for sql in engine.connection.statements)
+
+
+async def test_privilege_check_fails_for_superuser() -> None:
+    """`rolbypassrls=true`（超级用户会绕过 RLS）→ 自检不通过。"""
+    engine = _FakeEngine(bypass_rls=True)
+    assert await check_engine_privilege(engine) is False  # type: ignore[arg-type]
+
+
+async def test_privilege_check_fails_closed_when_query_errors() -> None:
+    """查询异常 → 判为不通过（fail-closed，绝不「查不到就当没事」）。"""
+    engine = _FakeEngine(bypass_rls=False, raise_on_privilege=True)
+    assert await check_engine_privilege(engine) is False  # type: ignore[arg-type]
+
+
+async def test_privilege_check_fails_when_role_row_missing() -> None:
+    """查不到自身角色行 → 同样判为不通过。"""
+    engine = _FakeEngine(bypass_rls=None)
+    assert await check_engine_privilege(engine) is False  # type: ignore[arg-type]
+
+
+async def test_privilege_check_skips_in_memory_mode() -> None:
+    """内存模式没有连接，直接通过。"""
+    assert await check_engine_privilege(None) is True
+
+
+def test_bypassrls_check_sql_targets_current_user() -> None:
+    """自检 SQL 必须查 `current_user` 的 `rolbypassrls`（防被改成查别人）。"""
+    normalized = " ".join(BYPASSRLS_CHECK_SQL.split()).lower()
+    assert "from pg_roles" in normalized
+    assert "rolname = current_user" in normalized
+    assert "rolbypassrls" in normalized
+
+
+# ===========================================================================
+# 7. 连接串规范化与 SQL 标识符校验
 # ===========================================================================
 def test_normalize_database_url_adds_async_driver() -> None:
     """同步连接串被改写为 asyncpg 驱动形式。"""

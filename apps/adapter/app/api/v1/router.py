@@ -24,6 +24,8 @@ KB1-KB8 / TL1 / ID1-ID11 / BL1-BL10 / OPS1-OPS8，按 B04-B10 逐批落地。
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Request
 
 from app.api.v1 import agent, identity, knowledge_ext, model, rag, tool
@@ -31,7 +33,7 @@ from app.core.config import Settings, get_request_settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
 from app.core.security import enforce_ratelimit
-from app.db.engine import check_engine, get_engine
+from app.db.engine import check_engine, check_engine_privilege, get_engine
 from app.registry.loader import get_profile_routes, get_tool_registry
 from app.schemas.common import ApiResponse, HealthData, ReadyCheck, ReadyData
 
@@ -133,6 +135,7 @@ async def readyz(request: Request) -> ApiResponse[ReadyData]:
         checks.append(ReadyCheck(name="tool_registry", ready=False, detail="工具注册表不可用"))
 
     checks.append(await _check_database(request))
+    checks.append(await _check_database_privilege(request))
 
     all_ready = all(check.ready for check in checks)
     data = ReadyData(status="ready" if all_ready else "not_ready", checks=checks)
@@ -141,30 +144,65 @@ async def readyz(request: Request) -> ApiResponse[ReadyData]:
     raise ApiError(ErrorCode.CONFIG_ERROR, message=data.status, data=data)
 
 
-async def _check_database(request: Request) -> ReadyCheck:
-    """数据库就绪检查项（阶段二 D-02）。
-
-    `business_store=memory` 时直接 ready 并注明「内存模式」——
-    内存模式不依赖 PostgreSQL，不能让 T01 离线演示与离线单测被判为未就绪。
+def _effective_engine(request: Request) -> Any:
+    """取当前生效的业务库引擎（注入优先）。
 
     Args:
         request: FastAPI 请求对象。
 
     Returns:
-        ReadyCheck: 数据库检查项。
+        Any: 引擎实例；内存模式为 None。
+    """
+    engine = getattr(request.app.state, "db_engine", None)
+    if engine is not None:
+        return engine
+    return get_engine(get_request_settings(request))
+
+
+async def _check_database(request: Request) -> ReadyCheck:
+    """数据库连通性检查项（阶段二 D-02）。
+
+    注意 `checks` 是**数组**（`ReadyData.checks: list[ReadyCheck]`），
+    新增检查项只能追加元素，不得改成对象——否则破坏既有 `/readyz` 契约。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        ReadyCheck: `name="db"` 的检查项。
     """
     settings = get_request_settings(request)
     if not settings.uses_postgres:
-        return ReadyCheck(name="database", ready=True, detail="内存模式（未启用业务库）")
-
-    engine = getattr(request.app.state, "db_engine", None)
-    if engine is None:
-        engine = get_engine(settings)
-    healthy = await check_engine(engine)
+        return ReadyCheck(name="db", ready=True, detail="内存模式（未启用业务库）")
+    healthy = await check_engine(_effective_engine(request))
     return ReadyCheck(
-        name="database",
+        name="db",
         ready=healthy,
         detail="数据库连接正常" if healthy else "数据库连接异常",
+    )
+
+
+async def _check_database_privilege(request: Request) -> ReadyCheck:
+    """数据库权限自检（G-25）：连接账号不得带 `BYPASSRLS`。
+
+    超级用户会绕过全部行级安全策略，使「tenant_id 条件 + RLS」的双保险退化为单层；
+    代码无法约束运维填什么 DSN，只能靠就绪自检兜住，故升为硬门禁。
+    `detail` 一律使用业务语言，**不得**出现 `rolbypassrls` / `BYPASSRLS` 等术语。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        ReadyCheck: `name="db_privilege"` 的检查项。
+    """
+    settings = get_request_settings(request)
+    if not settings.uses_postgres:
+        return ReadyCheck(name="db_privilege", ready=True, detail="内存模式（未启用业务库）")
+    allowed = await check_engine_privilege(_effective_engine(request))
+    return ReadyCheck(
+        name="db_privilege",
+        ready=allowed,
+        detail="数据库连接权限正常" if allowed else "数据库连接权限配置不正确",
     )
 
 

@@ -3,7 +3,9 @@
 --
 -- 架构依据：docs/architecture-phase2.md 第 3 章（D-02 业务库归属结论）
 -- 执行方式：
---   1) 容器首次启动：挂载为 docker-entrypoint-initdb.d/01-init-schema-phase2.sql（B01 批次）
+--   1) 容器首次启动：挂载为 docker-entrypoint-initdb.d/20-init-schema-phase2.sql（B01 批次）
+--      必须排在 10-init-rls.sql **之后**执行：本脚本末尾会 DROP 旧策略名
+--      tenant_isolation_* 并重建统一的 p_tenant_isolation / p_catalog_shared。
 --   2) 已有数据卷：python -m app.db.migrate（按 schema_migration 版本表增量执行）
 --   3) 手工核验：psql -U officeai -d officeai -f deploy/init-schema-phase2.sql
 --
@@ -666,8 +668,10 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
--- 15. 平台种子数据（三级套餐 + 16 个权限点；运行期由运营后台覆盖，不删行）
+-- 15. 平台种子数据（三级套餐 3 条 + 权限点 20 条；运行期由运营后台覆盖，不删行）
 --     价格与额度即 PRD 5.1 默认配置（Q2-1），全部走配置不硬编码前端
+--     注：ops_settings 属共享目录表但**不预置任何行**，运行期首次写入。
+--         写「共享表应能读到种子数据」类断言时不要包含它，否则误报为泄漏。
 -- ---------------------------------------------------------------------------
 INSERT INTO billing_plan (tenant_id, plan_code, display_name, price_per_seat_month_cents,
                           min_seats, quota_units_per_seat_month, purchasable_quota,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -27,7 +29,145 @@ def test_readyz_needs_no_auth(client: TestClient) -> None:
     assert body["code"] == 0
     assert body["data"]["status"] == "ready"
     names = {check["name"] for check in body["data"]["checks"]}
-    assert {"config", "profile_routes", "tool_registry"} <= names
+    assert {"config", "profile_routes", "tool_registry", "db", "db_privilege"} <= names
+
+
+def test_readyz_checks_is_array_contract() -> None:
+    """`checks` 必须是**数组**（`ReadyData.checks: list[ReadyCheck]`），不得改成对象。
+
+    阶段二新增 `db` / `db_privilege` 检查项时只能追加元素，否则破坏既有契约。
+    """
+    from app.schemas.common import ReadyData
+
+    field = ReadyData.model_fields["checks"]
+    assert isinstance(ReadyData(status="ready").checks, list)
+    assert "list" in str(field.annotation)
+
+
+def _readyz_settings(**overrides: object) -> Any:
+    """构造 postgres 模式配置（凭据密钥必须合法，否则启动即失败）。"""
+    import base64
+    import os
+
+    from app.core.config import Settings
+
+    payload: dict[str, object] = {
+        "env": "test",
+        "deploy_mode": "private",
+        "ratelimit_enabled": False,
+        "business_store": "postgres",
+        "database_url": "postgresql+asyncpg://officeai:pw@127.0.0.1:1/officeai",
+        "credential_encryption_key": base64.b64encode(os.urandom(32)).decode("ascii"),
+    }
+    payload.update(overrides)
+    return Settings(**payload)  # type: ignore[arg-type]
+
+
+class _ScalarResult:
+    """模拟 `Result.scalar()`。"""
+
+    def __init__(self, value: Any) -> None:
+        """初始化。"""
+        self._value = value
+
+    def scalar(self) -> Any:
+        """返回标量。"""
+        return self._value
+
+
+class _Connection:
+    """模拟连接：`pg_roles` 查询返回指定值，其余返回 1。"""
+
+    def __init__(self, bypass_rls: bool) -> None:
+        """初始化。"""
+        self._bypass_rls = bypass_rls
+
+    async def __aenter__(self) -> _Connection:
+        """进入上下文。"""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        """退出上下文。"""
+        return False
+
+    async def execute(self, statement: Any, parameters: Any = None) -> _ScalarResult:
+        """执行语句。"""
+        if "pg_roles" in str(statement):
+            return _ScalarResult(self._bypass_rls)
+        return _ScalarResult(1)
+
+
+class _Engine:
+    """模拟异步引擎。"""
+
+    def __init__(self, bypass_rls: bool) -> None:
+        """初始化。"""
+        self._bypass_rls = bypass_rls
+
+    def connect(self) -> _Connection:
+        """返回连接（异步上下文管理器）。"""
+        return _Connection(self._bypass_rls)
+
+
+def test_readyz_not_ready_when_db_user_bypasses_rls() -> None:
+    """连接账号带 BYPASSRLS（超级用户）→ `not_ready`，detail 为业务语言（G-25）。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    app = create_app(_readyz_settings())
+    with TestClient(app) as client:
+        # 用替身引擎替换真实引擎（无需真实超级用户环境）
+        app.state.db_engine = _Engine(bypass_rls=True)
+        response = client.get("/readyz")
+
+    body = response.json()
+    assert response.status_code == 500
+    assert body["data"]["status"] == "not_ready"
+    checks = {check["name"]: check for check in body["data"]["checks"]}
+    assert checks["db"]["ready"] is True
+    assert checks["db_privilege"]["ready"] is False
+    assert checks["db_privilege"]["detail"] == "数据库连接权限配置不正确"
+    # 不得出现任何数据库内部术语
+    for term in ("rolbypassrls", "bypassrls", "pg_roles", "superuser"):
+        assert term not in response.text.lower()
+
+
+def test_readyz_ready_when_db_user_is_restricted() -> None:
+    """连接账号不带 BYPASSRLS → `ready`，detail 为「数据库连接权限正常」。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    app = create_app(_readyz_settings())
+    with TestClient(app) as client:
+        app.state.db_engine = _Engine(bypass_rls=False)
+        response = client.get("/readyz")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["data"]["status"] == "ready"
+    checks = {check["name"]: check for check in body["data"]["checks"]}
+    assert checks["db"]["ready"] is True
+    assert checks["db_privilege"]["ready"] is True
+    assert checks["db_privilege"]["detail"] == "数据库连接权限正常"
+
+
+def test_readyz_db_checks_ready_in_memory_mode() -> None:
+    """`business_store=memory` 时 `db` / `db_privilege` 均直接 ready 并注明内存模式。"""
+    from fastapi.testclient import TestClient
+
+    from app.core.config import Settings
+    from app.main import create_app
+
+    app = create_app(Settings(env="test", deploy_mode="private", ratelimit_enabled=False))
+    with TestClient(app) as client:
+        body = client.get("/readyz").json()
+
+    checks = {check["name"]: check for check in body["data"]["checks"]}
+    assert checks["db"]["ready"] is True
+    assert checks["db_privilege"]["ready"] is True
+    assert "内存模式" in checks["db_privilege"]["detail"]
 
 
 def test_health_responses_never_expose_secrets(client: TestClient) -> None:

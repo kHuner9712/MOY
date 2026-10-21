@@ -39,6 +39,14 @@ POOL_RECYCLE_SECONDS: Final[int] = 1800
 #: 连接串中禁止出现的超级用户名（超级用户 BYPASSRLS，双保险失效）
 FORBIDDEN_DB_USERS: Final[tuple[str, ...]] = ("postgres", "supersuer", "root")
 
+#: 探活语句
+HEALTHCHECK_SQL: Final[str] = "SELECT 1"
+
+#: RLS 前置条件自检：当前连接用户是否带 `BYPASSRLS`（超级用户恒为 true）
+#: 超级用户会**绕过全部行级安全策略**，使「tenant_id 条件 + RLS」的双保险退化为单层。
+#: 代码无法约束运维填什么 DSN，只能在启动/就绪自检里兜住（G-25）。
+BYPASSRLS_CHECK_SQL: Final[str] = "SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user"
+
 #: 进程内引擎单例与其构造签名（签名变化即重建，避免测试间串配置）
 _engine: AsyncEngine | None = None
 _engine_signature: tuple[str, int, int, float] | None = None
@@ -208,9 +216,46 @@ async def check_engine(engine: AsyncEngine | None) -> bool:
         return True
     try:
         async with engine.connect() as connection:
-            await connection.execute(text("SELECT 1"))
+            await connection.execute(text(HEALTHCHECK_SQL))
     except Exception:
         logger.warning("business_engine_healthcheck_failed", exc_info=True)
+        return False
+    return True
+
+
+async def check_engine_privilege(engine: AsyncEngine | None) -> bool:
+    """自检当前数据库连接是否**不带** `BYPASSRLS`（RLS 双保险的前置条件）。
+
+    RLS 隔离依赖运维使用非超级用户 DSN（如 `officeai`）；代码侧无法约束 DSN，
+    因此这里主动查一次 `pg_roles.rolbypassrls`：
+
+    - `false` → 正常（受策略约束）；
+    - `true` → 超级用户会**绕过全部行级策略**，必须整体 `not_ready`，禁止带病上线；
+    - 查询异常或查不到自身角色行 → 一律判为不通过（fail-closed，不做「查不到就当没事」）。
+
+    Args:
+        engine: 引擎实例（`None` 表示内存模式，直接通过）。
+
+    Returns:
+        bool: 通过返回 True。
+    """
+    if engine is None:
+        return True
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(text(BYPASSRLS_CHECK_SQL))
+            bypass_rls = result.scalar()
+    except Exception:
+        logger.error("db_privilege_check_failed", exc_info=True)
+        return False
+    if bypass_rls is None:
+        logger.error("db_privilege_role_not_found")
+        return False
+    if bool(bypass_rls):
+        logger.error(
+            "db_privilege_superuser_detected",
+            hint="OA_DATABASE_URL 使用了带 BYPASSRLS 的账号，行级安全策略会被绕过",
+        )
         return False
     return True
 
@@ -234,8 +279,11 @@ async def reset_engine_for_test() -> None:
 
 __all__ = [
     "ASYNC_DRIVER_PREFIX",
+    "BYPASSRLS_CHECK_SQL",
+    "HEALTHCHECK_SQL",
     "POOL_RECYCLE_SECONDS",
     "check_engine",
+    "check_engine_privilege",
     "create_engine",
     "dispose_engine",
     "get_engine",
