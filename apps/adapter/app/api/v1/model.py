@@ -57,7 +57,7 @@ async def generate(
     service = get_model_service()
 
     async def factory() -> GenerateData:
-        return await service.generate(body)
+        return await service.generate(body, context.auth.user_id)
 
     result, replayed = await run_idempotent(request, context, factory, manager)
     if replayed:
@@ -95,12 +95,12 @@ async def generate_stream(
     Raises:
         ApiError: 鉴权失败（20002）、租户缺失（20001）。
     """
-    del context  # 鉴权已在依赖中完成
+    user_id = context.auth.user_id
     service = get_model_service()
     # SSE 响应一旦开始写出便无法再返回统一错误体，故先做档位校验
     service.ensure_profile_available(body.profile)
     return StreamingResponse(
-        service.generate_stream(body),
+        service.generate_stream(body, user_id),
         media_type=SSE_MEDIA_TYPE,
         headers=SSE_HEADERS,
     )

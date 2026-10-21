@@ -133,11 +133,12 @@ class ModelService:
     # ------------------------------------------------------------------
     # M1 非流式生成
     # ------------------------------------------------------------------
-    async def generate(self, request: GenerateRequest) -> GenerateData:
+    async def generate(self, request: GenerateRequest, user_id: str = "") -> GenerateData:
         """执行非流式生成。
 
         Args:
             request: 生成请求。
+            user_id: 终端用户标识（底座 user 字段必填，见 T02 联调修复）。
 
         Returns:
             GenerateData: 自研生成结果（`content` / `usage.*_units` / `citations`）。
@@ -157,10 +158,14 @@ class ModelService:
         if self._settings.mock_mode:
             return self._stub_generate(request)
 
-        response = await self._dify.post(_DIFY_CHAT_PATH, self._build_downstream_payload(request))
+        response = await self._dify.post(
+            _DIFY_CHAT_PATH, self._build_downstream_payload(request, user_id)
+        )
         return self._transform_generate_response(response.payload)
 
-    def _build_downstream_payload(self, request: GenerateRequest) -> dict[str, Any]:
+    def _build_downstream_payload(
+        self, request: GenerateRequest, user_id: str = ""
+    ) -> dict[str, Any]:
         """构造底座原生请求体。
 
         注意：此处出现底座原生字段名是**允许且必需**的——
@@ -187,7 +192,8 @@ class ModelService:
             "query": last_user_message,
             "response_mode": "blocking",
             "conversation_id": request.conversation_id,
-            "user": "",
+            # 底座 user 为必填终端用户标识（Dify >= 0.6 强制，T02 实联调修复）
+            "user": user_id,
             "files": [],
             "context": {
                 "history_window": request.context.history_window,
@@ -318,7 +324,9 @@ class ModelService:
         """
         self.resolve_route(profile)
 
-    async def generate_stream(self, request: GenerateRequest) -> AsyncIterator[str]:
+    async def generate_stream(
+        self, request: GenerateRequest, user_id: str = ""
+    ) -> AsyncIterator[str]:
         """执行流式生成，产出自研 SSE 帧序列。
 
         事件类型完全自研：`start` / `delta` / `citation` / `done` / `error`，
@@ -353,7 +361,7 @@ class ModelService:
             return
 
         try:
-            streaming_payload = self._build_downstream_payload(request) | {
+            streaming_payload = self._build_downstream_payload(request, user_id) | {
                 "response_mode": "streaming"
             }
             async for event in self._dify.post_stream(_DIFY_CHAT_PATH, streaming_payload):

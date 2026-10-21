@@ -166,15 +166,25 @@ class AgentService:
         if not self._settings.mock_mode:
             response = await self._dify.post(
                 f"{_DIFY_WORKFLOWS_PATH}/run",
-                {"inputs": request.inputs, "response_mode": "blocking"},
+                {
+                    "inputs": request.inputs,
+                    "response_mode": "blocking",
+                    # 底座 user 为必填终端用户标识（Dify >= 0.6 强制，T02 实联调修复）
+                    "user": auth.user_id,
+                },
             )
             native_run_id = str(response.payload.get("workflow_run_id", ""))
             if native_run_id:
                 task_id = f"{_TASK_PREFIX}{native_run_id}"
+                # blocking 模式下底座已同步返回终态（data.status），
+                # 直接映射为自研任务状态，而非停留 running（T02 实联调修复）
+                native_status = str(
+                    (response.payload.get("data") or {}).get("status", "")
+                ).lower()
                 self._tasks[task_id] = TaskDetailData(
                     task_id=task_id,
-                    status=TaskStatus.RUNNING,
-                    progress=0,
+                    status=_STATUS_MAP.get(native_status, TaskStatus.RUNNING),
+                    progress=100 if native_status == "succeeded" else 0,
                     updated_at=created_at,
                 )
                 self._steps[task_id] = StepsData(task_id=task_id, steps=[])
@@ -238,13 +248,13 @@ class AgentService:
             if self._settings.mock_mode:
                 raise ApiError(ErrorCode.TASK_NOT_FOUND, internal_detail=f"task_id={task_id}")
             response = await self._dify.get(
-                f"{_DIFY_WORKFLOWS_PATH}/runs/{task_id.removeprefix(_TASK_PREFIX)}"
+                f"{_DIFY_WORKFLOWS_PATH}/run/{task_id.removeprefix(_TASK_PREFIX)}"
             )
             return self._transform_task_detail(task_id, response.payload)
 
         if not self._settings.mock_mode:
             response = await self._dify.get(
-                f"{_DIFY_WORKFLOWS_PATH}/runs/{task_id.removeprefix(_TASK_PREFIX)}"
+                f"{_DIFY_WORKFLOWS_PATH}/run/{task_id.removeprefix(_TASK_PREFIX)}"
             )
             return self._transform_task_detail(task_id, response.payload)
         return detail

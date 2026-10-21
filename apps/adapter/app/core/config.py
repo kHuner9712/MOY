@@ -93,10 +93,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     database_url: str = ""
     milvus_uri: str = ""
-    minio_endpoint: str = ""
-    minio_access_key: str = ""
-    minio_secret_key: str = ""
-    minio_bucket: str = "officeai"
+    # 对象存储连接（SeaweedFS，S3 兼容；2026-10-21 由 minio_* 统一改名，
+    # 消除「名为 MinIO 实为 SeaweedFS」的指代漂移，见 QA 附录 A P2-4）
+    object_store_endpoint: str = ""
+    object_store_access_key: str = ""
+    object_store_secret_key: str = ""
+    object_store_bucket: str = "officeai"
 
     # ------------------------------------------------------------------
     # 幂等与限流（架构文档 3.0.4）

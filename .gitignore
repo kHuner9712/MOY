@@ -85,7 +85,9 @@ Thumbs.db
 # 工具链本地工作区（不纳入版本控制）
 # ---------------------------------------------------------------------------
 .workbuddy/
-qa_probe/
 
-# QA 一次性验证产物（QA 探针脚本）
-apps/adapter/qa_probe/
+# QA 一次性验证产物（Sprint 0 探针脚本，保留本地历史、不入库）
+apps/adapter/qa_probe/probe_contract.py
+apps/adapter/qa_probe/probe_runtime.py
+# 注意：qa_probe/ 下的长期资产（mock_llm.py 契约测试 mock、
+# integration_real.py 真实联调脚本）必须入库，不适用本忽略规则
