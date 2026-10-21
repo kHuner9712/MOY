@@ -1,12 +1,26 @@
 """RAG 服务接口契约（架构文档 3.2，R1-R7）。
 
 设计原则：仅暴露「知识库-文档」业务模型；
-分块、向量化、召回参数（附录 A-3）全部封装在适配层配置与底座内，不对外暴露。
+内容切分精细度只暴露两档业务选项（标准 / 精细），检索参数（附录 A-3）
+全部封装在适配层配置与底座内，不对外暴露。
+
+阶段二 B04 扩展（PRD P2-KB-01 / P2-KB-02）：
+
+- `Visibility` 加宽 `restricted`（指定成员可见）；
+- `CreateBaseRequest` / `CreateBaseData` 增加库级 `chunk_policy`；
+- `KnowledgeBaseItem` 增加 `chunk_policy` / `my_role` / `updated_at`；
+- `UploadDocumentData` 增加 `stage`；`IndexStatusData` 增加
+  `stage` / `estimated_remaining_seconds` / `file_size` / `uploaded_at`；
+- 新增 `DocumentStage` 五态枚举与 `STAGE_DISPLAY_NAMES` 用户可见文案。
+
+五态与三态必须同时返回且语义一致：`index_status=completed` ⟺ `stage=completed`，
+`index_status=failed` ⟺ `stage=failed`（由数据库 CHECK 约束兜底）。
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Final
 
 from pydantic import BaseModel, Field
 
@@ -14,25 +28,75 @@ from app.schemas.common import PageQuery
 
 
 class Visibility(StrEnum):
-    """知识库可见性枚举。"""
+    """知识库可见范围枚举（阶段二新增 `restricted`，只允许加宽）。"""
 
     ORGANIZATION = "organization"
     PRIVATE = "private"
+    #: 指定成员可见（授权清单由 P2-KB-03 维护）
+    RESTRICTED = "restricted"
 
 
 class ChunkPolicy(StrEnum):
-    """分块策略枚举（仅暴露策略，不暴露分块参数）。"""
+    """内容切分精细度枚举（仅暴露两档策略，不暴露任何处理参数）。
+
+    业务语言：`default` = 标准（处理更快，适合手册与说明文档）；
+    `fine` = 精细（条款定位更准，适合制度与合同）。
+    """
 
     DEFAULT = "default"
     FINE = "fine"
 
 
+class KnowledgeBaseRole(StrEnum):
+    """当前用户在该知识库上的角色（P2-KB-01 R2 新增 `my_role`）。"""
+
+    OWNER = "owner"
+    EDITOR = "editor"
+    VIEWER = "viewer"
+
+
 class IndexStatus(StrEnum):
-    """索引进度状态（三态，底座原状态名不外泄，附录 A-3）。"""
+    """文档处理进度（三态，底座原状态名不外泄，附录 A-3）。"""
 
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class DocumentStage(StrEnum):
+    """文档处理阶段（五态，P2-KB-02；与三态 `index_status` 语义对齐）。"""
+
+    UPLOADED = "uploaded"
+    PARSING = "parsing"
+    PREPARING = "preparing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+#: 阶段 → 用户可见文案（PRD P2-KB-02 第 2 条，禁词已全部替换为业务语言）
+STAGE_DISPLAY_NAMES: Final[dict[DocumentStage, str]] = {
+    DocumentStage.UPLOADED: "已上传",
+    DocumentStage.PARSING: "正在读取内容",
+    DocumentStage.PREPARING: "正在准备内容",
+    DocumentStage.COMPLETED: "可使用",
+    DocumentStage.FAILED: "处理未成功",
+}
+
+
+def stage_display_name(stage: DocumentStage | str) -> str:
+    """取阶段的用户可见文案。
+
+    Args:
+        stage: 阶段枚举或其字符串值。
+
+    Returns:
+        str: 业务语言文案；未知阶段按「已上传」处理。
+    """
+    try:
+        normalized = DocumentStage(str(stage))
+    except ValueError:
+        normalized = DocumentStage.UPLOADED
+    return STAGE_DISPLAY_NAMES[normalized]
 
 
 class CreateBaseRequest(BaseModel):
@@ -41,12 +105,16 @@ class CreateBaseRequest(BaseModel):
     Attributes:
         name: 知识库名称。
         description: 知识库描述。
-        visibility: 可见性。
+        visibility: 可见范围。
+        chunk_policy: 内容切分精细度（库级默认，缺省 `default`）。
     """
 
     name: str = Field(min_length=1, max_length=128, description="知识库名称")
     description: str = Field(default="", max_length=1024, description="知识库描述")
-    visibility: Visibility = Field(default=Visibility.ORGANIZATION, description="可见性")
+    visibility: Visibility = Field(default=Visibility.ORGANIZATION, description="可见范围")
+    chunk_policy: ChunkPolicy = Field(
+        default=ChunkPolicy.DEFAULT, description="内容切分精细度：default 标准 / fine 精细"
+    )
 
 
 class KnowledgeBaseItem(BaseModel):
@@ -56,17 +124,27 @@ class KnowledgeBaseItem(BaseModel):
         base_id: 知识库 ID，形如 `kb_01HF8...`。
         name: 名称。
         description: 描述。
-        visibility: 可见性。
+        visibility: 可见范围。
+        chunk_policy: 内容切分精细度。
+        my_role: 当前用户在该库上的角色。
         document_count: 文档数量。
         created_at: 创建时间（ISO 8601）。
+        updated_at: 最近更新时间（ISO 8601）。
     """
 
     base_id: str = Field(description="知识库 ID，形如 kb_01HF8...")
     name: str = Field(default="", description="知识库名称")
     description: str = Field(default="", description="知识库描述")
-    visibility: Visibility = Field(default=Visibility.ORGANIZATION, description="可见性")
+    visibility: Visibility = Field(default=Visibility.ORGANIZATION, description="可见范围")
+    chunk_policy: ChunkPolicy = Field(
+        default=ChunkPolicy.DEFAULT, description="内容切分精细度：default 标准 / fine 精细"
+    )
+    my_role: KnowledgeBaseRole = Field(
+        default=KnowledgeBaseRole.VIEWER, description="当前用户在该知识库上的角色"
+    )
     document_count: int = Field(default=0, ge=0, description="文档数量")
     created_at: str = Field(default="", description="创建时间，ISO 8601 格式")
+    updated_at: str = Field(default="", description="最近更新时间，ISO 8601 格式")
 
 
 class CreateBaseData(BaseModel):
@@ -75,11 +153,15 @@ class CreateBaseData(BaseModel):
     Attributes:
         base_id: 知识库 ID。
         name: 知识库名称。
+        chunk_policy: 内容切分精细度。
         created_at: 创建时间。
     """
 
     base_id: str = Field(description="知识库 ID，形如 kb_01HF8...")
     name: str = Field(default="", description="知识库名称")
+    chunk_policy: ChunkPolicy = Field(
+        default=ChunkPolicy.DEFAULT, description="内容切分精细度：default 标准 / fine 精细"
+    )
     created_at: str = Field(default="", description="创建时间，ISO 8601 格式")
 
 
@@ -99,45 +181,63 @@ class UploadDocumentData(BaseModel):
     Attributes:
         document_id: 文档 ID，形如 `doc_01HF8...`。
         file_name: 文件名。
-        index_status: 索引进度状态。
+        index_status: 文档处理进度（三态）。
+        stage: 文档处理阶段（五态，与三态语义一致）。
+        chunk_policy: 本次实际使用的内容切分精细度（未指定时取库级设置，便于核对）。
         progress: 进度百分比（0-100）。
     """
 
     document_id: str = Field(description="文档 ID，形如 doc_01HF8...")
     file_name: str = Field(default="", description="文件名")
-    index_status: IndexStatus = Field(default=IndexStatus.PROCESSING, description="索引进度状态")
+    index_status: IndexStatus = Field(default=IndexStatus.PROCESSING, description="文档处理进度")
+    stage: DocumentStage = Field(default=DocumentStage.UPLOADED, description="文档处理阶段")
+    chunk_policy: ChunkPolicy = Field(
+        default=ChunkPolicy.DEFAULT, description="内容切分精细度：default 标准 / fine 精细"
+    )
     progress: int = Field(default=0, ge=0, le=100, description="进度百分比")
 
 
 class IndexStatusData(BaseModel):
-    """R4 索引进度查询响应数据。
+    """R4 文档处理进度查询响应数据。
 
     Attributes:
         document_id: 文档 ID。
-        index_status: 索引状态。
+        index_status: 文档处理进度（三态）。
+        stage: 文档处理阶段（五态）。
         progress: 进度百分比。
-        segment_count: 已完成分块数。
+        estimated_remaining_seconds: 预估剩余秒数（无法预估时为 null）。
+        segment_count: 内容片段数。
+        file_size: 文档大小（字节）。
+        uploaded_at: 上传时间（ISO 8601）。
         error_message: 失败原因（业务语言）。
     """
 
     document_id: str = Field(description="文档 ID")
-    index_status: IndexStatus = Field(default=IndexStatus.PROCESSING, description="索引状态")
+    index_status: IndexStatus = Field(default=IndexStatus.PROCESSING, description="文档处理进度")
+    stage: DocumentStage = Field(default=DocumentStage.UPLOADED, description="文档处理阶段")
     progress: int = Field(default=0, ge=0, le=100, description="进度百分比")
-    segment_count: int = Field(default=0, ge=0, description="已完成分块数")
+    estimated_remaining_seconds: int | None = Field(
+        default=None, ge=0, description="预估剩余秒数，无法预估时为 null"
+    )
+    segment_count: int = Field(default=0, ge=0, description="内容片段数")
+    file_size: int = Field(default=0, ge=0, description="文档大小（字节）")
+    uploaded_at: str = Field(default="", description="上传时间，ISO 8601 格式")
     error_message: str | None = Field(default=None, description="失败原因，业务语言")
 
 
 class ReindexData(BaseModel):
-    """R5 重建索引响应数据。
+    """R5 重新处理响应数据。
 
     Attributes:
         document_id: 文档 ID。
-        index_status: 索引状态。
+        index_status: 文档处理进度（三态）。
+        stage: 文档处理阶段（五态）。
         progress: 进度百分比。
     """
 
     document_id: str = Field(description="文档 ID")
-    index_status: IndexStatus = Field(default=IndexStatus.PROCESSING, description="索引状态")
+    index_status: IndexStatus = Field(default=IndexStatus.PROCESSING, description="文档处理进度")
+    stage: DocumentStage = Field(default=DocumentStage.PARSING, description="文档处理阶段")
     progress: int = Field(default=0, ge=0, le=100, description="进度百分比")
 
 

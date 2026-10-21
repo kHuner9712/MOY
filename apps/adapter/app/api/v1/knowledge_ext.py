@@ -1,27 +1,31 @@
 """知识库扩展端点（阶段二 KB1-KB8，架构文档 §4 / 2.2 第 2 条）。
 
-本文件在 B03 阶段只落地 **KB8 凭据绑定**；KB1-KB7 由 B04/B05 追加到同一 `router`，
-路径前缀固定 `/api/v1/knowledge`（与既有 RAG 域同前缀，不新增版本）。
+路径前缀固定 `/api/v1/knowledge`（与既有 RAG 域同前缀，不新增版本）：
 
-KB8 设计要点（D-10 安全红线）：
+| # | 端点 | 批 |
+| --- | --- | --- |
+| KB1 | `PATCH /bases/{base_id}` | B04 |
+| KB2 | `DELETE /bases/{base_id}` | B04 |
+| KB3 | `GET /bases/{base_id}/documents` | B04 |
+| KB8 | `PUT /bases/{base_id}/credential-binding` | B03（本批模型迁入 `schemas/knowledge_ext.py`）|
 
-1. **权限**：`knowledge:base:update`（走统一判权出口 `require_permission`，
-   与 U1 `POST /api/v1/identity/verify` 同一套规则）；
-2. **幂等**：写接口必须携带 `Idempotency-Key`；幂等指纹含请求体摘要
-   （`run_idempotent` 自动读取 body digest），因此「同 path 不同 body」不会被
-   误判为重复请求——这是 KB8 最易漏的一项（漏了就是「用户看到成功但凭据没换」）；
-3. **响应/日志零明文**：响应只有 `base_id / bound / updated_at`，
-   日志只允许出现 `base_id` 与 `credential_ref` 后 6 位；
-4. **换绑即生效**：绑定成功后由 `CredentialResolver.bind()` 删除密文缓存与知识库缓存，
-   下一个请求重新解析，无需重启。
+设计要点：
+
+1. **权限**：统一走 `require_permission`（与 U1 同一套规则）+ **对象级判权**
+   （业务层 `KnowledgeBaseService`）；
+2. **幂等**：KB1/KB2 是写接口，必须携带 `Idempotency-Key`；指纹含请求体摘要
+   （KB1 显式传入 `body_digest`，KB2 无请求体走空体固定摘要）；
+3. **软删除**：KB2 只做软删除，列表立即不可见、操作记录保留；
+4. **分页**：KB3 一律 `page/page_size + COUNT(*)`，5000 条下第 250 页也稳定。
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Path, Query, Request
 
 from app.business.credential_service import get_credential_resolver, ref_suffix
+from app.business.document_service import DocumentService
+from app.business.knowledge_base_service import KnowledgeBaseService
 from app.core.config import get_request_settings
 from app.core.errors import ErrorCode, error_response
 from app.core.idempotency import IdempotencyManager, get_idempotency_manager, hash_request_body
@@ -32,43 +36,202 @@ from app.core.security import (
     require_permission,
     run_idempotent,
 )
-from app.schemas.common import ApiResponse
+from app.schemas.common import ApiResponse, PageResult
+from app.schemas.knowledge_ext import (
+    CredentialBindingData,
+    CredentialBindingRequest,
+    DeleteBaseData,
+    DocumentItem,
+    ListDocumentsQuery,
+    UpdateBaseData,
+    UpdateBaseRequest,
+)
+from app.schemas.rag import DocumentStage
 
 logger = get_logger(__name__)
 
-#: KB8 所需权限点（前端 `PERM.KB_UPDATE`）
+#: KB1/KB8 所需权限点（前端 `PERM.KB_UPDATE`）
 KB_UPDATE_PERMISSION = "knowledge:base:update"
+
+#: KB2 所需权限点（前端 `PERM.KB_DELETE`）
+KB_DELETE_PERMISSION = "knowledge:base:delete"
+
+#: KB3 所需权限点（前端 `PERM.KB_READ`）
+KB_READ_PERMISSION = "knowledge:base:read"
 
 router = APIRouter(prefix="/knowledge", tags=["RAG 服务"])
 
 
-class CredentialBindingRequest(BaseModel):
-    """KB8 请求体。
+def _knowledge_base_service(request: Request) -> KnowledgeBaseService:
+    """按请求生效配置构造知识库业务服务。
 
-    Attributes:
-        credential_ref: 凭据引用，形如 `cred_01K4Q8Z2X7M9B3N5P6R8T0V2W4`。
-            明文密钥**永不**出现在本接口的请求/响应中。
+    配置取自 `app.state.settings`（注入优先），与鉴权链路同一口径，
+    避免 `create_app(settings=...)` 注入的配置被全局单例覆盖。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        KnowledgeBaseService: 业务服务实例。
     """
-
-    credential_ref: str = Field(
-        min_length=4,
-        max_length=128,
-        description="凭据引用（形如 cred_01K...），由运营侧预先入库",
-    )
+    return KnowledgeBaseService(get_request_settings(request))
 
 
-class CredentialBindingData(BaseModel):
-    """KB8 响应数据。
+def _document_service(request: Request) -> DocumentService:
+    """按请求生效配置构造文档业务服务。
 
-    Attributes:
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        DocumentService: 业务服务实例（复用同一份知识库服务做可见性判权）。
+    """
+    settings = get_request_settings(request)
+    return DocumentService(settings, bases=KnowledgeBaseService(settings))
+
+
+@router.patch(
+    "/bases/{base_id}",
+    response_model=ApiResponse[UpdateBaseData],
+    summary="KB1 修改知识库设置",
+    description=(
+        "修改知识库的名称、描述、内容切分精细度或可见范围（至少提供一项）。"
+        "修改内容切分精细度仅对之后上传的文档生效，已处理文档需在文档行按新设置重新处理。"
+        "写接口，需携带 Idempotency-Key 请求头；需 knowledge:base:update 权限。"
+    ),
+)
+async def update_base(
+    request: Request,
+    body: UpdateBaseRequest,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    base_id: str = Path(..., description="知识库 ID", min_length=3, max_length=128),
+) -> ApiResponse[UpdateBaseData]:
+    """KB1 修改知识库设置。
+
+    Args:
+        request: FastAPI 请求对象。
+        body: 更新请求。
+        context: 请求上下文。
+        manager: 幂等管理器。
         base_id: 知识库 ID。
-        bound: 是否已完成绑定（固定 True）。
-        updated_at: 绑定更新时间（ISO 8601）。
-    """
 
-    base_id: str = Field(description="知识库 ID")
-    bound: bool = Field(default=True, description="是否已绑定")
-    updated_at: str = Field(default="", description="绑定更新时间，ISO 8601")
+    Returns:
+        ApiResponse[UpdateBaseData]: 更新后的库级设置。
+
+    Raises:
+        ApiError: 权限不足（20003）、知识库不存在（11001）、参数非法（20001）。
+    """
+    require_permission(context.auth, KB_UPDATE_PERMISSION)
+    service = _knowledge_base_service(request)
+
+    async def factory() -> UpdateBaseData:
+        return await service.update(base_id, body, context.auth)
+
+    # 指纹必须含请求体摘要：同键改不同字段时不得静默回放首次结果
+    digest = hash_request_body(body.model_dump_json())
+    result, replayed = await run_idempotent(request, context, factory, manager, body_digest=digest)
+    if replayed:
+        return ApiResponse[UpdateBaseData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message=error_response(ErrorCode.IDEMPOTENT_DUPLICATE).message,
+            data=result,
+        )
+    return ApiResponse[UpdateBaseData].ok(result)
+
+
+@router.delete(
+    "/bases/{base_id}",
+    response_model=ApiResponse[DeleteBaseData],
+    summary="KB2 删除知识库",
+    description=(
+        "删除知识库（软删除）：列表内立即不可见，其下文档一并移除，操作记录保留。"
+        "仅知识库创建者或组织管理员可删除。写接口，需携带 Idempotency-Key 请求头；"
+        "需 knowledge:base:delete 权限。"
+    ),
+)
+async def delete_base(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    base_id: str = Path(..., description="知识库 ID", min_length=3, max_length=128),
+) -> ApiResponse[DeleteBaseData]:
+    """KB2 删除知识库。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        manager: 幂等管理器。
+        base_id: 知识库 ID。
+
+    Returns:
+        ApiResponse[DeleteBaseData]: 删除结果（含一并移除的文档数）。
+
+    Raises:
+        ApiError: 权限不足（20003）、知识库不存在（11001）、重复删除（20005）。
+    """
+    require_permission(context.auth, KB_DELETE_PERMISSION)
+    service = _knowledge_base_service(request)
+
+    async def factory() -> DeleteBaseData:
+        return await service.soft_delete(base_id, context.auth)
+
+    # DELETE 无请求体：走空体固定摘要（架构文档 3.0.5 要求摘要项不得省略）
+    result, replayed = await run_idempotent(request, context, factory, manager)
+    if replayed:
+        return ApiResponse[DeleteBaseData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message=error_response(ErrorCode.IDEMPOTENT_DUPLICATE).message,
+            data=result,
+        )
+    return ApiResponse[DeleteBaseData].ok(result)
+
+
+@router.get(
+    "/bases/{base_id}/documents",
+    response_model=ApiResponse[PageResult[DocumentItem]],
+    summary="KB3 文档清单",
+    description=(
+        "知识库下的文档清单（分页）。支持文档名称关键字与处理阶段筛选，"
+        "支持按上传时间排序（uploaded_at:desc / uploaded_at:asc）。"
+        "需 knowledge:base:read 权限。"
+    ),
+)
+async def list_documents(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    base_id: str = Path(..., description="知识库 ID", min_length=3, max_length=128),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=200, description="每页条数"),
+    keyword: str = Query("", max_length=128, description="文档名称关键字"),
+    stage: DocumentStage | None = Query(None, description="处理阶段筛选"),
+    sort: str = Query("uploaded_at:desc", max_length=64, description="排序，字段:方向"),
+) -> ApiResponse[PageResult[DocumentItem]]:
+    """KB3 文档清单。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        base_id: 知识库 ID。
+        page: 页码。
+        page_size: 每页条数。
+        keyword: 文档名称关键字。
+        stage: 处理阶段筛选。
+        sort: 排序串。
+
+    Returns:
+        ApiResponse[PageResult[DocumentItem]]: 分页结果。
+
+    Raises:
+        ApiError: 权限不足（20003）、知识库不存在（11001）。
+    """
+    require_permission(context.auth, KB_READ_PERMISSION)
+    query = ListDocumentsQuery(
+        page=page, page_size=page_size, keyword=keyword, stage=stage, sort=sort
+    )
+    service = _document_service(request)
+    result = await service.list_documents(base_id, query, context.auth)
+    return ApiResponse[PageResult[DocumentItem]].ok(result)
 
 
 @router.put(
@@ -131,6 +294,8 @@ async def update_credential_binding(
 
 
 __all__ = [
+    "KB_DELETE_PERMISSION",
+    "KB_READ_PERMISSION",
     "KB_UPDATE_PERMISSION",
     "CredentialBindingData",
     "CredentialBindingRequest",

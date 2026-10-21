@@ -79,9 +79,9 @@ async def test_create_base_stub() -> None:
     assert data.created_at.endswith("Z")
 
 
-def test_list_bases_returns_empty_page() -> None:
-    """桩模式列表返回空分页且元信息正确。"""
-    result = _service().list_bases(ListBasesQuery(page=1, page_size=20), _AUTH)
+async def test_list_bases_returns_empty_page() -> None:
+    """空存储下列表返回空分页且元信息正确。"""
+    result = await _service().list_bases(ListBasesQuery(page=1, page_size=20), _AUTH)
     assert result.items == []
     assert result.meta.total == 0
     assert result.meta.total_pages == 0

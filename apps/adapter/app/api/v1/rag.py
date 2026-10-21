@@ -5,13 +5,18 @@
 | --- | --- | --- | --- |
 | R1 | `/api/v1/knowledge/bases` | POST | 创建知识库 |
 | R2 | `/api/v1/knowledge/bases` | GET | 知识库列表（分页） |
-| R3 | `/api/v1/knowledge/bases/{base_id}/documents` | POST | 上传文档（multipart，异步索引） |
-| R4 | `/api/v1/knowledge/bases/{base_id}/documents/{doc_id}` | GET | 查询文档索引进度 |
-| R5 | `/api/v1/knowledge/bases/{base_id}/documents/{doc_id}/reindex` | POST | 重建索引 |
+| R3 | `/api/v1/knowledge/bases/{base_id}/documents` | POST | 上传文档（multipart，异步处理） |
+| R4 | `/api/v1/knowledge/bases/{base_id}/documents/{doc_id}` | GET | 查询文档处理进度 |
+| R5 | `/api/v1/knowledge/bases/{base_id}/documents/{doc_id}/reindex` | POST | 重新处理 |
 | R6 | `/api/v1/knowledge/bases/{base_id}/documents/{doc_id}` | DELETE | 删除文档 |
 | R7 | `/api/v1/knowledge/search` | POST | 独立检索（带引用） |
 
 本文件只做参数装配与响应封装，协议转换全部在 `services/rag_service.py`。
+
+B04 变更边界：**路径零改动**，仅透传新增字段——
+R1 请求/响应增加库级 `chunk_policy`；R2 输出 `chunk_policy` / `my_role` / `updated_at`；
+R3 的 `chunk_policy` 改为可选（不给即按库级设置处理）并输出 `stage`；
+R4 输出 `stage` / `estimated_remaining_seconds` / `file_size` / `uploaded_at`。
 """
 
 from __future__ import annotations
@@ -84,7 +89,7 @@ async def create_base(
     "/bases",
     response_model=ApiResponse[PageResult[KnowledgeBaseItem]],
     summary="R2 知识库列表",
-    description="知识库列表（分页，支持名称关键字过滤）。",
+    description="知识库列表（分页，支持名称关键字过滤），含内容切分精细度与当前用户角色。",
 )
 async def list_bases(
     context: RequestContext = Depends(get_request_context),
@@ -104,9 +109,8 @@ async def list_bases(
         ApiResponse[PageResult[KnowledgeBaseItem]]: 分页结果。
     """
     query = ListBasesQuery(page=page, page_size=page_size, keyword=keyword)
-    return ApiResponse[PageResult[KnowledgeBaseItem]].ok(
-        get_rag_service().list_bases(query, context.auth)
-    )
+    result = await get_rag_service().list_bases(query, context.auth)
+    return ApiResponse[PageResult[KnowledgeBaseItem]].ok(result)
 
 
 @router.post(
@@ -114,8 +118,10 @@ async def list_bases(
     response_model=ApiResponse[UploadDocumentData],
     summary="R3 上传文档",
     description=(
-        "上传文档（multipart/form-data，字段 file），异步构建索引。"
-        "支持 pdf/docx/xlsx/md/txt，单文件上限 50MB。写接口，需携带 Idempotency-Key 请求头。"
+        "上传文档（multipart/form-data，字段 file），异步处理。"
+        "支持 pdf/docx/xlsx/md/txt，单文件上限 50MB。"
+        "内容切分精细度缺省时按知识库设置处理（单次覆盖不改变库级设置）。"
+        "写接口，需携带 Idempotency-Key 请求头。"
     ),
 )
 async def upload_document(
@@ -124,7 +130,9 @@ async def upload_document(
     manager: IdempotencyManager = Depends(get_idempotency_manager),
     base_id: str = Path(..., description="知识库 ID", min_length=3, max_length=128),
     file: UploadFile = File(..., description="待上传文档"),
-    chunk_policy: ChunkPolicy = Form(ChunkPolicy.DEFAULT, description="分块策略"),
+    chunk_policy: ChunkPolicy | None = Form(
+        None, description="内容切分精细度（缺省按知识库设置）：default 标准 / fine 精细"
+    ),
 ) -> ApiResponse[UploadDocumentData]:
     """R3 上传文档。
 
@@ -134,10 +142,10 @@ async def upload_document(
         manager: 幂等管理器。
         base_id: 知识库 ID。
         file: 上传文件。
-        chunk_policy: 分块策略。
+        chunk_policy: 内容切分精细度（缺省按知识库设置）。
 
     Returns:
-        ApiResponse[UploadDocumentData]: 文档 ID 与索引进度初值。
+        ApiResponse[UploadDocumentData]: 文档 ID 与处理进度初值。
 
     Raises:
         ApiError: 文件超限（20008）、格式不支持（11002）、内容过大（11003）。
@@ -160,8 +168,8 @@ async def upload_document(
             base_id=base_id,
             file_name=file_name,
             file_size=file_size,
-            chunk_policy=chunk_policy,
             auth=context.auth,
+            chunk_policy=chunk_policy,
         )
 
     # multipart 请求体已被表单解析器消费，无法二次读取；
@@ -185,8 +193,11 @@ async def upload_document(
 @router.get(
     "/bases/{base_id}/documents/{doc_id}",
     response_model=ApiResponse[IndexStatusData],
-    summary="R4 索引进度查询",
-    description="查询文档索引进度。index_status 为自研三态，底座原状态名不暴露。",
+    summary="R4 文档处理进度查询",
+    description=(
+        "查询文档处理进度。同时返回三态进度与五态阶段（两者语义一致），"
+        "处理中给出预估剩余秒数（无法预估时为 null）。"
+    ),
 )
 async def get_document_status(
     context: RequestContext = Depends(get_request_context),
@@ -212,8 +223,11 @@ async def get_document_status(
 @router.post(
     "/bases/{base_id}/documents/{doc_id}/reindex",
     response_model=ApiResponse[ReindexData],
-    summary="R5 重建索引",
-    description="重建文档索引。文档正在处理中时返回 11006。写接口，需携带 Idempotency-Key 请求头。",
+    summary="R5 重新处理文档",
+    description=(
+        "按当前设置重新处理文档，阶段回到「正在读取内容」。"
+        "文档正在处理中时返回 11006。写接口，需携带 Idempotency-Key 请求头。"
+    ),
 )
 async def reindex_document(
     request: Request,

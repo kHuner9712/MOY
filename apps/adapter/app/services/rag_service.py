@@ -3,12 +3,20 @@
 转换职责（架构文档 3.2.6）：
 - 知识库：底座 `id` → 自研 `base_id`；`visibility` 由适配层落业务库（底座无此概念）；
 - 文档：底座 `file_id`/`batch` → 自研 `document_id`；
-- 索引状态：底座七态（waiting/parsing/cleaning/splitting/indexing/completed/error）
-  **映射**为自研三态 `processing`/`completed`/`failed`（原状态名不外泄，附录 A-3）；
+- 处理进度：底座七态（waiting/parsing/cleaning/splitting/indexing/completed/error）
+  **映射**为自研五态 `stage` 与三态 `index_status`（原状态名不外泄，附录 A-3）；
 - 检索：底座 `records[].segment.*` → 自研 `segments[]`。
 
 T01 阶段说明：`Settings.downstream_enabled=false` 时返回业务化 mock 结果，
-不产生任何真实底座请求。
+不产生任何真实底座请求；**但库级/文档级元数据仍会落业务库**（B04 起），
+否则「改名 / 删除 / 文档清单」在桩模式下会退化为空实现。
+
+B04 落库边界（架构文档 9.2 第 8 条）：
+
+- R1 创建 → `KnowledgeBaseService.create()`（库级 `chunk_policy` 持久化）；
+- R2 列表 → `KnowledgeBaseService.list()`（含 `my_role` / `updated_at`）；
+- R3 上传 → `DocumentService.register_document()`（不带 `chunk_policy` 时按库级处理）；
+- R4 进度 → 已落库文档直接读本地记录，未落库时回落到桩结果（保证既有回归不变）。
 """
 
 from __future__ import annotations
@@ -17,6 +25,8 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from app.business.credential_service import CredentialResolver, get_credential_resolver
+from app.business.document_service import DocumentService, map_stage
+from app.business.knowledge_base_service import KnowledgeBaseService
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -25,11 +35,11 @@ from app.core.logging import get_logger
 from app.core.security import AuthContext
 from app.db.tenant import resolve_runtime_tenant
 from app.registry.loader import ProfileRouteTable, get_profile_routes
-from app.schemas.common import build_page
 from app.schemas.rag import (
     ChunkPolicy,
     CreateBaseData,
     CreateBaseRequest,
+    DocumentStage,
     IndexStatus,
     IndexStatusData,
     ListBasesQuery,
@@ -92,6 +102,24 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _elapsed_since(uploaded_at: str) -> float:
+    """计算自上传时间以来的秒数（用于预估剩余时间）。
+
+    Args:
+        uploaded_at: 上传时间（ISO 8601）。
+
+    Returns:
+        float: 秒数；时间不可解析时返回 0。
+    """
+    if not uploaded_at:
+        return 0.0
+    try:
+        moment = datetime.fromisoformat(uploaded_at.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return max((datetime.now(UTC) - moment).total_seconds(), 0.0)
+
+
 def map_index_status(native_status: str) -> IndexStatus:
     """将底座原生索引状态映射为自研三态。
 
@@ -109,9 +137,11 @@ class RagService:
 
     Attributes:
         _settings: 配置实例。
-        _routes: 档位路由表（提供检索与分块默认策略）。
+        _routes: 档位路由表（提供检索与内容切分默认策略）。
         _dify: 底座客户端。
         _credentials: per-kb 凭据解析器（D-10）。
+        _bases: 知识库元数据业务服务（B04）。
+        _documents: 文档元数据业务服务（B04）。
     """
 
     def __init__(
@@ -120,6 +150,8 @@ class RagService:
         routes: ProfileRouteTable | None = None,
         dify: DifyClient | None = None,
         resolver: CredentialResolver | None = None,
+        bases: KnowledgeBaseService | None = None,
+        documents: DocumentService | None = None,
     ) -> None:
         """初始化服务。
 
@@ -128,11 +160,17 @@ class RagService:
             routes: 可选档位路由表。
             dify: 可选底座客户端。
             resolver: 可选凭据解析器（测试注入）。
+            bases: 可选知识库业务服务（测试注入）。
+            documents: 可选文档业务服务（测试注入）。
         """
         self._settings = settings or get_settings()
         self._routes = routes or get_profile_routes()
         self._dify = dify or get_dify_client()
         self._credentials = resolver or get_credential_resolver(self._settings)
+        self._bases: KnowledgeBaseService = bases or KnowledgeBaseService(self._settings)
+        self._documents: DocumentService = documents or DocumentService(
+            self._settings, bases=self._bases
+        )
 
     # ------------------------------------------------------------------
     # per-kb 凭据（D-10）
@@ -189,10 +227,11 @@ class RagService:
             "knowledge_base_create_requested",
             name=request.name,
             visibility=request.visibility.value,
+            chunk_policy=request.chunk_policy.value,
             tenant_id=auth.tenant_id,
         )
         if self._settings.mock_mode:
-            return CreateBaseData(base_id=new_base_id(), name=request.name, created_at=_now_iso())
+            return await self._bases.create(request, auth, base_id=new_base_id())
 
         response = await self._dify.post(
             _DIFY_DATASETS_PATH,
@@ -208,17 +247,13 @@ class RagService:
         native_id = str(response.payload.get("id", ""))
         if not native_id:
             raise ApiError(ErrorCode.DOWNSTREAM_UNAVAILABLE, internal_detail="dataset id missing")
-        return CreateBaseData(
-            base_id=f"{_BASE_PREFIX}{native_id}",
-            name=str(response.payload.get("name", request.name)),
-            created_at=_now_iso(),
-        )
+        return await self._bases.create(request, auth, base_id=f"{_BASE_PREFIX}{native_id}")
 
     # ------------------------------------------------------------------
     # R2 知识库列表
     # ------------------------------------------------------------------
-    def list_bases(self, query: ListBasesQuery, auth: AuthContext) -> Any:
-        """查询知识库列表（桩实现返回空分页）。
+    async def list_bases(self, query: ListBasesQuery, auth: AuthContext) -> Any:
+        """查询知识库列表（含 `chunk_policy` / `my_role` / `updated_at`）。
 
         Args:
             query: 分页与关键字过滤参数。
@@ -227,14 +262,7 @@ class RagService:
         Returns:
             Any: `PageResult[KnowledgeBaseItem]` 分页结果。
         """
-        del auth  # T01 桩模式不持有状态
-        logger.info("knowledge_base_list_queried", keyword=query.keyword, page=query.page)
-        return build_page(
-            items=[],
-            total=0,
-            page=query.page,
-            page_size=query.page_size,
-        )
+        return await self._bases.list(query, auth)
 
     # ------------------------------------------------------------------
     # R3 上传文档
@@ -245,23 +273,23 @@ class RagService:
         base_id: str,
         file_name: str,
         file_size: int,
-        chunk_policy: ChunkPolicy,
         auth: AuthContext,
+        chunk_policy: ChunkPolicy | None = None,
     ) -> UploadDocumentData:
-        """上传文档并触发异步索引。
+        """上传文档并登记文档元数据（不带 `chunk_policy` 时按库级设置处理）。
 
         Args:
             base_id: 知识库 ID。
             file_name: 文件名。
             file_size: 文件字节数。
-            chunk_policy: 分块策略。
             auth: 鉴权上下文。
+            chunk_policy: 单次覆盖的内容切分精细度；缺省取库级设置。
 
         Returns:
-            UploadDocumentData: 文档 ID 与索引进度初值。
+            UploadDocumentData: 文档 ID 与处理进度初值（含五态阶段）。
 
         Raises:
-            ApiError: 知识库不存在（11001）、格式不支持（11002）、超出大小限制（11003）。
+            ApiError: 知识库已删除（11001）、格式不支持（11002）、超出大小限制（11003）。
         """
         self._validate_document(file_name, file_size)
         logger.info(
@@ -269,19 +297,30 @@ class RagService:
             base_id=base_id,
             file_name=file_name,
             file_size=file_size,
-            chunk_policy=chunk_policy.value,
+            chunk_policy=chunk_policy.value if chunk_policy is not None else "inherit",
             tenant_id=auth.tenant_id,
         )
 
         if self._settings.mock_mode:
-            return UploadDocumentData(
-                document_id=new_document_id(),
+            record = await self._documents.register_document(
+                base_id=base_id,
                 file_name=file_name,
-                index_status=IndexStatus.PROCESSING,
-                progress=0,
+                file_size=file_size,
+                auth=auth,
+                chunk_policy=chunk_policy,
+                document_id=new_document_id(),
+            )
+            return UploadDocumentData(
+                document_id=record.document_id,
+                file_name=record.file_name,
+                index_status=IndexStatus(record.index_status),
+                stage=DocumentStage(record.stage),
+                chunk_policy=ChunkPolicy(record.chunk_policy),
+                progress=record.progress,
             )
 
         api_key = await self._api_key_for(base_id, auth)
+        effective_policy = chunk_policy or await self._resolve_base_policy(base_id, auth)
         upload = await self._dify.post(
             _DIFY_UPLOAD_PATH, {"filename": file_name, "purpose": "document"}, api_key=api_key
         )
@@ -297,7 +336,7 @@ class RagService:
                     "type": "document",
                     "name": file_name,
                     "doc_form": file_name.rsplit(".", 1)[-1].lower(),
-                    "chunk_policy": chunk_policy.value,
+                    "chunk_policy": effective_policy.value,
                 },
                 "indexing_technique": "high_quality",
             },
@@ -305,12 +344,41 @@ class RagService:
         )
         batch = created.payload.get("batch", "")
         logger.debug("document_upload_dispatched", base_id=base_id, has_batch=bool(batch))
-        return UploadDocumentData(
-            document_id=f"{_DOC_PREFIX}{native_file_id}",
+        record = await self._documents.register_document(
+            base_id=base_id,
             file_name=file_name,
-            index_status=IndexStatus.PROCESSING,
-            progress=0,
+            file_size=file_size,
+            auth=auth,
+            chunk_policy=effective_policy,
+            document_id=f"{_DOC_PREFIX}{native_file_id}",
+            native_status=str(created.payload.get("indexing_status", "waiting")),
         )
+        return UploadDocumentData(
+            document_id=record.document_id,
+            file_name=record.file_name,
+            index_status=IndexStatus(record.index_status),
+            stage=DocumentStage(record.stage),
+            chunk_policy=ChunkPolicy(record.chunk_policy),
+            progress=record.progress,
+        )
+
+    async def _resolve_base_policy(self, base_id: str, auth: AuthContext) -> ChunkPolicy:
+        """取知识库的内容切分精细度（上传未指定时使用）。
+
+        Args:
+            base_id: 知识库 ID。
+            auth: 鉴权上下文。
+
+        Returns:
+            ChunkPolicy: 库级设置；库不在本地元数据中时返回 `default`。
+        """
+        base = await self._bases.base_exists_for_delete_check(base_id, auth)
+        if base is None:
+            return ChunkPolicy.DEFAULT
+        try:
+            return ChunkPolicy(base.chunk_policy)
+        except ValueError:
+            return ChunkPolicy.DEFAULT
 
     def _validate_document(self, file_name: str, file_size: int) -> None:
         """校验文档格式与大小。
@@ -368,7 +436,10 @@ class RagService:
         doc_id: str,
         auth: AuthContext | None = None,
     ) -> IndexStatusData:
-        """查询文档索引进度。
+        """查询文档处理进度（五态 + 三态同时返回）。
+
+        已落库的文档直接读本地记录（桩模式下也如此），未落库的历史文档
+        回落到原有桩结果——保证既有回归（如 `kb_1/doc_1`）行为不变。
 
         Args:
             base_id: 知识库 ID。
@@ -376,12 +447,17 @@ class RagService:
             auth: 鉴权上下文（用于 per-kb 凭据的租户解析）。
 
         Returns:
-            IndexStatusData: 三态索引状态与进度百分比。
+            IndexStatusData: 处理进度（阶段、百分比、预估剩余、大小、上传时间）。
 
         Raises:
             ApiError: 文档不存在（20004）或库级凭据不可用（11007）。
         """
+        tenant_id = self._tenant_of(auth)
+        stored = await self._documents.store.get(tenant_id, doc_id)
+
         if self._settings.mock_mode:
+            if stored is not None:
+                return self._documents.to_status_data(stored)
             return IndexStatusData(
                 document_id=doc_id,
                 index_status=IndexStatus.PROCESSING,
@@ -396,17 +472,31 @@ class RagService:
             f"{_DIFY_DATASETS_PATH}/{base_id.removeprefix(_BASE_PREFIX)}/documents/{native_doc_id}",
             api_key=api_key,
         )
-        return self._transform_index_status(doc_id, response.payload)
+        data = self._transform_index_status(doc_id, response.payload)
+        if stored is not None:
+            await self._documents.refresh_progress(
+                tenant_id=tenant_id,
+                document_id=doc_id,
+                native_status=str(response.payload.get("indexing_status", "waiting")),
+                progress=data.progress,
+                segment_count=data.segment_count,
+                error_message=data.error_message,
+                elapsed_seconds=_elapsed_since(stored.uploaded_at),
+            )
+            refreshed = await self._documents.store.get(tenant_id, doc_id)
+            if refreshed is not None:
+                return self._documents.to_status_data(refreshed)
+        return data
 
     def _transform_index_status(self, doc_id: str, payload: dict[str, Any]) -> IndexStatusData:
-        """将底座原生索引进度转换为自研三态。
+        """将底座原生处理进度转换为自研五态 + 三态。
 
         Args:
             doc_id: 自研文档 ID。
             payload: 底座原生响应体。
 
         Returns:
-            IndexStatusData: 自研索引进度。
+            IndexStatusData: 自研处理进度。
 
         Raises:
             ApiError: 底座返回 error 状态时按业务语言给出失败原因。
@@ -421,13 +511,34 @@ class RagService:
         error_message = None
         if status == IndexStatus.FAILED:
             error_message = "文档解析失败，请确认文件内容后重新上传"
+        view = map_stage(native_status, progress)
         return IndexStatusData(
             document_id=doc_id,
             index_status=status,
+            stage=view.stage,
             progress=max(min(progress, 100), 0),
+            estimated_remaining_seconds=view.estimated_remaining_seconds,
             segment_count=completed,
             error_message=error_message,
         )
+
+    async def list_documents(
+        self,
+        base_id: str,
+        query: Any,
+        auth: AuthContext,
+    ) -> Any:
+        """KB3 文档清单（协议层入口，业务规则在 `DocumentService`）。
+
+        Args:
+            base_id: 知识库 ID。
+            query: `ListDocumentsQuery` 查询参数。
+            auth: 鉴权上下文。
+
+        Returns:
+            Any: `PageResult[DocumentItem]` 分页结果。
+        """
+        return await self._documents.list_documents(base_id, query, auth)
 
     # ------------------------------------------------------------------
     # R5 重建索引
@@ -435,9 +546,9 @@ class RagService:
     async def reindex(
         self, *, base_id: str, doc_id: str, auth: AuthContext | None = None
     ) -> ReindexData:
-        """触发文档重建索引。
+        """触发文档重新处理（阶段回到「正在读取内容」）。
 
-        底座无原生重建 API，T02 由适配层编排「查原文档 → 重新触发索引」；
+        底座无原生重建 API，T02 由适配层编排「查原文档 → 重新触发处理」；
         文档处于处理中时返回 11006。
 
         Args:
@@ -446,7 +557,7 @@ class RagService:
             auth: 鉴权上下文（用于 per-kb 凭据的租户解析）。
 
         Returns:
-            ReindexData: 重建后的索引状态。
+            ReindexData: 重新处理后的阶段与进度。
 
         Raises:
             ApiError: 文档正在处理（11006）、文档不存在（20004）或凭据不可用（11007）。
@@ -458,9 +569,12 @@ class RagService:
                 internal_detail=f"doc_id={doc_id} still processing",
             )
         logger.info("document_reindex_requested", base_id=base_id, doc_id=doc_id)
+        tenant_id = self._tenant_of(auth)
+        await self._documents.mark_reprocessing(tenant_id=tenant_id, document_id=doc_id)
         return ReindexData(
             document_id=doc_id,
             index_status=IndexStatus.PROCESSING,
+            stage=DocumentStage.PARSING,
             progress=0,
         )
 
@@ -481,9 +595,12 @@ class RagService:
             str: 被删除的文档 ID。
 
         Raises:
-            ApiError: 文档不存在（20004）或库级凭据不可用（11007）。
+            ApiError: 文档正在处理（11006）、文档不存在（20004）或凭据不可用（11007）。
         """
         logger.info("document_delete_requested", base_id=base_id, doc_id=doc_id)
+        tenant_id = self._tenant_of(auth)
+        actor_id = auth.user_id if auth is not None else ""
+        await self._documents.require_deletable(tenant_id=tenant_id, document_id=doc_id)
         if not self._settings.mock_mode:
             api_key = await self._api_key_for(base_id, auth)
             await self._dify.delete(
@@ -491,6 +608,9 @@ class RagService:
                 f"/documents/{doc_id.removeprefix(_DOC_PREFIX)}",
                 api_key=api_key,
             )
+        await self._documents.soft_delete(
+            tenant_id=tenant_id, actor_id=actor_id, document_id=doc_id
+        )
         return doc_id
 
     # ------------------------------------------------------------------

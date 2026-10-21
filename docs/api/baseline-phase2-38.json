@@ -1,11 +1,23 @@
 {
-  "version": 1,
+  "version": 2,
   "frozen_target": 38,
-  "note": "B03 起逐步补齐至 38（KB1-8 / TL1 / ID1-11 / BL1-10 / OPS1-8）；只允许登记真实已实现端点，禁止为凑数写假端点",
+  "note": "B03 起逐步补齐至 38（KB1-8 / TL1 / ID1-11 / BL1-10 / OPS1-8）；只允许登记真实已实现端点，禁止为凑数写假端点。B04 追加 KB1/KB2/KB3（均为已实现端点，落点 apps/adapter/app/api/v1/knowledge_ext.py）",
   "endpoints": [
     {
       "method": "PUT",
       "path": "/api/v1/knowledge/bases/{base_id}/credential-binding"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/knowledge/bases/{base_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/knowledge/bases/{base_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/bases/{base_id}/documents"
     }
   ],
   "registered_at": "2026-10-21"
