@@ -93,7 +93,7 @@ services:
   milvus-minio:
     # MinIO：锁定 AGPL 之前的最后版本线（Apache-2.0），仅作 Milvus 依赖独立运行
     # ⚠️ D-06 待决：版本线与独立进程方式需合规确认
-    image: minio/minio:RELEASE.2021-04-22T23-11-00Z
+    image: minio/minio:RELEASE.2021-04-22T15-44-28Z
     container_name: oa-milvus-minio
     restart: unless-stopped
     environment:
@@ -152,7 +152,7 @@ services:
   # 业务对象存储（文档原文件）：锁定 AGPL 之前的版本线，独立容器运行
   # ⚠️ D-06 待决
   minio:
-    image: minio/minio:RELEASE.2021-04-22T23-11-00Z
+    image: minio/minio:RELEASE.2021-04-22T15-44-28Z
     container_name: oa-minio
     restart: unless-stopped
     environment:

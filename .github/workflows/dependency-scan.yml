@@ -103,6 +103,46 @@ jobs:
           echo "[OK] 底座调用出口唯一性校验通过"
 
   # =========================================================================
+  # 门禁 1b：镜像标签存在性校验（P0，QA NEW-P0 / NEW-P1）
+  #
+  # 镜像标签拼错的后果是「CI 全绿、部署才炸」——代码依赖违规会被 SCA 扫出来，
+  # 但镜像标签拼错只有拉取时才发现。因此本门禁独立于协议扫描，
+  # 对 images.lock 中每个 tag 做上游存在性核验。
+  # =========================================================================
+  image-tag-existence:
+    name: 镜像标签存在性校验
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 校验一致性 + 精确版本线
+        run: |
+          python -m pip install pyyaml
+          python deploy/validate_images.py
+
+      - name: 校验上游标签真实存在（杜绝合成标签）
+        run: |
+          python deploy/validate_images.py --check-remote
+
+      - name: 校验 Valkey 健康检查命令（禁用 redis-cli）
+        run: |
+          echo "::group::校验 Valkey 健康检查命令"
+          if grep -rn "redis-cli" deploy/docker-compose*.yml; then
+            echo "::error::Valkey 服务的健康检查须使用 valkey-cli（redis-cli 在部分镜像中不存在）"
+            exit 1
+          fi
+          echo "::endgroup::"
+          echo "[OK] 健康检查命令合规"
+
+  # =========================================================================
   # 门禁 2：SCA 协议扫描
   # =========================================================================
   license-scan:
@@ -192,24 +232,78 @@ jobs:
                       findings['grey'].append(f'[node] {name}: {licenses}')
 
           # ---- 基础设施镜像协议复核（⚠️ D-06）----
+          # 说明：镜像判定一律以 deploy/images.lock（唯一事实来源）为准，
+          # 不再对编排文件做宽松前缀正则匹配——宽松正则会给**不存在的合成标签**
+          # 签发虚假合规通行证（QA NEW-P1）。
+          # 标签存在性与一致性校验由独立的 image-tag-existence 门禁负责
+          # （deploy/validate_images.py，本地与 CI 同源）。
           compose_dir = pathlib.Path('deploy')
-          for compose in compose_dir.glob('docker-compose*.yml'):
-              text = compose.read_text(encoding='utf-8')
-              if 'minio/minio' in text:
-                  # 校验是否锁定 AGPL 之前的版本线
-                  locked = re.search(r'minio/minio:RELEASE\.2021-04-22', text)
-                  if locked:
-                      findings['grey'].append(
-                          '[infra] MinIO 锁定 AGPL 之前版本线（RELEASE.2021-04-22 系列），独立容器运行'
-                      )
-                  else:
+          lock_file = compose_dir / 'images.lock'
+          locked_images: set[tuple[str, str]] = set()
+          if lock_file.is_file():
+              lock_data = yaml.safe_load(lock_file.read_text(encoding='utf-8'))
+              for entry in (lock_data or {}).get('images', []):
+                  locked_images.add((str(entry.get('name', '')), str(entry.get('tag', ''))))
+                  license_name = str(entry.get('license', ''))
+                  role = str(entry.get('role', ''))
+                  if BLACKLIST.search(license_name):
                       findings['black'].append(
-                          '[infra] MinIO 未锁定 AGPL 之前的版本线（违反灰名单规则）'
+                          f'[infra] {entry.get("name")}:{entry.get("tag")} 协议 {license_name}（{role}）'
                       )
-              if 'valkey/valkey' in text:
-                  findings['grey'].append('[infra] 缓存使用 Valkey（BSD-3-Clause），D-06 待决')
-              if 'redis:' in text and 'valkey' not in text:
-                  findings['grey'].append('[infra] 使用 Redis 7（RSALv2/SSPL），须独立进程运行')
+                  elif GREYLIST.search(license_name):
+                      findings['grey'].append(
+                          f'[infra] {entry.get("name")}:{entry.get("tag")} 协议 {license_name}（{role}）'
+                      )
+          else:
+              findings['black'].append('[infra] 缺少 deploy/images.lock（镜像唯一事实来源）')
+
+          # MinIO 必须锁定 AGPL 之前的精确版本线
+          minio_entry = next(
+              (n, t) for n, t in locked_images if n == 'minio/minio'
+          ) if any(n == 'minio/minio' for n, _ in locked_images) else None
+          if minio_entry is None:
+              findings['black'].append('[infra] images.lock 未登记 minio/minio')
+          elif minio_entry[1] != 'RELEASE.2021-04-22T15-44-28Z':
+              findings['black'].append(
+                  f'[infra] MinIO 未锁定 AGPL 前的精确版本线：{minio_entry[1]}'
+              )
+          else:
+              findings['grey'].append(
+                  '[infra] MinIO 锁定 AGPL 前精确版本线'
+                  '（RELEASE.2021-04-22T15-44-28Z），独立容器运行，D-06 待决'
+              )
+
+          if any(n == 'valkey/valkey' for n, _ in locked_images):
+              findings['grey'].append('[infra] 缓存使用 Valkey（BSD-3-Clause），D-06 待决')
+          if any(n == 'redis' for n, _ in locked_images):
+              findings['grey'].append('[infra] 使用 Redis 7（RSALv2/SSPL），须独立进程运行')
+
+          # ---- 编排文件的镜像引用必须 ⊆ images.lock（精确匹配）----
+          compose_refs: set[tuple[str, str]] = set()
+          for compose in compose_dir.glob('docker-compose*.yml'):
+              compose_data = yaml.safe_load(compose.read_text(encoding='utf-8'))
+              for service in (compose_data or {}).get('services', {}).values():
+                  image = (service or {}).get('image')
+                  if not image or ':' not in image:
+                      continue
+                  name, tag = image.rsplit(':', 1)
+                  # 解析 ${VAR:-default} 模板语法，取默认值参与比对
+                  template = re.search(r'\$\{[A-Z_]+:-([^}]+)\}', tag)
+                  if template:
+                      tag = template.group(1)
+                  if '@sha256:' in tag:
+                      # digest 锁定形式，视为合规
+                      continue
+                  compose_refs.add((name, tag))
+
+          for name, tag in sorted(compose_refs):
+              if (name, tag) not in locked_images:
+                  findings['black'].append(
+                      f'[infra] 编排文件引用 {name}:{tag}，但未在 images.lock 中登记'
+                  )
+          if compose_refs:
+              print(f'[INFO] 编排文件镜像引用 {len(compose_refs)} 个，'
+                    f'images.lock 登记 {len(locked_images)} 个')
 
           print('=' * 70)
           print('开源协议扫描结果')

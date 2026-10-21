@@ -30,7 +30,7 @@ deploy/offline/
 | 缓存 | `valkey/valkey:7.2-alpine` | BSD-3-Clause ⚠️ D-06 |
 | 向量库 | `milvusdb/milvus:v2.4.6` | Apache-2.0 |
 | etcd | `quay.io/coreos/etcd:v3.5.16` | Apache-2.0 |
-| 对象存储 | `minio/minio:RELEASE.2021-04-22T23-11-00Z` | Apache-2.0（AGPL 前版本线）⚠️ D-06 |
+| 对象存储 | `minio/minio:RELEASE.2021-04-22T15-44-28Z` | Apache-2.0（AGPL 前版本线）⚠️ D-06 |
 | 身份底座 | `quay.io/keycloak/keycloak:25.0.6` | Apache-2.0 |
 | 代理 | `squidly/squid:5.2` | GPL-2.0 ⚠️ **灰名单** |
 | 监控 | `prom/prometheus:v2.54.0`、`grafana/grafana:11.1.0` | Apache-2.0 |
