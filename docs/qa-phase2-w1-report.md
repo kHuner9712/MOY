@@ -198,17 +198,17 @@ git -C <repo> worktree add /tmp/qa-b05-clean 2edbb78
 4. 如确需兼容阶段一历史库：加 `OA_LEGACY_BASE_PASSTHROUGH`（默认 `false`）、在 `/readyz` 或启动日志提示，并在 `docs/qa-phase2-waivers.md` 登记；不得默认放行。
 5. 回归时请保留本报告 §5.3 的 5 条 QA 断言（当前已在用例文件中以阻断形式存在，无需 `xfail`）。
 
-### 5.6 报告定稿时工程师 WIP 的进展（供主理人知悉，不作为判据）
+### 5.6 修复落地情况（第 2 轮已复验，见 §10）
 
-截至本报告定稿（18:25 UTC），工程师已在工作树中提交前修改（`git diff --stat`：`rag_service.py` / `policy_service.py` / `grant_service.py` / `segment_service.py` 共 86 增 23 删），方向与上述建议一致：
+工程师在 `5a036be` 中按上述方向完成修复，并把归一化补强推广到 KB3/KB4/M1/M2 入口（`document_service.py` / `knowledge_base_service.py` / `model_service.py`）：
 
-- 新增 `normalize_base_id()`（`BASE_ID_PREFIX` 归一化），R7 入口先归一化再判权；
+- 新增 `normalize_base_id()`（`BASE_ID_PREFIX` 归一化），R7/KB3/KB4/M1/M2 入口先归一化再判权；
 - `_assert_readable` 改为 `record is None or record.is_deleted` → `20003`（fail-closed）；
 - `filter_authorized` 改为未登记/已删除库计入 `skipped`（fail-closed）。
 
-**但该 WIP 尚未提交，且中间态不绿**（18:11–18:15 的 PG 跑出现 18 failed，含 `test_segment_service.py::test_get_detail_forbidden_base_returns_20003` 等），因此本报告不采信其正确性，须按 §8.3 在提交后重跑。
+QA 第 2 轮在干净 worktree 复跑：`745 passed / 33 skipped`（non-PG）、`778 passed / 0 skipped / 0 failed`（PG），5 条缺陷断言全部转绿（详见 §10.2/§10.4）。
 
-另记录一项事实（不计缺陷）：QA 用例文件中的 `xfail` 标记于 18:14 被外部移除，当前 5 条缺陷断言在仓库内已按**阻断**形式生效。该方向与 QA 意图一致（修复后应转阻断），故仅作记录；后续建议「QA 用例由 QA 维护」，如需调整断言口径请先与 QA 对齐。
+另记录一项事实（不计缺陷）：QA 用例文件中的 `xfail` 标记在第 1 轮期间被外部移除，当前 5 条缺陷断言以**阻断**形式存在并已随修复提交；`test_a2b` 的断言口径被工程师调整为「抛 `20003` + 下游零调用」，QA 已裁定**接受**（比原写法更强，理由见 §10.3）。后续建议「QA 用例由 QA 维护」，调整断言口径请先与 QA 对齐。
 
 ---
 
@@ -251,13 +251,16 @@ git -C <repo> worktree add /tmp/qa-b05-clean 2edbb78
 
 ## 7. 缺陷清单
 
-| 编号 | 等级 | 标题 | 复现步骤 | 期望 / 实际 | 归属 |
-| --- | --- | --- | --- | --- | --- |
-| **B05-P0-01** | **P0（阻断）** | `restricted` 判权对「无本地元数据」的库 fail-open，导致 R7 / 对话可读到无权限库（含**跨租户**） | ① `T_owner` 建 `restricted` 库 `kb_X`；② 未授权成员 `POST /knowledge/search {"base_id":"X"}`（去掉 `kb_` 前缀）或 `{"knowledge_base_ids":["kb_X"]}` 走 M1；③ 或 `tnt_b` 用户直接用 `tnt_a` 的 `kb_crossA` 检索 | 期望 `20003`（§4.8 租户层+对象级）；实际 `code=0` 且下游 `datasets/<id>/retrieve` 返回受限库正文。定位：`app/services/rag_service.py:697`（`if record is None: return`）、`app/business/policy_service.py:309-311`（`if record is None: allowed.append(...)`） | **Engineer** |
-| **B05-P2-02** | P2 | 同批 `subject_ids` 内重复对象未计入 `skipped_count` | `POST .../grants {"subject_ids":["usr_c","usr_c"]}` | 期望 `created=1/skipped=1`（架构 §4.2 要点）；实际 `created=1/skipped=0`（`grant_service.py:228` + `_normalize_subject_ids:394` 先行去重，丢失 skipped 计数） | **Engineer** |
-| **QA-P2-03** | P2（流程） | G-05 覆盖率两项均未达标且无豁免登记 | `pytest --run-pg --cov=app`；`coverage report --include="app/business/*,app/db/*"` | 期望 ≥90.5% / ≥85%；实际 **87.22% / 83.98%**；`docs/qa-phase2-waivers.md` **不存在**（方案 §2.4 要求登记门禁编号/理由/补偿/到期/签字）。注：非 B05/B06 回归（B03 85.05% → B04 85.97% → 本次 87.10%，持续改善） | 主理人 + Engineer |
-| **QA-P3-04** | P3 | G-13 门禁脚本缺失，门禁无法按方案执行 | `python apps/adapter/scripts/check_error_catalog.py` | 期望可执行；实际 `No such file or directory`（已用等价核对替代，见 §6.2）。建议 B07 前补脚本并纳入门禁序列 | Engineer |
-| **QA-P3-05** | P3 | 用例名与测试方案 §5 落点名不一致，追溯困难 | 方案要求 `test_grant_and_backlink.py::test_restricted_base_detail_and_search_return_20003` 等，实际为 `test_restricted_base_is_visible_only_to_granted_member` 等 | 不影响判据成立性；建议用例名对齐或同步更新方案映射表 | Engineer / QA |
+> 状态：第 1 轮登记的 P0/P2 均已由 `5a036be` 修复并经 QA 第 2 轮复验转绿（见 §10）。下表保留原始复现信息以便回溯。
+
+| 编号 | 等级 | 标题 | 复现步骤 | 期望 / 实际 | 归属 | 状态 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **B05-P0-01** | **P0（阻断）** | `restricted` 判权对「无本地元数据」的库 fail-open，导致 R7 / 对话可读到无权限库（含**跨租户**） | ① `T_owner` 建 `restricted` 库 `kb_X`；② 未授权成员 `POST /knowledge/search {"base_id":"X"}`（去掉 `kb_` 前缀）或 `{"knowledge_base_ids":["kb_X"]}` 走 M1；③ 或 `tnt_b` 用户直接用 `tnt_a` 的 `kb_crossA` 检索 | 期望 `20003`（§4.8 租户层+对象级）；实际 `code=0` 且下游 `datasets/<id>/retrieve` 返回受限库正文。定位：`app/services/rag_service.py:697`（`if record is None: return`）、`app/business/policy_service.py:309-311`（`if record is None: allowed.append(...)`） | Engineer | ✅ 已闭环（`5a036be`：归一化 + fail-closed） |
+| **B05-P2-02** | P2 | 同批 `subject_ids` 内重复对象未计入 `skipped_count` | `POST .../grants {"subject_ids":["usr_c","usr_c"]}` | 期望 `created=1/skipped=1`（架构 §4.2 要点）；实际 `created=1/skipped=0`（`grant_service.py:228` + `_normalize_subject_ids:394` 先行去重，丢失 skipped 计数） | Engineer | ✅ 已闭环（保留重复项 + `seen` 计 skipped） |
+| **QA-P2-03** | P2（流程） | G-05 覆盖率两项均未达标且无豁免登记 | `pytest --run-pg --cov=app`；`coverage report --include="app/business/*,app/db/*"` | 期望 ≥90.5% / ≥85%；第 1 轮实际 **87.22% / 83.98%**、第 2 轮 **87.11% / 83.97%**；`docs/qa-phase2-waivers.md` **不存在**（方案 §2.4 要求登记门禁编号/理由/补偿/到期/签字）。注：非本批回归（B03 85.05% → B04 85.97% → 现在 87.11%，持续改善） | 主理人 + Engineer | ⏳ 待决策 |
+| **QA-P3-04** | P3 | G-13 门禁脚本缺失，门禁无法按方案执行 | `python apps/adapter/scripts/check_error_catalog.py` | 期望可执行；实际 `No such file or directory`（已用等价核对替代，见 §6.2）。脚本已写但未提交；建议提交后纳入门禁序列，`--strict` 待前端码补齐（B11-B14）再开 | Engineer | ⏳ 待提交 |
+| **QA-P3-05** | P3 | 用例名与测试方案 §5 落点名不一致，追溯困难 | 方案要求 `test_grant_and_backlink.py::test_restricted_base_detail_and_search_return_20003` 等，实际为 `test_restricted_base_is_visible_only_to_granted_member` 等 | 不影响判据成立性；建议用例名对齐或同步更新方案映射表 | Engineer / QA | ⏳ 建议 |
+| **QA-P3-06** | P3 | G-11 scratch 库偶发撞锁致假失败 | 见 §10.6 | 期望稳定绿；实际偶发 1 次 `test_g11_cli_check_then_apply_on_empty_database` 失败，清残留后全量 778 passed | QA / Engineer | ⏳ 建议加固 |
 
 **未计入缺陷的观察项**（供决策，不需本批修复）：
 
@@ -392,6 +395,8 @@ cd apps/adapter && ./.venv/Scripts/python.exe -m pytest \
 
 | 编号 | 项 | 现状 | 处置建议 |
 | --- | --- | --- | --- |
-| QA-P2-03 | G-05 覆盖率两项未达标（87.09% / 83.94%） | 仍未达标（自 B03 起的存量趋势） | 二选一：①补测至 ≥90.5%/≥85%（优先 `app/db/repositories/*` 与 `app/tools/wechat_mp_connector.py`，后者仅 69.60%）；②按方案 §2.4 写 `docs/qa-phase2-waivers.md` 登记（门禁编号/理由/补偿措施/到期批次/签字），到期批次建议 B07 |
-| QA-P3-04 | G-13 门禁脚本缺失 | 工作树中已见 `apps/adapter/scripts/check_error_catalog.py`（**未提交**，`7c2cf79` 不含） | 随下一批提交并纳入 §2.2 门禁序列复跑 |
-| — | 后续 WIP（KB3/KB4 归一化、`document_service`/`knowledge_base_service` 改动、`test_b05_guard_regressions.py`、`test_policy_permission_guards.py`） | 工作树内未提交，QA **未验证** | 提交后按 §9 命令复跑一次即可并入本报告结论 |
+| QA-P2-03 | G-05 覆盖率两项未达标（87.11% / 83.97%） | 仍未达标（自 B03 起的存量趋势） | 二选一：①补测至 ≥90.5%/≥85%（优先 `app/db/repositories/*` 与 `app/tools/wechat_mp_connector.py`，后者仅 69.60%）；②按方案 §2.4 写 `docs/qa-phase2-waivers.md` 登记（门禁编号/理由/补偿措施/到期批次/签字），到期批次建议 B07 |
+| QA-P3-04 | G-13 门禁脚本缺失 | 工作树中已见 `apps/adapter/scripts/check_error_catalog.py`（**未提交**，`5a036be` 不含） | 随下一批提交并纳入 §2.2 门禁序列复跑；严格模式（`--strict`）需等前端 `business-errors.ts` 在 B11-B14 补齐后开启 |
+| QA-P3-06 | G-11 scratch 库偶发撞锁（见 §10.6） | 观测到 1 次 | 重试 + `finally` 清理 + 库名带 worker 后缀 |
+
+**工作区归属说明（避免误认领）**：截至本报告定稿，仓库工作树中仍有未提交/未跟踪内容——`.github/workflows/ci-adapter.yml`（改动）、`apps/adapter/scripts/`（G-13 脚本）、`apps/adapter/tests/integration/test_b05_guard_regressions.py`、`apps/adapter/tests/unit/test_policy_permission_guards.py`、本报告。其中 **`test_policy_permission_guards.py` 与 `test_b05_guard_regressions.py` 非 QA 产出**（QA 本批只新增 `test_qa_b05_b06_verification.py`，已随 `5a036be` 提交），如需纳入准出判据请先提交，QA 再按 §9 命令复跑。
