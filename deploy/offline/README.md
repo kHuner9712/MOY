@@ -55,3 +55,15 @@ deploy/offline/
 
 - 需确认离线包的交付介质（物理介质/内网 FTP/对象存储）与容量规划。
 - 需确认客户环境的 CPU 架构（x86_64 / arm64），影响镜像构建目标平台。
+
+## 插件离线包（2026-10-21 新增）
+
+私有化离线环境无法访问 Dify 插件市场（marketplace.dify.ai），
+模型提供方插件须随离线包分发并在部署时本地安装：
+
+| 插件 | 文件 | 协议 |
+| --- | --- | --- |
+| DeepSeek 模型提供方 v0.0.25 | `plugins/deepseek-0.0.25.difypkg` | Apache-2.0（Dify 官方插件） |
+
+安装：`python apps/adapter/qa_probe/bootstrap_dify.py --pkg deploy/offline/plugins/deepseek-0.0.25.difypkg ...`
+（引导脚本会自动上传并安装，无需外网）
