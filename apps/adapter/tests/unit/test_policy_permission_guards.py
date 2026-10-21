@@ -289,6 +289,75 @@ async def test_filter_authorized_keeps_authorized_base_and_normalizes_id(
     assert allowed == ["kb_granted"]
 
 
+# ===========================================================================
+# 2.1 QA-P3-07：同一对象的两种写法必须先归一化再去重
+#
+# 现象：`filter_authorized(["kb_x", "x"])` 曾返回 `["kb_x", "kb_x"]`——先按原始串
+# 去重、再逐个归一化，两个写法各自存活。后果不是越权，而是 M1/M2 的
+# `knowledge_base_ids` 出现重复项 → 可能重复检索、引用条重复 →
+# **单次对话用量虚高**（与 D-12 的单次口径冲突）。四条断言覆盖：
+# ① 顺序与规范形态；② 任意组合不重复；③ 去重不得绕过 fail-closed；
+# ④ 空输入的透传契约（M1/M2 无知识库对话依赖它）。
+# ===========================================================================
+async def test_filter_authorized_normalizes_before_dedup(settings: Settings) -> None:
+    """断言 ①：`["kb_X", "X"]` 只剩一个规范形态，且保持首次出现顺序。
+
+    Args:
+        settings: 配置实例。
+    """
+    await _seed_base(settings, _record("kb_dup_x", visibility="organization"))
+    policy = PolicyService(settings)
+
+    allowed = await policy.filter_authorized(_auth(), ["kb_dup_x", "dup_x"])
+
+    assert allowed == ["kb_dup_x"], f"同一对象的两种写法未收敛：{allowed}"
+
+
+async def test_filter_authorized_never_returns_duplicates(settings: Settings) -> None:
+    """断言 ②：任意混合写法下返回值无重复（前置 `out` 防恒真）。
+
+    Args:
+        settings: 配置实例。
+    """
+    await _seed_base(settings, _record("kb_dup_y", visibility="organization"))
+    policy = PolicyService(settings)
+
+    out = await policy.filter_authorized(_auth(), ["kb_dup_y", "dup_y", "kb_dup_y", "kb_dup_y"])
+
+    assert out, "已可见的库被全部剔除，用例失效"
+    assert len(out) == len(set(out)), f"返回值出现重复项（P3-07 复发）：{out}"
+    assert out == ["kb_dup_y"]
+
+
+async def test_dedup_does_not_bypass_fail_closed(settings: Settings) -> None:
+    """断言 ③：未授权库的两种写法去重后仍然整体剔除（不得因去重而放行）。
+
+    Args:
+        settings: 配置实例。
+    """
+    await _seed_base(settings, _record("kb_dup_z", visibility="organization", tenant=OTHER_TENANT))
+    policy = PolicyService(settings)
+
+    allowed = await policy.filter_authorized(_auth(), ["kb_dup_z", "dup_z"])
+
+    assert allowed == [], f"跨租户库通过重复写法被放行：{allowed}"
+
+
+async def test_empty_input_still_passes_through(settings: Settings) -> None:
+    """断言 ④：空输入原样返回（M1/M2 无知识库对话依赖该早退分支）。
+
+    Args:
+        settings: 配置实例。
+    """
+    policy = PolicyService(settings)
+
+    assert await policy.filter_authorized(_auth(), []) == []
+    assert await policy.filter_authorized(None, ["kb_dup_x", "dup_x"]) == [
+        "kb_dup_x",
+        "dup_x",
+    ], "无鉴权上下文必须原样透传（不做归一化，保持既有契约）"
+
+
 async def test_filter_authorized_keeps_organization_base(settings: Settings) -> None:
     """全企业可见的库对普通成员始终保留。
 

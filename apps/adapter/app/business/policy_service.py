@@ -543,6 +543,13 @@ class PolicyService:
         放行只会造成「列表看不到、检索拿得到」的越权形态（架构 §4.8）。
         历史库若确需继续检索，必须走元数据回填，不接受按 ID 形态开洞。
 
+        **归一化必须先去重后判权（QA-P3-07）**：`["kb_x", "x"]` 是**同一个对象**的
+        两种写法，若先按原始串去重再归一化，返回值会出现两个 `kb_x` →
+        M1/M2 的 `knowledge_base_ids` 出现重复项 → 可能重复检索、引用条重复，
+        **单次对话用量虚高**（与 D-12 的计量口径直接冲突）。
+        因此：先 `normalize_base_id` 再 `dict.fromkeys` 去重（保持首次出现顺序），
+        并在返回前断言结果内无重复。
+
         Args:
             auth: 鉴权上下文（None 表示无鉴权信息，原样返回）。
             base_ids: 请求携带的知识库 ID 列表。
@@ -555,8 +562,7 @@ class PolicyService:
         snapshot = await self.snapshot(auth)
         allowed: list[str] = []
         skipped = 0
-        for raw_id in dict.fromkeys(base_ids):
-            base_id = normalize_base_id(raw_id)
+        for base_id in dict.fromkeys(normalize_base_id(raw_id) for raw_id in base_ids):
             if not base_id:
                 skipped += 1
                 continue
@@ -576,6 +582,16 @@ class PolicyService:
                 skipped=skipped,
                 allowed=len(allowed),
             )
+        if len(allowed) != len(set(allowed)):  # pragma: no cover - 防御性自检
+            # 理论上不可达（上面已按规范形态去重）；一旦触发说明归一化被改坏，
+            # 会让单次对话重复检索并放大用量，属于必须立即暴露的缺陷。
+            logger.error(
+                "policy_duplicate_base_ids",
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                allowed=allowed,
+            )
+            allowed = list(dict.fromkeys(allowed))
         return allowed
 
     # ------------------------------------------------------------------
