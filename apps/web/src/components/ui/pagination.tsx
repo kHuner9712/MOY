@@ -1,0 +1,212 @@
+'use client';
+
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import * as React from 'react';
+
+import { Select } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
+
+/** 省略号占位标识 */
+type PageToken = number | 'gap-left' | 'gap-right';
+
+/** 默认每页条数候选 */
+const DEFAULT_PAGE_SIZE_OPTIONS: number[] = [10, 20, 50, 100];
+
+/**
+ * 生成页码序列：页数较少时全部平铺，页数较多时收起中间部分。
+ *
+ * @param current - 当前页（1 起）
+ * @param totalPages - 总页数
+ * @param siblingCount - 当前页左右各展示的页码数量
+ * @returns 页码与省略号占位序列
+ */
+function buildPageTokens(
+  current: number,
+  totalPages: number,
+  siblingCount: number,
+): PageToken[] {
+  const totalSlots = siblingCount * 2 + 5;
+  if (totalPages <= totalSlots) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const leftSibling = Math.max(current - siblingCount, 1);
+  const rightSibling = Math.min(current + siblingCount, totalPages);
+  const showLeftGap = leftSibling > 2;
+  const showRightGap = rightSibling < totalPages - 1;
+
+  const tokens: PageToken[] = [1];
+
+  if (showLeftGap) {
+    tokens.push('gap-left');
+  } else {
+    for (let pageNumber = 2; pageNumber < leftSibling; pageNumber += 1) {
+      tokens.push(pageNumber);
+    }
+  }
+
+  for (
+    let pageNumber = Math.max(leftSibling, 2);
+    pageNumber <= Math.min(rightSibling, totalPages - 1);
+    pageNumber += 1
+  ) {
+    tokens.push(pageNumber);
+  }
+
+  if (showRightGap) {
+    tokens.push('gap-right');
+  } else {
+    for (let pageNumber = rightSibling + 1; pageNumber < totalPages; pageNumber += 1) {
+      tokens.push(pageNumber);
+    }
+  }
+
+  tokens.push(totalPages);
+  return tokens;
+}
+
+/** 分页条属性 */
+export interface PaginationProps {
+  /** 当前页（1 起） */
+  page: number;
+  /** 每页条数 */
+  pageSize: number;
+  /** 总条数 */
+  total: number;
+  /** 翻页回调 */
+  onPageChange: (page: number) => void;
+  /** 每页条数候选，默认 10 / 20 / 50 / 100 */
+  pageSizeOptions?: number[];
+  /** 每页条数变更回调；不传则不展示该选择器 */
+  onPageSizeChange?: (pageSize: number) => void;
+  /** 当前页左右各展示的页码数量，默认 1 */
+  siblingCount?: number;
+  /** 是否禁用 */
+  disabled?: boolean;
+  className?: string;
+}
+
+/**
+ * 分页条：左侧「共 N 条」，中间页码，右侧每页条数。
+ *
+ * 文案固定使用业务语言（条 / 页），不出现任何接口字段名。
+ *
+ * @param props - 组件属性
+ * @returns 分页条元素
+ */
+export function Pagination({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+  pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
+  onPageSizeChange,
+  siblingCount = 1,
+  disabled = false,
+  className,
+}: PaginationProps): React.JSX.Element {
+  const safePageSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.trunc(pageSize) : 10;
+  const safeTotal = Number.isFinite(total) && total > 0 ? Math.trunc(total) : 0;
+  const totalPages = Math.max(1, Math.ceil(safeTotal / safePageSize));
+  const currentPage = Math.min(Math.max(1, Math.trunc(page) || 1), totalPages);
+  const tokens = buildPageTokens(currentPage, totalPages, Math.max(0, Math.trunc(siblingCount)));
+  const navDisabled = disabled || totalPages <= 1;
+
+  /** 跳转到指定页（越界自动收敛） */
+  const goTo = (next: number): void => {
+    const target = Math.min(Math.max(1, next), totalPages);
+    if (target === currentPage) return;
+    onPageChange(target);
+  };
+
+  return (
+    <nav
+      aria-label="分页"
+      className={cn(
+        'flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between',
+        className,
+      )}
+    >
+      <p className="text-xs text-muted-foreground tabular-nums">
+        共 {safeTotal} 条
+        {safeTotal > 0 ? (
+          <span className="ml-2">
+            第 {currentPage} / {totalPages} 页
+          </span>
+        ) : null}
+      </p>
+
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-label="上一页"
+          disabled={navDisabled || currentPage <= 1}
+          onClick={() => goTo(currentPage - 1)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+
+        {tokens.map((token) =>
+          typeof token === 'number' ? (
+            <button
+              key={`page-${token}`}
+              type="button"
+              aria-label={`第 ${token} 页`}
+              aria-current={token === currentPage ? 'page' : undefined}
+              disabled={disabled}
+              onClick={() => goTo(token)}
+              className={cn(
+                'inline-flex h-9 min-w-9 items-center justify-center rounded-md border px-2 text-sm font-medium tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+                token === currentPage
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground',
+              )}
+            >
+              {token}
+            </button>
+          ) : (
+            <span
+              key={token}
+              aria-hidden="true"
+              className="inline-flex h-9 w-6 items-center justify-center text-sm text-muted-foreground"
+            >
+              …
+            </span>
+          ),
+        )}
+
+        <button
+          type="button"
+          aria-label="下一页"
+          disabled={navDisabled || currentPage >= totalPages}
+          onClick={() => goTo(currentPage + 1)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+
+      {onPageSizeChange ? (
+        <div className="flex items-center gap-2">
+          <span className="whitespace-nowrap text-xs text-muted-foreground">每页</span>
+          <Select
+            aria-label="每页条数"
+            wrapperClassName="w-28"
+            className="h-9 text-xs"
+            value={String(safePageSize)}
+            disabled={disabled}
+            onChange={(event) => {
+              const nextSize = Number(event.target.value);
+              if (Number.isFinite(nextSize) && nextSize > 0) onPageSizeChange(nextSize);
+            }}
+            options={pageSizeOptions.map((option) => ({
+              value: String(option),
+              label: `${option} 条`,
+            }))}
+          />
+        </div>
+      ) : null}
+    </nav>
+  );
+}
