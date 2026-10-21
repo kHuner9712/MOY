@@ -52,6 +52,10 @@ services:
       # 其 DROP POLICY IF EXISTS + CREATE POLICY p_tenant_isolation 会统一旧策略名
       # （用 01- 会先于 10-init-rls.sql 执行，导致新旧策略共存，见主理人裁决 1）
       - ./init-schema-phase2.sql:/docker-entrypoint-initdb.d/20-init-schema-phase2.sql:ro
+      # 应用连接角色（非超级用户）：必须排在 20- 之后（先有表才能授权）。
+      # 用 officeai（超级用户）连库会绕过行级安全，多租户隔离失效；
+      # /readyz 的 db_privilege 自检会因此判 not_ready。
+      - ./init-app-role.sql:/docker-entrypoint-initdb.d/30-init-app-role.sql:ro
     networks: [officeai]
     logging: *default-logging
     healthcheck:
@@ -425,6 +429,18 @@ services:
     image: officeai/adapter:${OA_IMAGE_TAG:-1.0.0}
     container_name: oa-adapter
     restart: unless-stopped
+    healthcheck:
+      # 就绪探针必须打 /readyz（不是 /healthz）：它同时校验业务库连通性与
+      # **数据库权限自检**（连接账号带 BYPASSRLS 时行级安全策略形同虚设）
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request as u, sys;
+          sys.exit(0 if u.urlopen('http://127.0.0.1:8000/readyz', timeout=5).status == 200 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     env_file:
       - .env
     environment:

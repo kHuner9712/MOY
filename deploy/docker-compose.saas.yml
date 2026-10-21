@@ -28,11 +28,15 @@ services:
       POSTGRES_DB: ${OA_POSTGRES_DB:-officeai}
       LANG: C.UTF-8
     volumes:
-      - saas-postgres-data:/var/lib/postgresql/data
+      # PostgreSQL 18+ 镜像要求挂载到 /var/lib/postgresql（数据在 data/ 子目录），
+      # 挂 /var/lib/postgresql/data 会被镜像入口拒绝启动（私有化编排已修，SaaS 漏改）
+      - saas-postgres-data:/var/lib/postgresql
       - ./init-databases.sql:/docker-entrypoint-initdb.d/00-init-databases.sql:ro
       - ./init-rls.sql:/docker-entrypoint-initdb.d/10-init-rls.sql:ro
       # 阶段二业务库表结构（D-02）：最后执行，统一重建 p_tenant_isolation 策略
       - ./init-schema-phase2.sql:/docker-entrypoint-initdb.d/20-init-schema-phase2.sql:ro
+      # 应用连接角色（非超级用户）：排在 20- 之后（先有表才能授权）
+      - ./init-app-role.sql:/docker-entrypoint-initdb.d/30-init-app-role.sql:ro
     networks: [officeai]
     logging: *default-logging
     healthcheck:
@@ -328,6 +332,18 @@ services:
     image: officeai/adapter:${OA_IMAGE_TAG:-1.0.0}
     container_name: oa-saas-adapter
     restart: unless-stopped
+    healthcheck:
+      # 就绪探针必须打 /readyz（不是 /healthz）：它同时校验业务库连通性与
+      # **数据库权限自检**（连接账号带 BYPASSRLS 时行级安全策略形同虚设）
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request as u, sys;
+          sys.exit(0 if u.urlopen('http://127.0.0.1:8000/readyz', timeout=5).status == 200 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     env_file:
       - .env
     environment:
