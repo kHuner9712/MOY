@@ -24,6 +24,18 @@ sign   = hex(HMAC-SHA256(api_v3_key, 待签串))
 
 **安全边界**：网关只处理「金额、订单号、流水号、签名」四个字段，
 不解析、不记录渠道回传的其它字段，也不把任何密钥写进日志或响应。
+
+**支付生效不是单事务（经阶段验收裁定接受）**：一笔支付落到业务状态要经过
+「订单置 `paid` → 订阅生效 → 开具账单 → 写审计」，仓储沿用既有「一方法一短事务」
+模式，因此这四步**不在同一个数据库事务里**。收敛手段不是强事务，而是三道幂等：
+
+1. `payment_callback_log` 的 `uq_callback_external`：同渠道同流水号只处理一次；
+2. `billing_invoice` 的 `uq_invoice_order`：一单一票，重放不会重复开票；
+3. 订单状态机 `pending_payment → paid` **单向**：已支付订单不再触发二次生效。
+
+> 改这一层之前先确认「重复执行不会产生第二份订阅/账单」，否则会把「少数情况下的
+> 状态不一致」换成「确定性的重复开通」——后者对账更难收。具体落点在
+> `business/order_service.py::OrderService._apply_payment`。
 """
 
 from __future__ import annotations

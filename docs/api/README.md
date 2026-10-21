@@ -89,6 +89,18 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 完整错误码与业务语言文案见架构文档 3.0.3，代码落点为
 `apps/adapter/app/core/errors.py` 的 `ERROR_REGISTRY`。
 
+**提示码（非阻断，`code` 仍为 0）**：有些「结果需要告知、但不构成失败」的场景
+**不得**返回非 0 `code`——前端 `unwrap()` 会把非 0 码当异常抛出，用户看到报错弹窗。
+这类场景统一走 `data` 内的字段下发，前端据此展示**提示条/提示文案**：
+
+| 场景 | 下发方式 | 前端动作 |
+| --- | --- | --- |
+| 降级将在当前周期结束后生效（`15005`） | `data.notice_code=15005` + `data.notice_message` | 展示提示条，**不弹错误** |
+| 变更后额度已超额（`15006` 语义） | `data.over_quota_warning=true` | 展示超额提示，**不弹错误** |
+
+> `15005` / `15006` 仍登记在错误码表中（供日志与文档引用），但在上述端点里
+> **不会**作为 `code` 返回。判定口径见架构文档 §7.2 的裁决行。
+
 **注册制流程**：架构文档登记 → `ERROR_REGISTRY` 注册 → 同步
 `apps/web/src/lib/business-errors.ts` 兜底映射 → 更新本文档。
 
