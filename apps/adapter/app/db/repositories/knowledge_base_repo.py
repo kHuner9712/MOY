@@ -129,19 +129,21 @@ class KnowledgeBasePatch:
 class KnowledgeBaseViewer:
     """列表查询的「观察者」上下文（可见范围判定下沉到存储层，保证分页总数正确）。
 
-    可见规则（P2-KB-03 授权表落地前的 fail-closed 口径）：
+    可见规则（B05 起由 `business/policy_service.py` 统一计算后传入）：
 
     - `organization`：全员可见；
-    - `private` / `restricted`：仅所有者与组织管理员可见（B05 起 `restricted`
-      改为「授权表命中即可见」，由 `PolicyService` 统一判定）。
+    - `private` / `restricted`：所有者、组织管理员，或 `allowed_base_ids` 命中
+      （授权表判定结果，由 `PolicyService` 计算，存储层只做过滤，不判权）。
 
     Attributes:
         user_id: 当前用户 ID。
         is_admin: 是否组织管理员（含平台超级角色）。
+        allowed_base_ids: 授权可见的知识库 ID（仅对非 `organization` 库生效）。
     """
 
     user_id: str = ""
     is_admin: bool = False
+    allowed_base_ids: tuple[str, ...] = ()
 
     def can_see(self, record: KnowledgeBaseRecord) -> bool:
         """判断该记录对观察者是否可见。
@@ -156,7 +158,9 @@ class KnowledgeBaseViewer:
             return True
         if self.is_admin:
             return True
-        return bool(self.user_id) and record.owner_user_id == self.user_id
+        if self.user_id and record.owner_user_id == self.user_id:
+            return True
+        return record.base_id in self.allowed_base_ids
 
 
 class KnowledgeBaseStore(Protocol):
@@ -468,10 +472,20 @@ class PostgresKnowledgeBaseStore:
         viewer_filter = (
             f"AND ({assert_identifier('kb')}.visibility = 'organization' "
             f"OR {assert_identifier('kb')}.owner_user_id = :viewer_user_id "
-            "OR :viewer_is_admin"
+            "OR :viewer_is_admin "
+            "OR kb.base_id = ANY(string_to_array(CAST(:viewer_allowed_ids AS text), ','))"
             ")"
             if viewer is not None
             else ""
+        )
+        viewer_params: dict[str, Any] = (
+            {
+                "viewer_user_id": viewer.user_id,
+                "viewer_is_admin": bool(viewer.is_admin),
+                "viewer_allowed_ids": ",".join(viewer.allowed_base_ids),
+            }
+            if viewer is not None
+            else {}
         )
         columns = (
             "kb.tenant_id, kb.base_id, kb.name, kb.description, kb.visibility, kb.chunk_policy, "
@@ -492,10 +506,9 @@ class PostgresKnowledgeBaseStore:
                 """,
                 repo.params(
                     keyword=f"%{keyword.strip()}%" if keyword.strip() else "",
-                    viewer_user_id=viewer.user_id if viewer is not None else "",
-                    viewer_is_admin=bool(viewer.is_admin) if viewer is not None else False,
                     limit=limit,
                     offset=offset,
+                    **viewer_params,
                 ),
             )
             total = await repo.fetch_scalar(
@@ -507,8 +520,7 @@ class PostgresKnowledgeBaseStore:
                 """,
                 repo.params(
                     keyword=f"%{keyword.strip()}%" if keyword.strip() else "",
-                    viewer_user_id=viewer.user_id if viewer is not None else "",
-                    viewer_is_admin=bool(viewer.is_admin) if viewer is not None else False,
+                    **viewer_params,
                 ),
             )
         return [_to_record(row) for row in rows], int(total or 0)

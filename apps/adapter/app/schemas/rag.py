@@ -272,12 +272,18 @@ class SegmentPosition(BaseModel):
 class SearchSegment(BaseModel):
     """检索命中片段。
 
+    B05 加性扩展（PRD P2-KB-04 / 架构文档 §4.7）：新增 `base_id` / `base_name` /
+    `segment_id` 三个**可选**字段，用于引用回链；既有字段语义与取值域不变。
+
     Attributes:
         document_id: 文档 ID。
         document_name: 文档名称。
         segment_content: 片段内容。
         score: 相关度。
         position: 片段位置。
+        base_id: 所属知识库 ID（回链用）。
+        base_name: 所属知识库名称（回链展示用）。
+        segment_id: 片段稳定标识（重新处理后保持不变）。
     """
 
     document_id: str = Field(default="", description="文档 ID")
@@ -285,6 +291,9 @@ class SearchSegment(BaseModel):
     segment_content: str = Field(default="", description="片段内容")
     score: float = Field(default=0.0, ge=0.0, le=1.0, description="相关度")
     position: SegmentPosition | None = Field(default=None, description="片段位置")
+    base_id: str = Field(default="", description="所属知识库 ID")
+    base_name: str = Field(default="", description="所属知识库名称")
+    segment_id: str = Field(default="", description="片段稳定标识，形如 seg_9f2c...")
 
 
 class SearchData(BaseModel):

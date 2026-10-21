@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.rag import SegmentPosition
+
 
 class ModelProfile(StrEnum):
     """能力档位枚举（契约枚举，新增模型不新增枚举值）。"""
@@ -122,17 +124,29 @@ class Usage(BaseModel):
 class Citation(BaseModel):
     """引用片段（用于前端引用展示，FLOW-02）。
 
+    B05 加性扩展（PRD P2-KB-04 / 架构文档 §4.7）：新增 `base_id` / `base_name` /
+    `segment_id` / `position` 四个**可选**字段，使引用条可点击回链到原文那一段；
+    既有字段 `document_name` / `segment_content` / `score` 保留不变。
+
     Attributes:
         document_id: 文档 ID。
         document_name: 文档名称。
         segment_content: 命中的片段内容。
         score: 命中相关度。
+        base_id: 所属知识库 ID。
+        base_name: 所属知识库名称。
+        segment_id: 片段稳定标识（重新处理后保持不变）。
+        position: 原文位置（页码 / 段落）。
     """
 
     document_id: str = Field(default="", description="文档 ID")
     document_name: str = Field(default="", description="文档名称")
     segment_content: str = Field(default="", description="命中的片段内容")
     score: float = Field(default=0.0, ge=0.0, le=1.0, description="命中相关度")
+    base_id: str = Field(default="", description="所属知识库 ID")
+    base_name: str = Field(default="", description="所属知识库名称")
+    segment_id: str = Field(default="", description="片段稳定标识，形如 seg_9f2c...")
+    position: SegmentPosition | None = Field(default=None, description="原文位置：页码与段落序号")
 
 
 class GenerateData(BaseModel):
@@ -240,13 +254,26 @@ class StreamDeltaData(BaseModel):
 class StreamCitationData(BaseModel):
     """`citation` 事件载荷（随答案位置穿插下发）。
 
+    B05 加性扩展：新增 `base_id` / `base_name` / `segment_id` / `document_id` /
+    `position`，使流式引用条**到达即可点击**（PRD P2-KB-04 验收 5）。
+
     Attributes:
         document_name: 文档名称。
         segment_content: 片段内容。
+        document_id: 文档 ID。
+        base_id: 所属知识库 ID。
+        base_name: 所属知识库名称。
+        segment_id: 片段稳定标识。
+        position: 原文位置（页码 / 段落）。
     """
 
     document_name: str = Field(default="", description="文档名称")
     segment_content: str = Field(default="", description="片段内容")
+    document_id: str = Field(default="", description="文档 ID")
+    base_id: str = Field(default="", description="所属知识库 ID")
+    base_name: str = Field(default="", description="所属知识库名称")
+    segment_id: str = Field(default="", description="片段稳定标识，形如 seg_9f2c...")
+    position: SegmentPosition | None = Field(default=None, description="原文位置：页码与段落序号")
 
 
 class StreamDoneData(BaseModel):

@@ -36,6 +36,9 @@ RESOURCE_KNOWLEDGE_BASE: Final[str] = "knowledge_base"
 #: 资源类型：文档
 RESOURCE_DOCUMENT: Final[str] = "document"
 
+#: 资源类型：知识库授权（B05）
+RESOURCE_GRANT: Final[str] = "knowledge_base_grant"
+
 #: 操作：创建知识库
 ACTION_KB_CREATE: Final[str] = "knowledge_base.create"
 
@@ -44,6 +47,12 @@ ACTION_KB_UPDATE: Final[str] = "knowledge_base.update"
 
 #: 操作：删除知识库
 ACTION_KB_DELETE: Final[str] = "knowledge_base.delete"
+
+#: 操作：新增成员授权（B05，PRD P2-KB-03 验收 6）
+ACTION_GRANT_CREATE: Final[str] = "knowledge_base.grant_create"
+
+#: 操作：撤销成员授权（B05）
+ACTION_GRANT_REVOKE: Final[str] = "knowledge_base.grant_revoke"
 
 #: 操作：上传文档
 ACTION_DOC_UPLOAD: Final[str] = "document.upload"
@@ -56,6 +65,8 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_KB_CREATE: "创建知识库",
     ACTION_KB_UPDATE: "修改知识库设置",
     ACTION_KB_DELETE: "删除知识库",
+    ACTION_GRANT_CREATE: "添加成员授权",
+    ACTION_GRANT_REVOKE: "撤销成员授权",
     ACTION_DOC_UPLOAD: "上传文档",
     ACTION_DOC_DELETE: "删除文档",
 }
@@ -461,11 +472,14 @@ __all__: list[str] = [
     "ACTION_DISPLAY_NAMES",
     "ACTION_DOC_DELETE",
     "ACTION_DOC_UPLOAD",
+    "ACTION_GRANT_CREATE",
+    "ACTION_GRANT_REVOKE",
     "ACTION_KB_CREATE",
     "ACTION_KB_DELETE",
     "ACTION_KB_UPDATE",
     "AUDIT_TABLE",
     "RESOURCE_DOCUMENT",
+    "RESOURCE_GRANT",
     "RESOURCE_KNOWLEDGE_BASE",
     "AuditEntry",
     "AuditRecorder",

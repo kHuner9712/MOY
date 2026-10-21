@@ -1,19 +1,21 @@
 """知识库扩展端点契约（阶段二 KB1-KB8，架构文档 §4.2 / 2.2 第 2 条）。
 
-本文件是**知识库扩展域模型的唯一归属**：KB1-KB3（B04）与 KB8（B03）的请求/响应
-模型全部定义在此，`api/v1/knowledge_ext.py` 只做参数装配与响应封装。
-后续 B05 追加 KB4-KB7 时同样只改本文件，路由文件保持「薄」层。
+本文件是**知识库扩展域模型的唯一归属**：KB1-KB3（B04）、KB5-KB7（B05）与 KB8（B03）
+的请求/响应模型全部定义在此，`api/v1/knowledge_ext.py` 只做参数装配与响应封装
+（KB4 的引用详情模型在 `schemas/segment.py`，因其同时被 M1/M2 引用回链复用）。
 
 设计约束：
 
 1. **加性演进**：所有新字段可选或有默认值，既有字段不删、不改语义；
 2. **业务语言**：字段名与描述一律使用业务语言，禁词（切分/处理进度/内容片段数）
    见 PRD 第 7 章；用户可见文案集中在 `STAGE_DISPLAY_NAMES`；
-3. **五态与三态同时返回**：`stage` 与 `index_status` 语义必须对齐。
+3. **五态与三态同时返回**：`stage` 与 `index_status` 语义必须对齐；
+4. **授权三要素**：对象类型（成员 / 部门 / 角色）、对象列表（≤50）、级别（可提问 / 可上传与管理）。
 """
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Final
 
 from pydantic import BaseModel, Field
@@ -230,16 +232,127 @@ class CredentialBindingData(BaseModel):
     updated_at: str = Field(default="", description="绑定更新时间，ISO 8601")
 
 
+# ===========================================================================
+# KB5-KB7 成员授权（B05）
+# ===========================================================================
+class GrantSubjectType(StrEnum):
+    """授权对象类型枚举（业务语言：成员 / 部门 / 角色）。"""
+
+    USER = "user"
+    DEPARTMENT = "department"
+    ROLE = "role"
+
+
+class GrantPermission(StrEnum):
+    """授权级别枚举。
+
+    `viewer` = 可提问（仅问答与检索）；`editor` = 可上传与管理（含文档维护）。
+    """
+
+    VIEWER = "viewer"
+    EDITOR = "editor"
+
+
+#: 授权对象类型的用户可见名称
+SUBJECT_TYPE_DISPLAY_NAMES: Final[dict[GrantSubjectType, str]] = {
+    GrantSubjectType.USER: "成员",
+    GrantSubjectType.DEPARTMENT: "部门",
+    GrantSubjectType.ROLE: "角色",
+}
+
+#: 授权级别的用户可见名称
+PERMISSION_DISPLAY_NAMES: Final[dict[GrantPermission, str]] = {
+    GrantPermission.VIEWER: "可提问",
+    GrantPermission.EDITOR: "可上传与管理",
+}
+
+
+class GrantItem(BaseModel):
+    """KB5 授权清单条目。
+
+    Attributes:
+        grant_id: 授权记录 ID，形如 `grnt_01HF8...`。
+        subject_type: 授权对象类型。
+        subject_id: 授权对象 ID。
+        subject_name: 授权对象展示名（部门名 / 角色名；成员暂以 ID 展示）。
+        permission: 授权级别。
+        granted_by_name: 授权人展示名。
+        granted_at: 授权时间（ISO 8601）。
+    """
+
+    grant_id: str = Field(description="授权记录 ID")
+    subject_type: GrantSubjectType = Field(
+        default=GrantSubjectType.USER, description="授权对象类型：成员 / 部门 / 角色"
+    )
+    subject_id: str = Field(default="", description="授权对象 ID")
+    subject_name: str = Field(default="", description="授权对象展示名")
+    permission: GrantPermission = Field(
+        default=GrantPermission.VIEWER, description="授权级别：可提问 / 可上传与管理"
+    )
+    granted_by_name: str = Field(default="", description="授权人展示名")
+    granted_at: str = Field(default="", description="授权时间，ISO 8601")
+
+
+class CreateGrantRequest(BaseModel):
+    """KB6 批量授权请求。
+
+    Attributes:
+        subject_type: 授权对象类型（成员 / 部门 / 角色）。
+        subject_ids: 授权对象 ID 列表（1-50 个，重复对象计入跳过）。
+        permission: 授权级别（`viewer` 可提问 / `editor` 可上传与管理）。
+    """
+
+    subject_type: GrantSubjectType = Field(description="授权对象类型：成员 / 部门 / 角色")
+    subject_ids: list[str] = Field(
+        min_length=1, max_length=50, description="授权对象 ID 列表（最多 50 个）"
+    )
+    permission: GrantPermission = Field(
+        default=GrantPermission.VIEWER, description="授权级别：可提问 / 可上传与管理"
+    )
+
+
+class CreateGrantData(BaseModel):
+    """KB6 响应数据。
+
+    Attributes:
+        created_count: 新建的授权条数。
+        skipped_count: 已存在（重复授权）而跳过的条数。
+    """
+
+    created_count: int = Field(default=0, ge=0, description="新建的授权条数")
+    skipped_count: int = Field(default=0, ge=0, description="重复授权而跳过的条数")
+
+
+class DeleteGrantData(BaseModel):
+    """KB7 响应数据。
+
+    Attributes:
+        grant_id: 被撤销的授权记录 ID。
+        deleted: 是否撤销成功（恒为 True）。
+    """
+
+    grant_id: str = Field(description="被撤销的授权记录 ID")
+    deleted: bool = Field(default=True, description="是否撤销成功")
+
+
 __all__ = [
     "DEFAULT_SORT_DIRECTION",
     "DEFAULT_SORT_FIELD",
+    "PERMISSION_DISPLAY_NAMES",
     "SORT_DIRECTIONS",
     "SORT_FIELD_MAP",
+    "SUBJECT_TYPE_DISPLAY_NAMES",
+    "CreateGrantData",
+    "CreateGrantRequest",
     "CredentialBindingData",
     "CredentialBindingRequest",
     "DeleteBaseData",
+    "DeleteGrantData",
     "DocumentItem",
     "DocumentSort",
+    "GrantItem",
+    "GrantPermission",
+    "GrantSubjectType",
     "ListDocumentsQuery",
     "UpdateBaseData",
     "UpdateBaseRequest",

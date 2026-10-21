@@ -41,6 +41,12 @@ STAGE_UPLOADED: Final[str] = "uploaded"
 #: 处理中三态
 INDEX_STATUS_PROCESSING: Final[str] = "processing"
 
+#: 已完成三态（与 `stage='completed'` 同真同假，由 DB CHECK 保证）
+INDEX_STATUS_COMPLETED: Final[str] = "completed"
+
+#: 处理失败三态
+INDEX_STATUS_FAILED: Final[str] = "failed"
+
 
 def _now_iso() -> str:
     """当前 UTC 时间（ISO 8601）。
@@ -71,6 +77,7 @@ class DocumentRecord:
         uploader_user_id: 上传人 ID。
         uploader_name: 上传人展示名（身份底座成员目录接入前以用户 ID 兜底）。
         uploaded_at: 上传时间（ISO 8601）。
+        run_id: 处理批次号（R5 重新处理时换新批次，用于片段映射的新旧判定）。
         deleted_at: 软删除时间；未删除为 None。
     """
 
@@ -89,6 +96,7 @@ class DocumentRecord:
     uploader_user_id: str = ""
     uploader_name: str = ""
     uploaded_at: str = ""
+    run_id: str = ""
     deleted_at: str | None = None
 
     @property
@@ -108,6 +116,7 @@ class DocumentProgressPatch:
         estimated_remaining_seconds: 预估剩余秒数。
         segment_count: 内容片段数。
         error_message: 失败原因（业务语言）。
+        run_id: 处理批次号（为 None 表示不改动当前批次）。
     """
 
     stage: str = STAGE_UPLOADED
@@ -116,6 +125,7 @@ class DocumentProgressPatch:
     estimated_remaining_seconds: int | None = None
     segment_count: int = 0
     error_message: str | None = None
+    run_id: str | None = None
 
 
 class DocumentStoreProtocol(Protocol):
@@ -272,6 +282,7 @@ class InMemoryDocumentStore:
                 estimated_remaining_seconds=patch.estimated_remaining_seconds,
                 segment_count=patch.segment_count,
                 error_message=patch.error_message,
+                run_id=patch.run_id if patch.run_id is not None else current.run_id,
             )
             self._records[key] = updated
         return updated
@@ -374,11 +385,12 @@ class PostgresDocumentStore:
                 INSERT INTO {DOCUMENT_TABLE} (
                     tenant_id, document_id, base_id, file_name, file_size, chunk_policy,
                     stage, index_status, progress, estimated_remaining_seconds,
-                    segment_count, error_message, uploader_user_id, uploaded_at
+                    segment_count, error_message, uploader_user_id, run_id, uploaded_at
                 ) VALUES (
                     :tenant_id, :document_id, :base_id, :file_name, :file_size, :chunk_policy,
                     :stage, :index_status, :progress, :estimated_remaining_seconds,
-                    :segment_count, :error_message, :uploader_user_id, now()
+                    :segment_count, :error_message, :uploader_user_id,
+                    NULLIF(:run_id, ''), now()
                 )
                 ON CONFLICT (tenant_id, document_id) DO UPDATE SET
                     file_name = EXCLUDED.file_name,
@@ -388,7 +400,7 @@ class PostgresDocumentStore:
                 RETURNING tenant_id, document_id, base_id, file_name, file_size, chunk_policy,
                           stage, index_status, progress, estimated_remaining_seconds,
                           segment_count, error_message, uploader_user_id,
-                          uploaded_at, deleted_at
+                          uploaded_at, run_id, deleted_at
                 """,
                 repo.params(
                     document_id=record.document_id,
@@ -403,6 +415,7 @@ class PostgresDocumentStore:
                     segment_count=record.segment_count,
                     error_message=record.error_message,
                     uploader_user_id=record.uploader_user_id,
+                    run_id=record.run_id,
                 ),
             )
         return _to_record(row) if row is not None else record
@@ -423,7 +436,8 @@ class PostgresDocumentStore:
                 f"""
                 SELECT tenant_id, document_id, base_id, file_name, file_size, chunk_policy,
                        stage, index_status, progress, estimated_remaining_seconds,
-                       segment_count, error_message, uploader_user_id, uploaded_at, deleted_at
+                       segment_count, error_message, uploader_user_id, uploaded_at,
+                       run_id, deleted_at
                 FROM {DOCUMENT_TABLE}
                 WHERE {repo.tenant_clause()} AND document_id = :document_id
                   AND deleted_at IS NULL
@@ -468,7 +482,8 @@ class PostgresDocumentStore:
                 f"""
                 SELECT tenant_id, document_id, base_id, file_name, file_size, chunk_policy,
                        stage, index_status, progress, estimated_remaining_seconds,
-                       segment_count, error_message, uploader_user_id, uploaded_at, deleted_at
+                       segment_count, error_message, uploader_user_id, uploaded_at,
+                       run_id, deleted_at
                 FROM {DOCUMENT_TABLE}
                 WHERE {repo.tenant_clause()} AND base_id = :base_id
                   AND deleted_at IS NULL {keyword_filter} {stage_filter}
@@ -522,12 +537,14 @@ class PostgresDocumentStore:
                     estimated_remaining_seconds = :estimated_remaining_seconds,
                     segment_count = :segment_count,
                     error_message = :error_message,
+                    run_id = COALESCE(:run_id, run_id),
                     processed_at = CASE WHEN :stage = 'completed' THEN now() ELSE processed_at END
                 WHERE {repo.tenant_clause()} AND document_id = :document_id
                   AND deleted_at IS NULL
                 RETURNING tenant_id, document_id, base_id, file_name, file_size, chunk_policy,
                           stage, index_status, progress, estimated_remaining_seconds,
-                          segment_count, error_message, uploader_user_id, uploaded_at, deleted_at
+                          segment_count, error_message, uploader_user_id,
+                          uploaded_at, run_id, deleted_at
                 """,
                 repo.params(
                     document_id=document_id,
@@ -537,6 +554,7 @@ class PostgresDocumentStore:
                     estimated_remaining_seconds=patch.estimated_remaining_seconds,
                     segment_count=patch.segment_count,
                     error_message=patch.error_message,
+                    run_id=patch.run_id,
                 ),
             )
         return _to_record(row) if row is not None else None
@@ -687,6 +705,7 @@ def _to_record(row: Mapping[str, Any]) -> DocumentRecord:
         uploader_user_id=str(row.get("uploader_user_id", "")),
         uploader_name=str(row.get("uploader_user_id", "")),
         uploaded_at=_to_timestamp(row.get("uploaded_at")),
+        run_id=str(row.get("run_id", "") or ""),
         deleted_at=_to_timestamp(row.get("deleted_at")) or None,
     )
 
@@ -762,6 +781,8 @@ async def count_by_base_in_memory(tenant_id: str, base_id: str) -> int:
 __all__: list[str] = [
     "DEFAULT_CHUNK_POLICY",
     "DOCUMENT_TABLE",
+    "INDEX_STATUS_COMPLETED",
+    "INDEX_STATUS_FAILED",
     "INDEX_STATUS_PROCESSING",
     "STAGE_UPLOADED",
     "DocumentProgressPatch",

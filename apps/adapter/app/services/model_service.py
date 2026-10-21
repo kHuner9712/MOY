@@ -16,14 +16,22 @@ T01 阶段说明：`Settings.downstream_enabled=false` 时返回业务化 mock �
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any, Final
 
+from app.business.policy_service import PolicyService, get_policy_service
+from app.business.segment_service import SegmentHit, SegmentService, build_key
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
+from app.db.repositories.knowledge_base_repo import (
+    KnowledgeBaseStore,
+    get_knowledge_base_store,
+)
+from app.db.tenant import resolve_runtime_tenant
 from app.registry.loader import ProfileRoute, ProfileRouteTable, get_profile_routes
 from app.schemas.common import sse_frame
 from app.schemas.model import (
@@ -36,12 +44,14 @@ from app.schemas.model import (
     ProfileItem,
     ProfileStatus,
     Quota,
+    StreamCitationData,
     StreamDeltaData,
     StreamDoneData,
     StreamStartData,
     Usage,
     UsageData,
 )
+from app.schemas.rag import SegmentPosition
 
 logger = get_logger(__name__)
 
@@ -61,6 +71,74 @@ def new_generation_id() -> str:
     return new_resource_id(_GENERATION_PREFIX)
 
 
+def _base_id_of_native(native_dataset_id: Any) -> str:
+    """把底座数据集 ID 映射为自研知识库 ID。
+
+    Args:
+        native_dataset_id: 底座数据集 ID（可能为 None）。
+
+    Returns:
+        str: 自研知识库 ID；入参为空时返回空串。
+    """
+    text = str(native_dataset_id or "").strip()
+    return f"kb_{text}" if text else ""
+
+
+def _position_of_native(raw: Any) -> SegmentPosition | None:
+    """把底座引用位置映射为自研位置对象。
+
+    Args:
+        raw: 底座位置（整型序号或 `{page, paragraph}` 映射）。
+
+    Returns:
+        SegmentPosition | None: 自研位置；无法解析时返回 None。
+    """
+    if not isinstance(raw, dict) or not raw:
+        return None
+    page = raw.get("page")
+    paragraph = raw.get("paragraph")
+    if page is None and paragraph is None:
+        return None
+    return SegmentPosition(
+        page=int(page) if page not in (None, "") else None,
+        paragraph=int(paragraph) if paragraph not in (None, "") else None,
+    )
+
+
+@dataclass(slots=True)
+class CitationContext:
+    """流式引用回链的上下文（M2 专用）。
+
+    Attributes:
+        tenant_id: 租户 ID。
+        base_ids: 本次请求**已授权**的知识库 ID 列表（未授权的已在生成前剔除）。
+        base_names: `base_id → 知识库名称`。
+        hits: 回填 `segment_map` 的命中集合（流结束前统一异步写入）。
+        index: 片段序号计数器（底座未给序号时按到达顺序兜底）。
+    """
+
+    tenant_id: str
+    base_ids: tuple[str, ...] = ()
+    base_names: dict[str, str] = field(default_factory=dict)
+    hits: list[SegmentHit] = field(default_factory=list)
+    index: int = 0
+
+    def resolve_base(self, native_dataset_id: str) -> str:
+        """把底座数据集 ID 映射为自研知识库 ID。
+
+        Args:
+            native_dataset_id: 底座数据集 ID（可为空）。
+
+        Returns:
+            str: 自研知识库 ID；无法确定时返回空串。
+        """
+        if native_dataset_id:
+            return f"kb_{native_dataset_id}"
+        if len(self.base_ids) == 1:
+            return self.base_ids[0]
+        return ""
+
+
 class ModelService:
     """模型服务。
 
@@ -68,6 +146,8 @@ class ModelService:
         _settings: 配置实例。
         _routes: 能力档位路由表。
         _dify: 底座客户端。
+        _policy: 可见性判定服务（未授权库静默跳过）。
+        _segments: 片段映射服务（引用回链旁路回填）。
     """
 
     def __init__(
@@ -75,6 +155,9 @@ class ModelService:
         settings: Settings | None = None,
         routes: ProfileRouteTable | None = None,
         dify: DifyClient | None = None,
+        policy: PolicyService | None = None,
+        segments: SegmentService | None = None,
+        bases: KnowledgeBaseStore | None = None,
     ) -> None:
         """初始化服务。
 
@@ -82,10 +165,129 @@ class ModelService:
             settings: 可选配置实例。
             routes: 可选档位路由表，缺省从注册表加载。
             dify: 可选底座客户端，缺省取全局单例。
+            policy: 可选可见性判定服务（测试注入）。
+            segments: 可选片段映射服务（测试注入）。
+            bases: 可选知识库元数据存储（引用回链的名称回填）。
         """
         self._settings = settings or get_settings()
         self._routes = routes or get_profile_routes()
         self._dify = dify or get_dify_client()
+        self._policy: PolicyService = policy or get_policy_service(self._settings)
+        self._segments: SegmentService = segments or SegmentService(self._settings)
+        self._bases: KnowledgeBaseStore = bases or get_knowledge_base_store(self._settings)
+
+    # ------------------------------------------------------------------
+    # 租户与授权库解析（B05）
+    # ------------------------------------------------------------------
+    def _tenant_of(self, auth: AuthContext | None) -> str:
+        """解析本次生成所属租户。
+
+        Args:
+            auth: 鉴权上下文（服务层单测可为 None）。
+
+        Returns:
+            str: 租户 ID。
+        """
+        if auth is not None and auth.tenant_id:
+            return auth.tenant_id
+        return resolve_runtime_tenant(self._settings)
+
+    async def _authorized_base_ids(
+        self, request: GenerateRequest, auth: AuthContext | None
+    ) -> list[str]:
+        """过滤出已授权的知识库（未授权库在对话中**静默跳过**）。
+
+        Args:
+            request: 生成请求。
+            auth: 鉴权上下文。
+
+        Returns:
+            list[str]: 允许参与本次生成的知识库 ID。
+        """
+        authorized = await self._policy.filter_authorized(auth, request.knowledge_base_ids)
+        skipped = len(set(request.knowledge_base_ids)) - len(authorized)
+        if skipped:
+            logger.info(
+                "model_unauthorized_bases_skipped",
+                requested=len(set(request.knowledge_base_ids)),
+                allowed=len(authorized),
+                skipped=skipped,
+            )
+        return authorized
+
+    async def _base_names(self, tenant_id: str, base_ids: tuple[str, ...]) -> dict[str, str]:
+        """批量取知识库展示名（未登记库不出现在结果中）。
+
+        Args:
+            tenant_id: 租户 ID。
+            base_ids: 知识库 ID 列表。
+
+        Returns:
+            dict[str, str]: `base_id → 名称`。
+        """
+        names: dict[str, str] = {}
+        for base_id in base_ids:
+            record = await self._bases.get(tenant_id, base_id)
+            if record is not None and record.name:
+                names[base_id] = record.name
+        return names
+
+    async def _attach_citation_backlinks(
+        self,
+        data: GenerateData,
+        base_ids: list[str],
+        tenant_id: str,
+        *,
+        schedule: bool = True,
+    ) -> GenerateData:
+        """为引用补齐回链字段并回填片段映射（D-11）。
+
+        Args:
+            data: 生成结果。
+            base_ids: 本次请求已授权的知识库 ID。
+            tenant_id: 租户 ID。
+            schedule: 是否异步写库（流式路径 True，避免阻塞）。
+
+        Returns:
+            GenerateData: 补齐回链字段后的生成结果。
+        """
+        fallback = base_ids[0] if len(base_ids) == 1 else ""
+        names = await self._base_names(tenant_id, tuple(dict.fromkeys([*base_ids, fallback])))
+        hits: list[SegmentHit] = []
+        enriched: list[Citation] = []
+        for index, citation in enumerate(data.citations):
+            base_id = citation.base_id or fallback
+            segment_key = (
+                build_key(citation.document_id, index, citation.segment_content)
+                if citation.document_id
+                else ""
+            )
+            enriched.append(
+                citation.model_copy(
+                    update={
+                        "base_id": base_id,
+                        "base_name": names.get(base_id, ""),
+                        "segment_id": segment_key,
+                    }
+                )
+            )
+            if segment_key and base_id:
+                hits.append(
+                    SegmentHit(
+                        base_id=base_id,
+                        document_id=citation.document_id,
+                        segment_index=index,
+                        content=citation.segment_content,
+                        position_page=(
+                            citation.position.page if citation.position is not None else None
+                        ),
+                        position_paragraph=(
+                            citation.position.paragraph if citation.position is not None else None
+                        ),
+                    )
+                )
+        await self._segments.record_hits(tenant_id, hits, schedule=schedule)
+        return data.model_copy(update={"citations": enriched})
 
     # ------------------------------------------------------------------
     # 能力档位解析
@@ -133,12 +335,15 @@ class ModelService:
     # ------------------------------------------------------------------
     # M1 非流式生成
     # ------------------------------------------------------------------
-    async def generate(self, request: GenerateRequest, user_id: str = "") -> GenerateData:
+    async def generate(
+        self, request: GenerateRequest, user_id: str = "", auth: AuthContext | None = None
+    ) -> GenerateData:
         """执行非流式生成。
 
         Args:
             request: 生成请求。
             user_id: 终端用户标识（底座 user 字段必填，见 T02 联调修复）。
+            auth: 鉴权上下文（用于未授权库静默跳过与引用回链的租户解析）。
 
         Returns:
             GenerateData: 自研生成结果（`content` / `usage.*_units` / `citations`）。
@@ -147,12 +352,13 @@ class ModelService:
             ApiError: 档位不可用（10004）、上下文超窗（10002）、生成失败（10001）。
         """
         self.resolve_route(request.profile)
+        authorized = await self._authorized_base_ids(request, auth)
         logger.info(
             "model_generate_requested",
             conversation_id=request.conversation_id,
             profile=request.profile.value,
             message_count=len(request.messages),
-            knowledge_base_count=len(request.knowledge_base_ids),
+            knowledge_base_count=len(authorized),
         )
 
         if self._settings.mock_mode:
@@ -166,7 +372,10 @@ class ModelService:
         if isinstance(payload.get("answer"), str):
             flt = _ReasoningFilter()
             payload = {**payload, "answer": flt.feed(payload["answer"]) + flt.flush()}
-        return self._transform_generate_response(payload)
+        data = self._transform_generate_response(payload)
+        return await self._attach_citation_backlinks(
+            data, authorized, self._tenant_of(auth), schedule=False
+        )
 
     def _build_downstream_payload(
         self, request: GenerateRequest, user_id: str = ""
@@ -256,6 +465,8 @@ class ModelService:
                         document_name=str(item.get("document_name", "")),
                         segment_content=str(item.get("content", "")),
                         score=float(item.get("score", 0.0)),
+                        base_id=_base_id_of_native(item.get("dataset_id")),
+                        position=_position_of_native(item.get("position")),
                     )
                 )
 
@@ -344,7 +555,7 @@ class ModelService:
         self.resolve_route(profile)
 
     async def generate_stream(
-        self, request: GenerateRequest, user_id: str = ""
+        self, request: GenerateRequest, user_id: str = "", auth: AuthContext | None = None
     ) -> AsyncIterator[str]:
         """执行流式生成，产出自研 SSE 帧序列。
 
@@ -353,6 +564,8 @@ class ModelService:
 
         Args:
             request: 生成请求（同 M1）。
+            user_id: 终端用户标识。
+            auth: 鉴权上下文（未授权库静默跳过 + 引用回链租户解析）。
 
         Yields:
             str: SSE 文本帧。
@@ -366,11 +579,19 @@ class ModelService:
             yield sse_frame("error", {"code": int(exc.code), "message": exc.message})
             return
 
+        authorized = await self._authorized_base_ids(request, auth)
+        tenant_id = self._tenant_of(auth)
+        citation_ctx = CitationContext(
+            tenant_id=tenant_id,
+            base_ids=tuple(authorized),
+            base_names=await self._base_names(tenant_id, tuple(authorized)),
+        )
         generation_id = new_generation_id()
         logger.info(
             "model_stream_started",
             conversation_id=request.conversation_id,
             profile=request.profile.value,
+            knowledge_base_count=len(authorized),
         )
         yield sse_frame("start", StreamStartData(generation_id=generation_id).model_dump())
 
@@ -398,14 +619,19 @@ class ModelService:
                     rest = reasoning_filter.flush()
                     if rest:
                         yield sse_frame("delta", StreamDeltaData(text=rest).model_dump())
-                mapped_frame = self._transform_stream_event(event)
+                mapped_frame = self._transform_stream_event(event, citation_ctx)
                 if mapped_frame is not None:
                     yield mapped_frame
         except ApiError as exc:
             logger.warning("model_stream_failed", detail=exc.log_message)
             yield sse_frame("error", {"code": int(exc.code), "message": exc.message})
+        finally:
+            # 引用回链旁路回填：不阻塞流，写失败只记 WARN
+            await self._segments.record_hits(tenant_id, citation_ctx.hits, schedule=True)
 
-    def _transform_stream_event(self, event: dict[str, Any]) -> str | None:
+    def _transform_stream_event(
+        self, event: dict[str, Any], citation_ctx: CitationContext | None = None
+    ) -> str | None:
         """将底座原生流式事件转换为自研 SSE 帧。
 
         映射关系（架构文档 3.1.6）：
@@ -414,6 +640,7 @@ class ModelService:
 
         Args:
             event: 底座原生事件字典。
+            citation_ctx: 引用回链上下文（缺省时引用帧只带既有字段）。
 
         Returns:
             str | None: 自研 SSE 帧；无需下发的事件返回 `None`。
@@ -426,13 +653,7 @@ class ModelService:
             )
 
         if native_event == "message_file":
-            return sse_frame(
-                "citation",
-                {
-                    "document_name": str(event.get("filename", "")),
-                    "segment_content": str(event.get("content", "")),
-                },
-            )
+            return sse_frame("citation", self._build_citation_payload(event, citation_ctx))
 
         if native_event == "message_end":
             usage_native = event.get("metadata", {})
@@ -450,6 +671,50 @@ class ModelService:
             return sse_frame("error", {"code": int(mapped.code), "message": mapped.message})
 
         return None
+
+    def _build_citation_payload(
+        self, event: dict[str, Any], citation_ctx: CitationContext | None
+    ) -> dict[str, Any]:
+        """构造 `citation` 事件载荷（含回链字段，到达即可点击）。
+
+        Args:
+            event: 底座原生 `message_file` 事件。
+            citation_ctx: 引用回链上下文。
+
+        Returns:
+            dict[str, Any]: 自研 `citation` 载荷。
+        """
+        document_name = str(event.get("filename", ""))
+        content = str(event.get("content", ""))
+        document_id = str(event.get("document_id", ""))
+        payload = StreamCitationData(document_name=document_name, segment_content=content)
+        if citation_ctx is None:
+            return payload.model_dump()
+        base_id = citation_ctx.resolve_base(str(event.get("dataset_id", "")))
+        segment_key = build_key(document_id, citation_ctx.index, content) if document_id else ""
+        position = _position_of_native(event.get("position"))
+        enriched = StreamCitationData(
+            document_name=document_name,
+            segment_content=content,
+            document_id=document_id,
+            base_id=base_id,
+            base_name=citation_ctx.base_names.get(base_id, ""),
+            segment_id=segment_key,
+            position=position,
+        )
+        if segment_key and base_id:
+            citation_ctx.hits.append(
+                SegmentHit(
+                    base_id=base_id,
+                    document_id=document_id,
+                    segment_index=citation_ctx.index,
+                    content=content,
+                    position_page=position.page if position is not None else None,
+                    position_paragraph=position.paragraph if position is not None else None,
+                )
+            )
+        citation_ctx.index += 1
+        return enriched.model_dump()
 
     async def _stub_stream(
         self, generation_id: str, request: GenerateRequest

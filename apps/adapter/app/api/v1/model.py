@@ -57,7 +57,7 @@ async def generate(
     service = get_model_service()
 
     async def factory() -> GenerateData:
-        return await service.generate(body, context.auth.user_id)
+        return await service.generate(body, context.auth.user_id, context.auth)
 
     result, replayed = await run_idempotent(request, context, factory, manager)
     if replayed:
@@ -100,7 +100,7 @@ async def generate_stream(
     # SSE 响应一旦开始写出便无法再返回统一错误体，故先做档位校验
     service.ensure_profile_available(body.profile)
     return StreamingResponse(
-        service.generate_stream(body, user_id),
+        service.generate_stream(body, user_id, context.auth),
         media_type=SSE_MEDIA_TYPE,
         headers=SSE_HEADERS,
     )

@@ -1,19 +1,19 @@
-"""知识库元数据业务能力（阶段二 B04，架构文档 5 类图 / PRD P2-KB-01）。
+"""知识库元数据业务能力（阶段二 B04/B05，架构文档 5 类图 / PRD P2-KB-01）。
 
 职责边界：
 
 - 本层是**知识库库级设置的权威**与判权出口（改名 / 改可见范围 / 改内容切分精细度 / 删除）；
 - `services/rag_service.py` 只做协议转换，调用本层落库；
-- `db/repositories/knowledge_base_repo.py` 只有 SQL 与内存存储。
+- `db/repositories/knowledge_base_repo.py` 只有 SQL 与内存存储；
+- 可见性判定统一交给 `business/policy_service.py`（列表 / 检索 / 问答同一套）。
 
 三条业务规则（本批最容易做错的地方）：
 
 1. **删除判权**（PRD v1.1 冻结口径）：`owner` / `org_admin` 可删任意库；
    `member` 仅当 `base.owner_user_id == auth.user_id`（自己创建的库）时可删；
    `guest` 一律 `20003`。删除为**软删除**：列表立即不可见、操作记录保留。
-2. **`my_role` 不写死**：由 `owner_user_id` 与令牌角色推导——
-   所有者 → `owner`，组织管理员 → `editor`，其余 → `viewer`；
-   B05 授权表落地后由 `grant_permission` 参数参与判定（同一函数，不改签名语义）。
+2. **`my_role` 不写死**：由 `owner_user_id`、授权表（`grant_permission`）与令牌角色推导——
+   所有者 → `owner`，授权 `editor` / 组织管理员 → `editor`，其余 → `viewer`。
 3. **改内容切分精细度只影响之后上传的文档**：已处理文档需在文档行点
    「按新设置重新处理」（R5），本层不改存量文档的 `chunk_policy`。
 """
@@ -29,6 +29,15 @@ from app.business.audit_service import (
     RESOURCE_KNOWLEDGE_BASE,
     AuditService,
     get_audit_recorder,
+)
+from app.business.policy_service import (
+    GUEST_ROLES,
+    ORG_ADMIN_ROLES,
+    WILDCARD_ROLE,
+    PolicyService,
+    get_policy_service,
+    has_admin_role,
+    is_guest_role,
 )
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -63,15 +72,6 @@ logger = get_logger(__name__)
 #: 知识库 ID 前缀（与 `services/rag_service.py` 的 `new_base_id()` 保持一致）
 BASE_ID_PREFIX: Final[str] = "kb_"
 
-#: 组织管理员角色（令牌 `roles` 中出现任一即视为组织管理员）
-ORG_ADMIN_ROLES: Final[frozenset[str]] = frozenset({"owner", "org_admin", "admin"})
-
-#: 访客角色（只读，任何写操作一律拒绝）
-GUEST_ROLES: Final[frozenset[str]] = frozenset({"guest"})
-
-#: 通配角色（平台运维令牌）
-WILDCARD_ROLE: Final[str] = "*"
-
 #: 名称最大长度（与数据库 CHECK 一致）
 NAME_MAX_LENGTH: Final[int] = 128
 
@@ -89,7 +89,7 @@ def new_base_id_value() -> str:
 
 
 def is_org_admin(auth: AuthContext) -> bool:
-    """判断是否为组织管理员。
+    """判断是否为组织管理员（规则唯一实现在 `PolicyService`）。
 
     Args:
         auth: 鉴权上下文。
@@ -97,10 +97,7 @@ def is_org_admin(auth: AuthContext) -> bool:
     Returns:
         bool: 令牌角色命中管理员集合（或通配）时返回 True。
     """
-    roles = {str(role).strip().lower() for role in auth.roles}
-    if WILDCARD_ROLE in roles:
-        return True
-    return bool(roles & ORG_ADMIN_ROLES)
+    return has_admin_role(auth)
 
 
 def is_guest(auth: AuthContext) -> bool:
@@ -112,10 +109,7 @@ def is_guest(auth: AuthContext) -> bool:
     Returns:
         bool: 命中访客角色且非管理员时返回 True。
     """
-    if is_org_admin(auth):
-        return False
-    roles = {str(role).strip().lower() for role in auth.roles}
-    return bool(roles & GUEST_ROLES)
+    return is_guest_role(auth)
 
 
 class KnowledgeBaseService:
@@ -134,6 +128,7 @@ class KnowledgeBaseService:
         store: KnowledgeBaseStore | None = None,
         documents: DocumentStoreProtocol | None = None,
         audit: AuditService | None = None,
+        policy: PolicyService | None = None,
     ) -> None:
         """初始化服务。
 
@@ -142,6 +137,7 @@ class KnowledgeBaseService:
             store: 可选知识库存储（测试注入）。
             documents: 可选文档存储（测试注入）。
             audit: 可选操作记录服务（测试注入）。
+            policy: 可选可见性判定服务（测试注入；缺省取进程单例）。
         """
         self._settings = settings or get_settings()
         self._store: KnowledgeBaseStore = store or get_knowledge_base_store(self._settings)
@@ -149,6 +145,12 @@ class KnowledgeBaseService:
         self._audit: AuditService = audit or AuditService(
             self._settings, recorder=get_audit_recorder(self._settings)
         )
+        self._policy: PolicyService = policy or get_policy_service(self._settings)
+
+    @property
+    def policy(self) -> PolicyService:
+        """可见性判定服务（授权变更后由调用方失效其缓存）。"""
+        return self._policy
 
     @property
     def store(self) -> KnowledgeBaseStore:
@@ -192,7 +194,9 @@ class KnowledgeBaseService:
         return KnowledgeBaseRole.VIEWER
 
     def is_visible(self, record: KnowledgeBaseRecord, auth: AuthContext) -> bool:
-        """判断该知识库对当前用户是否可见（B05 授权表接入前为 fail-closed 口径）。
+        """判断该知识库对当前用户是否可见（同步版，仅静态规则）。
+
+        需要授权表判定时请用 `require_readable()`（异步，带 5s 缓存快照）。
 
         Args:
             record: 知识库记录。
@@ -201,18 +205,25 @@ class KnowledgeBaseService:
         Returns:
             bool: 可见返回 True。
         """
-        return self._viewer_of(auth).can_see(record)
+        return self._policy.is_visible(record, auth)
 
-    def _viewer_of(self, auth: AuthContext) -> KnowledgeBaseViewer:
+    def _viewer_of(
+        self, auth: AuthContext, allowed_base_ids: tuple[str, ...] = ()
+    ) -> KnowledgeBaseViewer:
         """构造观察者上下文。
 
         Args:
             auth: 鉴权上下文。
+            allowed_base_ids: 授权可见的知识库 ID（由 `PolicyService` 计算）。
 
         Returns:
             KnowledgeBaseViewer: 观察者上下文。
         """
-        return KnowledgeBaseViewer(user_id=auth.user_id, is_admin=is_org_admin(auth))
+        return KnowledgeBaseViewer(
+            user_id=auth.user_id,
+            is_admin=is_org_admin(auth),
+            allowed_base_ids=tuple(sorted(allowed_base_ids)),
+        )
 
     def assert_can_update(self, record: KnowledgeBaseRecord, auth: AuthContext) -> None:
         """校验「修改知识库设置」对象级权限。
@@ -336,6 +347,9 @@ class KnowledgeBaseService:
     async def list(self, query: ListBasesQuery, auth: AuthContext) -> PageResult[KnowledgeBaseItem]:
         """查询知识库列表（分页 + 关键字 + 可见范围过滤）。
 
+        `restricted` 库通过授权表判定可见：先取 5s 快照（含授权可见库集合），
+        再把该集合交给存储层做 SQL 过滤——保证 `total` 与分页一致（无 N+1）。
+
         Args:
             query: 分页与关键字参数。
             auth: 鉴权上下文。
@@ -343,14 +357,18 @@ class KnowledgeBaseService:
         Returns:
             PageResult[KnowledgeBaseItem]: 分页结果。
         """
+        snapshot = await self._policy.snapshot(auth)
         records, total = await self._store.list(
             auth.tenant_id,
             keyword=query.keyword,
-            viewer=self._viewer_of(auth),
+            viewer=self._viewer_of(auth, tuple(snapshot.granted_base_ids)),
             limit=query.page_size,
             offset=query.offset,
         )
-        items = [await self._to_item(record, auth) for record in records]
+        items = [
+            await self._to_item(record, auth, snapshot.permission_of(record.base_id))
+            for record in records
+        ]
         logger.info(
             "knowledge_base_list_loaded",
             keyword=query.keyword,
@@ -360,12 +378,15 @@ class KnowledgeBaseService:
         )
         return build_page(items=items, total=total, page=query.page, page_size=query.page_size)
 
-    async def _to_item(self, record: KnowledgeBaseRecord, auth: AuthContext) -> KnowledgeBaseItem:
+    async def _to_item(
+        self, record: KnowledgeBaseRecord, auth: AuthContext, grant_permission: str | None = None
+    ) -> KnowledgeBaseItem:
         """把记录转换为对外条目。
 
         Args:
             record: 知识库记录。
             auth: 鉴权上下文。
+            grant_permission: 该用户在该库上的授权级别（`viewer` / `editor`）。
 
         Returns:
             KnowledgeBaseItem: 对外条目。
@@ -378,7 +399,7 @@ class KnowledgeBaseService:
             description=record.description,
             visibility=_visibility_of(record.visibility),
             chunk_policy=_chunk_policy_of(record.chunk_policy),
-            my_role=self.resolve_role(record, auth),
+            my_role=self.resolve_role(record, auth, grant_permission=grant_permission),
             document_count=record.document_count,
             created_at=record.created_at,
             updated_at=record.updated_at,
@@ -550,7 +571,7 @@ class KnowledgeBaseService:
         record = await self._store.get(auth.tenant_id, base_id)
         if record is None:
             raise ApiError(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND, internal_detail=f"base_id={base_id}")
-        if not self.is_visible(record, auth):
+        if not await self._policy.can_read(auth, record):
             raise ApiError(
                 ErrorCode.FORBIDDEN,
                 internal_detail=f"user_id={auth.user_id} cannot read base_id={base_id}",

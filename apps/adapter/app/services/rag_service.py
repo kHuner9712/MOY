@@ -17,6 +17,12 @@ B04 落库边界（架构文档 9.2 第 8 条）：
 - R2 列表 → `KnowledgeBaseService.list()`（含 `my_role` / `updated_at`）；
 - R3 上传 → `DocumentService.register_document()`（不带 `chunk_policy` 时按库级处理）；
 - R4 进度 → 已落库文档直接读本地记录，未落库时回落到桩结果（保证既有回归不变）。
+
+B05 追加（引用回链 D-11）：
+
+- R7 命中结果带 `base_id` / `base_name` / `segment_id`，并旁路回填 `segment_map`；
+- R7 先做对象级判权（`20003`），未登记元数据的历史库保持阶段一行为；
+- R5 成功完成后由 `DocumentService` 把旧批次映射统一转 stale（见其实现）。
 """
 
 from __future__ import annotations
@@ -27,6 +33,8 @@ from typing import Any, Final
 from app.business.credential_service import CredentialResolver, get_credential_resolver
 from app.business.document_service import DocumentService, map_stage
 from app.business.knowledge_base_service import KnowledgeBaseService
+from app.business.policy_service import PolicyService, get_policy_service
+from app.business.segment_service import SegmentHit, SegmentService, build_key
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -152,6 +160,8 @@ class RagService:
         resolver: CredentialResolver | None = None,
         bases: KnowledgeBaseService | None = None,
         documents: DocumentService | None = None,
+        policy: PolicyService | None = None,
+        segments: SegmentService | None = None,
     ) -> None:
         """初始化服务。
 
@@ -162,6 +172,8 @@ class RagService:
             resolver: 可选凭据解析器（测试注入）。
             bases: 可选知识库业务服务（测试注入）。
             documents: 可选文档业务服务（测试注入）。
+            policy: 可选可见性判定服务（测试注入）。
+            segments: 可选片段映射服务（测试注入）。
         """
         self._settings = settings or get_settings()
         self._routes = routes or get_profile_routes()
@@ -170,6 +182,10 @@ class RagService:
         self._bases: KnowledgeBaseService = bases or KnowledgeBaseService(self._settings)
         self._documents: DocumentService = documents or DocumentService(
             self._settings, bases=self._bases
+        )
+        self._policy: PolicyService = policy or get_policy_service(self._settings)
+        self._segments: SegmentService = segments or SegmentService(
+            self._settings, documents=self._documents.store, bases=self._bases
         )
 
     # ------------------------------------------------------------------
@@ -620,16 +636,18 @@ class RagService:
         """执行知识库检索。
 
         召回参数经适配层默认策略校准后下发，底座参数不对外暴露（附录 A-3）。
+        命中片段附带 `base_id` / `base_name` / `segment_id` 并回填片段映射（D-11）。
 
         Args:
             request: 检索请求。
-            auth: 鉴权上下文（用于 per-kb 凭据的租户解析）。
+            auth: 鉴权上下文（用于 per-kb 凭据的租户解析与对象级判权）。
 
         Returns:
             SearchData: 命中片段列表。
 
         Raises:
-            ApiError: 知识库不存在（11001）、检索失败（11005）或凭据不可用（11007）。
+            ApiError: 知识库不存在（11001）、无权限（20003）、检索失败（11005）
+                或凭据不可用（11007）。
         """
         logger.info(
             "knowledge_search_requested",
@@ -637,6 +655,7 @@ class RagService:
             top_k=request.top_k,
             score_threshold=request.score_threshold,
         )
+        await self._assert_readable(request.base_id, auth)
         if self._settings.mock_mode:
             return SearchData(segments=[])
 
@@ -656,7 +675,90 @@ class RagService:
             },
             api_key=api_key,
         )
-        return self._transform_search_result(response.payload)
+        data = self._transform_search_result(response.payload)
+        return await self._attach_backlinks(data, request.base_id, auth)
+
+    async def _assert_readable(self, base_id: str, auth: AuthContext | None) -> None:
+        """R7 的对象级判权（与列表 / 问答同一套可见性判定）。
+
+        未在本地元数据登记的历史库**保持阶段一行为**（无法判定可见性时不阻断）：
+        阶段一已有调用方直接检索外部库，强制 11001 会让兼容性红线破裂。
+
+        Args:
+            base_id: 知识库 ID。
+            auth: 鉴权上下文。
+
+        Raises:
+            ApiError: 用户无权读取该知识库（20003）。
+        """
+        if auth is None:
+            return
+        record = await self._bases.store.get(auth.tenant_id, base_id)
+        if record is None:
+            return
+        if not await self._policy.can_read(auth, record):
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                internal_detail=f"user_id={auth.user_id} cannot read base_id={base_id}",
+            )
+
+    async def _attach_backlinks(
+        self, data: SearchData, base_id: str, auth: AuthContext | None
+    ) -> SearchData:
+        """为命中片段补齐回链字段并回填片段映射。
+
+        Args:
+            data: 检索结果。
+            base_id: 知识库 ID。
+            auth: 鉴权上下文。
+
+        Returns:
+            SearchData: 补齐回链字段后的检索结果。
+        """
+        tenant_id = self._tenant_of(auth)
+        base_name = await self._base_name_of(tenant_id, base_id)
+        tenant_hits: list[SegmentHit] = []
+        enriched: list[SearchSegment] = []
+        for index, segment in enumerate(data.segments):
+            segment_key = build_key(segment.document_id, index, segment.segment_content)
+            enriched.append(
+                segment.model_copy(
+                    update={
+                        "base_id": base_id,
+                        "base_name": base_name,
+                        "segment_id": segment_key,
+                    }
+                )
+            )
+            if segment.document_id:
+                tenant_hits.append(
+                    SegmentHit(
+                        base_id=base_id,
+                        document_id=segment.document_id,
+                        segment_index=index,
+                        content=segment.segment_content,
+                        position_page=segment.position.page if segment.position else None,
+                        position_paragraph=(
+                            segment.position.paragraph if segment.position else None
+                        ),
+                    )
+                )
+        # R7 是单次请求：直接写入（≤ top_k 行），失败只记 WARN，不影响检索结果
+        await self._segments.record_hits(tenant_id, tenant_hits, schedule=False)
+        return data.model_copy(update={"segments": enriched})
+
+    async def _base_name_of(self, tenant_id: str, base_id: str) -> str:
+        """取知识库展示名（未登记时返回空串）。
+
+        Args:
+            tenant_id: 租户 ID。
+            base_id: 知识库 ID。
+
+        Returns:
+            str: 知识库名称。
+        """
+        record = await self._bases.store.get(tenant_id, base_id)
+        return record.name if record is not None else ""
 
     def _transform_search_result(self, payload: dict[str, Any]) -> SearchData:
         """将底座原生检索结果转换为自研片段列表。

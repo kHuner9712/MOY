@@ -22,6 +22,8 @@ from jose import jwt
 
 from app.business.audit_service import reset_audit_recorder
 from app.business.credential_service import reset_credential_resolver
+from app.business.policy_service import reset_policy_service
+from app.business.segment_service import reset_segment_service
 from app.clients.dify_client import reset_dify_client
 from app.clients.keycloak_client import reset_keycloak_client
 from app.core.config import Settings, get_settings, reset_settings_cache
@@ -36,7 +38,9 @@ from app.core.logging import reset_logging_for_test
 from app.core.ratelimit import RateLimiter, reset_rate_limiter
 from app.db.repositories.credential_repo import reset_credential_stores
 from app.db.repositories.document_repo import reset_document_store
+from app.db.repositories.grant_repo import reset_grant_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
+from app.db.repositories.segment_repo import reset_segment_store
 from app.main import create_app
 from app.registry.loader import reset_registry_cache
 from app.services.agent_service import reset_agent_service
@@ -159,6 +163,10 @@ def _reset_all() -> None:
     reset_credential_stores()
     reset_knowledge_base_store()
     reset_document_store()
+    reset_grant_store()
+    reset_segment_store()
+    reset_segment_service()
+    reset_policy_service()
     reset_audit_recorder()
     reset_logging_for_test()
 

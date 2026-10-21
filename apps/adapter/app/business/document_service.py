@@ -1,4 +1,4 @@
-"""文档元数据业务能力（阶段二 B04，架构文档 5 类图 / PRD P2-KB-02）。
+"""文档元数据业务能力（阶段二 B04/B05，架构文档 5 类图 / PRD P2-KB-02）。
 
 两条硬规则：
 
@@ -7,6 +7,15 @@
    （数据库 CHECK 约束兜底，本层不再二次校验）。
 2. **清单必须分页**：单库 5000 条文档时第 250 页也必须稳定返回，
    `list_documents()` 一律走存储层 `LIMIT/OFFSET + COUNT(*)`，禁止全量捞取再切片。
+
+B05 追加的两条引用回链联动（架构文档 2.4 第 3 条）：
+
+- **R5 重新处理 → 换批次号**：`mark_reprocessing()` 生成新 `run_id`，旧片段映射行不动
+  （处理期间旧引用仍可查看）；
+- **新批次成功完成 → 旧引用统一转 stale**：`refresh_progress()` 在 `stage=completed`
+  时调用 `SegmentService.mark_stale(keep_run_id=当前批次)`；**失败不置 stale**
+  （未成功处理不应让用户丢引用）；
+- **R6 删除文档 → 映射转 deleted**：抽屉展示「该引用已不可查看」。
 
 用户可见文案集中在 `STAGE_DISPLAY_NAMES`（已上传 / 正在读取内容 / 正在准备内容 /
 可使用 / 处理未成功），**不出现**任何技术术语。
@@ -26,6 +35,7 @@ from app.business.audit_service import (
     get_audit_recorder,
 )
 from app.business.knowledge_base_service import KnowledgeBaseService
+from app.business.segment_service import SegmentService
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
@@ -53,6 +63,9 @@ logger = get_logger(__name__)
 
 #: 文档 ID 前缀（与 `services/rag_service.py` 的 `new_document_id()` 保持一致）
 DOCUMENT_ID_PREFIX: Final[str] = "doc_"
+
+#: 处理批次号前缀（R5 重新处理换新批次）
+RUN_ID_PREFIX: Final[str] = "run_"
 
 #: 底座七态 → 自研五态（附录 A-3 的细化版，原状态名不外泄）
 NATIVE_STAGE_MAP: Final[dict[str, DocumentStage]] = {
@@ -237,6 +250,7 @@ class DocumentService:
         store: DocumentStoreProtocol | None = None,
         bases: KnowledgeBaseService | None = None,
         audit: AuditService | None = None,
+        segments: SegmentService | None = None,
     ) -> None:
         """初始化服务。
 
@@ -245,12 +259,16 @@ class DocumentService:
             store: 可选文档存储（测试注入）。
             bases: 可选知识库服务（测试注入）。
             audit: 可选操作记录服务（测试注入）。
+            segments: 可选片段映射服务（测试注入；用于引用回链状态迁移）。
         """
         self._settings = settings or get_settings()
         self._store: DocumentStoreProtocol = store or get_document_store(self._settings)
         self._bases: KnowledgeBaseService = bases or KnowledgeBaseService(self._settings)
         self._audit: AuditService = audit or AuditService(
             self._settings, recorder=get_audit_recorder(self._settings)
+        )
+        self._segments: SegmentService = segments or SegmentService(
+            self._settings, documents=self._store
         )
 
     @property
@@ -315,6 +333,7 @@ class DocumentService:
             uploader_user_id=auth.user_id,
             uploader_name=auth.user_id,
             uploaded_at="",
+            run_id=new_resource_id(RUN_ID_PREFIX),
         )
         stored = await self._store.create(record)
         await self._audit.record(
@@ -487,10 +506,36 @@ class DocumentService:
             segment_count=segment_count,
             error_message=error_message,
         )
-        return await self._store.update_progress(tenant_id, document_id, patch)
+        updated = await self._store.update_progress(tenant_id, document_id, patch)
+        if view.stage is DocumentStage.COMPLETED:
+            await self._close_previous_runs(tenant_id, document_id, updated)
+        return updated
+
+    async def _close_previous_runs(
+        self, tenant_id: str, document_id: str, record: DocumentRecord | None
+    ) -> None:
+        """新批次成功完成：把旧批次的片段映射统一转 stale（架构文档 2.4 第 3 条）。
+
+        失败路径**不**调用本方法：未成功处理不应让用户丢引用。
+
+        Args:
+            tenant_id: 租户 ID。
+            document_id: 文档 ID。
+            record: 更新后的文档记录（取当前批次号）。
+        """
+        current = record or await self._store.get(tenant_id, document_id)
+        keep_run_id = current.run_id if current is not None else ""
+        try:
+            await self._segments.mark_stale(tenant_id, document_id, keep_run_id=keep_run_id)
+        except Exception as exc:
+            logger.warning(
+                "segment_stale_marking_failed",
+                document_id=document_id,
+                reason=type(exc).__name__,
+            )
 
     async def mark_reprocessing(self, *, tenant_id: str, document_id: str) -> DocumentRecord | None:
-        """把文档置回「正在读取内容」（R5 重新处理）。
+        """把文档置回「正在读取内容」，并换新处理批次（R5 重新处理）。
 
         Args:
             tenant_id: 租户 ID。
@@ -505,6 +550,7 @@ class DocumentService:
             progress=0,
             estimated_remaining_seconds=None,
             error_message=None,
+            run_id=new_resource_id(RUN_ID_PREFIX),
         )
         return await self._store.update_progress(tenant_id, document_id, patch)
 
@@ -546,6 +592,14 @@ class DocumentService:
         removed = await self._store.soft_delete(tenant_id, document_id)
         if not removed:
             return False
+        try:
+            await self._segments.mark_deleted(tenant_id, document_id)
+        except Exception as exc:
+            logger.warning(
+                "segment_delete_marking_failed",
+                document_id=document_id,
+                reason=type(exc).__name__,
+            )
         await self._audit.record(
             tenant_id=tenant_id,
             actor_id=actor_id,
@@ -562,6 +616,7 @@ __all__: list[str] = [
     "MAX_ESTIMATE_SECONDS",
     "NATIVE_STAGE_MAP",
     "PROCESSING_STAGES",
+    "RUN_ID_PREFIX",
     "DocumentService",
     "StageView",
     "map_stage",
