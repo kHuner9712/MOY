@@ -400,3 +400,22 @@ cd apps/adapter && ./.venv/Scripts/python.exe -m pytest \
 | QA-P3-06 | G-11 scratch 库偶发撞锁（见 §10.6） | 观测到 1 次 | 重试 + `finally` 清理 + 库名带 worker 后缀 |
 
 **工作区归属说明（避免误认领）**：截至本报告定稿，仓库工作树中仍有未提交/未跟踪内容——`.github/workflows/ci-adapter.yml`（改动）、`apps/adapter/scripts/`（G-13 脚本）、`apps/adapter/tests/integration/test_b05_guard_regressions.py`、`apps/adapter/tests/unit/test_policy_permission_guards.py`、本报告。其中 **`test_policy_permission_guards.py` 与 `test_b05_guard_regressions.py` 非 QA 产出**（QA 本批只新增 `test_qa_b05_b06_verification.py`，已随 `5a036be` 提交），如需纳入准出判据请先提交，QA 再按 §9 命令复跑。
+
+---
+
+## 11. R03 终局确认（HEAD 冻结 `5059a83`）
+
+HEAD 冻结后按主理人约定跑了 R03 最小确认轮，**不重开全面评审、不改代码**，详见 `docs/qa-phase2-w1-r03-report.md`。关键数字（本报告 §2/§10 的数字为历史快照，以本节为准）：
+
+| 项 | 结果 |
+| --- | --- |
+| `pytest -q --run-pg` | **829 passed / 0 failed / 0 skipped** |
+| `test_qa_b05_b06_verification.py` | **15 passed**（15/15；约定写的 14 为 R02 前的旧数，第 15 条是跨租户用例 `test_a2c_*`） |
+| ruff / format / mypy | 全绿（`116 files already formatted` / `73 source files`） |
+| `validate_openapi.py --allow-missing-phase2` | `core=30 phase2=9/38`、`G1-G5 全部通过` |
+| 覆盖率（附加核验） | 总 **88.06%**、business+db **86.09%**——与豁免单 W-01/W-02 声明**逐字一致**，W-02 撤销豁免成立 |
+| G-13（附加核验） | `check_error_catalog.py` 退出码 **0**，`39 码全被 business-errors.ts 覆盖`，13 个待落地码按域放行 |
+
+**结论：W1 准出 PASS（B05 + B06，基线 `5059a83`），新增 P0 = 0 / P1 = 0。**
+
+遗留项状态：QA-P2-03 → 豁免单 W-01（B07 复核 / B15 关闭）；QA-P3-04 → `f168e85` 已闭环；QA-P3-05 → 已在 `docs/qa-phase2-test-plan.md` 追加 §5.9 映射校准；QA-P3-06 → 不阻断建议项（G-11 scratch 库撞锁加固）。

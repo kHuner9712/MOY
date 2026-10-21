@@ -1115,6 +1115,43 @@ deploy/
 
 ---
 
+### 5.9 映射校准（B05/B06 实测用例名，落实 QA-P3-05）
+
+> **背景**：本方案 §4/§5 早期给出的「落点名」是**设计期预测名**，工程师实现时取名不同，导致「按编号找用例」时要多跳一次。依 R02 裁定（见 `docs/qa-phase2-waivers.md` §二 QA-P3-05），此处以**实测名**为准做一次校准；**用例编号与判据不变**，仅同步落点。
+
+| 用例编号 | 方案原预测落点 | **实测落点（以此为准）** |
+| --- | --- | --- |
+| TC-P2-KB03-01 | `test_grant_and_backlink.py::test_restricted_base_hidden_from_ungranted_list` | `test_grant_and_backlink.py::test_restricted_base_is_visible_only_to_granted_member` |
+| TC-P2-KB03-02 | `::test_restricted_base_detail_and_search_return_20003` | 同上（同一用例内含 KB3 直连与 R7 两条断言） |
+| TC-P2-KB03-03 | `::test_chat_silently_skips_unauthorized_base` | `::test_conversation_silently_skips_unauthorized_base` |
+| TC-P2-KB03-04 | `::test_department_grant_covers_subtree_and_revokes_within_5s` | `::test_department_grant_applies_to_current_members`（≤5s 由 `tests/unit/test_grant_service.py::test_permission_cache_expires_within_five_seconds` 证 TTL） |
+| TC-P2-KB03-05 | `::test_role_grant_effective_and_revocable` | `::test_revoke_grant_takes_effect_immediately`（角色授权生效在 `tests/unit/test_grant_service.py`） |
+| TC-P2-KB03-06 | `::test_duplicate_grant_counts_as_skipped` | `::test_duplicate_grant_is_skipped`（批内重复见 `tests/unit/test_grant_service.py::test_create_grants_deduplicates_within_single_request`） |
+| TC-P2-KB03-07 | `::test_guest_editor_grant_rejected_with_20001` | `tests/unit/test_grant_service.py`（`guest+editor` → `20001`）+ 集成层 `::test_grant_endpoints_require_permission` |
+| TC-P2-KB03-08 | `::test_owner_grant_cannot_be_revoked_and_batch_limit` | `::test_grant_endpoints_require_permission` + `::test_grant_records_are_audited` |
+| TC-P2-KB04-01~02 | `::test_kb4_*`（M1/M2 citation 字段） | `tests/unit/test_model_service.py`（citation 新字段）+ `::test_kb4_returns_valid_segment_with_context` |
+| TC-P2-KB04-03 | `::test_r7_returns_backlink_fields` | `tests/integration/test_endpoints.py::TestRagEndpoints::test_r7_search` + QA `test_qa_b05_b06_verification.py::test_a1_*` |
+| TC-P2-SEG-01 | `test_segment_stale_lifecycle.py::test_*_stale` | 方案原计划的独立文件**未建**，实测落 `test_grant_and_backlink.py::test_kb4_returns_stale_after_reprocessing` + QA `test_qa_b05_b06_verification.py::test_a6_*` |
+| TC-P2-SEG-02 | `::test_reprocessing_keeps_valid` | `::test_kb4_failed_reprocessing_keeps_segment_valid` |
+| TC-P2-SEG-03/04 | `::test_deleted_document/book_*` | `::test_kb4_error_boundaries`（`11004` / `11001` 边界） |
+| TC-P2-SEG-05 | `::test_stale_beyond_retention_returns_null_content` | `tests/unit/test_segment_service.py`（保留期外 `content=None`）+ QA `test_a6_*` |
+| TC-P2-SEG-06 | `tests/unit/test_segment_service.py::test_build_key_*` | 同名（`build_key` 稳定性/敏感性/空白归一） |
+| TC-P2-PERM-01/07 | `test_permission_matrix.py::*` | 方案原计划的矩阵文件**未建**；B05 轮实测落 `test_grant_and_backlink.py::test_restricted_base_is_visible_only_to_granted_member` + QA `test_qa_b05_b06_verification.py::test_a1_/test_a2_/test_a2b_/test_a2c_/test_a3_`（含 ID 形态与跨租户维度） |
+| TC-P2-PERM-08 | `::test_permission_cache_ttl` | `tests/unit/test_grant_service.py::test_permission_cache_expires_within_five_seconds` + QA `test_a5_*` |
+| TC-P2-TL-01~04 | `test_tool_executions.py::test_t1_*` / `test_tl1_*` | `::test_t1_returns_five_tools_with_unchanged_shape`、`::test_tl1_returns_latest_twenty`、`::test_failed_execution_is_recorded_without_stack_or_code`、`::test_tl1_requires_permission` |
+| TC-P2-TL-05 | `::test_t5_execute_*` | `::test_execute_without_connection_returns_13002_with_tool_message`、`::test_successful_execution_is_recorded` |
+
+**两处结构性缺口（B05 轮已由 QA 独立用例补齐，后续批次请按正式文件名补齐）**：
+
+| 方案要求的文件 | 现状 | 补偿 |
+| --- | --- | --- |
+| `tests/integration/test_segment_stale_lifecycle.py` | 未建（stale 断言并入 `test_grant_and_backlink.py`） | QA `test_qa_b05_b06_verification.py::test_a6_*` 覆盖 200+stale 与无错误码外露 |
+| `tests/integration/test_permission_matrix.py`（8 账号 × 3 入口 24 格） | 未建 | **B08 必须补**（ID1-ID11 到位后才有 8 账号语义）；当前由 PERM 相关 4 条 QA 断言 + `test_grant_and_backlink.py` 覆盖 |
+
+> 校准原则：**编号只增不改、判据只紧不松**。若后续批次改名，请在同一 PR 内同步本表，否则按 §6.1 R2 视作追溯缺陷。
+
+---
+
 ## 6. 回归策略
 
 ### 6.1 既有 421 用例的保护规则（硬约束）
