@@ -38,8 +38,10 @@ LOCK_FILE = DEPLOY_DIR / "images.lock"
 #: 编排文件通配
 COMPOSE_GLOB = "docker-compose*.yml"
 
-#: MinIO 必须锁定的 AGPL 前精确版本线
-MINIO_APPROVED_TAG = "RELEASE.2021-04-22T15-44-28Z"
+# MinIO 已于 2026-10-21 整体替换为 SeaweedFS（Apache-2.0，ADR-0002 v1.3 /
+# docs/decisions/0004）：minio/minio 仓库在 Docker Hub 已整体下架，
+# 原「锁 AGPL 前版本线 RELEASE.2021-04-22T15-44-28Z」常量随之移除；
+# 该标签仍保留在下方负样本自测中，用于验证门禁对「已下架仓库」确实判 FAIL。
 
 #: Docker 官方镜像（Docker Official Images）在 Hub 上位于 library/ 命名空间，
 #: 但可省略前缀引用。校验存在性时必须归一化，否则官方镜像会被误判为「不存在」。

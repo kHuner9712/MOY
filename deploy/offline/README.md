@@ -25,22 +25,28 @@ deploy/offline/
 | --- | --- | --- |
 | 底座 API/Worker | `langgenius/dify-api:1.0.0` | Apache-2.0 |
 | 底座 Web | `langgenius/dify-web:1.0.0` | Apache-2.0 |
-| 代码沙箱 | `langgenius/dify-sandbox:0.2.10` | Apache-2.0 |
+| 代码沙箱 | `langgenius/dify-sandbox:0.2.10` | Apache-2.0（修改版，见 images.lock 说明） |
 | 关系库 | `postgres:16-alpine` | PostgreSQL License |
-| 缓存 | `valkey/valkey:7.2-alpine` | BSD-3-Clause ⚠️ D-06 |
+| 缓存 | `valkey/valkey:7.2-alpine` | BSD-3-Clause ✅ D-06 已批准 |
 | 向量库 | `milvusdb/milvus:v2.4.6` | Apache-2.0 |
 | etcd | `quay.io/coreos/etcd:v3.5.16` | Apache-2.0 |
-| 对象存储 | `minio/minio:RELEASE.2021-04-22T15-44-28Z` | Apache-2.0（AGPL 前版本线）⚠️ D-06 |
+| 对象存储 | `chrislusf/seaweedfs:3.80` | Apache-2.0（白名单，S3 兼容）✅ D-06 已批准 |
 | 身份底座 | `quay.io/keycloak/keycloak:25.0.6` | Apache-2.0 |
 | 代理 | `ubuntu/squid:5.2-22.04_beta` | GPL-2.0 ⚠️ **灰名单** |
-| 监控 | `prom/prometheus:v2.54.0`、`grafana/grafana:11.1.0` | Apache-2.0 |
+| 监控 | `prom/prometheus:v2.54.0` | Apache-2.0 |
 | 自研适配层 | `officeai/adapter:1.0.0` | 内部交付物 |
 | 自研前端 | `officeai/web:1.0.0` | 内部交付物 |
 
-## ⚠️ 合规待决
+## 合规状态
 
-1. **D-06**：Valkey 与 MinIO 的最终方案需主理人与法务/合规确认。
-2. **squid 协议**：`ubuntu/squid` 为 GPL-2.0，按灰名单规则「仅可独立进程调用、
+1. **D-06**：✅ 已于 2026-10-21 由创始人授权主理人正式批准（Valkey + SeaweedFS，
+   白名单协议双落地，`docs/decisions/0004`）。
+2. **Grafana**：✅ V1.0 已移除（AGPL-3.0 且 AGPL 前版本线在 Docker Hub 已不存在，
+   看板不属 V1.0 验收项；`docs/decisions/0004` 第二章）。
+3. **Dify**：⚠️ 修改版 Apache-2.0（多租户与商标限制）——三条规避约束已拍板：
+   SaaS 不用 Dify 多租户（租户隔离由适配层 + Postgres RLS 实现）、不修改代码、
+   不展示品牌标识（`docs/decisions/0004` 第三章）。
+4. **squid 协议**：`ubuntu/squid` 为 GPL-2.0，按灰名单规则「仅可独立进程调用、
    不可引入核心代码」处理。本项目仅以独立容器方式调用其进程，不引入任何代码。
    若合规要求进一步收紧，可改用应用层出站控制替代代理方案。
    **建议主理人确认此项（可并入 D-06 一并决策）。**

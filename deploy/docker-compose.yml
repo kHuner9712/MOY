@@ -4,7 +4,7 @@
 # 组成：
 #   - 底座层：dify-api / dify-worker / dify-web（Dify Apache-2.0）
 #   - 业务能力层：keycloak（身份与权限）
-#   - 基础设施层：postgres / valkey / milvus / minio / etcd / redis-benchmark
+#   - 基础设施层：postgres / valkey / milvus / seaweedfs / etcd
 #   - 自研层：adapter（统一适配层）/ web（前端交互层）
 #
 # 合规说明（总方案 5.3 / 架构文档 2.1）：
@@ -90,20 +90,31 @@ services:
     networks: [officeai]
     logging: *default-logging
 
-  milvus-minio:
-    # MinIO：锁定 AGPL 之前的最后版本线（Apache-2.0），仅作 Milvus 依赖独立运行
-    # ⚠️ D-06 待决：版本线与独立进程方式需合规确认
-    image: minio/minio:RELEASE.2021-04-22T15-44-28Z
-    container_name: oa-milvus-minio
+  milvus-object-store:
+    # S3 兼容对象存储（SeaweedFS，Apache-2.0 白名单协议，独立容器运行）
+    #
+    # 为何不用 MinIO：minio/minio 的 Docker Hub 仓库已整体下架（QA BLK-03 实测：
+    # 任何 tag 拉取均返回 401），即使锁定 AGPL 之前的版本线也无法部署；
+    # 且其 S3 网关 API 与 MinIO 有差异。SeaweedFS 提供等价 S3 兼容接口，
+    # 协议为 Apache-2.0，属总方案 5.3 白名单，且上游持续分发。
+    # ⚠️ D-06 待决：对象存储最终选型需主理人与法务/合规确认
+    image: chrislusf/seaweedfs:3.80
+    container_name: oa-milvus-object-store
     restart: unless-stopped
     environment:
-      MINIO_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      MINIO_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
-    command: minio server /minio_data
+      AWS_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      AWS_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333"]
     volumes:
-      - milvus-minio-data:/minio_data
+      - milvus-object-store-data:/data
     networks: [officeai]
     logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8333/ || exit 1"]
+      interval: 20s
+      timeout: 10s
+      start_period: 20s
+      retries: 5
 
   milvus-etcd:
     image: quay.io/coreos/etcd:v3.5.16
@@ -129,9 +140,9 @@ services:
     command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: milvus-etcd:2379
-      MINIO_ADDRESS: milvus-minio:9000
-      MINIO_ACCESS_KEY_ID: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      MINIO_SECRET_ACCESS_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+      MINIO_ADDRESS: milvus-object-store:8333
+      MINIO_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      MINIO_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
     volumes:
       - milvus-data:/var/lib/milvus
     ports:
@@ -139,7 +150,7 @@ services:
       - "${OA_MILVUS_METRICS_PORT:-9091}:9091"
     depends_on:
       - milvus-etcd
-      - milvus-minio
+      - milvus-object-store
     networks: [officeai]
     logging: *default-logging
     healthcheck:
@@ -149,28 +160,29 @@ services:
       start_period: 90s
       retries: 3
 
-  # 业务对象存储（文档原文件）：锁定 AGPL 之前的版本线，独立容器运行
-  # ⚠️ D-06 待决
-  minio:
-    image: minio/minio:RELEASE.2021-04-22T15-44-28Z
-    container_name: oa-minio
+  # 业务对象存储（文档原文件）：S3 兼容，独立容器运行
+  # ⚠️ D-06 待决：最终选型需合规确认
+  object-store:
+    image: chrislusf/seaweedfs:3.80
+    container_name: oa-object-store
     restart: unless-stopped
     environment:
-      MINIO_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      MINIO_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
-    command: server /data --console-address ":9001"
+      AWS_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      AWS_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333"]
     volumes:
-      - minio-data:/data
+      - object-store-data:/data
     ports:
-      - "${OA_MINIO_API_PORT:-9000}:9000"
-      - "${OA_MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${OA_OBJECT_STORE_API_PORT:-8333}:8333"
+      - "${OA_OBJECT_STORE_ADMIN_PORT:-23646}:23646"
     networks: [officeai]
     logging: *default-logging
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8333/ || exit 1"]
+      interval: 20s
       timeout: 10s
-      retries: 3
+      start_period: 20s
+      retries: 5
 
   # ---------------------------------------------------------------------
   # 底座层（Dify，Apache-2.0）
@@ -203,9 +215,9 @@ services:
       CELERY_BROKER_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/1
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: s3
-      OPENDAL_S3_ENDPOINT: http://minio:9000
-      OPENDAL_S3_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      OPENDAL_S3_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+      OPENDAL_S3_ENDPOINT: http://object-store:8333
+      OPENDAL_S3_ACCESS_KEY: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
       OPENDAL_S3_BUCKET: ${OA_DIFY_S3_BUCKET:-dify}
       VECTOR_STORE: milvus
       MILVUS_URI: http://milvus:19530
@@ -242,9 +254,9 @@ services:
       CELERY_BROKER_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/1
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: s3
-      OPENDAL_S3_ENDPOINT: http://minio:9000
-      OPENDAL_S3_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      OPENDAL_S3_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+      OPENDAL_S3_ENDPOINT: http://object-store:8333
+      OPENDAL_S3_ACCESS_KEY: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
       VECTOR_STORE: milvus
       MILVUS_URI: http://milvus:19530
     depends_on:
@@ -333,7 +345,7 @@ services:
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
       OA_DATABASE_URL: postgresql+asyncpg://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD}@postgres:5432/${OA_POSTGRES_DB:-officeai}
       OA_MILVUS_URI: http://milvus:19530
-      OA_MINIO_ENDPOINT: http://minio:9000
+      OA_OBJECT_STORE_ENDPOINT: http://object-store:8333
     ports:
       - "${OA_ADAPTER_PORT:-8000}:8000"
     depends_on:
@@ -364,7 +376,14 @@ services:
     logging: *default-logging
 
   # ---------------------------------------------------------------------
-  # 监控告警（Prometheus + Grafana，Apache-2.0）
+  # 监控告警（Prometheus，Apache-2.0）
+  #
+  # Grafana 已于 V1.0 移除（2026-10-21 拍板，见 docs/decisions/0004）：
+  # grafana/grafana 自 8.0 起为 AGPL-3.0，且 AGPL 前的 7.5.x 版本线
+  # 在 Docker Hub 已整体不存在（实测 7.5.31/32/33 均 404），
+  # 「锁 AGPL 前版本线」路径不可行；可视化看板不属 V1.0 验收项，
+  # 指标采集 + 告警规则足以支撑可用率度量。看板列 V1.1
+  # （候选：Perses，Apache-2.0）。
   # ---------------------------------------------------------------------
   prometheus:
     image: prom/prometheus:v2.54.0
@@ -378,33 +397,15 @@ services:
     networks: [officeai]
     logging: *default-logging
 
-  grafana:
-    image: grafana/grafana:11.1.0
-    container_name: oa-grafana
-    restart: unless-stopped
-    environment:
-      GF_SECURITY_ADMIN_USER: ${OA_GRAFANA_ADMIN:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${OA_GRAFANA_PASSWORD:?必须在 .env 中设置}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-    volumes:
-      - grafana-data:/var/lib/grafana
-    ports:
-      - "${OA_GRAFANA_PORT:-3001}:3000"
-    depends_on:
-      - prometheus
-    networks: [officeai]
-    logging: *default-logging
-
 volumes:
   postgres-data:
   valkey-data:
   etcd-data:
   milvus-etcd-data:
-  milvus-minio-data:
+  milvus-object-store-data:
   milvus-data:
-  minio-data:
+  object-store-data:
   prometheus-data:
-  grafana-data:
 
 networks:
   officeai:

@@ -87,18 +87,29 @@ services:
     logging: *default-logging
 
   # MinIO 锁定 AGPL 之前的版本线，独立容器运行（⚠️ D-06 待决）
-  milvus-minio:
-    image: minio/minio:RELEASE.2021-04-22T15-44-28Z
-    container_name: oa-saas-milvus-minio
+  milvus-object-store:
+    # S3 兼容对象存储（SeaweedFS，Apache-2.0 白名单协议，独立容器运行）
+    #
+    # 为何不用 MinIO：minio/minio 的 Docker Hub 仓库已整体下架（QA BLK-03 实测：
+    # 任何 tag 拉取均返回 401），即使锁定 AGPL 之前的版本线也无法部署。
+    # ⚠️ D-06 待决：对象存储最终选型需主理人与法务/合规确认
+    image: chrislusf/seaweedfs:3.80
+    container_name: oa-saas-milvus-object-store
     restart: unless-stopped
     environment:
-      MINIO_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      MINIO_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
-    command: minio server /minio_data
+      AWS_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      AWS_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333"]
     volumes:
-      - saas-milvus-minio-data:/minio_data
+      - saas-milvus-object-store-data:/data
     networks: [officeai]
     logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8333/ || exit 1"]
+      interval: 20s
+      timeout: 10s
+      start_period: 20s
+      retries: 5
 
   milvus:
     image: milvusdb/milvus:v2.4.6
@@ -107,32 +118,40 @@ services:
     command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: milvus-etcd:2379
-      MINIO_ADDRESS: milvus-minio:9000
-      MINIO_ACCESS_KEY_ID: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      MINIO_SECRET_ACCESS_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+      MINIO_ADDRESS: milvus-object-store:8333
+      MINIO_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      MINIO_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
     volumes:
       - saas-milvus-data:/var/lib/milvus
     ports:
       - "${OA_MILVUS_PORT:-19530}:19530"
-    depends_on: [milvus-etcd, milvus-minio]
+    depends_on: [milvus-etcd, milvus-object-store]
     networks: [officeai]
     logging: *default-logging
 
-  minio:
-    image: minio/minio:RELEASE.2021-04-22T15-44-28Z
-    container_name: oa-saas-minio
+  object-store:
+    # 业务对象存储（文档原文件）：S3 兼容，独立容器运行
+    # ⚠️ D-06 待决：最终选型需合规确认
+    image: chrislusf/seaweedfs:3.80
+    container_name: oa-saas-object-store
     restart: unless-stopped
     environment:
-      MINIO_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      MINIO_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
-    command: server /data --console-address ":9001"
+      AWS_ACCESS_KEY_ID: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      AWS_SECRET_ACCESS_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333"]
     volumes:
-      - saas-minio-data:/data
+      - saas-object-store-data:/data
     ports:
-      - "${OA_MINIO_API_PORT:-9000}:9000"
-      - "${OA_MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${OA_OBJECT_STORE_API_PORT:-8333}:8333"
+      - "${OA_OBJECT_STORE_ADMIN_PORT:-23646}:23646"
     networks: [officeai]
     logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8333/ || exit 1"]
+      interval: 20s
+      timeout: 10s
+      start_period: 20s
+      retries: 5
 
   dify-api:
     image: langgenius/dify-api:1.0.0
@@ -160,9 +179,9 @@ services:
       CELERY_BROKER_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/1
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: s3
-      OPENDAL_S3_ENDPOINT: http://minio:9000
-      OPENDAL_S3_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      OPENDAL_S3_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+      OPENDAL_S3_ENDPOINT: http://object-store:8333
+      OPENDAL_S3_ACCESS_KEY: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
       OPENDAL_S3_BUCKET: ${OA_DIFY_S3_BUCKET:-dify}
       VECTOR_STORE: milvus
       MILVUS_URI: http://milvus:19530
@@ -194,9 +213,9 @@ services:
       CELERY_BROKER_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/1
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: s3
-      OPENDAL_S3_ENDPOINT: http://minio:9000
-      OPENDAL_S3_ACCESS_KEY: ${OA_MINIO_ROOT_USER:?必须在 .env 中设置}
-      OPENDAL_S3_SECRET_KEY: ${OA_MINIO_ROOT_PASSWORD:?必须在 .env 中设置}
+      OPENDAL_S3_ENDPOINT: http://object-store:8333
+      OPENDAL_S3_ACCESS_KEY: ${OA_OBJECT_STORE_ACCESS_KEY:?必须在 .env 中设置}
+      OPENDAL_S3_SECRET_KEY: ${OA_OBJECT_STORE_SECRET_KEY:?必须在 .env 中设置}
       VECTOR_STORE: milvus
       MILVUS_URI: http://milvus:19530
     depends_on: [postgres, valkey]
@@ -261,7 +280,7 @@ services:
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
       OA_DATABASE_URL: postgresql+asyncpg://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD}@postgres:5432/${OA_POSTGRES_DB:-officeai}
       OA_MILVUS_URI: http://milvus:19530
-      OA_MINIO_ENDPOINT: http://minio:9000
+      OA_OBJECT_STORE_ENDPOINT: http://object-store:8333
       # SaaS 模式：允许调用外部闭源模型 API（路由表见 registry/profile_routes.yaml）
       OA_DOWNSTREAM_ENABLED: "true"
     ports:
@@ -292,9 +311,9 @@ volumes:
   saas-valkey-data:
   saas-etcd-data:
   saas-milvus-etcd-data:
-  saas-milvus-minio-data:
+  saas-milvus-object-store-data:
   saas-milvus-data:
-  saas-minio-data:
+  saas-object-store-data:
 
 networks:
   officeai:

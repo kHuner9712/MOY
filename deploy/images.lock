@@ -17,23 +17,30 @@ version: 1
 
 images:
   # ---------------------------------------------------------------------
-  # 底座层（Dify，Apache-2.0）
+  # 底座层（Dify，Apache-2.0 修改版）
+  #
+  # ⚠️ 协议事实（QA 附录 A P1-2 实测）：Dify LICENSE 为 Apache-2.0 修改版，
+  #    附带「多租户特性限制」与「商标/LOGO 限制」。三条规避约束已拍板
+  #    （docs/decisions/0004 第三章）：
+  #    1. SaaS 禁用 Dify 多租户特性 —— 租户隔离由自研适配层 + Postgres RLS 实现；
+  #    2. 不修改 Dify 代码（附加限制只对修改后分发与多租户使用生效）；
+  #    3. 不展示 Dify 品牌标识（前端黑盒化 + 开源声明如实列明）。
   # ---------------------------------------------------------------------
   - name: langgenius/dify-api
     tag: "1.0.0"
-    license: Apache-2.0
+    license: Apache-2.0（修改版：多租户与商标限制，见上方说明）
     role: 底座 API 与 Worker
     source: docker-hub
 
   - name: langgenius/dify-web
     tag: "1.0.0"
-    license: Apache-2.0
+    license: Apache-2.0（修改版：多租户与商标限制，见上方说明）
     role: 底座控制台
     source: docker-hub
 
   - name: langgenius/dify-sandbox
     tag: "0.2.10"
-    license: Apache-2.0
+    license: Apache-2.0（修改版：多租户与商标限制，见上方说明）
     role: 代码沙箱
     source: docker-hub
 
@@ -56,13 +63,13 @@ images:
     source: docker-hub
 
   # Valkey 取代 Redis（BSD-3-Clause），规避 RSALv2/SSPL 双许可风险
-  # ⚠️ D-06 待决：最终选型需主理人与法务/合规确认
+  # ✅ D-06 已于 2026-10-21 由创始人授权主理人正式批准（docs/decisions/0004）
   - name: valkey/valkey
     tag: "7.2-alpine"
     license: BSD-3-Clause
     role: 缓存与幂等键
     source: docker-hub
-    note: D-06 待决；若改回 Redis 须保持独立进程运行
+    note: D-06 已批准；若改回 Redis 须保持独立进程运行
 
   - name: milvusdb/milvus
     tag: "v2.4.6"
@@ -76,18 +83,24 @@ images:
     role: 分布式 KV（Milvus 依赖）
     source: quay
 
-  # MinIO 锁定 AGPL 之前的最后版本线（Apache-2.0），独立容器运行
-  # 已核验：git ls-remote --tags https://github.com/minio/minio.git
-  #   → refs/tags/RELEASE.2021-04-22T15-44-28Z（存在）
-  #   → raw.githubusercontent.com/minio/minio/<tag>/LICENSE 首行为 Apache License 2.0
-  # 上游自 RELEASE.2021-05-11T23-27-41Z 起转为 AGPL-3.0，故 04-22 为最后可用版本线
-  # ⚠️ D-06 待决：版本线与独立进程方式需合规确认
-  - name: minio/minio
-    tag: "RELEASE.2021-04-22T15-44-28Z"
+  # S3 兼容对象存储（SeaweedFS）
+  #
+  # 为何不用 MinIO（实测结论，勿轻易回退）：
+  #   1. minio/minio 的 Docker Hub 仓库已**整体下架**——按真实 pull 路径
+  #      （auth.docker.io 取 token → registry-1.docker.io 取 manifest）实测，
+  #      任意 tag（含 AGPL 前的 RELEASE.2021-04-22T15-44-28Z）均返回 HTTP 401；
+  #      对照组 library/postgres:16-alpine 同法返回 200，证实探测方法有效；
+  #   2. 即便锁定 AGPL 之前的版本线，镜像也**拉不下来**，私有化部署直接失败；
+  #   3. SeaweedFS 提供等价 S3 兼容接口，协议为 **Apache-2.0**（白名单），
+  #      且上游持续分发，Docker Hub 实测可拉取。
+  #
+  # ✅ D-06 已于 2026-10-21 由创始人授权主理人正式批准（docs/decisions/0004）
+  - name: chrislusf/seaweedfs
+    tag: "3.80"
     license: Apache-2.0
-    role: 对象存储（Milvus 依赖 + 业务对象存储）
+    role: S3 兼容对象存储（Milvus 依赖 + 业务对象存储）
     source: docker-hub
-    note: AGPL 前的最后版本线，独立容器运行；上游自 2021-05-11 起为 AGPL-3.0
+    note: 替代已下架的 minio/minio；Apache-2.0 白名单协议，独立容器运行
 
   # ---------------------------------------------------------------------
   # 网络与监控
@@ -108,11 +121,10 @@ images:
     role: 指标采集
     source: docker-hub
 
-  - name: grafana/grafana
-    tag: "11.1.0"
-    license: Apache-2.0
-    role: 监控看板
-    source: docker-hub
+  # Grafana 已于 V1.0 移除（2026-10-21 拍板，docs/decisions/0004 第二章）：
+  # grafana/grafana 自 8.0 起为 AGPL-3.0，AGPL 前的 7.5.x 版本线在
+  # Docker Hub 已不存在（实测 7.5.31/32/33 均 404），锁版本线路径不可行；
+  # 可视化看板不属 V1.0 验收项，V1.1 再评估 Perses（Apache-2.0）等替代。
 
   # ---------------------------------------------------------------------
   # 自研层（本地构建，不从上游拉取）
