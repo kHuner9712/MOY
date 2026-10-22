@@ -32,7 +32,10 @@ services:
       # 挂 /var/lib/postgresql/data 会被镜像入口拒绝启动（私有化编排已修，SaaS 漏改）
       - saas-postgres-data:/var/lib/postgresql
       - ./init-databases.sql:/docker-entrypoint-initdb.d/00-init-databases.sql:ro
-      - ./init-rls.sql:/docker-entrypoint-initdb.d/10-init-rls.sql:ro
+      # 历史文件 init-rls.sql 已停止挂载（M16，2026-10-23）：
+      # 它建的是阶段一的旧租户策略，与阶段二的 p_tenant_isolation 会同时存在
+      # （均为 permissive OR），导致两套部署产出的库结构不一致。
+      # 保留文件作为历史存档，不再参与初始化。
       # 阶段二业务库表结构（D-02）：最后执行，统一重建 p_tenant_isolation 策略
       - ./init-schema-phase2.sql:/docker-entrypoint-initdb.d/20-init-schema-phase2.sql:ro
       # 阶段三业务库表结构（B17）：插件域 9 张表 + RLS 重声明 + 目录种子。
@@ -352,13 +355,19 @@ services:
     env_file:
       - .env
     environment:
-      OA_ENV: production
+      # 环境名与鉴权模式都从 .env 取值：缺省按生产 + OIDC 处理。
+      # **不再依赖代码默认值**（auth_mode 默认 stub = 不验签，S1）。
+      OA_ENV: ${OA_ENV:-production}
+      OA_AUTH_MODE: ${OA_AUTH_MODE:-oidc}
       OA_DEPLOY_MODE: saas
       OA_OFFLINE_MODE: "false"
       OA_DIFY_BASE_URL: http://dify-api:5001
       OA_KEYCLOAK_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
-      OA_DATABASE_URL: postgresql+asyncpg://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD}@postgres:5432/${OA_POSTGRES_DB:-officeai}
+      # SaaS 同样必须使用 officeai_app（NOSUPERUSER + NOBYPASSRLS）：
+      # 此前写死 ${OA_POSTGRES_USER}（库属主/超级用户），RLS 对该角色永久失效，
+      # 等于把多租户隔离关掉。缺失即拒绝启动，不回落超级用户（S6，2026-10-23）。
+      OA_DATABASE_URL: ${OA_DATABASE_URL:?SaaS 必须提供应用角色 DSN（officeai_app），不得使用库属主}
       OA_MILVUS_URI: http://milvus:19530
       OA_OBJECT_STORE_ENDPOINT: http://object-store:8333
       # SaaS 模式：允许调用外部闭源模型 API（路由表见 registry/profile_routes.yaml）
