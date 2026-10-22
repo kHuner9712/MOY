@@ -50,7 +50,13 @@ jobs:
         run: |
           echo "::group::扫描前端与插件代码中的底座直连痕迹"
           # 禁止出现的底座关键词（架构文档 1.4 第 4 条 + 9.6）
-          FORBIDDEN='dify|milvus|litellm|5001|chat-messages|workflow_run|retriever_resources|datasets/|/v1/'
+          #
+          # ⚠️ 规则收窄（审计 OA-AUDIT-001 / P1-2）：原 `5001` 是**裸子串**，
+          #    会命中计费域错误码 **`15001`**（"当前套餐不支持该功能"）——
+          #    `15001` 里就含 `5001` 这个子串。门禁因此长期误报，
+          #    而误报比漏报更危险：团队会习惯性地给它打绿灯或直接跳过。
+          #    改为 `\b5001\b`（词界）后，`15001` 不再命中（"5001" 前是数字 1）。
+          FORBIDDEN='dify|milvus|litellm|\b5001\b|chat-messages|workflow_run|retriever_resources|datasets/|/v1/'
           TARGETS='apps/web'
           # 未来插件 SDK 目录加入同一门禁
           if [ -d 'plugins' ]; then
@@ -59,7 +65,11 @@ jobs:
 
           # 排除构建产物与依赖目录——它们不是本仓库源码，
           # 且其内容来自上游包，可能合法地包含上述字样（如类型定义中的路径）。
-          EXCLUDE='--exclude-dir=node_modules --exclude-dir=.next --exclude-dir=out --exclude-dir=dist --exclude-dir=coverage --exclude=*.tsbuildinfo --exclude=package-lock.json'
+          #
+          # `scripts/` 一并排除（审计 P1-2）：那是**构建期校验工具**，不随产物分发；
+          # 且 `check-banned-terms.mjs` 的负样本表里**必须**写 `milvus` 这类字样
+          # （否则无法证明术语门禁能红）。扫描工具自身会把自己扫成违规。
+          EXCLUDE='--exclude-dir=node_modules --exclude-dir=.next --exclude-dir=out --exclude-dir=dist --exclude-dir=coverage --exclude-dir=scripts --exclude=*.tsbuildinfo --exclude=package-lock.json'
 
           MATCHES=$(grep -rniE "$FORBIDDEN" $TARGETS $EXCLUDE 2>/dev/null || true)
 
