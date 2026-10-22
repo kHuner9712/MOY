@@ -482,34 +482,155 @@ def test_c2_pl13_capability_policy_idempotent_by_idempotency_key(
     )
 
 
-def test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched(
-    client: TestClient,
-) -> None:
-    """TC-P3-WF12-05：保存即重渲染（下载 sha256 == 刚保存正文），且不得触发重跑。
+def test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched(monkeypatch) -> None:
+    """TC-P3-WF12-05：保存即重渲染，且**不得触发重跑**。
 
-    当前 B19 未实现 WF2，故先断言**路由未注册即不达标**（真实契约事实）；
-    路由落地后补齐：`version+1`、`download_url` 内容 sha256 相等、
-    `plugin_task_step` 行数与状态集合 **+0**、任务 `status` 仍 `completed`。
+    真断言（此前只断"路由存在"，等于没验）：
+    ① `version` 只 +1；
+    ② 响应 `content_sha256` 与落库一致、且与旧值不同（保存即重算）；
+    ③ `download_url` 刷新（token 含版本，故必然变化）；
+    ④ 任务 `status` 与步骤 `status` 序列**均不变**（证明是"编辑"不是"重跑"）。
     """
-    paths = client.app.openapi()["paths"]
-    expected = "/api/v1/agent/tasks/{task_id}/artifacts/{artifact_id}"
-    assert expected in paths, (
-        f"[TC-P3-WF12-05 ①] WF2 产物编辑接口未注册（B19 应实现），实际路径集合缺 {expected}"
+    import tests.unit.test_artifact_edit as fx
+    from app.business.audit_service import AuditService
+    from app.schemas.task import ArtifactEditRequest
+    from tests.unit.task_helpers import TENANT, auth
+
+    # ⑤ 审计留痕：编辑成功必须写审计（只断返回码会放过"改完不记账"）
+    written: list[object] = []
+    original_record = AuditService.record
+
+    async def spy_record(self: object, *args: object, **kwargs: object) -> object:
+        written.append(args if args else kwargs)
+        return await original_record(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(AuditService, "record", spy_record)
+    service, tasks, artifacts, (task_id, artifact_id) = fx._prepare_task()  # noqa: SLF001
+    audit_before = len(written)
+    before_art = fx._run(artifacts.get(TENANT, artifact_id))  # noqa: SLF001
+    before_task = fx._run(tasks.get_task(TENANT, task_id))  # noqa: SLF001
+    before_steps = fx._run(tasks.list_steps(TENANT, task_id))  # noqa: SLF001
+
+    data = fx._run(  # noqa: SLF001
+        service.edit_artifact(  # type: ignore[attr-defined]
+            task_id,
+            artifact_id,
+            ArtifactEditRequest(content="## 新的方案正文\n\n- 第一条\n- 第二条"),
+            auth(),
+        )
+    )
+    after_art = fx._run(artifacts.get(TENANT, artifact_id))  # noqa: SLF001
+    after_task = fx._run(tasks.get_task(TENANT, task_id))  # noqa: SLF001
+    after_steps = fx._run(tasks.list_steps(TENANT, task_id))  # noqa: SLF001
+
+    assert data.version == before_art.version + 1, (
+        f"[TC-P3-WF12-05 ①] version 应只 +1：{before_art.version} → {data.version}"
+    )
+    assert data.content_sha256 == after_art.content_sha256, (
+        "[TC-P3-WF12-05 ②] 响应的 content_sha256 与落库不一致（下载会拿到旧内容）"
+    )
+    assert data.content_sha256 != before_art.content_sha256, (
+        "[TC-P3-WF12-05 ②] content_sha256 未重算"
+    )
+    # ③ `download_url` 含版本 token：连续两次保存必须得到不同地址
+    #   （`ArtifactRecord` 不存 url，故用"两次保存对比"验证刷新，而不是比 before）
+    second = fx._run(  # noqa: SLF001
+        service.edit_artifact(  # type: ignore[attr-defined]
+            task_id,
+            artifact_id,
+            ArtifactEditRequest(content="## 第二次保存的正文"),
+            auth(),
+        )
+    )
+    assert second.version == data.version + 1, (
+        f"[TC-P3-WF12-05 ③] 第二次保存 version 应再 +1：{data.version} → {second.version}"
+    )
+    assert second.download_url != data.download_url, (
+        "[TC-P3-WF12-05 ③] download_url 未随版本刷新（保存后下载会拿到旧版本）"
+    )
+    assert after_task is not None and before_task is not None
+    assert after_task.status == before_task.status, (
+        f"[TC-P3-WF12-05 ④] 编辑触发了任务状态变化：{before_task.status} → {after_task.status}"
+    )
+    assert len(after_steps) == len(before_steps), (
+        f"[TC-P3-WF12-05 ④] 步骤行数变化：{len(before_steps)} → {len(after_steps)}（编辑不得重跑）"
+    )
+    assert [item.status for item in after_steps] == [item.status for item in before_steps], (
+        "[TC-P3-WF12-05 ④] 步骤状态序列变化（编辑不得重跑）"
+    )
+    assert len(written) - audit_before >= 1, (
+        f"[TC-P3-WF12-05 ⑤] 编辑成功未写审计：新增 {len(written) - audit_before} 条"
     )
 
 
-def test_c4_wf2_non_editable_types_rejected_without_version_bump(
-    client: TestClient,
-) -> None:
-    """TC-P3-WF12-06：`link`/`file` 不可编辑，且拒绝后 `version` 不变。
+def test_c4_wf2_non_editable_types_rejected_without_version_bump(monkeypatch) -> None:
+    """TC-P3-WF12-06：`link` / `file` 不可编辑，且拒绝后**三处均不变**。
 
-    同 c3：先断言路由存在（WF2 未实现即不达标）。路由落地后补齐：
-    返回拒绝；产物 `content` / `sha256` / `version` 三处均不变（防"先写后校验"）。
+    真断言（此前只断"路由存在"）：
+    ① 返回 `20001`；
+    ② `version` 不变；③ `content_sha256` 不变；④ `inline_text` 不变
+    —— 三处同查，专防"先写库再校验"的实现（只断返回码抓不到）。
     """
-    paths = client.app.openapi()["paths"]
-    expected = "/api/v1/agent/tasks/{task_id}/artifacts/{artifact_id}"
-    assert expected in paths, (
-        f"[TC-P3-WF12-06 ①] WF2 产物编辑接口未注册（B19 应实现），实际路径集合缺 {expected}"
+    import tests.unit.test_artifact_edit as fx
+    from app.business.audit_service import AuditService as _Audit
+    from app.core.errors import ApiError, ErrorCode
+    from app.db.repositories.artifact_repo import ArtifactRecord
+    from app.schemas.task import ArtifactEditRequest
+    from tests.unit.task_helpers import TENANT, auth
+
+    # ⑤ 审计留痕：**被拒**不得写审计（只断码值会放过"拒了但已记账"）
+    rejected_writes: list[object] = []
+    _orig = _Audit.record
+
+    async def _spy(self: object, *args: object, **kwargs: object) -> object:
+        rejected_writes.append(args if args else kwargs)
+        return await _orig(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_Audit, "record", _spy)
+    service, _tasks, artifacts, (task_id, artifact_id) = fx._prepare_task()  # noqa: SLF001
+    audit_before_reject = len(rejected_writes)
+    original = fx._run(artifacts.get(TENANT, artifact_id))  # noqa: SLF001
+    assert original is not None
+
+    # 造一个 link 类型的产物（同 task 下），验证"只读类型不可编辑"
+    link_artifact = ArtifactRecord(
+        tenant_id=TENANT,
+        artifact_id="art_readonly_link",
+        task_id=task_id,
+        step_id=original.step_id,
+        output_key=original.output_key,
+        type="link",
+        name="提交记录",
+        external_url="https://example.invalid/commit/abc",
+    )
+    fx._run(artifacts.add_artifacts([link_artifact]))  # noqa: SLF001
+
+    with pytest.raises(ApiError) as excinfo:
+        fx._run(  # noqa: SLF001
+            service.edit_artifact(  # type: ignore[attr-defined]
+                task_id,
+                "art_readonly_link",
+                ArtifactEditRequest(content="试图修改只读产物"),
+                auth(),
+            )
+        )
+    assert excinfo.value.code is ErrorCode.PARAM_INVALID, (
+        f"[TC-P3-WF12-06 ①] link 类型编辑应返回 20001，实际 {excinfo.value.code}"
+    )
+
+    after = fx._run(artifacts.get(TENANT, "art_readonly_link"))  # noqa: SLF001
+    assert after is not None
+    assert after.version == link_artifact.version, (
+        f"[TC-P3-WF12-06 ②] 拒绝后 version 变了：{link_artifact.version} → {after.version}"
+    )
+    assert after.content_sha256 == link_artifact.content_sha256, (
+        "[TC-P3-WF12-06 ③] 拒绝后 content_sha256 变了（先写后校验）"
+    )
+    assert after.inline_text == link_artifact.inline_text, (
+        "[TC-P3-WF12-06 ④] 拒绝后 inline_text 变了（先写后校验）"
+    )
+    assert len(rejected_writes) == audit_before_reject, (
+        f"[TC-P3-WF12-06 ⑤] 被拒请求仍写了审计：新增 {len(rejected_writes) - audit_before_reject} 条"
     )
 
 
