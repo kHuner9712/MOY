@@ -138,3 +138,82 @@ DDL 与台账退回两步——正好是 T4-01.4 要修的缺陷本身。处置�
 | `.seed.sql` | 本地手工造数脚本，无引用；已进 `.gitignore` |
 | `apps/web/src/lib/business-errors.ts` | **待改（T4-02 提交 3）**：`15006` 文案仍是旧版（「…常规模式，升级套餐可恢复完整能力」），且缺 402 分支；`api-client` 还需把 HTTP 402 当业务响应解析。⚠ **提交 3 之前不要让任何人手工验收额度场景**——后端已返回 402 + 新文案，前端仍是旧映射，会看到「文案没变」的假象 |
 | 合并覆盖率 | 已补测达标（90.85% / 92.09% / 86.01%），见 §2.1 |
+
+---
+
+# 阶段四 T4-03 记忆内核（提交 2 / 提交 3）交付记录
+
+> 维护人：寇豆码（工程师）· 同样的口径纪律：**SHA + 命令 + 是否含 PG + OA_BATCH + 耗时**，缺一不可引用。
+
+## 6. 本轮入库的提交（3 个，按合入顺序）
+
+| SHA | 主题 | 文件数 | 内容 |
+| --- | --- | --- | --- |
+| `79250db` | `feat(memory): 后台任务引擎与事实抽取（PG 队列 + 6 类事实 + 降级）` | 18 | 提交 2：`background_job` 仓储（`FOR UPDATE SKIP LOCKED` + `locked_until` 租约，认领与租约同事务）+ 注册表式 `JobRunner`（`tick()` 可同步驱动、`stop()` 无残余协程）+ lifespan 接线；`MemoryExtractor` 走极薄 `ChatCompletion`（**不经 `ModelService.generate`**）+ 6 类事实 + 敏感丢弃 + 同 hash 合并 / `superseded_by` 链 / 200 条淘汰 + 四条降级 |
+| `8249266` | `test(memory): 真库用例前置释放引擎，防事件循环关闭导致的跨文件假红` | 1 | 提交 2 收尾：`test_memory_job_pg.py` 的 `dispose_engine()` 由「仅用例后」改为「前后都释放」（既有写法只在后释放；前置才是幂等的，`-k` 重排/xdist 下同样成立） |
+| `98d726d` | `feat(memory): 召回注入、降级与 MM1-MM4 端点` | 16 | 提交 3：`MemoryService.recall`（top_k=8 + 300ms 硬超时 + D-2/D-3 双路径降级）+ `ContextAssembler` L3 注入（只进上游 prompt）+ MM1-MM4 四端点（硬删含向量行、18002、审计只记动作与条数）+ `phase4_present` 4→8 + 抽取应用改为必填（无 key 不抽取不入队、只告警一次） |
+
+## 7. 全量测试与口径（唯一权威）
+
+| 项 | 提交 2 | 提交 3 |
+| --- | --- | --- |
+| SHA | `main @ 79250db` | `main @ 98d726d` |
+| 命令 | `OA_TEST_DATABASE_URL='postgresql://officeai_app:***@127.0.0.1:55434/officeai' OA_BATCH=B21 pytest tests --run-pg -q`（**不带 cov**） | 同左 |
+| 结果 | **1804 passed / 0 failed / 0 skipped** | **1830 passed / 0 failed / 0 skipped** |
+| 耗时 | **425.14s（7m05s）** | **444.97s（7m24s）** |
+| 含 PG | **是**（`moy-qa-pg-vec`，55434；`vector 0.8.7` / 40 表） | 同左 |
+| `OA_BATCH` | B21 | B21 |
+| 解释器 | `apps/adapter/.venv/Scripts/python.exe` | 同左 |
+
+门禁：`ruff check .` / `ruff format --check .` / `mypy app` 三次提交后均全绿（`mypy` 覆盖 134 源文件）。
+
+定向验收：
+
+| 命令 | 结果 |
+| --- | --- |
+| `pytest -m memory -q`（提交 2） | 29 passed |
+| `pytest tests/unit/test_job_runner.py -q` | 15 passed |
+| `pytest -m memory -q`（提交 3） | **41 passed** |
+| `pytest tests/unit/test_memory_recall_degrade.py -q` | 10 passed |
+| `pytest tests/integration/test_memory_job_pg.py --run-pg -q` | 6 passed |
+| `pytest tests/integration/test_memory_endpoints.py --run-pg -q` | 14 passed |
+| `pytest tests/integration --run-pg -q --basetemp=/tmp/pyt-integ` | 632 passed（整目录真实排序，含 G-11 迁移幂等、schema 基线、会话 RLS、计费 PG） |
+| `deploy/validate_migrations.py --run-pg` | `[OK]` 三路径实跑通过（空库 `--apply`×2、已初始化库 `--check/--apply`、`0007→0006` 回滚往返） |
+| `deploy/validate_openapi.py --no-write-openapi` | `phase4_present=8`（未实现：TD1/TD2），G1-G6 通过 |
+
+## 8. 与文档口径的 6 处偏离（均已获主理人批准，除第 5 条为既有形态）
+
+| # | 文档口径 | 实现 | 理由 |
+| --- | --- | --- | --- |
+| 1 | 提交 2 指令：「向量不可用时**跳过**语义去重，只按 hash」 | 保留架构 §3.3.1 的 `difflib ≥0.9` 降级 | 默认部署**没有** embedding 提供方（架构 A-1）；若"没向量就不去重"，PRD §4.3「同一事实重复出现要合并」在默认部署下永不生效，用户会看到同一条偏好出现五遍。`difflib` 无网络、结果确定、可离线单测。**已批准** |
+| 2 | 提交 2 指令：「抽取失败 → job 按 `max_attempts` 重试」 | `memory_extract` 的 `max_attempts=1`（Runner 通用按 `max_attempts` 重试，该类策略即 1 次） | PRD §4.7 D-1 / 架构 §2.3 第 3 条 / §5.3 时序图三处一致：抽取失败"丢弃，下个周期再来"。重试只会重复烧注定失败的上游调用。**已批准** |
+| 3 | lifespan 仅判 `OA_BACKGROUND_JOBS_ENABLED` ∧ `env != test` | 再加一条 `has_engine` | `business_store=memory` 下没有队列可消费，起轮询只是空转。**已批准** |
+| 4 | PRD §4.3 的第三个触发条件（手动「立即整理」） | **不实现端点**，列 V1.1 | 端点预算固定 10 个（PRD §0.3）。**在此披露**，不做"偷偷加第 11 个端点" |
+| 5 | 架构 §8.1 的 `memory_injected_total` 走 `/metrics` | 自制 stdlib 计数器注册表（`app/core/metrics.py`），**不新增 `/metrics` 端点** | 加端点会打破 `phase4_present` 与端点基线；导出器属 T4-05 交付物，两批各写一套必然漂移。本批只负责"把数记下来" |
+| 6 | ——（实现细节） | 语义去重与召回降级的**告警只打一次**（进程级标记） | 召回每轮都跑，逐轮 WARNING 会淹掉真正的降级日志（「日志 1 条」也就无法断言）。意外异常与超时仍逐次告警 |
+
+## 9. 需要下游（QA / 前端 / 提交 4）知道的四条边界
+
+1. **`get_model_service()` 无参构造，其配置取进程级 `get_settings()`**（阶段二既有形态，非本批引入）：
+   `app.state.settings` 的注入只到端点层，`ModelService`/`ContextAssembler` 用进程级配置。
+   生产环境"进程级配置 = 部署环境变量"，语义正确；但**测试若要模拟"抽取应用已配置"，必须注入环境变量
+   `OA_DIFY_MEMORY_APP_KEY` 并清配置缓存**（见 `test_memory_extract.py::_enable_extract_app`）。
+   建议后续批次统一收口为「端点内 `get_model_service(get_request_settings(request))`」，本批未动以免波及既有 1804 用例。
+2. **`memory_extract_every_turns` 的计数口径是"用户轮次"**（`count_role(role="user")`），不是
+   `conversation.message_count`（后者含 assistant 行）；拿总条数当轮次会让触发频率翻倍。
+3. **测试环境的宿主安全删除钩子会污染退出码**：`pytest tests/integration --run-pg -q` 曾出现
+   632 个用例全绿但 `exit=1`、日志停在 `[100%]` 无汇总行——根因是钩子拦了 pytest 的临时目录清理
+   （`[safe-delete] count=606 > threshold=50`）。加 `--basetemp=/tmp/...` 后同一批 `exit=0`。
+   **QA 读结果请看汇总行，不要只看退出码。**
+4. **`deploy/validate_migrations.py --run-pg` 必须显式带 `OA_TEST_DATABASE_URL`**，否则只报
+   `[FAIL] 环境`；且不要用 `| tail` 读退出码（管道会吞掉非 0）。
+
+## 10. 未入库 / 待办
+
+| 项 | 状态 |
+| --- | --- |
+| `scripts/bench/` | 未跟踪，按分工不入库 |
+| 前端「我的记忆」页（T4-03.6）、禁词门禁扩容（T4-03.7） | 未开始（不在提交 2/3 范围） |
+| `MemoryService.recall` 的向量 provider（OpenAI 兼容） | 只有 `NullEmbeddingProvider`；`OA_MEMORY_EMBEDDING_ENABLED=true` 但未配齐时**打 WARNING 并回落不可用**，不静默假装可用 |
+| 手动触发抽取、30 分钟闲置触发 | 列 V1.1 / 后续提交（见 §8 第 4 条） |
+| `docs/api/openapi.snapshot.json` | 未重写（`--no-write-openapi` 下 G1-G6 全通过，新增端点为加性变更） |
