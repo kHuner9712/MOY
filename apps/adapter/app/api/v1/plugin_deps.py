@@ -21,6 +21,10 @@ from app.business.plugin_grant_service import (
     PluginGrantService,
     get_plugin_grant_service,
 )
+from app.business.plugin_review_service import (
+    PluginReviewService,
+    get_plugin_review_service,
+)
 from app.business.plugin_service import PluginService, get_plugin_service
 from app.core.config import Settings, get_request_settings
 from app.core.errors import ApiError, ErrorCode
@@ -75,6 +79,18 @@ def get_grants_service(request: Request) -> PluginGrantService:
     return get_plugin_grant_service(get_request_settings(request))
 
 
+def get_reviews_service(request: Request) -> PluginReviewService:
+    """按请求生效配置构造评价服务。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        PluginReviewService: 评价服务。
+    """
+    return get_plugin_review_service(get_request_settings(request))
+
+
 def build_action_gateway(settings: Settings | None = None) -> ActionGateway:
     """构造执行原语门面（实现由 B19 提供，这里只做延迟装配）。
 
@@ -104,4 +120,5 @@ __all__: list[str] = [
     "get_grants_service",
     "get_plugin_registry",
     "get_plugins_service",
+    "get_reviews_service",
 ]

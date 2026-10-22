@@ -25,6 +25,9 @@ from app.business.credential_service import reset_credential_resolver
 from app.business.order_service import reset_order_service
 from app.business.payment_gateway import reset_payment_gateway
 from app.business.plan_service import reset_plan_service
+from app.business.plugin_grant_service import reset_plugin_grant_service
+from app.business.plugin_review_service import reset_plugin_review_service
+from app.business.plugin_service import reset_plugin_service
 from app.business.policy_service import reset_policy_service
 from app.business.segment_service import reset_segment_service
 from app.business.subscription_service import reset_subscription_service
@@ -48,10 +51,13 @@ from app.db.repositories.grant_repo import reset_grant_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
 from app.db.repositories.ops_repo import reset_ops_store
 from app.db.repositories.org_repo import reset_org_store
+from app.db.repositories.plugin_repo import reset_plugin_store
+from app.db.repositories.plugin_review_repo import reset_review_store
 from app.db.repositories.segment_repo import reset_segment_store
 from app.db.repositories.tool_repo import reset_tool_store
 from app.db.repositories.usage_repo import reset_usage_store
 from app.main import create_app
+from app.plugins.loader import reset_registry
 from app.registry.loader import reset_registry_cache
 from app.services.agent_service import reset_agent_service
 from app.services.identity_service import reset_identity_service
@@ -195,6 +201,13 @@ def _reset_all() -> None:
     reset_subscription_service()
     reset_order_service()
     reset_payment_gateway()
+    # 阶段三插件域：注册表 + 三个仓储 + 三个服务（含授权快照缓存）
+    reset_registry()
+    reset_plugin_store()
+    reset_review_store()
+    reset_plugin_grant_service()
+    reset_plugin_review_service()
+    reset_plugin_service()
 
 
 @pytest.fixture

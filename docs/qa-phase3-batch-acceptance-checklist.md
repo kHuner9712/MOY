@@ -41,6 +41,14 @@ OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q -m p0 --run-pg               > "$
 OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg --cov=app --cov-report=term > "$LOG/g05.log" 2>&1; echo "G-05 EXIT=$?"; grep "^TOTAL" "$LOG/g05.log"
 "$PY" -m coverage report --include="app/business/*,app/db/*"            > "$LOG/g05b.log" 2>&1; echo "G-05b EXIT=$?"; tail -1 "$LOG/g05b.log"
 
+# ── G3-12 双向码表核对（pm 2026-10-23 提出；**必须按批次放行，否则中批全红**）──
+#   ① 对外码：必须被 ≥1 个**已实现端点**引用（反查僵尸码）
+#   ② 端点引用：必须在注册表内（正查未定义码）
+#   ③ 内部码（可见性=内部，如 17002）：不得被任何端点引用
+#   ⚠️ 中批陷阱：B17 只有 PL1-PL5/PL13，16003/16004/16007/16008/16010/16011/16012/17001
+#      都是"端点未落地"的正常状态，直接判僵尸会**每批假红**。放行方式与 G-13 同源：
+#      按 `--allow-pending bxx` 列出"本批尚未实现的端点所对应的码"，只对已实现端点判僵尸。
+#   最小断言：两个方向的差集都为空（不是"数量相等"）。
 # ── 占位禁用自检（team-lead 2026-10-23）：pytest.fail 不得当占位 ──
 HITS=$(grep -rn "pytest.fail(" "$TREE/apps/adapter/tests/" | grep -icE "未实现|TODO|占位" || true)
 echo "G-PLACEHOLDER HITS=$HITS (期望 0)"; test "$HITS" = "0"

@@ -22,8 +22,12 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from app.business.audit_service import (
+    ACTION_PLUGIN_CAPABILITY_GRANT,
     ACTION_PLUGIN_CAPABILITY_POLICY,
     ACTION_PLUGIN_INSTALL,
+    ACTION_PLUGIN_STATE_CHANGE,
+    ACTION_PLUGIN_UNINSTALL,
+    ACTION_PLUGIN_VERSION_CHANGE,
     RESOURCE_PLUGIN,
     AuditService,
 )
@@ -47,6 +51,7 @@ from app.db.repositories.plugin_repo import (
 )
 from app.plugins.actions import (
     CAPABILITY_CATALOG,
+    CAPABILITY_KEYS,
     ORG_CAPABILITIES,
     PERSONAL_CAPABILITIES,
     capability_display_name,
@@ -70,7 +75,14 @@ from app.schemas.plugin import (
     OutputBriefItem,
     PluginCapabilityItem,
     SettingBriefItem,
+    SettingsData,
+    SettingsRequest,
+    StateData,
+    UninstallData,
+    UpdateGrantsData,
+    UpdateGrantsRequest,
     VersionBriefItem,
+    VersionData,
 )
 
 logger = get_logger(__name__)
@@ -233,9 +245,11 @@ class PluginService:
 
         total = len(items)
         start = max(page - 1, 0) * page_size
+        policies = await self._store.list_policies(auth.tenant_id)
         return MarketData(
             items=items[start : start + page_size],
             categories=categories,
+            org_capabilities=_policy_items(policies),
             page=page,
             page_size=page_size,
             total=total,
@@ -507,6 +521,7 @@ class PluginService:
         _assert_settings_keys(manifest, request.settings)
 
         version = context.catalog.latest_version
+        already_installed = context.installation is not None and context.installation.is_live
         installation = await self._store.save_installation(
             InstallationRecord(
                 tenant_id=auth.tenant_id,
@@ -531,14 +546,32 @@ class PluginService:
                 enabled_at=now_iso(),
             )
         )
+        # 重复添加（已添加状态再点一次）：**不动授权、不写审计、不改安装数**
+        # —— 那是 PL14（授权）与 PL6（停用）的职责。重复点按钮不该产生"授权被重置"
+        # 或"审计里多一条安装"的副作用（TC-P3-MK08-06）。
+        if already_installed:
+            current = await self._grants.snapshot(auth.tenant_id, plugin_id, auth.user_id)
+            logger.info(
+                "plugin_already_installed",
+                tenant_id=auth.tenant_id,
+                plugin_id=plugin_id,
+                version=installation.version,
+            )
+            return InstallData(
+                plugin_id=plugin_id,
+                status=installation.status,
+                version=installation.version,
+                granted_capabilities=sorted(current),
+                denied_capabilities=sorted(declared - current),
+                already_installed=True,
+            )
         granted = await self._grants.grant(
             tenant_id=auth.tenant_id,
             plugin_id=plugin_id,
             user_id=auth.user_id,
             capabilities=requested,
         )
-        if context.installation is None or not context.installation.is_live:
-            await self._store.adjust_install_count(plugin_id, 1)
+        await self._store.adjust_install_count(plugin_id, 1)
         await self._audit.record(
             tenant_id=auth.tenant_id,
             actor_id=auth.user_id,
@@ -566,6 +599,91 @@ class PluginService:
             version=version,
             granted_capabilities=sorted(granted),
             denied_capabilities=sorted(declared - requested),
+            already_installed=False,
+        )
+
+    # ------------------------------------------------------------------
+    # PL14 更新本人授权
+    # ------------------------------------------------------------------
+    async def update_grants(
+        self, *, plugin_id: str, request: UpdateGrantsRequest, auth: AuthContext
+    ) -> UpdateGrantsData:
+        """增减**本人**对该插件的能力授权（PL14，闭环 P0-P3-03 ④）。
+
+        三条硬约束（架构 §5.2 PL14）：
+        1. `required: true` 的能力**不可撤**（撤了插件直接不可用，用户会当成故障）→ `20001`；
+        2. 只能改本人，管理员改他人授权不在本版（避免绕过企业策略）；
+        3. 不新增权限点，登录即可；授予企业能力时同样要过企业开关（`16006`）。
+
+        Args:
+            plugin_id: 插件标识。
+            request: 增减意图。
+            auth: 鉴权上下文。
+
+        Returns:
+            UpdateGrantsData: 变更后的授权全貌。
+
+        Raises:
+            ApiError: 未添加（16003）、撤销必需能力（20001）、企业未开放（16006）。
+        """
+        installation = await self._require_live(plugin_id, auth)
+        manifest = self._registry.get(plugin_id, installation.version)
+        declared = set(manifest.capability_keys) if manifest is not None else set()
+        required = set(manifest.required_capability_keys) if manifest is not None else set()
+        unknown = sorted(
+            item.capability_key for item in request.grants if item.capability_key not in declared
+        )
+        if unknown:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID, internal_detail=f"undeclared: {', '.join(unknown)}"
+            )
+        current = set(await self._grants.snapshot(auth.tenant_id, plugin_id, auth.user_id))
+        target = set(current)
+        for item in request.grants:
+            if item.granted:
+                target.add(item.capability_key)
+            else:
+                target.discard(item.capability_key)
+        revoked_required = sorted(required - target)
+        if revoked_required:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                message="必需能力不能撤销，如不再使用请停用或移除该插件",
+                internal_detail=f"cannot revoke required: {', '.join(revoked_required)}",
+            )
+        policies = await self._store.list_policies(auth.tenant_id)
+        blocked = sorted(
+            capability
+            for capability in target
+            if capability in ORG_CAPABILITIES and not policies.get(capability, False)
+        )
+        if blocked:
+            raise ApiError(
+                ErrorCode.CAPABILITY_POLICY_BLOCKED,
+                internal_detail=f"policy disabled: {', '.join(blocked)}",
+            )
+        granted = await self._grants.grant(
+            tenant_id=auth.tenant_id,
+            plugin_id=plugin_id,
+            user_id=auth.user_id,
+            capabilities=target,
+        )
+        await self._audit.record(
+            tenant_id=auth.tenant_id,
+            actor_id=auth.user_id,
+            action=ACTION_PLUGIN_CAPABILITY_GRANT,
+            resource_type=RESOURCE_PLUGIN,
+            resource_id=plugin_id,
+            actor_role=auth.roles[0] if auth.roles else "",
+            change_summary={
+                "granted": sorted(target - current),
+                "revoked": sorted(current - target),
+            },
+        )
+        return UpdateGrantsData(
+            granted_capabilities=sorted(granted),
+            denied_capabilities=sorted(declared - granted),
+            required_capabilities=sorted(required),
         )
 
     # ------------------------------------------------------------------
@@ -612,18 +730,345 @@ class PluginService:
         logger.info(
             "plugin_capability_policy_updated", tenant_id=auth.tenant_id, changed=sorted(values)
         )
+        # 回读**全量 6 项**：个人能力恒 True（不可被企业关闭），企业能力取存储值。
+        # 前端一次拿全，避免"个人能力要另调一个端点"。
+        stamp = now_iso()
         return CapabilityPolicyData(
             policies=[
                 CapabilityPolicyItem(
                     capability_key=capability,
                     display_name=capability_display_name(capability),
-                    enabled=stored.get(capability, False),
+                    enabled=(
+                        True
+                        if capability in PERSONAL_CAPABILITIES
+                        else stored.get(capability, False)
+                    ),
                     updated_by_name=auth.user_id,
-                    updated_at=now_iso(),
+                    updated_at=stamp,
                 )
-                for capability in ORG_CAPABILITIES
+                for capability in CAPABILITY_KEYS
             ]
         )
+
+    # ------------------------------------------------------------------
+    # PL6 停用 / 启用
+    # ------------------------------------------------------------------
+    async def set_state(self, *, plugin_id: str, status: str, auth: AuthContext) -> StateData:
+        """停用或启用插件（PL6）。
+
+        **停用不打断在跑任务**（PRD P0-P3-02 ⑤）：只改安装态，任务继续完成；
+        `running_task_count` 回给前端做提示（B19 接入任务计数，本批为 0）。
+        启用时要重新确认「能力授权仍在 + 企业开关仍开」——停用期间管理员可能把
+        企业能力关掉了，直接启用会得到一个"看起来能用、一跑就 16006"的插件。
+
+        Args:
+            plugin_id: 插件标识。
+            status: 目标状态（`enabled` / `disabled`）。
+            auth: 鉴权上下文。
+
+        Returns:
+            StateData: 变更结果。
+
+        Raises:
+            ApiError: 未添加（16003）、缺少能力（16005）、企业未开放（16006）。
+        """
+        installation = await self._require_live(plugin_id, auth)
+        if installation.status == status:
+            return StateData(plugin_id=plugin_id, status=status, running_task_count=0)
+        if status == STATUS_ENABLED:
+            manifest = self._registry.get(plugin_id, installation.version)
+            if manifest is not None:
+                granted = await self._grants.snapshot(auth.tenant_id, plugin_id, auth.user_id)
+                missing = sorted(set(manifest.required_capability_keys) - granted)
+                if missing:
+                    raise ApiError(
+                        ErrorCode.CAPABILITY_NOT_GRANTED,
+                        internal_detail=f"missing capabilities: {', '.join(missing)}",
+                    )
+                policies = await self._store.list_policies(auth.tenant_id)
+                blocked = sorted(
+                    capability
+                    for capability in manifest.capability_keys
+                    if capability in ORG_CAPABILITIES and not policies.get(capability, False)
+                )
+                if blocked:
+                    raise ApiError(
+                        ErrorCode.CAPABILITY_POLICY_BLOCKED,
+                        internal_detail=f"policy disabled: {', '.join(blocked)}",
+                    )
+        stamp = now_iso()
+        updated = await self._store.save_installation(
+            InstallationRecord(
+                tenant_id=installation.tenant_id,
+                plugin_id=installation.plugin_id,
+                version=installation.version,
+                previous_version=installation.previous_version,
+                status=status,
+                settings=installation.settings,
+                capability_version=installation.capability_version + 1,
+                installed_by=installation.installed_by,
+                installed_at=installation.installed_at,
+                enabled_at=stamp if status == STATUS_ENABLED else installation.enabled_at,
+                disabled_at=stamp if status == STATUS_DISABLED else installation.disabled_at,
+            )
+        )
+        self._grants.invalidate(auth.tenant_id, plugin_id)
+        await self._audit.record(
+            tenant_id=auth.tenant_id,
+            actor_id=auth.user_id,
+            action=ACTION_PLUGIN_STATE_CHANGE,
+            resource_type=RESOURCE_PLUGIN,
+            resource_id=plugin_id,
+            actor_role=auth.roles[0] if auth.roles else "",
+            change_summary={"status": {"from": installation.status, "to": updated.status}},
+        )
+        return StateData(plugin_id=plugin_id, status=updated.status, running_task_count=0)
+
+    # ------------------------------------------------------------------
+    # PL7 卸载
+    # ------------------------------------------------------------------
+    async def uninstall(self, *, plugin_id: str, auth: AuthContext) -> UninstallData:
+        """卸载插件（PL7，**保留历史任务与产物**）。
+
+        Args:
+            plugin_id: 插件标识。
+            auth: 鉴权上下文。
+
+        Returns:
+            UninstallData: 卸载结果。
+
+        Raises:
+            ApiError: 未添加（16003）。
+        """
+        installation = await self._require_live(plugin_id, auth)
+        stamp = now_iso()
+        await self._store.save_installation(
+            InstallationRecord(
+                tenant_id=installation.tenant_id,
+                plugin_id=installation.plugin_id,
+                version=installation.version,
+                previous_version=installation.previous_version,
+                status=STATUS_UNINSTALLED,
+                settings=installation.settings,
+                capability_version=installation.capability_version + 1,
+                installed_by=installation.installed_by,
+                installed_at=installation.installed_at,
+                enabled_at=installation.enabled_at,
+                disabled_at=installation.disabled_at,
+                uninstalled_at=stamp,
+            )
+        )
+        # 卸载即撤权：重新添加时必须重新走授权抽屉（能力边界不能"记住上次同意"）
+        await self._grants.grant(
+            tenant_id=auth.tenant_id,
+            plugin_id=plugin_id,
+            user_id=auth.user_id,
+            capabilities=set(),
+        )
+        await self._store.adjust_install_count(plugin_id, -1)
+        await self._audit.record(
+            tenant_id=auth.tenant_id,
+            actor_id=auth.user_id,
+            action=ACTION_PLUGIN_UNINSTALL,
+            resource_type=RESOURCE_PLUGIN,
+            resource_id=plugin_id,
+            actor_role=auth.roles[0] if auth.roles else "",
+            change_summary={"kept_task_count": 0},
+        )
+        logger.info("plugin_uninstalled", tenant_id=auth.tenant_id, plugin_id=plugin_id)
+        return UninstallData(
+            plugin_id=plugin_id, uninstalled=True, running_task_count=0, kept_task_count=0
+        )
+
+    # ------------------------------------------------------------------
+    # PL8 升级 / PL9 回滚
+    # ------------------------------------------------------------------
+    async def upgrade(
+        self, *, plugin_id: str, target_version: str, auth: AuthContext
+    ) -> VersionData:
+        """升级到指定版本（PL8）。
+
+        只保留最近 2 个版本（`version` + `previous_version`，PRD：只允许回退 1 次）。
+
+        Args:
+            plugin_id: 插件标识。
+            target_version: 目标版本。
+            auth: 鉴权上下文。
+
+        Returns:
+            VersionData: 变更结果。
+
+        Raises:
+            ApiError: 未添加（16003）、版本不存在（16012）、平台版本过低（16007）。
+        """
+        installation = await self._require_live(plugin_id, auth)
+        version = await self._store.get_version(plugin_id, target_version)
+        if version is None:
+            raise ApiError(
+                ErrorCode.PLUGIN_VERSION_NOT_FOUND,
+                internal_detail=f"{plugin_id}@{target_version}",
+            )
+        if version_tuple(version.min_platform_version) > version_tuple(self._settings.app_version):
+            raise ApiError(
+                ErrorCode.PLUGIN_VERSION_INCOMPATIBLE,
+                internal_detail=(
+                    f"require {version.min_platform_version} > {self._settings.app_version}"
+                ),
+            )
+        return await self._switch_version(installation, target_version, auth, action="upgrade")
+
+    async def rollback(self, *, plugin_id: str, auth: AuthContext) -> VersionData:
+        """回退到上一版本（PL9，只保留 1 次回退能力）。
+
+        Args:
+            plugin_id: 插件标识。
+            auth: 鉴权上下文。
+
+        Returns:
+            VersionData: 变更结果。
+
+        Raises:
+            ApiError: 未添加（16003）、无上一版本（16008）。
+        """
+        installation = await self._require_live(plugin_id, auth)
+        if not installation.previous_version:
+            raise ApiError(
+                ErrorCode.PLUGIN_ROLLBACK_UNAVAILABLE,
+                internal_detail=f"{plugin_id} has no previous_version",
+            )
+        return await self._switch_version(
+            installation, installation.previous_version, auth, action="rollback"
+        )
+
+    async def _switch_version(
+        self,
+        installation: InstallationRecord,
+        target_version: str,
+        auth: AuthContext,
+        *,
+        action: str,
+    ) -> VersionData:
+        """切换版本（升级/回滚共用），双指针互换。
+
+        Args:
+            installation: 当前安装行。
+            target_version: 目标版本。
+            auth: 鉴权上下文。
+            action: `upgrade` / `rollback`（写进审计）。
+
+        Returns:
+            VersionData: 变更结果。
+        """
+        updated = await self._store.save_installation(
+            InstallationRecord(
+                tenant_id=installation.tenant_id,
+                plugin_id=installation.plugin_id,
+                version=target_version,
+                previous_version=installation.version,
+                status=installation.status,
+                settings=installation.settings,
+                capability_version=installation.capability_version + 1,
+                installed_by=installation.installed_by,
+                installed_at=installation.installed_at,
+                enabled_at=installation.enabled_at,
+                disabled_at=installation.disabled_at,
+            )
+        )
+        catalog = await self._store.get_catalog(installation.plugin_id)
+        latest = catalog.latest_version if catalog is not None else target_version
+        await self._audit.record(
+            tenant_id=auth.tenant_id,
+            actor_id=auth.user_id,
+            action=ACTION_PLUGIN_VERSION_CHANGE,
+            resource_type=RESOURCE_PLUGIN,
+            resource_id=installation.plugin_id,
+            actor_role=auth.roles[0] if auth.roles else "",
+            change_summary={
+                "version": {"from": installation.version, "to": target_version},
+                "action": action,
+            },
+        )
+        logger.info(
+            "plugin_version_switched",
+            tenant_id=auth.tenant_id,
+            plugin_id=installation.plugin_id,
+            action=action,
+            version=target_version,
+        )
+        return VersionData(
+            plugin_id=installation.plugin_id,
+            version=updated.version,
+            previous_version=updated.previous_version,
+            has_update=version_tuple(latest) > version_tuple(updated.version),
+        )
+
+    # ------------------------------------------------------------------
+    # PL10 插件配置
+    # ------------------------------------------------------------------
+    async def set_settings(
+        self, *, plugin_id: str, request: SettingsRequest, auth: AuthContext
+    ) -> SettingsData:
+        """写入插件配置（PL10，键须 ⊆ 声明）。
+
+        Args:
+            plugin_id: 插件标识。
+            request: 配置请求。
+            auth: 鉴权上下文。
+
+        Returns:
+            SettingsData: 当前配置。
+
+        Raises:
+            ApiError: 未添加（16003）、出现未声明的配置键（20001）。
+        """
+        installation = await self._require_live(plugin_id, auth)
+        manifest = self._registry.get(plugin_id, installation.version)
+        declared = (
+            {item.key for item in manifest.settings_schema} if manifest is not None else set()
+        )
+        unknown = sorted(set(request.settings) - declared)
+        if unknown:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                internal_detail=f"undeclared settings: {', '.join(unknown)}",
+            )
+        updated = await self._store.save_installation(
+            InstallationRecord(
+                tenant_id=installation.tenant_id,
+                plugin_id=installation.plugin_id,
+                version=installation.version,
+                previous_version=installation.previous_version,
+                status=installation.status,
+                settings=dict(request.settings),
+                capability_version=installation.capability_version,
+                installed_by=installation.installed_by,
+                installed_at=installation.installed_at,
+                enabled_at=installation.enabled_at,
+                disabled_at=installation.disabled_at,
+            )
+        )
+        return SettingsData(plugin_id=plugin_id, settings=updated.settings, updated_at=now_iso())
+
+    async def _require_live(self, plugin_id: str, auth: AuthContext) -> InstallationRecord:
+        """读取安装行并要求「已添加」（否则 16003）。
+
+        Args:
+            plugin_id: 插件标识。
+            auth: 鉴权上下文。
+
+        Returns:
+            InstallationRecord: 安装行。
+
+        Raises:
+            ApiError: 未添加或已卸载（16003）。
+        """
+        installation = await self._store.get_installation(auth.tenant_id, plugin_id)
+        if installation is None or not installation.is_live:
+            raise ApiError(
+                ErrorCode.PLUGIN_NOT_INSTALLED,
+                internal_detail=f"tenant={auth.tenant_id} plugin={plugin_id}",
+            )
+        return installation
 
     # ------------------------------------------------------------------
     # 内部工具
@@ -696,6 +1141,32 @@ class PluginService:
             if installation is None or not installation.is_live:
                 missing.append(required)
         return missing
+
+
+def _policy_items(policies: dict[str, bool]) -> list[PluginCapabilityItem]:
+    """把企业能力开关转成条目（PL1 顶层 `org_capabilities`，3 项）。
+
+    Args:
+        policies: 开关字典。
+
+    Returns:
+        list[CapabilityPolicyItem]: 三条企业能力条目。
+    """
+    items: list[PluginCapabilityItem] = []
+    for capability in ORG_CAPABILITIES:
+        catalog = CAPABILITY_CATALOG.get(capability, {})
+        items.append(
+            PluginCapabilityItem(
+                capability_key=capability,
+                display_name=catalog.get("display_name", capability),
+                reason=catalog.get("reason", ""),
+                denial_effect=catalog.get("denial_effect", ""),
+                category="org",
+                required=True,
+                org_switch_enabled=bool(policies.get(capability, False)),
+            )
+        )
+    return items
 
 
 def _capability_items(

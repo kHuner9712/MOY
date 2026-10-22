@@ -47,8 +47,8 @@ CORE_BASELINE_COUNT: Final[int] = 30
 #: 阶段二新域端点基线数量
 PHASE2_BASELINE_COUNT: Final[int] = 38
 
-#: 阶段三插件域端点基线数量（PL1-PL13 + WF1）
-PHASE3_BASELINE_COUNT: Final[int] = 14
+#: 阶段三插件域端点基线数量（PL1-PL14 + WF1 + WF2，架构 v2 增补 PL14/WF2）
+PHASE3_BASELINE_COUNT: Final[int] = 16
 
 #: 对外文档禁词（G5）：任何底座/中间件/内部实现的术语都不得外泄
 FORBIDDEN_TERMS: Final[tuple[str, ...]] = (

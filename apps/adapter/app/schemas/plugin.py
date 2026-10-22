@@ -111,6 +111,9 @@ class MarketData(BaseModel):
 
     items: list[MarketItem] = Field(default_factory=list, description="条目列表")
     categories: list[CategoryCountItem] = Field(default_factory=list, description="分类计数")
+    org_capabilities: list[PluginCapabilityItem] = Field(
+        default_factory=list, description="企业能力开关（单一读源，3 项，含 org_switch_enabled）"
+    )
     page: int = Field(default=1, ge=1, description="页码")
     page_size: int = Field(default=12, ge=1, description="每页条数")
     total: int = Field(default=0, ge=0, description="总条数")
@@ -296,6 +299,7 @@ class InstallData(BaseModel):
         version: 安装版本。
         granted_capabilities: 已授权能力。
         denied_capabilities: 未授权能力。
+        already_installed: 是否「本来就已添加」（首次 false / 重复 true，字段恒有）。
     """
 
     plugin_id: str = ""
@@ -303,6 +307,7 @@ class InstallData(BaseModel):
     version: str = "1.0.0"
     granted_capabilities: list[str] = Field(default_factory=list, description="已授权能力")
     denied_capabilities: list[str] = Field(default_factory=list, description="未授权能力")
+    already_installed: bool = Field(default=False, description="是否重复添加")
 
 
 class CapabilityPolicyItem(BaseModel):
@@ -367,6 +372,7 @@ __all__: list[str] = [
     "CapabilityPolicyRequest",
     "CapabilityPolicyRequestItem",
     "CategoryCountItem",
+    "GrantToggleItem",
     "InstallData",
     "InstallRequest",
     "InstalledData",
@@ -379,6 +385,235 @@ __all__: list[str] = [
     "OutputBriefItem",
     "PluginCapabilityItem",
     "PluginCategory",
+    "ReviewData",
+    "ReviewItem",
+    "ReviewListData",
+    "ReviewRequest",
     "SettingBriefItem",
+    "SettingsData",
+    "SettingsRequest",
+    "StateData",
+    "StateRequest",
+    "UninstallData",
+    "UpdateGrantsData",
+    "UpdateGrantsRequest",
+    "UpgradeRequest",
     "VersionBriefItem",
+    "VersionData",
 ]
+
+
+# ===========================================================================
+# PL6-PL12（B18）：生命周期、设置与评价
+# ===========================================================================
+class StateRequest(BaseModel):
+    """启用/停用请求（PL6）。
+
+    Attributes:
+        status: 目标状态（`enabled` / `disabled`）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["enabled", "disabled"] = Field(description="目标状态")
+
+
+class StateData(BaseModel):
+    """启用/停用结果（PL6）。
+
+    Attributes:
+        plugin_id: 插件标识。
+        status: 变更后状态。
+        running_task_count: 在跑任务数（停用不打断它们）。
+    """
+
+    plugin_id: str = ""
+    status: str = "enabled"
+    running_task_count: int = 0
+
+
+class UninstallData(BaseModel):
+    """卸载结果（PL7）。
+
+    Attributes:
+        plugin_id: 插件标识。
+        uninstalled: 是否已卸载。
+        running_task_count: 仍在跑的任务数（会继续完成）。
+        kept_task_count: 保留的历史任务数（确认弹窗展示）。
+    """
+
+    plugin_id: str = ""
+    uninstalled: bool = True
+    running_task_count: int = 0
+    kept_task_count: int = 0
+
+
+class UpgradeRequest(BaseModel):
+    """升级请求（PL8）。
+
+    Attributes:
+        target_version: 目标版本。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_version: str = Field(min_length=5, max_length=16, description="目标版本")
+
+
+class VersionData(BaseModel):
+    """版本变更结果（PL8 / PL9）。
+
+    Attributes:
+        plugin_id: 插件标识。
+        version: 当前版本。
+        previous_version: 上一版本。
+        has_update: 是否仍有更新可用。
+    """
+
+    plugin_id: str = ""
+    version: str = "1.0.0"
+    previous_version: str = ""
+    has_update: bool = False
+
+
+class SettingsRequest(BaseModel):
+    """插件配置写入请求（PL10）。
+
+    Attributes:
+        settings: 配置键值（键须 ⊆ 声明 `settings_schema`）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    settings: dict[str, Any] = Field(default_factory=dict, description="配置键值")
+
+
+class SettingsData(BaseModel):
+    """插件配置结果（PL10）。
+
+    Attributes:
+        plugin_id: 插件标识。
+        settings: 当前配置。
+        updated_at: 更新时间。
+    """
+
+    plugin_id: str = ""
+    settings: dict[str, Any] = Field(default_factory=dict, description="当前配置")
+    updated_at: str = ""
+
+
+class ReviewItem(BaseModel):
+    """评价条目（PL11）。
+
+    Attributes:
+        review_id: 评价 ID。
+        rating: 评分。
+        content: 评价内容。
+        author_name: 展示名（匿名时为「某位同事」）。
+        department_name: 部门展示名（匿名时为空）。
+        created_at: 提交时间。
+    """
+
+    review_id: str = ""
+    rating: int = 5
+    content: str = ""
+    author_name: str = ""
+    department_name: str = ""
+    created_at: str = ""
+
+
+class ReviewListData(BaseModel):
+    """评价列表（PL11）。
+
+    Attributes:
+        items: 评价条目。
+        rating_avg: 平均分。
+        rating_count: 评价条数。
+        page: 页码。
+        page_size: 每页条数。
+        total: 总条数。
+        total_pages: 总页数。
+    """
+
+    items: list[ReviewItem] = Field(default_factory=list, description="评价条目")
+    rating_avg: float = Field(default=0.0, ge=0.0, description="平均分")
+    rating_count: int = Field(default=0, ge=0, description="评价条数")
+    page: int = Field(default=1, ge=1, description="页码")
+    page_size: int = Field(default=10, ge=1, description="每页条数")
+    total: int = Field(default=0, ge=0, description="总条数")
+    total_pages: int = Field(default=0, ge=0, description="总页数")
+
+
+class ReviewRequest(BaseModel):
+    """提交评价请求（PL12）。
+
+    Attributes:
+        rating: 评分（1-5）。
+        content: 评价内容（≤200 字）。
+        anonymous: 是否匿名。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rating: int = Field(ge=1, le=5, description="评分")
+    content: str = Field(default="", max_length=200, description="评价内容")
+    anonymous: bool = Field(default=False, description="是否匿名")
+
+
+class ReviewData(BaseModel):
+    """提交评价结果（PL12）。
+
+    Attributes:
+        review_id: 评价 ID。
+        rating: 评分。
+        created_at: 提交时间。
+        rating_avg: 更新后的平均分。
+        rating_count: 更新后的评价条数。
+    """
+
+    review_id: str = ""
+    rating: int = 5
+    created_at: str = ""
+    rating_avg: float = 0.0
+    rating_count: int = 0
+
+
+# ===========================================================================
+# PL14（架构 v2 增补）：更新本人授权
+# ===========================================================================
+class GrantToggleItem(BaseModel):
+    """单条授权增减意图（PL14 请求元素）。
+
+    Attributes:
+        capability_key: 能力键。
+        granted: 是否授予。
+    """
+
+    capability_key: str = Field(min_length=3, max_length=64, description="能力键")
+    granted: bool = Field(description="是否授予")
+
+
+class UpdateGrantsRequest(BaseModel):
+    """更新授权请求（PL14）。
+
+    Attributes:
+        grants: 增减意图列表。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    grants: list[GrantToggleItem] = Field(min_length=1, max_length=6, description="增减意图")
+
+
+class UpdateGrantsData(BaseModel):
+    """更新授权结果（PL14）。
+
+    Attributes:
+        granted_capabilities: 当前已授予。
+        denied_capabilities: 当前未授予。
+        required_capabilities: 该插件的必需能力（不可撤）。
+    """
+
+    granted_capabilities: list[str] = Field(default_factory=list, description="已授予")
+    denied_capabilities: list[str] = Field(default_factory=list, description="未授予")
+    required_capabilities: list[str] = Field(default_factory=list, description="必需能力")

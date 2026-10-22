@@ -26,7 +26,8 @@ from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
-from app.api.v1.plugin_deps import get_plugins_service
+from app.api.v1.plugin_deps import get_plugins_service, get_reviews_service
+from app.business.plugin_review_service import PluginReviewService
 from app.business.plugin_service import PluginService
 from app.business.policy_service import PolicyService, get_policy_service
 from app.core.config import get_request_settings
@@ -44,6 +45,18 @@ from app.schemas.plugin import (
     InstallRequest,
     MarketData,
     MarketDetailData,
+    ReviewData,
+    ReviewListData,
+    ReviewRequest,
+    SettingsData,
+    SettingsRequest,
+    StateData,
+    StateRequest,
+    UninstallData,
+    UpdateGrantsData,
+    UpdateGrantsRequest,
+    UpgradeRequest,
+    VersionData,
 )
 
 logger = get_logger(__name__)
@@ -76,6 +89,18 @@ def _service(request: Request) -> PluginService:
         PluginService: 插件服务。
     """
     return get_plugins_service(request)
+
+
+def _reviews_service(request: Request) -> PluginReviewService:
+    """按请求生效配置构造评价服务。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        PluginReviewService: 评价服务。
+    """
+    return get_reviews_service(request)
 
 
 # ===========================================================================
@@ -291,6 +316,62 @@ async def install_plugin(
 
 
 # ===========================================================================
+# PL14 更新本人授权
+# ===========================================================================
+@router.put(
+    "/{plugin_id}/grants",
+    response_model=ApiResponse[UpdateGrantsData],
+    summary="PL14 调整该插件的能力授权",
+    description=(
+        "增减你本人对这个插件的能力授权。必需能力不能撤销（如不再使用请停用或移除插件）；"
+        "开启企业能力时仍需管理员先在团队设置中开放。写接口，需携带 Idempotency-Key 请求头。"
+    ),
+)
+async def update_plugin_grants(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    body: UpdateGrantsRequest = Body(...),
+    plugin_id: str = Path(..., description="插件标识", min_length=6, max_length=44),
+) -> ApiResponse[UpdateGrantsData]:
+    """PL14 调整该插件的能力授权。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        manager: 幂等管理器。
+        body: 增减意图。
+        plugin_id: 插件标识。
+
+    Returns:
+        ApiResponse[UpdateGrantsData]: 变更后的授权全貌。
+
+    Raises:
+        ApiError: 未添加（16003）、撤销必需能力（20001）、企业未开放（16006）。
+    """
+    service = _service(request)
+
+    async def factory() -> UpdateGrantsData:
+        """写入授权。
+
+        Returns:
+            UpdateGrantsData: 变更后的授权全貌。
+        """
+        return await service.update_grants(plugin_id=plugin_id, request=body, auth=context.auth)
+
+    result, replayed = await run_idempotent(
+        request, context, factory, manager, body_digest=hash_request_body(body.model_dump_json())
+    )
+    if replayed:
+        return ApiResponse[UpdateGrantsData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message="本次操作已处理，无需重复提交",
+            data=result,
+        )
+    return ApiResponse[UpdateGrantsData].ok(result)
+
+
+# ===========================================================================
 # PL13 企业能力开关
 # ===========================================================================
 @router.put(
@@ -346,6 +427,373 @@ async def set_capability_policy(
     return ApiResponse[CapabilityPolicyData].ok(result)
 
 
+# ===========================================================================
+# PL6 停用 / 启用
+# ===========================================================================
+@router.patch(
+    "/{plugin_id}/state",
+    response_model=ApiResponse[StateData],
+    summary="PL6 停用或启用插件",
+    description=(
+        "停用或重新启用插件。停用**不会打断正在执行的任务**（响应里给出仍在跑的任务数），"
+        "只是不再接受新任务。重新启用会重新确认能力授权与企业开关仍然有效。"
+        "登录即可操作（成员可自行管理自己的安装）。"
+    ),
+)
+async def set_plugin_state(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    body: StateRequest = Body(...),
+    plugin_id: str = Path(..., description="插件标识", min_length=6, max_length=44),
+) -> ApiResponse[StateData]:
+    """PL6 停用或启用插件。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        body: 状态请求。
+        plugin_id: 插件标识。
+
+    Returns:
+        ApiResponse[StateData]: 变更结果。
+
+    Raises:
+        ApiError: 未添加（16003）、缺少能力（16005）、企业未开放（16006）。
+    """
+    service = _service(request)
+
+    async def factory() -> StateData:
+        """执行启停。
+
+        Returns:
+            StateData: 变更结果。
+        """
+        return await service.set_state(plugin_id=plugin_id, status=body.status, auth=context.auth)
+
+    result, replayed = await run_idempotent(
+        request, context, factory, manager, body_digest=hash_request_body(body.model_dump_json())
+    )
+    if replayed:
+        return ApiResponse[StateData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message="本次操作已处理，无需重复提交",
+            data=result,
+        )
+    return ApiResponse[StateData].ok(result)
+
+
+# ===========================================================================
+# PL7 卸载
+# ===========================================================================
+@router.delete(
+    "/{plugin_id}",
+    response_model=ApiResponse[UninstallData],
+    summary="PL7 移除插件",
+    description=(
+        "移除插件。**历史任务与产物全部保留**（`kept_task_count` 供确认弹窗展示），"
+        "正在执行的任务会继续完成（`running_task_count`）。移除即撤回全部能力授权，"
+        "重新添加时需再次逐项同意。写接口，需携带 Idempotency-Key 请求头。"
+    ),
+)
+async def uninstall_plugin(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    plugin_id: str = Path(..., description="插件标识", min_length=6, max_length=44),
+) -> ApiResponse[UninstallData]:
+    """PL7 移除插件。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        manager: 幂等管理器。
+        plugin_id: 插件标识。
+
+    Returns:
+        ApiResponse[UninstallData]: 卸载结果。
+
+    Raises:
+        ApiError: 未添加（16003）。
+    """
+    service = _service(request)
+
+    async def factory() -> UninstallData:
+        """执行卸载。
+
+        Returns:
+            UninstallData: 卸载结果。
+        """
+        return await service.uninstall(plugin_id=plugin_id, auth=context.auth)
+
+    result, replayed = await run_idempotent(
+        request, context, factory, manager, body_digest=hash_request_body(f"uninstall:{plugin_id}")
+    )
+    if replayed:
+        return ApiResponse[UninstallData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message="本次操作已处理，无需重复提交",
+            data=result,
+        )
+    return ApiResponse[UninstallData].ok(result)
+
+
+# ===========================================================================
+# PL8 升级 / PL9 回退
+# ===========================================================================
+@router.post(
+    "/{plugin_id}/upgrade",
+    response_model=ApiResponse[VersionData],
+    summary="PL8 更新插件版本",
+    description=(
+        "更新到指定版本。平台只保留最近两个版本，因此只能回退一次。"
+        "写接口，需携带 Idempotency-Key 请求头。"
+    ),
+)
+async def upgrade_plugin(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    body: UpgradeRequest = Body(...),
+    plugin_id: str = Path(..., description="插件标识", min_length=6, max_length=44),
+) -> ApiResponse[VersionData]:
+    """PL8 更新插件版本。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        manager: 幂等管理器。
+        body: 升级请求。
+        plugin_id: 插件标识。
+
+    Returns:
+        ApiResponse[VersionData]: 变更结果。
+
+    Raises:
+        ApiError: 未添加（16003）、版本不存在（16012）、平台版本过低（16007）。
+    """
+    service = _service(request)
+
+    async def factory() -> VersionData:
+        """执行升级。
+
+        Returns:
+            VersionData: 变更结果。
+        """
+        return await service.upgrade(
+            plugin_id=plugin_id, target_version=body.target_version, auth=context.auth
+        )
+
+    result, replayed = await run_idempotent(
+        request, context, factory, manager, body_digest=hash_request_body(body.model_dump_json())
+    )
+    if replayed:
+        return ApiResponse[VersionData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message="本次操作已处理，无需重复提交",
+            data=result,
+        )
+    return ApiResponse[VersionData].ok(result)
+
+
+@router.post(
+    "/{plugin_id}/rollback",
+    response_model=ApiResponse[VersionData],
+    summary="PL9 恢复上一版本",
+    description=(
+        "恢复到上一个版本。平台只保留最近两个版本，因此只支持回退一次；"
+        "更早的版本请联系管理员。写接口，需携带 Idempotency-Key 请求头。"
+    ),
+)
+async def rollback_plugin(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    plugin_id: str = Path(..., description="插件标识", min_length=6, max_length=44),
+) -> ApiResponse[VersionData]:
+    """PL9 恢复上一版本。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        manager: 幂等管理器。
+        plugin_id: 插件标识。
+
+    Returns:
+        ApiResponse[VersionData]: 变更结果。
+
+    Raises:
+        ApiError: 未添加（16003）、无上一版本（16008）。
+    """
+    service = _service(request)
+
+    async def factory() -> VersionData:
+        """执行回退。
+
+        Returns:
+            VersionData: 变更结果。
+        """
+        return await service.rollback(plugin_id=plugin_id, auth=context.auth)
+
+    result, replayed = await run_idempotent(
+        request, context, factory, manager, body_digest=hash_request_body(f"rollback:{plugin_id}")
+    )
+    if replayed:
+        return ApiResponse[VersionData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message="本次操作已处理，无需重复提交",
+            data=result,
+        )
+    return ApiResponse[VersionData].ok(result)
+
+
+# ===========================================================================
+# PL10 插件配置
+# ===========================================================================
+@router.put(
+    "/{plugin_id}/settings",
+    response_model=ApiResponse[SettingsData],
+    summary="PL10 保存插件配置",
+    description=(
+        "保存插件配置（如默认仓库、默认分支、默认渠道）。只能填该插件声明过的配置项，"
+        "未知配置项会被拒绝。写接口，需携带 Idempotency-Key 请求头。"
+    ),
+)
+async def set_plugin_settings(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    body: SettingsRequest = Body(...),
+    plugin_id: str = Path(..., description="插件标识", min_length=6, max_length=44),
+) -> ApiResponse[SettingsData]:
+    """PL10 保存插件配置。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        manager: 幂等管理器。
+        body: 配置请求。
+        plugin_id: 插件标识。
+
+    Returns:
+        ApiResponse[SettingsData]: 当前配置。
+
+    Raises:
+        ApiError: 未添加（16003）、出现未声明的配置项（20001）。
+    """
+    service = _service(request)
+
+    async def factory() -> SettingsData:
+        """写入配置。
+
+        Returns:
+            SettingsData: 当前配置。
+        """
+        return await service.set_settings(plugin_id=plugin_id, request=body, auth=context.auth)
+
+    result, replayed = await run_idempotent(
+        request, context, factory, manager, body_digest=hash_request_body(body.model_dump_json())
+    )
+    if replayed:
+        return ApiResponse[SettingsData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message="本次操作已处理，无需重复提交",
+            data=result,
+        )
+    return ApiResponse[SettingsData].ok(result)
+
+
+# ===========================================================================
+# PL11 评价列表 / PL12 提交评价
+# ===========================================================================
+@router.get(
+    "/{plugin_id}/reviews",
+    response_model=ApiResponse[ReviewListData],
+    summary="PL11 插件评价列表",
+    description=(
+        "查看本企业成员对该插件的评价与平均分。评价按企业隔离，其他企业的评价不展示；"
+        "匿名评价显示为「某位同事」。登录即可查看。"
+    ),
+)
+async def list_plugin_reviews(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    plugin_id: str = Path(..., description="插件标识", min_length=6, max_length=44),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=50, description="每页条数"),
+) -> ApiResponse[ReviewListData]:
+    """PL11 插件评价列表。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        plugin_id: 插件标识。
+        page: 页码。
+        page_size: 每页条数。
+
+    Returns:
+        ApiResponse[ReviewListData]: 评价列表。
+    """
+    data = await _reviews_service(request).list_reviews(
+        plugin_id=plugin_id, auth=context.auth, page=page, page_size=page_size
+    )
+    return ApiResponse[ReviewListData].ok(data)
+
+
+@router.post(
+    "/{plugin_id}/reviews",
+    response_model=ApiResponse[ReviewData],
+    summary="PL12 提交评价",
+    description=(
+        "提交对本企业已添加插件的评价。每人每个插件只有一条评价，重复提交会覆盖上一次内容；"
+        "平均分由平台重算。未添加的插件不能评价。"
+        "写接口，需携带 Idempotency-Key 请求头。"
+    ),
+)
+async def submit_plugin_review(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    body: ReviewRequest = Body(...),
+    plugin_id: str = Path(..., description="插件标识", min_length=6, max_length=44),
+) -> ApiResponse[ReviewData]:
+    """PL12 提交评价。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        manager: 幂等管理器。
+        body: 评价请求。
+        plugin_id: 插件标识。
+
+    Returns:
+        ApiResponse[ReviewData]: 提交结果。
+
+    Raises:
+        ApiError: 未添加该插件（16011）、插件不存在（16002）。
+    """
+    service = _reviews_service(request)
+
+    async def factory() -> ReviewData:
+        """写入评价。
+
+        Returns:
+            ReviewData: 提交结果。
+        """
+        return await service.submit(plugin_id=plugin_id, request=body, auth=context.auth)
+
+    result, replayed = await run_idempotent(
+        request, context, factory, manager, body_digest=hash_request_body(body.model_dump_json())
+    )
+    if replayed:
+        return ApiResponse[ReviewData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message="本次操作已处理，无需重复提交",
+            data=result,
+        )
+    return ApiResponse[ReviewData].ok(result)
+
+
 __all__: list[str] = [
     "PLUGIN_POLICY_PERMISSION",
     "get_market_detail",
@@ -353,6 +801,14 @@ __all__: list[str] = [
     "list_capabilities",
     "list_installed",
     "list_market",
+    "list_plugin_reviews",
+    "rollback_plugin",
     "router",
     "set_capability_policy",
+    "set_plugin_settings",
+    "set_plugin_state",
+    "submit_plugin_review",
+    "uninstall_plugin",
+    "update_plugin_grants",
+    "upgrade_plugin",
 ]

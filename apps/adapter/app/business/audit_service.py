@@ -148,6 +148,18 @@ ACTION_PLUGIN_INSTALL: Final[str] = "plugin.install"
 #: 操作：变更企业能力开关（PL13，阶段三 B17）
 ACTION_PLUGIN_CAPABILITY_POLICY: Final[str] = "plugin.capability_policy"
 
+#: 操作：启用或停用插件（PL6，阶段三 B18）
+ACTION_PLUGIN_STATE_CHANGE: Final[str] = "plugin.state_change"
+
+#: 操作：移除插件（PL7，阶段三 B18）
+ACTION_PLUGIN_UNINSTALL: Final[str] = "plugin.uninstall"
+
+#: 操作：更新或恢复插件版本（PL8 / PL9，阶段三 B18）
+ACTION_PLUGIN_VERSION_CHANGE: Final[str] = "plugin.version_change"
+
+#: 操作：变更插件能力授权（阶段三 B18）
+ACTION_PLUGIN_CAPABILITY_GRANT: Final[str] = "plugin.capability_grant"
+
 #: 操作：支付回调被拒绝（签名/金额/订单状态校验未通过，B09 安全加固）
 #:
 #: 拒绝事件**必须**进审计：`payment_callback_log` 只记「已接受并处理」的回调，
@@ -182,6 +194,10 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_PAYMENT_CALLBACK_REJECTED: "支付回调被拒绝",
     ACTION_PLUGIN_INSTALL: "添加插件",
     ACTION_PLUGIN_CAPABILITY_POLICY: "变更企业能力开关",
+    ACTION_PLUGIN_STATE_CHANGE: "启用或停用插件",
+    ACTION_PLUGIN_UNINSTALL: "移除插件",
+    ACTION_PLUGIN_VERSION_CHANGE: "更新或恢复插件版本",
+    ACTION_PLUGIN_CAPABILITY_GRANT: "变更插件能力授权",
 }
 
 
@@ -612,8 +628,12 @@ __all__: list[str] = [
     "ACTION_ORDER_CREATED",
     "ACTION_ORDER_PAID",
     "ACTION_PAYMENT_CALLBACK_REJECTED",
+    "ACTION_PLUGIN_CAPABILITY_GRANT",
     "ACTION_PLUGIN_CAPABILITY_POLICY",
     "ACTION_PLUGIN_INSTALL",
+    "ACTION_PLUGIN_STATE_CHANGE",
+    "ACTION_PLUGIN_UNINSTALL",
+    "ACTION_PLUGIN_VERSION_CHANGE",
     "ACTION_RECONCILE_MISMATCH",
     "ACTION_ROLE_DELETE",
     "ACTION_SETTINGS_UPDATE",
