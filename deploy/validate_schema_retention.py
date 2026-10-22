@@ -466,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             pg_violations = asyncio.run(run_pg_check(dsn))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - CLI 入口：连接类异常一律转成可读失败信息并以非 0 退出
             print(f"[FAIL] 连接数据库失败：{type(exc).__name__}: {exc}")
             return 2
         violations.extend(pg_violations)
