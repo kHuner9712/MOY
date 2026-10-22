@@ -55,8 +55,9 @@ HITS=$(grep -rn "pytest.fail(" "$TREE/apps/adapter/tests/" | grep -icE "未实�
 echo "G-PLACEHOLDER HITS=$HITS (期望 0)"; test "$HITS" = "0"
 
 # ── 契约 / 错误码 / 插件声明（部署脚本在 REPO 根）──
-# B17-B20 期间必须带 --allow-missing-phase3；B21 收口后去掉（届时 phase3 必须 14/14）
-"$PY" "$TREE/deploy/validate_openapi.py" --allow-missing-phase2 --allow-missing-phase3 \
+# B21 起 `--allow-missing-phase3` **已从脚本删除**：再传会被 argparse 拒绝（exit 2）。
+# 现在一律**严格模式**（phase3 必须 == 16）；B17-B20 的历史结论引旧参数时请注明「当时参数」（届时 phase3 必须 14/14）
+"$PY" "$TREE/deploy/validate_openapi.py" --allow-missing-phase2 \
       > "$LOG/g29.log" 2>&1; echo "G-29 EXIT=$?"; grep -E "端点统计|G1-G5" "$LOG/g29.log"
 "$PY" "$TREE/apps/adapter/scripts/check_error_catalog.py" --strict        > "$LOG/g30.log" 2>&1; echo "G-30 EXIT=$?"; tail -1 "$LOG/g30.log"
 "$PY" "$TREE/deploy/validate_plugins.py" --dir "$TREE/apps/adapter/app/plugins/manifests" \
@@ -111,7 +112,7 @@ echo "ARCHIVE_TREE=$TREE" | tee -a "$LOG/archive-identity.txt"
 | 假红源 | 形态 | 根因归类 | 状态 |
 | --- | --- | --- | --- |
 | G-13 要求 `17002` 出现在 `business-errors.ts` | 脚本判据与契约**方向相反**（架构要求 0 命中） | 脚本未跟契约 | 已报 P1，待修（`INTERNAL_CODES` 排除 + `--forbid-internal`） |
-| G-29 缺 `--allow-missing-phase3` | 门禁依赖外部参数，但缺省不含该参数 | **输入未界定** | 已修（§0.1 命令补参数） |
+| G-29 传了 `--allow-missing-phase3`（B21 已删除该参数） | 门禁依赖外部参数，但缺省不含该参数 | **输入未界定** | 已修（§0.1 命令补参数） |
 | G-26 缺省路径扫到"已安装包"而非归档树 | 隔离复跑变成假隔离，验的不是它声称的树 | **输入未界定** | 已报，待修（缺省按 `ADAPTER_ROOT` + 日志打绝对路径 + 断言解析目录==遍历目录） |
 | G3-12 无批次白名单 | 把"本批未实现端点"的码当僵尸码 | **输入（应查范围）未界定** | 已修（pm §7 行 201 加 `--allow-pending <批次>`） |
 
