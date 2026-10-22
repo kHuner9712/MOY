@@ -256,9 +256,13 @@ services:
       SSRF_PROXY_HTTP_URL: ${OA_SSRF_PROXY_URL:-http://ssrf_proxy:3128}
       SSRF_PROXY_HTTPS_URL: ${OA_SSRF_PROXY_URL:-http://ssrf_proxy:3128}
       PLUGIN_DAEMON_URL: ${OA_PLUGIN_DAEMON_URL:-http://plugin_daemon:5002}
-      PLUGIN_DAEMON_KEY: ${OA_PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpCjf+Sjc3ZtU+qUEi}
+      # 审计 OA-AUDIT-001 / P0-3：这两枚内部 API 密钥**曾带明文兜底值**（形如
+      # `${VAR:-<常量>}`），即不配 .env 也能启动——而该常量已随仓库提交公开，
+      # 等同于把 plugin_daemon 与 Dify 内部 API 对所有人敞开。
+      # 现改为与其它密钥一致：缺失即拒绝启动。`.env.example` 已登记两变量。
+      PLUGIN_DAEMON_KEY: ${OA_PLUGIN_DAEMON_KEY:?必须在 .env 中设置}
       PLUGIN_DIFY_INNER_API_URL: http://dify-api:5001
-      PLUGIN_DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
+      PLUGIN_DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:?必须在 .env 中设置}
     depends_on:
       postgres:
         condition: service_healthy
@@ -387,12 +391,12 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${OA_VALKEY_PASSWORD:?必须在 .env 中设置}
       REDIS_DB: "2"
-      # 守护进程自身
+      # 守护进程自身（审计 OA-AUDIT-001 / P0-3：同样移除明文兜底，缺失即拒绝启动）
       SERVER_PORT: "5002"
-      SERVER_KEY: ${OA_PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpCjf+Sjc3ZtU+qUEi}
+      SERVER_KEY: ${OA_PLUGIN_DAEMON_KEY:?必须在 .env 中设置}
       # 回呼 Dify api（注意服务名是本栈的 dify-api，非官方的 api）
       DIFY_INNER_API_URL: http://dify-api:5001
-      DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
+      DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:?必须在 .env 中设置}
       PLUGIN_REMOTE_INSTALLING_HOST: 0.0.0.0
       PLUGIN_REMOTE_INSTALLING_PORT: "5003"
       PLUGIN_WORKING_PATH: /app/storage/cwd

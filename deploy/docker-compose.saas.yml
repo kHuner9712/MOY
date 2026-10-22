@@ -201,9 +201,10 @@ services:
       SSRF_PROXY_HTTP_URL: ${OA_SSRF_PROXY_URL:-http://ssrf_proxy:3128}
       SSRF_PROXY_HTTPS_URL: ${OA_SSRF_PROXY_URL:-http://ssrf_proxy:3128}
       PLUGIN_DAEMON_URL: ${OA_PLUGIN_DAEMON_URL:-http://plugin_daemon:5002}
-      PLUGIN_DAEMON_KEY: ${OA_PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpCjf+Sjc3ZtU+qUEi}
+      # 审计 OA-AUDIT-001 / P0-3：移除明文兜底，缺失即拒绝启动（同私有化编排）
+      PLUGIN_DAEMON_KEY: ${OA_PLUGIN_DAEMON_KEY:?必须在 .env 中设置}
       PLUGIN_DIFY_INNER_API_URL: http://dify-api:5001
-      PLUGIN_DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
+      PLUGIN_DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:?必须在 .env 中设置}
     depends_on:
       postgres:
         condition: service_healthy
@@ -275,9 +276,9 @@ services:
       REDIS_PASSWORD: ${OA_VALKEY_PASSWORD:?必须在 .env 中设置}
       REDIS_DB: "2"
       SERVER_PORT: "5002"
-      SERVER_KEY: ${OA_PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpCjf+Sjc3ZtU+qUEi}
+      SERVER_KEY: ${OA_PLUGIN_DAEMON_KEY:?必须在 .env 中设置}
       DIFY_INNER_API_URL: http://dify-api:5001
-      DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
+      DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:?必须在 .env 中设置}
       PLUGIN_REMOTE_INSTALLING_HOST: 0.0.0.0
       PLUGIN_REMOTE_INSTALLING_PORT: "5003"
       PLUGIN_WORKING_PATH: /app/storage/cwd
