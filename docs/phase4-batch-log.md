@@ -68,6 +68,30 @@
 
 ---
 
+### 2.2 前端禁词门禁（回归验证，非新门禁）
+
+真实门禁一直在 `apps/web/scripts/check-banned-terms.mjs`（架构文档里的
+`scripts/check-frontend-terms.mjs` 与 `docs/api/term-blacklist.json` 是**幽灵引用**，
+两者都不存在）。本次三条实跑：
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm run scan:banned` | **扫描 95 个文件，0 命中** |
+| `npm run scan:words` | **词表与 PRD 一致（55 条词面）** |
+| `node scripts/check-banned-terms.mjs --self-test` | **SELF-TEST PASS**：负样本 12/12 命中、正样本 8 条 0 误报、标识符 5 条 0 误报、模板样本 5 条全符合预期 |
+
+⚠ 口径提示（写给 QA）：`--self-test` 退出码 **1 = 自检通过**（脚本头部注释第 19 行
+明文规定，与 `deploy/validate_deploy.py --self-test` 同一约定）。因此
+`npm run scan:self-test` 会打印 `npm error ... exit code 1`，**那不是失败**；
+判据看输出里的 `SELF-TEST PASS`。若接 CI 应写
+`node scripts/check-banned-terms.mjs --self-test; test $? -eq 1`。
+
+记忆域扩词（T4-03.7）**正确顺序**：先改 `docs/prd-phase2-increment.md` §7 表格
+（`check-banned-terms.mjs` 的 `PRD_PATH` 指向它，不是 phase4 PRD）→
+`node scripts/check-banned-terms.mjs --update-words` → `scan:words` / `scan:banned` /
+`--self-test` 三连。**禁止手改 `BANNED_TERMS`**（`--check-words` 会判漂移并退出 3）；
+词源若加到 phase4 PRD 会静默生成不含新词的常量（假绿）。
+
 ## 3. 收敛过程中修掉的真实缺陷（全部在测试侧，均未削弱断言）
 
 ### 3.1 S9 拒签空密钥 → 20 条用例抛 `ArtifactTokenError`
