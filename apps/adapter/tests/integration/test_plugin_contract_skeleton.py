@@ -127,14 +127,14 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
         "tc": "TC-P3-WF12-05",
         "batch": "B19",
         "why": "WF2 产物编辑接口未实现（路由未注册）",
-        "status": "xfail",
+        "status": "landed",
     },
     {
         "name": "test_c4_wf2_non_editable_types_rejected_without_version_bump",
         "tc": "TC-P3-WF12-06",
         "batch": "B19",
         "why": "WF2 只读类型拒绝未实现（路由未注册）",
-        "status": "xfail",
+        "status": "landed",
     },
 ]
 
@@ -482,7 +482,6 @@ def test_c2_pl13_capability_policy_idempotent_by_idempotency_key(
     )
 
 
-@pytest.mark.xfail(reason="B19 未实现：WF2 产物编辑接口", strict=True)
 def test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched(
     client: TestClient,
 ) -> None:
@@ -499,7 +498,6 @@ def test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched(
     )
 
 
-@pytest.mark.xfail(reason="B19 未实现：WF2 只读类型拒绝", strict=True)
 def test_c4_wf2_non_editable_types_rejected_without_version_bump(
     client: TestClient,
 ) -> None:

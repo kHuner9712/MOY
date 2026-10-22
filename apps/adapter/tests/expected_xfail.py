@@ -22,10 +22,10 @@ from __future__ import annotations
 from typing import Final
 
 #: 当前仍应处于 `xfail` 的条数（正常模式门禁：`xfailed` 必须等于它）
-EXPECTED_XFAIL: Final[int] = 2
+EXPECTED_XFAIL: Final[int] = 0
 
 #: 各批次剩余的 `xfail` 条数：本批结束时，本批归属项必须归 0
-EXPECTED_XFAIL_BY_BATCH: Final[dict[str, int]] = {"B19": 2}
+EXPECTED_XFAIL_BY_BATCH: Final[dict[str, int]] = {}
 
 #: 当前 `status=red`（已实现但红着）的条数——**缺陷不得沉淀为背景红**
 EXPECTED_RED: Final[int] = 0
@@ -38,9 +38,9 @@ EXPECTED_RED: Final[int] = 0
 #: 为什么单列：若只盯 `xfailed`，把 `xfail` 改成 `red`（断言写了但红）就能让
 #: `xfailed` 从 3 降到 0 而**一条能力都没多**——这是"把红变黄"的变体：
 #: 改状态标记而不改实现。把两个桶之和纳入同一计数，状态迁移可以，但总量不许涨。
-EXPECTED_OPEN_CASES: Final[int] = 2
+EXPECTED_OPEN_CASES: Final[int] = 0
 
-OPEN_CASES_HISTORY: Final[tuple[int, ...]] = (6, 6, 2)  # B16 结束 6、B17 结束 6、B18 结束 2
+OPEN_CASES_HISTORY: Final[tuple[int, ...]] = (6, 6, 2, 0)  # B16=6、B17=6、B18=2、B19=0
 
 #: `red` 条数的历史序列（append-only）。**必须单调不增**——否则「把 xfail 改成 red」
 #: 会让 red 从 3 涨到 6、同时 xfailed 归 0，总量看似没变而进度也没变（洗标记）。
@@ -72,8 +72,8 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         "level": "P2",
         "status": "open",
         "pinned_by": "test_real_postgres_migration_is_idempotent",
-        "due_batch": "B19",
-        "due_action": "--prune-orphans（改名别名映射落地）",
+        "due_batch": "B19c",
+        "due_action": "--prune-orphans + 0002 别名映射（B19c 孤儿治理）",
     },
 )
 
@@ -92,7 +92,12 @@ def current_batch() -> str:
     """
     import os
 
-    return os.environ["OA_BATCH"]
+    try:
+        return os.environ["OA_BATCH"]
+    except KeyError as exc:  # pragma: no cover - 由断言路径覆盖
+        raise RuntimeError(
+            "未设置 OA_BATCH：请设置当前批次，例如 `OA_BATCH=B19`（用于缺陷到期检查）"
+        ) from exc
 
 
 __all__: list[str] = [
