@@ -328,7 +328,8 @@ def check_frontend_superset(backend_codes: dict[str, str], frontend_codes: set[s
         CheckResult: 校验结果。
     """
     backend_values = set(backend_codes.values())
-    uncovered = sorted(backend_values - frontend_codes)
+    # 内部码不要求前端覆盖（架构 §5.4 硬约束 ②：`17002` 只允许出现在后端实现与单测）
+    uncovered = sorted(backend_values - frontend_codes - internal_codes())
     if uncovered:
         return CheckResult(
             "errors.py → business-errors.ts",
@@ -366,6 +367,22 @@ def check_registry_complete() -> CheckResult:
             f"以下码缺少 ErrorSpec 注册：{', '.join(str(code) for code in missing)}",
         )
     return CheckResult("ErrorCode → ERROR_REGISTRY", True, f"{len(declared)} 个码全部注册")
+
+
+def internal_codes() -> set[str]:
+    """从注册表读出「内部码」（`visibility="内部"`）。
+
+    内部码的判据是**双向**的（架构 §5.4 硬约束 ②）：
+
+    * 不要求进前端兜底表（`17002` 只允许出现在后端实现与单测）；
+    * 也**不允许**出现在前端兜底表里——本脚本会正向扫一遍。
+
+    Returns:
+        set[str]: 内部码集合（形如 `{"17002"}`）。
+    """
+    from app.core.errors import ERROR_REGISTRY
+
+    return {str(int(spec.code)) for spec in ERROR_REGISTRY.values() if spec.visibility == "内部"}
 
 
 def run(pending_arg: str) -> int:
@@ -409,6 +426,19 @@ def run(pending_arg: str) -> int:
         else:
             print(f"[FAIL] {result.name}: {result.detail}")
             failed = True
+
+    if failed:
+        print("[FAIL] 错误码三处一致门禁不通过（G-13）")
+        return 1
+    forbidden = sorted(internal_codes() & frontend_codes)
+    if forbidden:
+        print(
+            f"[FAIL] 内部码不得进前端兜底表：{forbidden}"
+            "（架构 §5.4 硬约束 ②：内部码只允许出现在后端实现与单测）"
+        )
+        failed = True
+    else:
+        print(f"[OK]   内部码未进前端兜底表（豁免：{sorted(internal_codes()) or '无'}）")
 
     if failed:
         print("[FAIL] 错误码三处一致门禁不通过（G-13）")

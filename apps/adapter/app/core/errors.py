@@ -160,6 +160,10 @@ class ErrorSpec:
     http_status: int
     message: str
     internal: str
+    #: 可见性：`对外` 的码前端兜底表必须有；`内部` 的码前端**必须没有**
+    #: （架构 §5.4 硬约束 ②：`17002` 只允许出现在后端内部实现与单测，
+    #:  不得进前端兜底表、不得出现在任何返回值与示例里）。
+    visibility: str = "对外"
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +436,7 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
         200,
         "任务执行未能完成，可重试",
         "仅内部汇总与审计文案；A3 不返回该码（步骤失败走状态）",
+        visibility="内部",
     ),
     # 系统错误
     ErrorCode.DOWNSTREAM_UNAVAILABLE: ErrorSpec(
