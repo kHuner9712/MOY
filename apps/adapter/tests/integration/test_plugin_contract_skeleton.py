@@ -55,35 +55,63 @@ EXPECTED_PLUGIN_CODES = {
     17002: "TASK_INTERNAL_AUDIT",
 }
 
-#: **预期 xfail 条数——显式常量，必须人工维护**
+#: **本骨架的延后用例登记表——append-only（只增不改不删）**
 #:
-#: 刻意不用 `len(DEFERRED_CASES)` 推导：若有人「删掉一条延后用例 + 同时删掉登记项」，
-#: 两个数会一起降、汇总断言仍绿，漂移就被掩盖了。写成常量后，任何增删都必须改这里，
-#: 改不动就会红——**这条断言的价值就在"逼人手动确认"**。
-EXPECTED_XFAIL = 6
+#: 每条记四件事：函数名、追溯表编号、应由哪个批次转绿、当前状态。
+#: **转绿后不要删除条目**，只把 `landed_in` 填成实际批次——这样：
+#: ① 历史清单永久可查（审计能回答「这 6 条曾经是未实现」）；
+#: ② 「xfail 6 → 0」有据可查，而不是"某个数字变了"；
+#: ③ 验收报告能直接引「哪几条由哪批做绿」，不必靠回忆。
+DEFERRED_CASES: list[dict[str, str | None]] = [
+    {
+        "name": "test_b1_pl05_already_installed_field_is_always_present",
+        "tc": "TC-P3-MK08-01",
+        "batch": "B17",
+        "why": "PL5 安装响应模型未实现（already_installed 常驻字段）",
+        "landed_in": None,
+    },
+    {
+        "name": "test_b2_pl14_update_grants_before_install_returns_16003",
+        "tc": "TC-P3-PL03-11",
+        "batch": "B17",
+        "why": "PL14 授权写接口未实现",
+        "landed_in": None,
+    },
+    {
+        "name": "test_c1_pl05_reinstall_does_not_touch_grants_or_audit",
+        "tc": "TC-P3-MK08-06",
+        "batch": "B17",
+        "why": "PL5 重复安装幂等 + 审计计数未实现",
+        "landed_in": None,
+    },
+    {
+        "name": "test_c2_pl13_capability_policy_idempotent_by_idempotency_key",
+        "tc": "TC-P3-PL03-07",
+        "batch": "B17",
+        "why": "PL13 企业能力策略写接口未实现",
+        "landed_in": None,
+    },
+    {
+        "name": "test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched",
+        "tc": "TC-P3-WF12-05",
+        "batch": "B19",
+        "why": "WF2 产物编辑接口未实现",
+        "landed_in": None,
+    },
+    {
+        "name": "test_c4_wf2_non_editable_types_rejected_without_version_bump",
+        "tc": "TC-P3-WF12-06",
+        "batch": "B19",
+        "why": "WF2 只读类型拒绝未实现",
+        "landed_in": None,
+    },
+]
 
-#: 延后用例 → 应由哪个批次转绿（**批次归属必须显式**）
+#: **当前仍应 xfail 的条数——显式常量，必须人工维护**
 #:
-#: 为什么记批次：`EXPECTED_XFAIL` 只在批次完成后才该下降。没有归属表时，
-#: "这批该转几条"要靠人回忆；有归属表后每批验收只需看「本批剩余 xfail 数是否归 0」。
-DEFERRED_BATCH = {
-    "test_b1_pl05_already_installed_field_is_always_present": "B17",
-    "test_b2_pl14_update_grants_before_install_returns_16003": "B17",
-    "test_c1_pl05_reinstall_does_not_touch_grants_or_audit": "B17",
-    "test_c2_pl13_capability_policy_idempotent_by_idempotency_key": "B17",
-    "test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched": "B19",
-    "test_c4_wf2_non_editable_types_rejected_without_version_bump": "B19",
-}
-
-#: 延后用例登记表（名字必须与函数名逐一对应，由 `test_d1` 校验）
-DEFERRED_CASES = (
-    "test_b1_pl05_already_installed_field_is_always_present",
-    "test_b2_pl14_update_grants_before_install_returns_16003",
-    "test_c1_pl05_reinstall_does_not_touch_grants_or_audit",
-    "test_c2_pl13_capability_policy_idempotent_by_idempotency_key",
-    "test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched",
-    "test_c4_wf2_non_editable_types_rejected_without_version_bump",
-)
+#: 刻意不用 `len(...)` 推导：若有人「删掉一条登记 + 同时改这个数」，漂移会被掩盖。
+#: 写成常量后，任何变化都必须改这里 —— 这条断言的价值就在"逼人手动确认"。
+EXPECTED_ACTIVE_XFAIL = 6
 
 
 # ===========================================================================
@@ -175,7 +203,7 @@ def test_a3_retired_code_16001_is_not_reused() -> None:
 # ===========================================================================
 # B 组：契约型但需要 B16 实现落地 → 未实现前 xfail（落地后自动转绿）
 # ===========================================================================
-@pytest.mark.xfail(reason="B16 未实现：PL5 安装响应模型 / already_installed 常驻字段", strict=False)
+@pytest.mark.xfail(reason="B17 未实现：PL5 安装响应模型 / already_installed 常驻字段", strict=False)
 def test_b1_pl05_already_installed_field_is_always_present() -> None:
     """TC-P3-MK08-01 / TC-P3-MK08-06：`already_installed` 是**常驻字段**。
 
@@ -196,7 +224,7 @@ def test_b1_pl05_already_installed_field_is_always_present() -> None:
     )
 
 
-@pytest.mark.xfail(reason="B16 未实现：PL14 授权写接口", strict=False)
+@pytest.mark.xfail(reason="B17 未实现：PL14 授权写接口", strict=False)
 def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
     """TC-P3-PL03-11：未安装直接改授权 → `16003`，且**不产生任何副作用**。
 
@@ -251,10 +279,14 @@ def test_c4_wf2_non_editable_types_rejected_without_version_bump() -> None:
 # D 组：骨架自检与汇总（保证「骨架能红」且「xfail 数可核对」）
 # ===========================================================================
 def test_d1_deferred_registry_matches_markers() -> None:
-    """汇总断言：`DEFERRED_CASES` 与本模块实际打了 `xfail` 的函数**必须逐一对应**。
+    """汇总断言：登记表（append-only）与本模块实际打了 `xfail` 的函数必须一致。
 
-    这条是为了防「新增了延后用例却忘了登记」或「落地后只删代码没删登记」，
-    两类漂移都会让「预期失败 N 条」这个验收信号失真。
+    防两类漂移：
+    - 「加了延后用例却忘了登记」→ 名字集合不等；
+    - 「落地后只删代码没删登记」/「只删标记没记落地」→ active 集合不等。
+
+    另防「6→0 其实是删了 6 条」：登记表 append-only，条目只填 `landed_in`、不删除，
+    因此历史永远可查。
     """
     module: ModuleType = sys.modules[__name__]
     marked = {
@@ -264,31 +296,37 @@ def test_d1_deferred_registry_matches_markers() -> None:
         and name.startswith("test_")
         and any(getattr(mark, "name", "") == "xfail" for mark in getattr(obj, "pytestmark", []))
     }
-    assert marked == set(DEFERRED_CASES), (
-        f"[骨架汇总 ①] xfail 用例与登记不一致：多出 {sorted(marked - set(DEFERRED_CASES))}、"
-        f"缺少 {sorted(set(DEFERRED_CASES) - marked)}"
-    )
-    assert len(marked) == EXPECTED_XFAIL, (
-        f"[骨架汇总 ②] 预期未实现 {EXPECTED_XFAIL} 条（显式常量），实际 {len(marked)} 条。"
-        "若确已落地，请同步下调 EXPECTED_XFAIL——必须人工确认，不允许自动推导"
-    )
-    for name in DEFERRED_CASES:
-        marks = [
-            mark
-            for mark in getattr(getattr(module, name), "pytestmark", [])
-            if getattr(mark, "name", "") == "xfail"
-        ]
-        assert marks[0].kwargs.get("reason"), f"[骨架汇总 ③] {name} 的 xfail 缺 reason"
 
-    assert set(DEFERRED_BATCH) == set(DEFERRED_CASES), (
-        f"[骨架汇总 ④] 批次归属表与登记表不一致：多出 "
-        f"{sorted(set(DEFERRED_BATCH) - set(DEFERRED_CASES))}、缺少 "
-        f"{sorted(set(DEFERRED_CASES) - set(DEFERRED_BATCH))}"
+    names = [str(case["name"]) for case in DEFERRED_CASES]
+    assert len(names) == len(set(names)), f"[骨架汇总 ①] 登记表存在重复函数名：{names}"
+
+    active = [case for case in DEFERRED_CASES if not case["landed_in"]]
+    active_names = {str(case["name"]) for case in active}
+    assert marked == active_names, (
+        f"[骨架汇总 ②] xfail 标记与「未落地」条目不一致："
+        f"多标记 {sorted(marked - active_names)}、缺标记 {sorted(active_names - marked)}"
     )
+    assert len(active) == EXPECTED_ACTIVE_XFAIL, (
+        f"[骨架汇总 ③] 预期仍 xfail {EXPECTED_ACTIVE_XFAIL} 条（显式常量），实际 {len(active)} 条。"
+        "落地后请把该条填 landed_in 并同步下调常量——必须人工确认，不允许自动推导"
+    )
+    assert len(marked) == len(active), (
+        f"[骨架汇总 ④] 标记数 {len(marked)} != 未落地条目数 {len(active)}"
+    )
+
+    for case in DEFERRED_CASES:
+        name = str(case["name"])
+        assert case["tc"], f"[骨架汇总 ⑤] {name} 缺追溯表编号（验收报告要按 TC 对回 P0）"
+        assert case["why"], f"[骨架汇总 ⑥] {name} 缺 why（xfail reason 不写全局说明，只写本条）"
+        assert case["batch"], f"[骨架汇总 ⑦] {name} 缺应落地批次"
+        landed = case["landed_in"]
+        assert landed is None or str(landed), f"[骨架汇总 ⑧] {name} 的 landed_in 取值非法"
+
     per_batch: dict[str, int] = {}
-    for batch in DEFERRED_BATCH.values():
+    for case in active:
+        batch = str(case["batch"])
         per_batch[batch] = per_batch.get(batch, 0) + 1
-    assert sum(per_batch.values()) == EXPECTED_XFAIL, (
-        f"[骨架汇总 ⑤] 归属表合计 {sum(per_batch.values())} != EXPECTED_XFAIL {EXPECTED_XFAIL}："
+    assert sum(per_batch.values()) == EXPECTED_ACTIVE_XFAIL, (
+        f"[骨架汇总 ⑨] 各批剩余合计 {sum(per_batch.values())} != {EXPECTED_ACTIVE_XFAIL}："
         f"分批剩余 {per_batch}"
     )
