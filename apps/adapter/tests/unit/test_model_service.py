@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.clients.dify_client import DifyClient
+from app.clients.dify_client import DifyClient, DifyResponse
 from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
@@ -357,3 +357,121 @@ def test_reasoning_filter_passthrough_normal_text() -> None:
     flt = _ReasoningFilter()
     visible = flt.feed("你好，我是麦子。") + flt.flush()
     assert visible == "你好，我是麦子。"
+
+
+# ---------------------------------------------------------------------------
+# B27 回归：M2 问答**不走** R7 `RagService.search()`
+#
+# 为什么必须钉住：`11005` 接线落在 `RagService.search()` 的**故障路径**上。
+# 若 M2 问答（带知识库的对话）也走同一个 `search()`，那条接线会让「问答」
+# 从"AI 没给出回答，请重试"变成"检索服务暂时不可用"，并把 HTTP 语义从
+# 200 之外的路径整体挪动——即把 P1 故障扩成 P0。
+# 事实是：M2 走 `model_service` 直连底座 chat（引用来自响应里的
+# `retriever_resources`），与 R7 是两条独立链路。本用例用「search 一旦被调用
+# 就断言失败」把这条边界固定下来——不写这条等于没防住。
+# ---------------------------------------------------------------------------
+
+
+class _ChatDify:
+    """只实现 blocking chat `post` 的假底座（M2 直连链路）。
+
+    Attributes:
+        paths: 被调用过的下游路径（用于断言"打的是 chat，不是 retrieve"）。
+    """
+
+    def __init__(self) -> None:
+        """初始化假底座。"""
+        self.paths: list[str] = []
+
+    async def post(
+        self,
+        path: str,
+        payload: dict[str, object],
+        *,
+        idempotent: bool = False,
+        api_key: str | None = None,
+    ) -> DifyResponse:
+        """返回一条带引用片段的 blocking 响应。
+
+        Args:
+            path: 下游路径。
+            payload: 请求体（本假实现不使用）。
+            idempotent: 是否允许重试（本假实现不使用）。
+            api_key: 下游密钥（本假实现不使用）。
+
+        Returns:
+            DifyResponse: 形如底座 chat 的响应体。
+        """
+        del payload, idempotent, api_key
+        self.paths.append(path)
+        return DifyResponse(
+            200,
+            {
+                "event": "message",
+                "answer": "年假需提前三个工作日申请。",
+                "metadata": {
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 9, "total_tokens": 21}
+                },
+                "retriever_resources": [
+                    {
+                        "document_id": "doc_m2",
+                        "document_name": "员工手册.pdf",
+                        "content": "年假申请需提前三个工作日提交",
+                        "score": 0.91,
+                        "dataset_id": "m2",
+                        "position": {"page": 3, "paragraph": 1},
+                    }
+                ],
+            },
+        )
+
+
+async def test_m2_chat_with_knowledge_base_does_not_use_rag_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M2 带知识库问答走 chat 直连，绝不调用 R7 `search()`（11005 接线边界）。"""
+    from app.db.repositories.knowledge_base_repo import (
+        KnowledgeBaseRecord,
+        get_knowledge_base_store,
+    )
+    from app.services.rag_service import RagService
+
+    auth = AuthContext(user_id="usr_1", tenant_id="tnt_1")
+    settings = Settings(downstream_enabled=True)
+    await get_knowledge_base_store(settings).create(
+        KnowledgeBaseRecord(
+            tenant_id=auth.tenant_id,
+            base_id="kb_m2",
+            name="制度库",
+            visibility="organization",
+            owner_user_id=auth.user_id,
+        )
+    )
+
+    async def _forbidden_search(*args: object, **kwargs: object) -> object:
+        """R7 检索一旦被调用即判失败（M2 不得经过它）。"""
+        raise AssertionError("M2 问答不得调用 RagService.search（R7 独立检索）")
+
+    monkeypatch.setattr(RagService, "search", _forbidden_search)
+
+    dify = _ChatDify()
+    service = ModelService(settings=settings, dify=dify)  # type: ignore[arg-type]
+    data = await service.generate(
+        GenerateRequest(
+            conversation_id="conv_01K4Q8Z2X7M9B3N5P6R8T0V2W4",
+            profile=ModelProfile.GENERAL,
+            messages=[ChatMessage(role=MessageRole.USER, content="年假怎么申请？")],
+            knowledge_base_ids=["kb_m2"],
+        ),
+        user_id=auth.user_id,
+        auth=auth,
+    )
+
+    # 走的是 chat 路径（不是 /retrieve）
+    assert dify.paths == ["/v1/chat-messages"]
+    assert data.content == "年假需提前三个工作日申请。"
+    assert data.usage.total_units == 21
+    # 引用来自 chat 响应的 retriever_resources（与 R7 无关）
+    assert len(data.citations) == 1
+    assert data.citations[0].document_name == "员工手册.pdf"
+    assert data.citations[0].base_id == "kb_m2"

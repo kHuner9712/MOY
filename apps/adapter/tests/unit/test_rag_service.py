@@ -324,3 +324,153 @@ def test_search_request_validates_bounds() -> None:
         SearchRequest(base_id="kb_1", query="x", top_k=0)
     with pytest.raises(ValueError):
         SearchRequest(base_id="kb_1", query="x", score_threshold=1.5)
+
+
+# ---------------------------------------------------------------------------
+# B27：`11005 RETRIEVAL_FAILED` 接线（R7 底座故障路径）
+#
+# 判据（冻结契约表 R7 行）：底座连接失败 / 超时 → `HTTP 200 + 11005`，
+# 而**不是** `HTTP 503 + 30001/30002`。其他下游码（429 限流、400 参数错）
+# 语义已正确，必须原样上抛——把"参数错"说成"服务繁忙"会掩盖真实原因。
+# ---------------------------------------------------------------------------
+
+
+class _RaisingDify:
+    """只实现 `post` 的假底座：记录被调用的路径后抛出预置异常。
+
+    Attributes:
+        error: 需要抛出的业务异常（模拟 `DifyClient` 的映射结果）。
+        paths: 被调用过的下游路径（用于断言"只打了一次检索"）。
+    """
+
+    def __init__(self, error: ApiError) -> None:
+        """初始化假底座。
+
+        Args:
+            error: 需要抛出的业务异常。
+        """
+        self.error = error
+        self.paths: list[str] = []
+
+    async def post(
+        self, path: str, payload: dict[str, object], *, api_key: str | None = None
+    ) -> object:
+        """模拟一次失败的下游 POST。
+
+        Args:
+            path: 下游路径。
+            payload: 请求体（本假实现不使用）。
+            api_key: 下游密钥（本假实现不使用）。
+
+        Raises:
+            ApiError: 构造时注入的异常。
+        """
+        del payload, api_key
+        self.paths.append(path)
+        raise self.error
+
+
+class _FailingResolver:
+    """凭据解析必定失败的假解析器（模拟库级凭据失效 11007）。"""
+
+    async def resolve(self, base_id: str, *, tenant_id: str) -> object:
+        """模拟解析失败。
+
+        Args:
+            base_id: 知识库 ID。
+            tenant_id: 租户 ID。
+
+        Raises:
+            ApiError: 固定抛 `11007`。
+        """
+        raise ApiError(
+            ErrorCode.KB_CREDENTIAL_UNAVAILABLE,
+            internal_detail=f"base_id={base_id} tenant_id={tenant_id} decrypt failed",
+        )
+
+
+def _live_service(dify: object = None, resolver: object = None) -> RagService:
+    """构造**非桩模式**的 RAG 服务（让 `search()` 真正下发下游）。
+
+    Args:
+        dify: 可选假底座。
+        resolver: 可选假凭据解析器。
+
+    Returns:
+        RagService: 服务实例。
+    """
+    return RagService(
+        settings=Settings(downstream_enabled=True),
+        dify=dify,  # type: ignore[arg-type]
+        resolver=resolver,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.parametrize(
+    "downstream_code",
+    [ErrorCode.DOWNSTREAM_UNAVAILABLE, ErrorCode.DOWNSTREAM_TIMEOUT],
+)
+async def test_search_maps_downstream_failure_to_11005(downstream_code: ErrorCode) -> None:
+    """底座连不上 / 超时 → `11005`（HTTP 200），不是一个 503 系统码。"""
+    from app.core.errors import ERROR_REGISTRY
+
+    dify = _RaisingDify(ApiError(downstream_code, internal_detail="edge reset"))
+    with pytest.raises(ApiError) as exc_info:
+        await _live_service(dify=dify).search(SearchRequest(base_id="kb_1", query="年假"))
+
+    error = exc_info.value
+    assert error.code == ErrorCode.RETRIEVAL_FAILED
+    assert int(error.code) == 11005
+    # 契约：HTTP 200（前端按业务失败处理，可原地重试），不是 503
+    assert error.http_status == 200
+    # 文案取注册表原文（不得临时改写为技术语言）
+    assert error.message == ERROR_REGISTRY[ErrorCode.RETRIEVAL_FAILED].message
+    assert error.message == "检索服务暂时不可用，请重试"
+    # 下游客码只进日志，供排障；不得出现在 message 里
+    assert error.internal_detail is not None
+    assert f"code={int(downstream_code)}" in error.internal_detail
+    assert "edge reset" in error.internal_detail
+    assert f"{int(downstream_code)}" not in error.message
+    # 只打了一次检索、且命中的是检索路径（不是上传/建库路径）
+    assert dify.paths == ["/v1/datasets/1/retrieve"]
+
+
+async def test_search_keeps_rate_limited_code() -> None:
+    """429 限流原样上抛（`20006`，HTTP 429），不得被改写成 `11005`。
+
+    把限流说成"检索服务不可用"会让用户无限重试，正是 429 想避免的行为。
+    """
+    dify = _RaisingDify(ApiError(ErrorCode.RATE_LIMITED, internal_detail="429"))
+    with pytest.raises(ApiError) as exc_info:
+        await _live_service(dify=dify).search(SearchRequest(base_id="kb_1", query="年假"))
+
+    assert exc_info.value.code == ErrorCode.RATE_LIMITED
+    assert exc_info.value.http_status == 429
+
+
+async def test_search_keeps_param_invalid_code() -> None:
+    """400 参数错原样上抛（`20001`），不得被改写成 `11005`。"""
+    dify = _RaisingDify(ApiError(ErrorCode.PARAM_INVALID, internal_detail="bad top_k"))
+    with pytest.raises(ApiError) as exc_info:
+        await _live_service(dify=dify).search(SearchRequest(base_id="kb_1", query="年假"))
+
+    assert exc_info.value.code == ErrorCode.PARAM_INVALID
+    assert exc_info.value.http_status == 400
+
+
+async def test_search_does_not_wrap_credential_error() -> None:
+    """库级凭据失效（`11007`）在 try **之外**，必须原样上抛且绝不下发下游。
+
+    11007 的出路是"联系管理员"，被改写成"请重试"会把用户引向死循环；
+    同时必须证明凭据失败时**没有**任何下游请求发出（不回落全局凭据）。
+    """
+    dify = _RaisingDify(ApiError(ErrorCode.DOWNSTREAM_UNAVAILABLE))
+    with pytest.raises(ApiError) as exc_info:
+        await _live_service(dify=dify, resolver=_FailingResolver()).search(
+            SearchRequest(base_id="kb_1", query="年假")
+        )
+
+    assert exc_info.value.code == ErrorCode.KB_CREDENTIAL_UNAVAILABLE
+    assert int(exc_info.value.code) == 11007
+    assert exc_info.value.http_status == 200
+    assert dify.paths == []

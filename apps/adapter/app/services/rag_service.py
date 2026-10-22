@@ -72,6 +72,16 @@ _DIFY_RETRIEVE_PATH: Final[str] = "/v1/datasets/{dataset_id}/retrieve"
 _BASE_PREFIX: Final[str] = "kb_"
 _DOC_PREFIX: Final[str] = "doc_"
 
+#: 需要在 R7 改写成 `11005 检索失败` 的下游码（B27 接线）。
+#:
+#: 只含「底座连不上 / 超时」：两者对用户是同一件事（稍后重试即可恢复），
+#: 且系统级码（HTTP 503）会让前端弹「服务不可用」并中断知识库问答。
+#: **不得**扩大本集合——429（限流）/ 400（参数错）等的既有语义已经正确，
+#: 改写会掩盖真实原因（尤其是把"请求参数错"说成"服务繁忙"）。
+_RETRIEVAL_DOWNSTREAM_CODES: Final[frozenset[ErrorCode]] = frozenset(
+    {ErrorCode.DOWNSTREAM_UNAVAILABLE, ErrorCode.DOWNSTREAM_TIMEOUT}
+)
+
 #: 底座索引状态 → 自研三态映射（附录 A-3）
 _INDEX_STATUS_MAP: Final[dict[str, IndexStatus]] = {
     "waiting": IndexStatus.PROCESSING,
@@ -695,6 +705,11 @@ class RagService:
         召回参数经适配层默认策略校准后下发，底座参数不对外暴露（附录 A-3）。
         命中片段附带 `base_id` / `base_name` / `segment_id` 并回填片段映射（D-11）。
 
+        **B27**：底座「连不上 / 超时」（`30001` / `30002`）在此处统一改写为
+        `11005 检索失败`（HTTP 200）——R7 的用户语义是"检索服务暂时不可用，
+        请重试"，HTTP 503 会让前端弹「服务不可用」并中断知识库问答。
+        判权（`20003`）与凭据（`11007`）在改写范围**之外**，原样上抛。
+
         Args:
             request: 检索请求。
             auth: 鉴权上下文（用于 per-kb 凭据的租户解析与对象级判权）。
@@ -723,20 +738,40 @@ class RagService:
 
         api_key = await self._api_key_for(base_id, auth)
         defaults = self._routes.retrieval_defaults
-        response = await self._dify.post(
-            _DIFY_RETRIEVE_PATH.format(dataset_id=base_id.removeprefix(_BASE_PREFIX)),
-            {
-                "query": request.query,
-                "retrieval_model": {
-                    "search_method": defaults.search_method,
-                    "reranking_enable": False,
-                    "top_k": min(request.top_k, defaults.top_k * 2),
-                    "score_threshold_enabled": True,
-                    "score_threshold": max(request.score_threshold, defaults.score_threshold),
+        try:
+            response = await self._dify.post(
+                _DIFY_RETRIEVE_PATH.format(dataset_id=base_id.removeprefix(_BASE_PREFIX)),
+                {
+                    "query": request.query,
+                    "retrieval_model": {
+                        "search_method": defaults.search_method,
+                        "reranking_enable": False,
+                        "top_k": min(request.top_k, defaults.top_k * 2),
+                        "score_threshold_enabled": True,
+                        "score_threshold": max(request.score_threshold, defaults.score_threshold),
+                    },
                 },
-            },
-            api_key=api_key,
-        )
+                api_key=api_key,
+            )
+        except ApiError as exc:
+            # 检索失败（11005，HTTP 200）的唯一接线点：
+            # 底座「连不上 / 超时」（30001/30002）在 R7 的用户语义是"检索服务暂时
+            # 不可用，请重试"，前端可原地重试即可恢复；而 30001/30002 是系统级码，
+            # 对外表现为 HTTP 503，会让前端弹「服务不可用」并中断整个知识库问答流程。
+            # 因此**只**把这两个码改写为 11005，对齐冻结契约表的 R7 行。
+            #
+            # 为什么只包这一处：
+            # - `_assert_readable()`（20003/11001）与 `_api_key_for()`（11007）在
+            #   try **之外**——它们是权限与凭据问题，重试无意义，改写会误导用户；
+            # - 其他下游码（429→20006 限流、400→20001 参数错）原样上抛，语义已正确。
+            if exc.code in _RETRIEVAL_DOWNSTREAM_CODES:
+                raise ApiError(
+                    ErrorCode.RETRIEVAL_FAILED,
+                    internal_detail=(
+                        f"retrieve downstream code={int(exc.code)} {exc.internal_detail or ''}"
+                    ).strip(),
+                ) from exc
+            raise
         data = self._transform_search_result(response.payload)
         return await self._attach_backlinks(data, base_id, auth)
 
