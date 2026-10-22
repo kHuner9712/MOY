@@ -78,7 +78,7 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     # B19：0004 迁移守卫块标签不匹配（DO $guard$ vs END $$）→ 已修
     {"id": "P3-B19-02", "level": "P0", "status": "fixed"},  # b75f0ab（空库 apply 直接语法失败）
     # 同一文件的第二个缺陷：0004 无条件 ALTER 在已初始化库必失败（权限模型，非语法）→ 三分支
-    {"id": "P3-B19-03", "level": "P1", "status": "fixed"},  # d75aa3a（+ init 脚本补 confirmed_step_seq）
+    {"id": "P3-B19-03", "level": "P1", "status": "fixed"},  # d75aa3a（init 脚本补列）
 )
 
 #: 当前批次是**运行时上下文**，不是跨批事实——所以用函数读环境变量，**不写常量**：
