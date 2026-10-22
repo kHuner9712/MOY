@@ -4,7 +4,7 @@
 | --- | --- |
 | 文档版本 | v3.2.2（阶段三架构定稿·封版） |
 | 文档性质 | 内部交付文档（供交付总监、产品经理、工程师、QA 消费） |
-| 上游输入 | `docs/prd-phase3-increment.md` **v1.2 已封版**（606 行 / 25 条 P0 / 6 条 P1 / 4 条 P2 / **16 新增端点** + 4 处扩展 / 16 项错误码需求 / **10 条勘误**）；`docs/prd-phase3-traceability.md`（196 行 / 116 断言 / 15 项结果物核查 / 金额三规则）；`docs/architecture-v1.0.md`（30 端点冻结基线 + 红线）；`docs/architecture-phase2.md`（38 端点基线 + 业务库范式）；`docs/phase2-acceptance-report.md` §6 |
+| 上游输入 | `docs/prd-phase3-increment.md` **v1.2 已封版**（606 行 / 25 条 P0 / 6 条 P1 / 4 条 P2 / **16 新增端点** + 4 处扩展 / 16 项错误码需求 / **10 条勘误**）；`docs/prd-phase3-traceability.md`（196 行 / 117 断言 / 15 项结果物核查 / 金额三规则）；`docs/architecture-v1.0.md`（30 端点冻结基线 + 红线）；`docs/architecture-phase2.md`（38 端点基线 + 业务库范式）；`docs/phase2-acceptance-report.md` §6 |
 | 代码基线 | `develop` @ `db7aea7`（core=30 / phase2=38、1119 测试、总覆盖率 89.99%） |
 | 作者 | 高见远（架构师） |
 | 日期 | 2026-10-23 |
@@ -84,13 +84,25 @@
 
 | 字段 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
-| `inputs[]` | object[] | ✅ | `{key, label, type, required, max_length?, options?}`；`type ∈ text/textarea/select/multi_select/email/file` | 驱动宿主表单（P0-P3-24） |
+| `inputs[]` | object[] | ✅ | `{key, label, type, required, max_length?, options?, max_items?}`（`max_items` 仅 `type=file` 用）；`type ∈ text/textarea/select/multi_select/email/file` | 驱动宿主表单（P0-P3-24）；**必须由 PL2 原样下发**，前端不得硬编码控件 |
+| `inputs[].type=file` 的取值形态 | — | — | **值为 `doc_ids: string[]`（已存在文档的 id），不是上传** | 见下方「文件类输入口径」 |
 | `outputs[]` | object[] | ✅ | `{key, label, type}`；`type ∈ text/link/file/table` | 驱动结果区渲染 |
 | `ui_extension` | object | ✅ | `{layout: "task_workspace", nav_label, icon_key, order}` | `layout` 仅 1 个值（新增布局=能力扩张，是故意的） |
 | `steps[]` | object[] | ✅ | **1-8 步**（PRD Q3-7 上限 8）；`seq` 连续从 1 开始；`{seq, title, action, produces[], needs[], on_failure, confirm?, when?}` | 见 §2.3；`title` 用户可见 |
 | `checklist[]` | object[] | ✅ | `{key, name, source_step}`，2-5 项 | 结果物核查清单（P0-P3-14，项数固定：DEV 4 / CNT 3 / HR 4） |
 
 **硬约束**：① 文案字段（`name/summary/description/inputs[].label/outputs[].label/steps[].title/checklist[].name/settings_schema[].label/changelog`）全部过禁词表 + 占位词表（PRD §8 第 19-30 行，含 `编排`/`节点`/`manifest`/`回滚`/`依赖`/`sha`/`PR` 等），命中即**拒绝加载**；② 无凭据字段（`token/api_key/secret/credential/endpoint`）；③ 无代码字段（`entry/module/handler/script/image/command/deps`）；④ 能力、动作、工具三类引用必须命中白名单（§2.2 / §3.2），CI G-26/G-28 + 启动期双校验。
+
+**文件类输入口径（V1.0 定稿，不新增上传端点）**
+
+| 项 | 口径 | 理由 |
+| --- | --- | --- |
+| `type=file` 的值 | **`doc_ids: string[]`**（已存在文档的 id，形如 `doc_01K...`） | 插件不持有文件字节，只持有引用 |
+| 文件从哪来 | **用户先在「知识库 / 我的文件」上传（走既有 R3）**，再在插件表单里**选已有文档** | 上传是平台既有能力，插件不重复实现 |
+| 插件怎么读 | 运行时凭 `personal.file.read` 能力解析 `doc_ids` → 取文本/片段 | 与 §2.2 映射表一致：`retrieve`/`file` 输入都需该能力 |
+| **是否新增上传端点** | **不新增**。表单里**不做"当场上传"** | ① 能力枚举里本来就有「读个人文件」，再开上传端点是把同一件事做两遍；② 人事筛简历、内容配图都是"先有文件再让插件处理"，不是"在表单里当场上传"；③ V1.0 端点表已冻结为 16，再加一个上传端点会与"插件不碰文件字节"的边界冲突 |
+| 空态 | 用户没有可选文档时，选择器显示「还没有上传文件，先去知识库上传」+ 跳 `/(main)/knowledge` | 与 §6 三态口径一致 |
+| 校验 | `doc_ids` 越权（不属于本人可见范围）→ `20003`；不存在/已删除 → `20004`；数量超声明 `max_items` → `20001` | 复用既有码，不新增 |
 
 ### 2.2 能力模型：两层彻底分离（**本阶段最关键的设计决策 D-15**）
 
@@ -655,6 +667,7 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 | 索引 | `idx_grant_lookup`（部分索引） | 每步入口复检授权，必须走索引（10⁵ 行下 < 5ms） |
 | 索引 | `idx_art_task` | 详情页一次取全步骤产物，避免 N+1 |
 | CHECK | `plugin_id` 正则 / `version` semver / `category` / `status` 枚举 | 契约形态 DB 兜底 |
+| **校验口径** | `manifest_sha256` | **按归一化内容计算**：`sha256(LF 行尾 + 去行尾空白 + 去 BOM + 末尾单个换行)`。理由：`git archive` 解出的文件可能变 CRLF，若按原始字节算 sha，门禁会因行尾差异误红（B16 隔离复跑已出现「仅 CRLF 差异」）。**加载器与 G-26 必须共用同一个归一化函数**，否则两边结论不一致 |
 | 容量护栏 | 任务列表必须带至少一个筛选 + `LIMIT`；列表**不返回** `inputs`/`checklist`/产物正文 | 10⁶ 行下第 250 页响应 < 200KB |
 
 ### 4.4 RLS 与事务口径
@@ -722,14 +735,14 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 | # | 方法 | 路径 | 请求 | 响应 `data` | 错误码 | 幂等键 |
 | --- | --- | --- | --- | --- | --- | --- |
 | PL1 | GET | `/plugins/market` | `category?, keyword?, sort?(recommended\|newest\|rating), page, page_size=12` | `items[{plugin_id,name,summary,category,icon_key,rating_avg,rating_count,latest_version,installed_status(none\|enabled\|disabled),has_update,installable}]`、`meta`、`categories[{key,name,count}]`、**`org_capabilities[{capability_key, org_switch_enabled}]`（仅 3 个 `org.*`）** | 20001 | — |
-| PL2 | GET | `/plugins/market/{plugin_id}` | — | `…, description, capabilities[{capability_key,display_name,reason,denial_effect,category(personal\|org),required}], step_titles[], outputs[], settings_schema[], changelog[], versions[{version,published_at}], installed_status, installed_version, has_update, installable` | 16002 | — |
+| PL2 | GET | `/plugins/market/{plugin_id}` | — | `…, description, capabilities[{capability_key,display_name,reason,denial_effect,category(personal\|org),required}], **inputs[]（与 §2.1 声明同形：`{key,label,type,required,max_length?,options?,max_items?}`）**, step_titles[], outputs[], settings_schema[], changelog[], versions[{version,published_at}], installed_status, installed_version, has_update, installable` | 16002 | — |
 | PL3 | GET | `/plugins/installed` | `status?` | `items[{plugin_id,name,category,version,latest_version,has_update,status,last_used_at,running_task_count}], meta` | 20003 | — |
 | PL4 | GET | `/plugins/{plugin_id}/capabilities` | — | `items[{capability_key,display_name,reason,denial_effect,category(personal\|org),required,org_switch_enabled}], granted_capabilities[], capability_version, installable` | 16002 | — |
-| PL5 | POST | `/plugins/{plugin_id}/install` | `grants{}`（capability_key→bool）、`settings{}`（可选） | `plugin_id, status(enabled), version, granted_capabilities[], denied_capabilities[], already_installed`（**常驻字段**：首次 `false`、重复 `true`） | 15001 16002 16005 16006 16009 20001 | **必需** |
-| PL6 | PATCH | `/plugins/{plugin_id}/state` | `status(enabled\|disabled)` | `plugin_id, status, running_task_count` | 15001 16002 16003 16005 16006 | **必需** |
-| PL7 | DELETE | `/plugins/{plugin_id}` | — | `plugin_id, uninstalled=true, running_task_count, kept_task_count` | 16002 16003 | **必需** |
-| PL8 | POST | `/plugins/{plugin_id}/upgrade` | `target_version` | `plugin_id, version, previous_version, has_update=false` | 16002 16003 16007 16012 | **必需** |
-| PL9 | POST | `/plugins/{plugin_id}/rollback` | — | `plugin_id, version, previous_version` | 16002 16003 16008 | **必需** |
+| PL5 | POST | `/plugins/{plugin_id}/install` | `grants{}`（capability_key→bool）、`settings{}`（可选） | `plugin_id, status(enabled), version, granted_capabilities[], denied_capabilities[], already_installed`（**常驻字段**：首次 `false`、重复 `true`） | 15001 16002 16005 16006 16009 20001 16010 | **必需** |
+| PL6 | PATCH | `/plugins/{plugin_id}/state` | `status(enabled\|disabled)` | `plugin_id, status, running_task_count` | 15001 16002 16003 16005 16006 16010 | **必需** |
+| PL7 | DELETE | `/plugins/{plugin_id}` | — | `plugin_id, uninstalled=true, running_task_count, kept_task_count` | 16002 16003 16010 | **必需** |
+| PL8 | POST | `/plugins/{plugin_id}/upgrade` | `target_version` | `plugin_id, version, previous_version, has_update=false` | 16002 16003 16007 16012 16010 | **必需** |
+| PL9 | POST | `/plugins/{plugin_id}/rollback` | — | `plugin_id, version, previous_version` | 16002 16003 16008 16010 | **必需** |
 | PL10 | PUT | `/plugins/{plugin_id}/settings` | `settings{}`（键须 ⊆ `settings_schema`） | `plugin_id, settings{}, updated_at` | 16002 16003 20001 | **必需** |
 | PL11 | GET | `/plugins/{plugin_id}/reviews` | `page, page_size=10` | `items[{review_id,rating,content,author_name,department_name,created_at}], meta, rating_avg, rating_count` | 16002 | — |
 | PL12 | POST | `/plugins/{plugin_id}/reviews` | `rating(1-5), content(≤200), anonymous` | `review_id, rating, created_at, rating_avg, rating_count` | 16002 16003 16011 20001 | **必需** |
@@ -770,7 +783,7 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 | **A2** `[扩展]` | GET | `/agent/tasks` | `plugin_id?`、`status?`、`initiator_id?`、`created_from?`、`created_to?` | `items[].plugin_id`、`items[].warning_count` | 20001 20003 |
 | **A3** `[扩展]` | GET | `/agent/tasks/{task_id}` | — | `status` 枚举新增 `queued`、`waiting_confirm`；`queue_position?`；`result.checklist[]`、`result.warnings[]`、`confirm{step_seq, reason, summary}` | 12001 20003 |
 | **A4** `[扩展]` | GET | `/agent/tasks/{task_id}/steps` | — | `steps[].artifacts[]`、`steps[].failure{reason_text,retryable,operator_action}` | 12001 20003 |
-| **WF1** | POST | `/agent/tasks/{task_id}/retry` | `decision(retry_step\|retry_all\|continue\|redo)`、`from_step?`（`retry_step` 必填） | `task_id, resumed, retry_of, status, from_step?` | 12001 16004 17001 17003 20003 |
+| **WF1** | POST | `/agent/tasks/{task_id}/retry` | `decision(retry_step\|retry_all\|continue\|redo)`、`from_step?`（`retry_step` 必填） | `task_id, resumed, retry_of, status, from_step?` | 12001 16004 17001 20003 |
 | **WF2** | PUT | `/agent/tasks/{task_id}/artifacts/{artifact_id}` | `content`、`render_format?`（`docx`\|`md`\|`csv`） | `artifact_id, version`（每次保存 +1）、`download_url`、`version_history[]` | 12001 20004 20001 20003 |
 
 **WF1 语义（任务级写端点之一，`decision` 四值）**
@@ -783,6 +796,7 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 | `failed` / `cancelled` | `retry_all` | **新建任务**，从第 1 步执行，原任务状态永不改变 | `resumed=false` / `retry_of=原 task_id` |
 | `completed` / `running` / `queued` / `pending` | 任意 | 拒绝 | — / `17001` |
 
+> **`17003`（任务已取消）不注册、不返回**：按上表 `cancelled` 可以重试（`retry_step`/`retry_all`），因此 WF1 不存在「已取消所以拒绝」的分支。删除依据是**语义不成立**（而非「码表漏登记」）——若只补注册，会把「取消后可重试」与「取消后不可重试」两种语义混进同一个码。
 > **为什么 `continue`/`redo` 必须同任务续跑（PM 硬要求，D-19）**：`waiting_confirm` 是**同一任务被暂停**，不是失败。若新建任务，核查清单与产物会分裂成两份，AC-02 的"结果物核查"就无法指向唯一任务，`retry_of` 链里也会混进"从未失败的任务"。因此响应用 `resumed` 明确区分两种语义，且 `resumed=true` 时 `retry_of` 必须为 `null`（QA TC-P3-13 ② 按此验）。
 > 并发排队同理用状态而非错误码：同租户同插件第 4 个任务返回 **HTTP 200 + `code=0` + `status=queued` + `queue_position=N`**，前端展示"前面还有 N 个任务"，**不返回 `20006`**（4xx 会被 `unwrap()` 渲染成报错页，违反 FLOW-04）。
 
@@ -803,21 +817,21 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 
 **分区理由**：`16002-16099` 给**插件域**（配置态：目录/安装/授权/版本/评价），`17001-17099` 给**任务域**（执行态：重试语义）。两者失败处置主体不同（管理员改配置 vs 用户重试/改输入），分段让前端兜底映射可分流。**`16001` 是阶段二提议后废弃的值，按"注销值不复用"原则跳过**（PRD A.3 约束②）。
 
-| code | HTTP | message（前端唯一可见） | 常量 | 内部含义 |
-| --- | --- | --- | --- | --- |
-| 16002 | 404 | 该插件已下架，去市场看看其他插件 | `PLUGIN_NOT_FOUND` | 目录无行 / `hidden`·`offline` |
-| 16003 | 400 | 该插件还没有添加，请先在插件市场添加 | `PLUGIN_NOT_INSTALLED` | **未添加**（PL6/PL7/PL8/PL9/PL10/PL12/PL14）；**PL5 不返回该码**。⚠️ **不要与 16004 倒置** |
-| 16004 | 400 | 该插件已停用，请联系管理员启用 | `PLUGIN_DISABLED` | **已停用**（`status=disabled` 下建任务）。⚠️ **不要与 16003 倒置**：16003=未添加、16004=已停用 |
-| 16005 | 403 | 缺少所需能力，请重新授权后再试 | `CAPABILITY_NOT_GRANTED` | 必需能力未授 / 运行中被撤销；`data.missing_capabilities[]` 给 key，前端映射能力名 |
-| 16006 | 403 | 该能力尚未对企业开放，请联系管理员开启 | `CAPABILITY_POLICY_BLOCKED` | `plugin_capability_policy=false` |
-| 16007 | 400 | 该插件需要更新版本的产品后才能使用，请联系管理员 | `PLUGIN_VERSION_INCOMPATIBLE` | `min_platform_version` 不满足 |
-| 16008 | 400 | 只能恢复到上一个版本，如需更早版本请联系管理员 | `PLUGIN_ROLLBACK_UNAVAILABLE` | 无 `previous_version` |
-| 16009 | 400 | 该插件需要先添加「XX」才能使用 | `PLUGIN_DEPENDENCY_MISSING` | `requires_plugins` 未满足；`data.missing_plugins[]` 给名称 |
-| 16010 | 409 | 插件状态已变化，请刷新后重试 | `PLUGIN_STATE_CONFLICT` | 并发安装/启停冲突（唯一键或版本指针竞争） |
-| 16011 | 403 | 使用过这个插件才能评价 | `PLUGIN_REVIEW_NOT_ALLOWED` | 未安装/未使用即评价 |
-| 16012 | 404 | 该插件版本不存在 | `PLUGIN_VERSION_NOT_FOUND` | `target_version` 无效 |
-| 17001 | 400 | 该任务无法重试，请查看任务状态 | `TASK_NOT_RETRYABLE` | WF1 在非 `failed/cancelled/waiting_confirm` 态被调用 |
-| 17002 | 200 | 任务执行未能完成，可重试 | `TASK_STEP_FAILED` | 仅供内部汇总与审计文案；**A3 不返回该码**（步骤失败走状态 + `steps[].failure`，PRD E-9） |
+| code | HTTP | message（前端唯一可见） | 常量 | 可见性 | 内部含义 |
+| --- | --- | --- | --- | --- | --- |
+| 16002 | 404 | 该插件已下架，去市场看看其他插件 | `PLUGIN_NOT_FOUND` | 对外 | 目录无行 / `hidden`·`offline`  |
+| 16003 | 400 | 该插件还没有添加，请先在插件市场添加 | `PLUGIN_NOT_INSTALLED` | 对外 | **未添加**（PL6/PL7/PL8/PL9/PL10/PL12/PL14）；**PL5 不返回该码**。⚠️ **不要与 16004 倒置**  |
+| 16004 | 400 | 该插件已停用，请联系管理员启用 | `PLUGIN_DISABLED` | 对外 | **已停用**（`status=disabled` 下建任务）。⚠️ **不要与 16003 倒置**：16003=未添加、16004=已停用  |
+| 16005 | 403 | 缺少所需能力，请重新授权后再试 | `CAPABILITY_NOT_GRANTED` | 对外 | 必需能力未授 / 运行中被撤销；`data.missing_capabilities[]` 给 key，前端映射能力名  |
+| 16006 | 403 | 该能力尚未对企业开放，请联系管理员开启 | `CAPABILITY_POLICY_BLOCKED` | 对外 | `plugin_capability_policy=false`  |
+| 16007 | 400 | 该插件需要更新版本的产品后才能使用，请联系管理员 | `PLUGIN_VERSION_INCOMPATIBLE` | 对外 | `min_platform_version` 不满足  |
+| 16008 | 400 | 只能恢复到上一个版本，如需更早版本请联系管理员 | `PLUGIN_ROLLBACK_UNAVAILABLE` | 对外 | 无 `previous_version`  |
+| 16009 | 400 | 该插件需要先添加「XX」才能使用 | `PLUGIN_DEPENDENCY_MISSING` | 对外 | `requires_plugins` 未满足；`data.missing_plugins[]` 给名称  |
+| 16010 | 409 | 插件状态已变化，请刷新后重试 | `PLUGIN_STATE_CONFLICT` | 对外 | **仅两个场景**：① 唯一键冲突（`uq_installation_active`，如并发安装）；② 版本指针竞争（`installation.version` 被并发改）。**其余冲突仍用各自语义码**（缺授权 `16005`、企业未开放 `16006`、未添加 `16003` 等）——不得为了「用上 16010」而把所有冲突都归到它 |
+| 16011 | 403 | 使用过这个插件才能评价 | `PLUGIN_REVIEW_NOT_ALLOWED` | 对外 | 未安装/未使用即评价  |
+| 16012 | 404 | 该插件版本不存在 | `PLUGIN_VERSION_NOT_FOUND` | 对外 | `target_version` 无效  |
+| 17001 | 400 | 该任务无法重试，请查看任务状态 | `TASK_NOT_RETRYABLE` | 对外 | WF1 在非 `failed/cancelled/waiting_confirm` 态被调用  |
+| 17002 | 200 | 任务执行未能完成，可重试 | `TASK_STEP_FAILED` | 内部 | 仅供内部汇总与审计文案；**A3 不返回该码**（步骤失败走状态 + `steps[].failure`，PRD E-9）  |
 
 **不新增码（复用既有）**：工具未连接 `13002`、授权过期 `13003`、套餐 `15001`、额度软限制 `15006`、无权限 `20003`、参数 `20001`（PRD E-14~E-16）。
 **PRD E-12（并发上限）明确不用码**：第 4 个任务返回 `200 + status=queued`，**不返回 `20006`**（4xx 会被前端渲染成报错页）。`20006` 仍只用于真正的限流。
@@ -889,7 +903,7 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 | `CapabilityList`（名称/为什么/不同意的后果） | `components/plugin/capability-list.tsx` | `ui/badge` `ui/tooltip` |
 | `ReviewList` / `ReviewForm` | `components/plugin/review-*.tsx` | `ui/table` `ui/input` `ui/textarea`(新增) `ui/button` |
 | `VersionHistory` | `components/plugin/version-history.tsx` | `ui/table` `ui/confirm-dialog` |
-| `DeclarationForm`（按 `inputs[].type` 渲染 6 控件） | `components/workbench/declaration-form.tsx` | `ui/input` `ui/textarea` `ui/select` `ui/checkbox` `ui/button` |
+| `DeclarationForm`（按 `inputs[].type` 渲染 6 控件） | `components/workbench/declaration-form.tsx` | `ui/input` `ui/textarea` `ui/select` `ui/checkbox` `ui/button`；**`type=file` 渲染为「选已有文档」选择器（不是上传控件，见 §2.1 文件类输入口径）** |
 | `StepTimeline`（垂直，失败步骤默认展开高亮） | `components/workflow/step-timeline.tsx` | `ui/progress` `ui/badge` `ui/tooltip` |
 | `ArtifactCard`（文件/链接/表格/稿件 4 类渲染；**WF2 编辑态**：`draft/doc/table` 出「编辑」入口 + 版本历史，`link/file` 不出入口） | `components/workflow/artifact-card.tsx` | `ui/card` `ui/button` `ui/table` `ui/textarea` `ui/select`（格式切换） |
 | `ChecklistPanel`（已核查 / 待人工确认） | `components/workflow/checklist-panel.tsx` | `ui/table` `ui/badge` |
@@ -1042,7 +1056,7 @@ export const pluginApi = {
 14. `apps/adapter/tests/unit/test_plugin_loader.py`（负样本：缺步骤段 / 版本 `abc` / 序号 1,3,4 / 名称含「RAG」/ 多字段 / `token` 键）
 15. `docs/architecture-v1.0.md` `[改]`（§3.0.3 登记 13 个新码）
 
-**验收**：`python deploy/validate_plugins.py` 退出码 0；`--self-test` 退出码 **1**（6 条负样本全命中）；把 `plg_dev_workbench.json` 序号改 `1,3,4` → 非 0 并打印行号；同一 `plugin_id` 注册两次 → 拒绝且原条目字段不变。
+**验收**：`python deploy/validate_plugins.py --dir <归档目录>` 退出码 0（**必须带 `--dir`**：缺省路径会扫「已安装包」而非被测树，属假隔离）；`--self-test` 退出码 **1**（6 条负样本全命中）；日志含**扫描绝对路径 + 归档 sha**；把 `plg_dev_workbench.json` 序号改 `1,3,4` → 非 0 并打印行号；同一 `plugin_id` 注册两次 → 拒绝且原条目字段不变。
 
 #### B17 数据模型与市场/安装（14 文件·依赖 B16）
 
@@ -1085,7 +1099,7 @@ export const pluginApi = {
 14. `apps/adapter/tests/integration/test_plugin_errors.py`（16002-16012 全覆盖）
 15. `apps/web/src/lib/business-errors.ts` `[改]`（13 个新码兜底映射，G-13 前置；**不得出现 17002 映射**）
 
-**验收**：安装后 `status=enabled`；停用后 A1 → `16004`；连点两次升级 → 仅 1 条新版本记录；回退两次 → 第二次 `16008`；同成员提交两次评价 → 仅 1 条且为第二次内容；**PL14 撤销 `personal.tool.use` 后，下一次任务在需工具那步 `16005` 失败、重新授权后 `retry_step` 成功**；PL14 撤 `required` 项 → `20001` 且 `required_capabilities[]` 含该项；已安装时重复 PL5 → `200 + already_installed=true`（不报错、不改授权）；`git grep "17002" apps/web/src` 0 命中；G-13 `--strict` 三处码集合一致。
+**验收**：安装后 `status=enabled`；停用后 A1 → `16004`；连点两次升级 → 仅 1 条新版本记录；回退两次 → 第二次 `16008`；同成员提交两次评价 → 仅 1 条且为第二次内容；**PL14 撤销 `personal.tool.use` 后，下一次任务在需工具那步 `16005` 失败、重新授权后 `retry_step` 成功**；PL14 撤 `required` 项 → `20001` 且 `required_capabilities[]` 含该项；已安装时重复 PL5 → `200 + already_installed=true`（不报错、不改授权）；**未安装直调 PL14 → `16003`（非 `16004`、非成功），且 `plugin_grant` 无新增、审计无 `plugin.capability_grant` 事件**——只断言返回码会漏掉「报错但已写库」的实现；`git grep "17002" apps/web/src` 0 命中；G-13 `--strict` 三处码集合一致。
 
 #### B19 任务引擎、A 域扩展与产物编辑 WF2（16 文件·依赖 B17）
 
@@ -1104,7 +1118,7 @@ export const pluginApi = {
 13. `apps/adapter/tests/unit/test_engine_steps.py`（retry/continue/skip_and_mark/abort/waiting_confirm/**queued 排队**/进度单调）
 14. `apps/adapter/tests/unit/test_sanitizer.py`（邮箱/手机/`api_key` 负样本）
 15. `apps/adapter/tests/integration/test_task_flow.py`（幂等 3 次 1 个任务；**`continue`/`redo` 同任务续跑且 `resumed=true`、`retry_of=null`**；`retry_step` 前序不重跑；**第 4 个任务 `200 + status=queued + queue_position`**）
-16. `apps/adapter/tests/integration/test_artifact_edit.py`（**WF2**：`draft/doc/table` 可改 / `link`·`file` 只读 → `20001` / `version` 单调 +1 且旧版可回看 / **改后 `content_sha256` 变化且脱敏重跑（手工贴手机号 → 落库被掩码）** / 不改任务状态 / 同键重放不产生第二个版本）
+16. `apps/adapter/tests/integration/test_artifact_edit.py`（**WF2**：`draft/doc/table` 可改 / `link`·`file` 只读 → `20001` / `version` 单调 +1 且旧版可回看 / **改后 `content_sha256` 变化且脱敏重跑（手工贴手机号 → 落库被掩码）** / **不改任务状态、且 `plugin_task_step` 行数与步骤状态集合均不变（计数断言，不是只看 `task.status`）** / 同键重放不产生第二个版本）
 
 **验收**：同 `Idempotency-Key` 连发 3 次 → 1 个任务 + 后两次 `code=20007`；`waiting_confirm` 15 分钟不自动继续；**`continue` 后 `task_id` 不变、`resumed=true`、`retry_of=null`，核查清单仍挂同一任务**（AC-02 核心断言）；`retry_step from_step=3` → 新任务 `retry_of` 正确、`resumed=false`、步骤 1-2 未重跑（耗时断言）；**并发第 4 个 → HTTP 200 + `status=queued` + `queue_position=1`，且不返回 429/20006**；产物含邮箱 → 落库已掩码；无 `plugin_id` 的 A1 行为与阶段一**完全一致**（既有 30 端点回归全绿）。
 
@@ -1227,7 +1241,7 @@ export const pluginApi = {
 6. `docs/phase3-gate-evidence.md`（5 道新门禁实跑证据 + 负样本演示）
 7. `apps/web/scripts/check-banned-terms.mjs` `[改]`（`--manifest` 模式覆盖 6 份声明）
 
-**验收**：插件目录放 1 个 `x.css` → G-27 非 0；`--self-test` 退出码 **1**；把 `plg_hr_admin` 的 `org.directory.read` 删掉但步骤仍用通讯录 → G-30 非 0；反向（声明 `org.repo.write` 但无 github 步骤）→ G-30 非 0；5 道门禁证据文档含命令与输出。
+**验收**：插件目录放 1 个 `x.css` → G-27 非 0；`--self-test` 退出码 **1**；把 `plg_hr_admin` 的 `org.directory.read` 删掉但步骤仍用通讯录 → G-30 非 0；反向（声明 `org.repo.write` 但无 github 步骤）→ G-30 非 0；5 道门禁证据文档含命令与输出；**所有扫描类门禁（G-26/G-27/G-28/G-30）复跑一律带 `--dir <归档目录>`，证据文档记「扫描路径 + 归档 sha」两列**（缺这两列该批门禁结论无效）。
 
 #### B28 覆盖率、门禁扩写与全量回归（10 文件·依赖 B26 B27）
 
@@ -1242,7 +1256,7 @@ export const pluginApi = {
 9. `docs/phase3-progress-audit.md`（批次进度 + 门禁实跑）
 10. `docs/qa-phase3-test-plan.md`（P0-P3-01~25 用例映射，QA 消费入口）
 
-**验收**：总覆盖率 ≥ 89%（不低于阶段二），`app/plugins` + `app/business` ≥ 88%；全量 `pytest --run-pg` 0 failed；9 表 RLS 各 1 条 fail-closed 断言全绿；25 条 P0 每条至少 1 个用例且可追溯到用例 ID；`check_error_catalog.py --strict --forbid-internal 17002` 绿且自检可红；`validate_schema_retention.py` 绿（改默认值即红）。
+**验收**：总覆盖率 ≥ 89%（不低于阶段二），`app/plugins` + `app/business` ≥ 88%；全量 `pytest --run-pg` 0 failed；9 表 RLS 各 1 条 fail-closed 断言全绿；25 条 P0 每条至少 1 个用例且可追溯到用例 ID；`check_error_catalog.py --strict --forbid-internal 17002` 绿且自检可红；`validate_schema_retention.py` 绿（改默认值即红）。 **断言质量抽样**：从本阶段新增的 P0 断言里随机抽 3 条，各把对应实现改错一行 → 必须变红（3 条里若有 2 条改错仍绿，说明该批断言整体是装饰，须返工）。
 
 #### B29 验收材料与文档同步（6 文件·依赖 B28）
 
@@ -1284,6 +1298,39 @@ export const pluginApi = {
 | G-31 | 把默认值改成 `30 days` → 必须非 0 | 同上 |
 
 > 反例护栏：任何门禁**不允许**"找不到文件就退出 0"；文件缺失一律退出码 2（阶段二 G-24 空跑事故的直接对策）。
+
+### 10.1 门禁可信度纪律（自证 / 隔离复跑 / xfail 真源）
+
+**门禁自证三原则（本轮新增，起因是一次真实的「假隔离」）**
+
+> B16 实跑发现：`deploy/validate_plugins.py` **不带 `--dir` 时扫的是「已安装 app 包」路径，不是脚本所在树**。QA 在隔离目录 `/tmp/qa-b16` 复跑，日志打印的却是主树的 `manifests` 目录——也就是说：**任何批次声称「隔离复跑通过」，实际验的可能是别人正在改的树**，绿灯不代表被测 sha 正确。
+
+| 原则 | 判据 | 落地 |
+| --- | --- | --- |
+| **①​ 目标必须显式** | 扫描类门禁**强制 `--dir`**（缺失即退出码 2）；缺省值若保留，必须是**脚本相对树**，不得是「已安装包路径」 | `validate_plugins.py` / `validate_plugin_actions.py` / `validate_capability_usage.py` 三个脚本同改；并校验「解析后的目录」==「实际遍历的目录」，不一致自己报红 |
+| **②​ 日志自证 sha** | 报告必须打印**扫描目录绝对路径** + **目标树 `git rev-parse HEAD`**（归档复跑则打印归档 sha） | 批次报告记「扫描路径 + 归档 sha」两列，否则该批复跑不成立 |
+| **③​ 判据不得窄于契约** | 契约给出多个合法实现时（如 `403`/`404`/`200+空体`），断言必须写**集合包含**，不得写单一等值 | 已踩三次：`/workflows` 是路由、`plugin_grant` 是后端字段名、`404` 比 `403` 更安全——**都是文档写得比世界窄，不是实现做错** |
+
+> **隔离复跑口径（B16-B28 全部适用）**：每批的 G-26 / G-28 / G-30 复跑**必须显式带 `--dir` 指向 `git archive <sha>` 解出的归档目录**。只跑主树 = 该批门禁结论无效。
+
+> **预期失败清单（xfail）单一真源（同属门禁可信度）**：`EXPECTED_XFAIL` / `EXPECTED_XFAIL_BY_BATCH` 只允许存在一份，落 `apps/adapter/tests/expected_xfail.py`，**加载器、门禁脚本、批次报告一律 import 它，不得本地另写**；且**每个批次的 xfail 条数只降不升**（B16 → B29 单调不增）。
+> 理由与「假隔离」同源：**双份常量是漂移的第一现场，且漂移不报错**；xfail 无上限膨胀是「永远绿」的第三条路径（前两条是 G-24 空跑、G-17 词表漂移）。
+
+### 10.2 「永远绿」的五条路径与对策（可被脚本定位）
+
+**「永远绿」的五条路径与对应纪律（阶段二~三累计，评审时逐条自查）**
+
+> **本表标题固定、段落独立**，目的是让外部脚本能按 `### 10.2` 定位（而不是靠 `^\| [1-5] \|` 这种多表共用的形态去猜）。**能被机器定位的表才能被机器核对**——本轮已有一次教训：按行首数字找表，误数到了 §4.1 的实体表与工作台步骤表，而结果「都是 5 行以内」看起来完全合理。
+
+| # | 路径 | 输入/判据如何失效 | 对策（已落门禁） |
+| --- | --- | --- | --- |
+| 1 | **空跑** | 用例集 = 0 条（G-24 事故） | 断言"用例数 ≥ N"；`--self-test` 期望退出码 1 |
+| 2 | **词表漂移** | 词表 = 空 / 与 PRD 不同步（G-17 事故） | `--check-words` 校验词表与 PRD 一致，漂移退出码 3 |
+| 3 | **假隔离** | 扫描树 = 错对象（B16 事故） | 强制 `--dir` + 「解析目录 == 遍历目录」+ 报告记 `"directory"` 与归档 sha |
+| 4 | **xfail 膨胀** | 预期失败集越写越大，红转黄 | 单一真源 + **每批只降不升**（当前批 > 上一批即红） |
+| 5 | **断言恒真** | 单条断言写成「能返回就算过」（`assert resp`），整体仍绿 | **每条断言必须能举出一个"若实现出错就必然失败"的反例**——与负样本自检同理，只是作用到每一条断言而非整个骨架 |
+
+> 前四条是「整批/整门禁失效」，第五条是「**单条失效但整体仍绿**」，最隐蔽：`assert resp is not None`、`assert "content" in body or True` 这类写法在 review 里几乎看不出来。判据：**把这条断言对应实现改错一行，测试必须红；改错了还绿，这条断言就是装饰。**
 
 ---
 
@@ -1387,6 +1434,53 @@ export const pluginApi = {
 
 > **固化规则（判定口径，一句话）**：**PRD 里写了「可增减 / 可切换 / 可恢复 / 可编辑 / 可管理」，端点表里就必须有一个写端点；只有读端点等于该需求做不出来。** 对不上的只有两条出路：① 补写端点（走 §11 冲突 → 报批 → 产品改 PRD → 同步 QA/工程）；② 把 PRD 表述改成「不可变更」，不许留成两可。
 
+> **配套第二问（本轮新增，原因是一次真实疏漏）**：**补了端点要顺手问「它的错误分支进哪个码」**。PL14 加进来时，`16003`（未添加）的适用面还停在 `PL6-PL12`，导致「未安装直调 PL14 返回什么」既没进码表、也没进用例——是"补了 A 忘了 B"的第二种形态。
+> 落地口径：新增端点时，把它的每个错误分支对到 §5.4 的码表，逐一确认「① 落在既有码 → 该码的适用面清单要 +1；② 需要新语义 → 走注册制新增码」。**适用面清单是契约的一部分，不是注释。**
+
+> **配套第三问（断言强度）**：凡是「某接口**不应该**做某事」的约束，一律落成**副作用计数/存在性断言**，不要只断言返回值。行为断言只能证明返回值对，计数断言才能证明副作用没发生：
+> - 重复安装不改授权（PL5）→ 断言**审计仅 1 条 `plugin.install`**（若出现 `plugin.capability_grant` 即说明偷偷 upsert）；
+> - 未安装不能改授权（PL14）→ 断言 **`plugin_grant` 无新增 + 审计无对应事件**；
+> - WF2 编辑不得触发重跑 → 断言 **`plugin_task_step` 行数与状态集合均不变**（不是只看 `task.status`）。
+
+> **配套第四问（派生数字）：任何"总数类"数字必须从源数据重算，不得沿用上一版的结论。** 本阶段三类文档各犯过一次：
+> - 产品追溯表标题写「78 条断言」（实际 117）——早期版本残留；
+> - 架构文档 §7 写「PRD 604 行」（实际 603/606）——把文末换行算成一行；
+> - QA checklist 照抄勘误的 `16003` 适用面清单（漏了后补的 PL14）——**清单类派生数据没有随新增项重算**。
+>
+> 落地口径：每次改完，用脚本重算并回填——端点行数（`^\| PL\d+ \|` + `^\| \*\*WF\d\*\* \|`）、错误码行数（`^\| 1[67]\d{3} \|`）、决策条数（`^### D-`）、冲突条数、批次文件条目（`^\d+\. \``）、表数（`^\| \d \| \``）。**人眼对不齐的，脚本一定对得齐。**
+
+> **落地细则：结论必须带计算口径。** 凡「行数 / 条数」类结论，一律标注怎么算的——`606 行（wc -l 口径）`、`16 端点（表格行口径）`、`117 断言（按编号项计数）`。理由是同一个数用不同方法算出两个结果时，**两个都没错的人会吵起来**：本阶段已出现 `604 / 603 / 606 / 607` 四种"PRD 行数"（差 1 全是文末换行）。
+>
+> **并且：重算脚本的"输入范围"必须显式**（就是本节第二问的同一个道理）——本轮两个反方向的事故：
+> - **误捕**：宽正则把权限矩阵的 `| PL13 | … |` 当端点行 → 算出 15（实际 16）；
+> - **漏捕**：用关键词过滤勘误行，第 2 条写「P0-P3-03 ⑤ 与端点 PL4」不含关键词 → 算出 9（实际 10）。
+>
+> 结论：**算数字也是一次门禁，它的输入范围同样必须被界定**，否则宽了误捕、窄了漏捕，而且两种都"看起来跑通了"。
+> **注意两种失败的不对称性：漏捕比误捕更危险**——误捕通常算出**偏多**的数（一眼可疑，会被复核）；漏捕算出**偏少**的数，而「少一条」在文档里看起来完全正常，没人会为「少了」去复核。**所以重算脚本宁可先写宽再收窄（宽了会被抓），也不要先写窄（窄了没人抓）。**
+> **两条操作细则（本轮补）**：① **先切片再数**——数任何一张表前，先定位到该表的区段（靠标题/锚点），不做全文匹配（否则 `^\| PL\d+ \|` 会把权限矩阵的行也算进来）；② **数字旁标采样点**——行数不只依赖算法还依赖读取时刻，写成 `1502 行（wc -l @ 改动后）`，避免两次都对的核算被误判为不一致。
+> **第四种失效形态：编号双角色。** `①` 既可能是「定义一个新判据」，也可能是「引用上面某条已定义的项」（如「取消必需能力②后安装」），两者字形相同，任何按符号计数的脚本都会把引用算成定义。纪律：**计项数只数分句起始处**（`^①` 或 `；①`），不数全文出现的符号；反过来也要求写判据时**少在正文引用项号**，一旦引用，任何统计都会失真。
+> **「先宽后窄」的前提**：必须有一个**独立于脚本的预期值**才能抓住「偏多」。若先不知道应该是几，宽算出的数会直接被当成答案。完整动作：**先写宽 → 与预期核对 → 再收窄 → 解释差异**；**没有预期值的重算，宽窄都不可信**。
+> **配套第五问（码表 ↔ 端点错误码列，必须双向，三条判据）**：
+> ① **`可见性=对外` 的码，必须至少被 1 个端点引用**；
+> ② **`可见性=内部` 的码，必须不被任何端点引用**；
+> ③ **每个端点引用的码，必须在注册表里**。
+>
+> 三条缺一条就有漏洞：只有 ① 会放过"内部码被端点返回"（内部码泄漏给前端）；只有 ③ 会放过僵尸码；只有 ①② 会放过"端点引用了不存在的码"。
+> **为什么这一问必须是「跨侧」检查**：门禁写错是「该抓的没抓到」，责任边界清楚；而码表与端点不一致**没有该抓的人**——写端点的人以为码表里有，写码表的人以为端点会用，**两侧都在自己的职责内做对了**，缺陷只存在于两者之间。所以它只能由一条跨侧核对兜住，任何一方的自检都发现不了。
+> - **正向**（端点 → 码表）抓 `17003` 类「调用方拿到未定义码」→ **联调时才炸**；
+> - **反向**（码表 → 端点）抓 `16010` 类「注册了但永远不会返回」→ **僵尸码，测试永远覆盖不到**。
+>
+> **豁免必须做成数据，不做成约定**：§5.4 有「可见性」列（`对外`/`内部`），判据 ①② 各自只作用于对应行——**如果"内部码"靠脚注或口头约定豁免，脚本就豁免不了，最后仍要人记，检查迟早被人为放宽**。将来新增内部码只改这一列、不改检查逻辑。
+>
+> 落地脚本：`grep '^| 1[67][0-9]{3} |'` 抽码（带可见性）+ 端点表错误码列抽引用 → **双向求差集，三个判据各报一行**。当前基线：13 码（1 个内部）/ 20 个端点行 / 三项 0 违反。
+> 两个方向各能抓到对方抓不到的缺陷，**单向检查等于只查一半**：
+> - **正向**（端点 → 码表）能抓 `17003` 这类「调用方拿到未定义码」（运行时炸）；
+> - **反向**（码表 → 端点）能抓 `16010` 这类「注册了但永远不会返回」（僵尸码：测试永远覆盖不到，白注册）。
+>
+> **豁免必须做成数据，不做成约定**：§5.4 已有「可见性」列（取值 `对外`/`内部`），判据① 只作用于 `对外` 行——**如果"内部码"靠脚注或口头约定豁免，脚本就豁免不了，最后仍要人记，检查迟早被人为放宽**。将来新增内部码只改这一列，不改检查逻辑。
+>
+> 落地：`grep '^| 1[67][0-9]{3} |'` 抽码 + 端点表错误码列抽引用 → **两边求差集，两个方向都报**。
+
 **本轮结果（PRD v1.2，25 条 P0，共摘出 26 条可操作表述）**
 
 | 类别 | 条数 | 明细 |
@@ -1417,6 +1511,8 @@ export const pluginApi = {
 ---
 
 ## 附录：本文档与上游文档的追溯关系
+
+> **跨文档引用约定**：引用他人文档的章节号**必须带文件名**（如 `docs/prd-phase3-increment.md §5.1`），不写裸 `§4`。原因：同一个章节号在架构文档与 QA 文档里指不同章节——本轮已因此产生过一次误解（产品经理说的「§4.0」是 QA 文档的阅读约定，不是本文档的 §4）。
 
 - §1 ← PRD §3.1 P0-P3-01~25、§7 V1.0 边界 B-1~B-8；plan 第 17-20 周
 - §2 ← PRD P0-P3-01（6 段声明）、P0-P3-03（能力 6 项与授权页三要素）、§5（三插件 6 步）、§8（术语表 19-30）、E-8（前置插件）

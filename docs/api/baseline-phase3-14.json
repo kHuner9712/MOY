@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "frozen_target": 14,
-  "note": "阶段三插件域基线（PL1-PL13 + WF1）。B17 登记 PL1-PL5 与 PL13（6 条），B18 追加 PL6-PL12（7 条），B19 追加 WF1（1 条）→ 14 条收口。phase2=38 一个字节不改；本文件只在 B21 之后冻结。",
+  "frozen_target": 16,
+  "note": "阶段三插件域基线（PL1-PL14 + WF1 + WF2）。B17 登记 PL1-PL5 与 PL13（6 条），B18 追加 PL6-PL12 与 PL14（8 条，合计 14），B19 追加 WF1/WF2（合计 16）→ 收口。phase2=38 一个字节不改。",
   "endpoints": [
     {
       "method": "GET",
@@ -26,6 +26,38 @@
     {
       "method": "PUT",
       "path": "/api/v1/plugins/capability-policy"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/plugins/{plugin_id}/state"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/plugins/{plugin_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/plugins/{plugin_id}/upgrade"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/plugins/{plugin_id}/rollback"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/plugins/{plugin_id}/settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/plugins/{plugin_id}/reviews"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/plugins/{plugin_id}/reviews"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/plugins/{plugin_id}/grants"
     }
   ],
   "registered_at": "2026-10-22"
