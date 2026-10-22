@@ -57,20 +57,15 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     # B17 的两条 P1（已随 B18 关闭）
     {"id": "P3-B17-01", "level": "P1", "status": "fixed"},
     {"id": "P3-B17-02", "level": "P1", "status": "fixed"},
-    # B18 的三条 P1（开放，由 g11 / G-13 用例钉住，不进骨架 red）
-    {"id": "P3-B18-01", "level": "P1", "status": "open", "pinned_by": "test_g11_*"},
+    # B18 的三条 P1：0003 与 G-13 已修，仅「台账孤儿」仍开放（由 g11 钉住）
+    {"id": "P3-B18-01", "level": "P1", "status": "fixed"},  # b5dbd69 幂等建表
     {
         "id": "P3-B18-02",
         "level": "P1",
         "status": "open",
         "pinned_by": "test_real_postgres_migration_is_idempotent",
     },
-    {
-        "id": "P3-B18-03",
-        "level": "P1",
-        "status": "open",
-        "pinned_by": "check_error_catalog --strict",
-    },
+    {"id": "P3-B18-03", "level": "P1", "status": "fixed"},  # c340e70 visibility 豁免
 )
 
 __all__: list[str] = [

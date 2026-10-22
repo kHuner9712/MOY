@@ -32,7 +32,9 @@ import json
 import sys
 from pathlib import Path
 
-ADAPTER_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
+#: 适配层根目录（脚本相对树推导：`<repo>/deploy` → `<repo>/apps/adapter`）
+ADAPTER_ROOT = REPO_ROOT / "apps" / "adapter"
 if str(ADAPTER_ROOT) not in sys.path:  # 允许直接以脚本方式运行
     sys.path.insert(0, str(ADAPTER_ROOT))
 
@@ -43,6 +45,16 @@ from app.plugins.loader import (  # noqa: E402
     manifest_digest,
 )
 from app.plugins.schema import BANNED_TERMS, find_banned_terms  # noqa: E402
+
+#: 脚本相对树的声明目录（**不用 `default_manifests_dir()` 兜底**）
+#:
+#: 2026-10-23 QA 实测的假隔离：在 `/tmp` 的导出目录里跑本脚本，日志里赫然是
+#: `.../Desktop/麦子/apps/adapter/app/plugins/manifests`——原因是缺省目录取自
+#: **导入到的 `app` 包**，而导出树里若装了同名包，`import app.plugins.loader`
+#: 会解析到主工作区那份，于是"验的是导出树、扫的是主仓"。
+#: 因此缺省目录一律由 `Path(__file__)` 直接推导（脚本在哪个树里，就扫哪个树），
+#: 并在输出里打印**绝对路径**供复核人一眼看出扫的是谁。
+SCRIPT_MANIFESTS_DIR: Path = ADAPTER_ROOT / "app" / "plugins" / "manifests"
 
 #: 期望的插件数量（V1.0 市场内置 6 个：3 标杆 + 3 轻量）
 EXPECTED_PLUGIN_COUNT = 6
@@ -56,6 +68,46 @@ SELF_TEST_CASES: tuple[str, ...] = (
     "重复 plugin_id",
     "工具操作未登记",
 )
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    """判断目录是否位于给定归档根之内（含相等）。
+
+    Args:
+        child: 被检查的目录（已 `resolve()`）。
+        parent: 归档根（已 `resolve()`）。
+
+    Returns:
+        bool: 位于其内（或相等）返回 True。
+    """
+    return child == parent or parent in child.parents
+
+
+def assert_scan_scope(scanned: Path, archive_root: Path) -> list[str]:
+    """断言「扫描目录 ∈ 归档根」，并证明**确实发生了遍历**。
+
+    这条断言针对的是「假隔离」：门禁全绿，但扫的是另一棵树。
+    只断言「路径相等」不够——路径对但 0 个文件（例如目录里只有子目录）同样会绿，
+    所以还要断言命中文件数 > 0（架构 §10.1 门禁自证原则 ①）。
+
+    Args:
+        scanned: 实际扫描目录。
+        archive_root: 本次运行认可的归档根（显式 `--dir` 时即其本身，否则为脚本树）。
+
+    Returns:
+        list[str]: 问题清单（空表示通过）。
+    """
+    resolved = scanned.resolve()
+    problems: list[str] = []
+    if not _is_within(resolved, archive_root.resolve()):
+        problems.append(
+            f"扫描目录不在归档根内：{resolved} ∉ {archive_root.resolve()}"
+            "（导出树复核必须显式传 --dir，或确认脚本与声明在同一棵树里）"
+        )
+    hits = len(list(resolved.glob("*.json"))) if resolved.is_dir() else 0
+    if hits <= 0:
+        problems.append(f"扫描目录内没有任何声明文件（0 命中）：{resolved}")
+    return problems
 
 
 def _mutate_extra_field(payload: dict) -> dict:
@@ -198,6 +250,10 @@ def run_validation(directory: Path) -> tuple[int, list[str], dict[str, object]]:
 
     stats: dict[str, object] = {
         "directory": str(directory),
+        # 绝对路径单独给一个键：复核人 `grep '"manifests_dir"'` 就能确认扫的是哪棵树，
+        # 不必再从 `"directory"` 的相对/绝对形态里猜（QA 检查单要求的"归档身份"）。
+        "manifests_dir": str(directory.resolve()),
+        "archive_root": str(ADAPTER_ROOT),
         "declarations": len(payloads),
         "registered": len(registry),
         "plugin_ids": registry.plugin_ids(),
@@ -235,23 +291,41 @@ def _iter_text(payload: dict) -> list[tuple[str, str]]:
     return collected
 
 
-def run_self_test(directory: Path) -> tuple[int, list[str]]:
+def run_self_test(directory: Path, archive_root: Path) -> tuple[int, list[str]]:
     """注入负样本，验证门禁"能被触发"。
+
+    **前置断言**（假隔离防线）：被扫描的目录必须位于本次认可的归档根内，且确实
+    命中 > 0 个声明文件；否则退出码 **2**（门禁失灵），而不是拿着另一棵树的结果
+    报「自检通过」。
 
     Args:
         directory: 声明目录（取第一份声明作为变异基座）。
+        archive_root: 本次运行认可的归档根。
 
     Returns:
         tuple[int, list[str]]: 退出码（1=自检成功，2=门禁失灵）、说明清单。
     """
+    scope_problems = assert_scan_scope(directory, archive_root)
+    if scope_problems:
+        return 2, [f"[FAIL] 自检前置断言失败：{item}" for item in scope_problems]
     if not directory.is_dir():
         return 2, [f"声明目录不存在：{directory}"]
     payloads = _load_payloads(directory)
     if not payloads:
         return 2, [f"声明目录为空：{directory}"]
-    base_name, base_payload = payloads[0]
 
-    notes: list[str] = []
+    notes: list[str] = [f"[OK] 扫描目录 ⊆ 归档根：{directory.resolve()} ⊆ {archive_root.resolve()}"]
+    # 「加载器认的目录」必须与「本次扫描的目录」一致——不一致说明 import 到的
+    # `app` 包来自另一棵树（正是 2026-10-23 那次假隔离的成因）。
+    loader_dir = default_manifests_dir().resolve()
+    if directory.resolve() == SCRIPT_MANIFESTS_DIR.resolve() and loader_dir != directory.resolve():
+        return 2, [
+            *notes,
+            f"[FAIL] 自检前置断言失败：加载器声明目录 {loader_dir} ≠ 脚本相对树 "
+            f"{directory.resolve()}（import 到了别处的 app 包）",
+        ]
+    notes.append(f"[OK] 加载器声明目录一致：{loader_dir}")
+    base_name, base_payload = payloads[0]
     undetected: list[str] = []
     mutations = {
         "多出可执行字段": _mutate_extra_field,
@@ -304,7 +378,14 @@ def main(argv: list[str] | None = None) -> int:
         int: 退出码（0=通过 / 1=发现违规或自检命中 / 2=门禁自身异常）。
     """
     parser = argparse.ArgumentParser(description="G-26 插件声明门禁")
-    parser.add_argument("--dir", default="", help="声明目录（缺省 app/plugins/manifests）")
+    parser.add_argument(
+        "--dir",
+        default="",
+        help=(
+            "声明目录（缺省取脚本相对树 <repo>/apps/adapter/app/plugins/manifests，"
+            "不跟随 import 到的 app 包，避免导出树复核扫到主工作区）"
+        ),
+    )
     parser.add_argument("--self-test", action="store_true", help="跑负样本自检（期望退出码 1）")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出")
     parser.add_argument(
@@ -316,10 +397,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(list(BANNED_TERMS), ensure_ascii=False))
         return 0
 
-    directory = Path(args.dir) if args.dir else default_manifests_dir()
+    # 归档根：显式 `--dir` 时以它为根（导出树复核），否则以脚本所在树为根
+    archive_root = Path(args.dir).resolve() if args.dir else ADAPTER_ROOT
+    directory = Path(args.dir).resolve() if args.dir else SCRIPT_MANIFESTS_DIR
 
     if args.self_test:
-        code, notes = run_self_test(directory)
+        code, notes = run_self_test(directory, archive_root)
         for note in notes:
             print(note)
         print(
@@ -344,7 +427,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(
         f"[OK]   G-26 通过：{stats['registered']} 份声明"
-        f"（{', '.join(stats['plugin_ids'])}），能力与原语均在白名单内"
+        f"（{', '.join(stats['plugin_ids'])}），能力与原语均在白名单内；"
+        f"扫描目录（绝对路径）= {stats['manifests_dir']}"
     )
     return 0
 
