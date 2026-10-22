@@ -57,15 +57,18 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     # B17 的两条 P1（已随 B18 关闭）
     {"id": "P3-B17-01", "level": "P1", "status": "fixed"},
     {"id": "P3-B17-02", "level": "P1", "status": "fixed"},
-    # B18 的三条 P1：0003 与 G-13 已修，仅「台账孤儿」仍开放（由 g11 钉住）
-    {"id": "P3-B18-01", "level": "P1", "status": "fixed"},  # b5dbd69 幂等建表
+    # B18 缺陷（等级按方案 §7.1「后果面」定：迁移不可重复 = P0，门禁假红 = P1）
+    {"id": "P3-B18-01", "level": "P0", "status": "fixed"},  # 0003 只对账 → b5dbd69 幂等建表
+    {"id": "P3-B18-02", "level": "P0", "status": "fixed"},  # checksum drift → 同源 b5dbd69
+    {"id": "P3-B18-03", "level": "P1", "status": "fixed"},  # G-13/17002 → c340e70 visibility 豁免
+    # 新增号（勿与 B18-02 混用）：改名遗留的 schema_migration 孤儿行——
+    # 「checksum 漂移」是环境态（B18-02），「改名留下孤儿行」是实现/脚本缺陷（本条）。
     {
-        "id": "P3-B18-02",
+        "id": "P3-B18-04",
         "level": "P1",
         "status": "open",
         "pinned_by": "test_real_postgres_migration_is_idempotent",
     },
-    {"id": "P3-B18-03", "level": "P1", "status": "fixed"},  # c340e70 visibility 豁免
 )
 
 __all__: list[str] = [
