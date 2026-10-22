@@ -57,7 +57,14 @@ EXPECTED_PLUGIN_CODES = {
     17002: "TASK_INTERNAL_AUDIT",
 }
 
-#: 预期未实现的延后用例（用于汇总断言：xfail 数必须与它相等）
+#: **预期 xfail 条数——显式常量，必须人工维护**
+#:
+#: 刻意不用 `len(DEFERRED_CASES)` 推导：若有人「删掉一条延后用例 + 同时删掉登记项」，
+#: 两个数会一起降、汇总断言仍绿，漂移就被掩盖了。写成常量后，任何增删都必须改这里，
+#: 改不动就会红——**这条断言的价值就在"逼人手动确认"**。
+EXPECTED_XFAIL = 6
+
+#: 延后用例登记表（名字必须与函数名逐一对应，由 `test_d1` 校验）
 DEFERRED_CASES = (
     "test_b1_pl05_already_installed_field_is_always_present",
     "test_b2_pl14_update_grants_before_install_returns_16003",
@@ -71,28 +78,48 @@ DEFERRED_CASES = (
 # ===========================================================================
 # A 组：契约型，**现在就能跑出结果**（不依赖 B16 业务实现完成）
 # ===========================================================================
-def test_a1_16003_means_not_installed_and_16004_means_disabled() -> None:
-    """TC-P3-PL02-01 / TC-P3-PL03-11：`16003`=未添加、`16004`=已停用，两者不得倒置。
+def _assert_codes_not_inverted(
+    *, not_installed: int, disabled: int, message_not_installed: str, message_disabled: str
+) -> None:
+    """校验「未安装码 / 已停用码」不变量（纯函数，便于用负样本证明它能抓错）。
 
-    一正一反两条断言：只断一边（如只断 `16003==16003`）在码值互换时仍会通过。
+    抽成纯函数的目的：**负样本只需传错参数**即可验证「这条断言真的会红」，
+    不需要去改 `errors.py` 或 `ERROR_REGISTRY` 这类真实常量——避免污染进程内状态、
+    避免「临时改回」被中断后引发连锁失败。
+
+    Args:
+        not_installed: 未安装码值。
+        disabled: 已停用码值。
+        message_not_installed: 未安装码文案。
+        message_disabled: 已停用码文案。
+
+    Raises:
+        AssertionError: 任一不变量被破坏。
     """
-    not_installed = int(ErrorCode.PLUGIN_NOT_INSTALLED)
-    disabled = int(ErrorCode.PLUGIN_DISABLED)
-
     assert not_installed == 16003, f"[TC-P3-PL02-01 ①] 未安装码应为 16003，实际 {not_installed}"
     assert disabled == 16004, f"[TC-P3-PL02-05 ①] 已停用码应为 16004，实际 {disabled}"
     assert not_installed != disabled, "[TC-P3-PL02-01 ②] 两个码不得相同（倒置/合并）"
-
-    spec_not_installed = ERROR_REGISTRY[ErrorCode.PLUGIN_NOT_INSTALLED]
-    spec_disabled = ERROR_REGISTRY[ErrorCode.PLUGIN_DISABLED]
-    assert "还没有添加" in spec_not_installed.message, (
-        f"[TC-P3-PL02-01 ③] 16003 文案应表达「还没有添加」，实际 {spec_not_installed.message!r}"
+    assert "还没有添加" in message_not_installed, (
+        f"[TC-P3-PL02-01 ③] 16003 文案应表达「还没有添加」，实际 {message_not_installed!r}"
     )
-    assert "已停用" in spec_disabled.message, (
-        f"[TC-P3-PL02-05 ③] 16004 文案应表达「已停用」，实际 {spec_disabled.message!r}"
+    assert "已停用" in message_disabled, (
+        f"[TC-P3-PL02-05 ③] 16004 文案应表达「已停用」，实际 {message_disabled!r}"
     )
-    assert spec_not_installed.message != spec_disabled.message, (
+    assert message_not_installed != message_disabled, (
         "[TC-P3-PL02-01 ④] 两码文案不得相同（用户出路不同：去添加 / 找管理员启用）"
+    )
+
+
+def test_a1_16003_means_not_installed_and_16004_means_disabled() -> None:
+    """TC-P3-PL02-01 / TC-P3-PL03-11：`16003`=未添加、`16004`=已停用，两者不得倒置。
+
+    一正一反多条断言：只断一边（如只断 `16003==16003`）在码值互换时仍会通过。
+    """
+    _assert_codes_not_inverted(
+        not_installed=int(ErrorCode.PLUGIN_NOT_INSTALLED),
+        disabled=int(ErrorCode.PLUGIN_DISABLED),
+        message_not_installed=ERROR_REGISTRY[ErrorCode.PLUGIN_NOT_INSTALLED].message,
+        message_disabled=ERROR_REGISTRY[ErrorCode.PLUGIN_DISABLED].message,
     )
 
 
@@ -216,8 +243,12 @@ def test_d1_deferred_registry_matches_markers() -> None:
         and any(getattr(mark, "name", "") == "xfail" for mark in getattr(obj, "pytestmark", []))
     }
     assert marked == set(DEFERRED_CASES), (
-        f"[骨架汇总] xfail 用例与登记不一致：多出 {sorted(marked - set(DEFERRED_CASES))}、"
+        f"[骨架汇总 ①] xfail 用例与登记不一致：多出 {sorted(marked - set(DEFERRED_CASES))}、"
         f"缺少 {sorted(set(DEFERRED_CASES) - marked)}"
+    )
+    assert len(marked) == EXPECTED_XFAIL, (
+        f"[骨架汇总 ②] 预期未实现 {EXPECTED_XFAIL} 条（显式常量），实际 {len(marked)} 条。"
+        "若确已落地，请同步下调 EXPECTED_XFAIL——必须人工确认，不允许自动推导"
     )
     for name in DEFERRED_CASES:
         marks = [
@@ -230,14 +261,37 @@ def test_d1_deferred_registry_matches_markers() -> None:
 
 @pytest.mark.skipif(
     os.environ.get(SELFTEST_ENV) != "1",
-    reason=f"骨架自检开关未开启（{SELFTEST_ENV}=1 时启用；用于确认骨架能报红）",
+    reason=f"骨架自检开关未开启（{SELFTEST_ENV}=1 时启用；只在 --self-test 下收集）",
 )
-def test_d2_skeleton_self_check_fails_on_purpose() -> None:
-    """骨架自检：**故意必红**。
+def test_d2_negative_sample_is_caught_by_invariant() -> None:
+    """骨架自检 ①：**负样本必须被不变量抓住**（纯内存，不碰任何真实常量）。
+
+    做法：把 `16003`/`16004` 互换后喂给 `_assert_codes_not_inverted`，必须抛
+    `AssertionError`。这条证明「断言真的会红」，且**不修改 `errors.py` /
+    `ERROR_REGISTRY`**——避免「临时改回」被中断后污染进程、引发连锁失败。
+    """
+    with pytest.raises(AssertionError) as caught:
+        _assert_codes_not_inverted(
+            not_installed=16004,
+            disabled=16003,
+            message_not_installed="该插件已停用，请联系管理员启用",
+            message_disabled="该插件还没有添加，请先在插件市场添加",
+        )
+    assert "[TC-P3-PL02-01 ①]" in str(caught.value), (
+        f"[骨架自检 ①] 负样本被抓住了，但报错没有带用例编号：{caught.value}"
+    )
+
+
+@pytest.mark.skipif(
+    os.environ.get(SELFTEST_ENV) != "1",
+    reason=f"骨架自检开关未开启（{SELFTEST_ENV}=1 时启用；只在 --self-test 下收集）",
+)
+def test_d3_skeleton_reports_failure_on_purpose() -> None:
+    """骨架自检 ②：**故意必红**，用来确认 pytest 会把失败报出来（exit 非 0）。
 
     用途：`OA_P3_SKELETON_SELFTEST=1 pytest -q <本文件>` 必须 **exit 非 0**。
-    若这种情况下仍然全绿，说明断言根本没生效（例如被 `xfail` 吞掉、或文件没被收集），
-    此时骨架的所有「绿」都不作数。平时不设该变量，本用例以 `skipif` 排除，
-    与被测实现无关（区别于「未实现项用 `xfail`」那条规则）。
+    若这种情况下仍然全绿，说明断言没生效（被 `xfail` 吞掉 / 文件没被收集 / 被 CI
+    当成「已知失败」长期挂着），此时骨架的所有「绿」都不作数。
+    平时不设该变量，本用例以 `skipif` 排除——与「未实现项用 `xfail`」是两件不同的事。
     """
-    raise AssertionError("[骨架自检] 这条断言故意失败：看到它失败，才说明骨架的断言真的会报红")
+    raise AssertionError("[骨架自检 ②] 这条断言故意失败：它失败才说明骨架的断言真的会报红")

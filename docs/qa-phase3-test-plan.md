@@ -360,7 +360,7 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | TC-P3-WF13-04 | 13 | 失败态 | 点「联系管理员」 | 复制文本 `\b[1-3]\d{4}\b` **0 命中**、无 `Traceback`/`at 0x`/堆栈特征 | 同上 `::test_diagnostic_copy_has_no_codes_or_stack` |
 | TC-P3-WF14-01 | 14 | 5 个不同插件/状态/发起人/时间的任务 | 四维筛选 + 1 条组合 | 4 条独立断言 + 1 条组合断言，返回集合精确相等（不是子集） | `test_workflow_history.py::test_filters_four_dimensions` |
 | TC-P3-WF14-02 | 14 | 三插件各完成 1 次 | 读 `result.checklist[]` | 项数 **4 / 3 / 4**，名称与 PRD §3.2.3 ②**逐字相等**；每项 `status ∈ {verified, pending_manual}` | 同上 `::test_checklist_items_exact`（`e2e`） |
-| TC-P3-WF14-03 | 14 | 非发起人且无管理权 | 打开他人任务 | 权限错误 + 文案「你没有权限查看该任务」；**不返回**任务内容（响应体不含任务名/产物名）；**副作用计数**：任务与产物的**行数、`updated_at`、`version` 均不变**（本阶段**无读审计**动作，故不用「无读取审计」判据；引入读审计后另行追加）；**交付面黑名单（比计数更贴风险）**：响应 JSON **递归序列化**后对 `content` / `download_url` / `file_name` / `preview_text` / `author_name` / `email` 六个 key **0 命中**（含 `data.*`、`data.items[*]`）；**403 / 404 / 200+空对象三种实现都要跑同一条黑名单**（404 合格且不暴露存在性；200 空对象也不得带任何上述字段） | 同上 `::test_cross_user_task_detail_denied` |
+| TC-P3-WF14-03 | 14 | 非发起人且无管理权 | 打开他人任务 | 权限错误 + 文案「你没有权限查看该任务」；**不返回**任务内容（响应体不含任务名/产物名）；**副作用计数**：任务与产物的**行数、`updated_at`、`version` 均不变**（本阶段**无读审计**动作，故不用「无读取审计」判据；引入读审计后另行追加）；**交付面黑名单（比计数更贴风险）**：响应 JSON **递归序列化**后对 `content` / `download_url` / `file_name` / `preview_text` / `author_name` / `email` 六个 key **0 命中**（含 `data.*`、`data.items[*]`）；**403 / 404 / 200+空对象三种实现都要跑同一条黑名单**（404 合格且不暴露存在性；200 空对象也不得带任何上述字段）；**断言写法约束**：不得写成「必须 403」——应断言「HTTP ∈ {403, 404, 200 且空体} **且** 六键黑名单 0 命中」，否则实现选了 404（更严：不暴露存在性）反而被判错 | 同上 `::test_cross_user_task_detail_denied` |
 
 ### 4.4 研发工作台（DEV，8 条，映射 P0-P3-15~17）
 
