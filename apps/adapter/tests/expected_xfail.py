@@ -162,11 +162,28 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         # 于是 PG（私有化）模式下导出公文得到的是**文本预览字节，不是 Word 文件**。
         # 验收报告「4 类公文可导出真 docx（可解压 word/document.xml）」只在内存模式成立。
         # 属典型「内存全绿、生产全废」，与 P3-B19-04 同族。
-        "status": "open",
-        "pinned_by": "PRD P0-P3-23（公文可导出）/ ArtifactRecord.content 仅内存保留",
-        "due_batch": "B30",
+        "status": "fixed",
+        # 关闭依据：0005 迁移补 `content BYTEA`（三段式 + to_regclass 守卫），
+        # PostgresArtifactStore 的 INSERT/UPDATE/_to_artifact 三路接上真实字节；
+        # 实测 PG 后端下载回真 zip（37241B、magic=PK、17 个部件含 word/document.xml、
+        # sha256 与库内一致）。判据落点：test_artifact_content_pg.py（9 条，真库）
+        # + test_artifact_content_column.py（13 条静态防回归）。
+        "pinned_by": "test_artifact_content_pg.py / test_artifact_content_column.py",
+        "due_batch": "B21",
         "due_action": "plugin_artifact 增二进制内容列（BYTEA，迁移 + init-schema 双更新），"
         "仓储读写与下载端点改用真实字节；或用对象存储并把 content_type/长度登记进库",
+    },
+    {
+        "id": "P3-B22-04",
+        "level": "P2",
+        # `plugin_artifact` **没有 content_type 列**，`_to_artifact` 恒回落默认值
+        # `text/plain; charset=utf-8`，于是下载 docx 时浏览器可能按文本渲染
+        # （`Content-Disposition: attachment` 未设、`filename*` 已正确）。
+        # 影响面：内存后端与 PG 后端**一致**，不是本次改动引入。
+        "status": "open",
+        "pinned_by": "下载响应 MIME 恒 text/plain / plugin_artifact 缺 content_type 列",
+        "due_batch": "B30",
+        "due_action": "加 content_type TEXT 列并在渲染/写入三处赋值；下载端点按实际类型返回",
     },
 )
 
