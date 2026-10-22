@@ -235,9 +235,14 @@ ok = covered * 100 >= threshold_pp * total      # ✅ 整数比较
 | 1 | 工作区干净（**须附时间戳**） | `git status --porcelain` 为空；**该读数以分钟计，不得跨小时沿用** | ❌ 新增 3 个用例未提交（2026-10-22T14:37） |
 | 2 | 导出树静态扫描 | SQL↔DDL 违规 **0** | ❌ HEAD **2 处**（`列25≠值24`、`引用 queue_position`） |
 | 3 | 分支统计已开 | `num_branches > 0` + 四档取值随报告行给出 | 待跑 |
-| 4 | **内容自证（签收用）** | `git show <sha>:…/task_repo.py` → ① INSERT **列数 == 值数** ② **不含 `queue_position`** | ❌ HEAD 为 25/24 且含 `queue_position` |
+| 4 | **内容自证（签收用；范围限定在 INSERT 列清单）** | `git show <sha>:…/task_repo.py`（或 `awk '/INSERT INTO \{TASK_TABLE\}/,/^\s*\)/'` 截段）→ ① **列数 == 值数** ② **列清单**不含 `queue_position` | ✅ HEAD 24/24、列清单无 `queue_position` |
 | 5 | 归属（**复盘用，不进签收**） | `git log -1 --format="%h %s" <sha> -- …/task_repo.py` 能指到修复提交 | ✅ `9a85de6` |
 | **6** | **修复确在该 sha 的祖先链** | `git merge-base --is-ancestor 9a85de6 <B21 冻结点>` → 退出码 **0** | ✅ `9a85de6` 是 HEAD 祖先（已实测） |
+
+> **⚠ 第 4 条的范围必须限定在「INSERT 列清单」**：`task_repo.py` **全文含 `queue_position` 17 次**，且**全部合法**
+> （注释说明、派生字段名、数据类型字段）；`deploy/migrations/*.sql` 里 `queue_position` **0 处** → 它是**派生值**，本就不该进 INSERT。
+> **若判据写成"文件里 0 处 `queue_position`"→ 永远假红**，而假红两次之后没人再跑。
+> **这是本轮同型第 3 次"范围没界定"**：`R2-c` 全仓检索 → `grep cov-branch` 推配置 → `queue_position` 全文判。**判据的作用域不写，等于判据没写。**
 
 > **第 4 条为何判"内容"而不判"归属"**：commit message 可以写 `fix:` 而实际没修（本轮已出现"看起来修了"）；把归属放进签收，
 > 等于允许**"提交信息写得像修了"过关**。**签收签的是"这个 sha 里的内容对不对"，不是"是谁改的"。**
@@ -318,6 +323,9 @@ ok = covered * 100 >= threshold_pp * total      # ✅ 整数比较
 | `list_queued` 位次 1..n（建任务即回填） | `test_queued_tasks_get_derived_positions`（断言 `[1,2]`，新建位次 3） | 通过 |
 | 异常分支"能看到原始 PG 错误" | **无用例**；探针：`SELECT queue_position …` → `UndefinedColumnError: column "queue_position" does not exist` | **列名可见**；`__cause__ = None`（未包装，属现状设计） |
 
+> **修复归属**：`P3-B19-04` **fixed by `9a85de6`（内容修复）+ `40d1b8a`（台账状态，仅改 `expected_xfail.py` 1 行）**——
+> 祖先链判据指向 `9a85de6`；若把 `40d1b8a` 说成"修好了"，会与祖先链对不上（它没碰 `task_repo.py`）。
+>
 > **口径已定：A 档**（原始异常不丢、日志可见即达标；不引入 `raise ... from exc` 包装）。
 > **但要求把"现状正确"变成"被守住"**——用例：`tests/integration/test_pg_error_surfacing.py`（`ae54db4`）：
 > | 断言 | 结果 |
