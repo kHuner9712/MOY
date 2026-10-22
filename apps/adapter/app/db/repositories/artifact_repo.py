@@ -10,9 +10,15 @@
 3. **`link` / `file` 只读**：允许改提交记录会直接毁掉 AC-02 的结果物核查客观性，
    所以可编辑类型在**仓储层**也再判一次（不只靠端点层）。
 
-**二进制内容的取舍**（V1.0 明说）：对象存储在私有化路径上是可选项，因此
-文件类产物的字节在内存后端保留、在 PG 后端只留 `storage_key` 与摘要；
-`download_url` 一律由平台代理（`/files/artifacts/...`），**不暴露存储地址**。
+**二进制内容的落点**（B22 修正，原设计见下）：
+文件类产物（docx / xlsx / zip）的字节**两种后端都保留**——内存后端存在
+`ArtifactRecord.content`，PG 后端存进 `plugin_artifact.content`（BYTEA，迁移 `0005`）。
+对象存储在私有化路径上是可选项，因此不能把"二进制能否落库"挂在它上面；
+`download_url` 仍一律由平台代理（`/files/artifacts/...`），**不暴露存储地址**。
+
+> 原设计（已废弃）：字节只在内存后端保留、PG 后端只留 `storage_key` 与摘要。
+> 后果是 PG（私有化）模式下下载任何文件类产物拿到的都是 `inline_text` 的文本预览，
+> 而不是真文件——"内存全绿、生产全废"（缺陷 P3-B22-03）。**不要把这个取舍改回去。**
 """
 
 from __future__ import annotations
@@ -75,7 +81,7 @@ class ArtifactRecord:
         expires_at: 过期时间（180 天）。
         created_at: 创建时间。
         updated_at: 最近更新时间。
-        content: 二进制内容（**仅内存后端**保留，PG 后端为 b""）。
+        content: 二进制内容（`file` 类产物的真实字节；PG 后端落 `plugin_artifact.content`）。
         content_type: MIME 类型（下载响应用）。
     """
 
@@ -312,6 +318,9 @@ class PostgresArtifactStore:
     async def add_artifacts(self, records: list[ArtifactRecord]) -> list[ArtifactRecord]:
         """批量插入产物。
 
+        `content` 与 `content_sha256` 一起落库：摘要负责"内容变没变"，
+        `content` 负责"下载拿得到什么"。两者**不得**互相替代（B22）。
+
         Args:
             records: 产物行列表。
 
@@ -327,12 +336,12 @@ class PostgresArtifactStore:
                     INSERT INTO {ARTIFACT_TABLE} (
                         tenant_id, artifact_id, task_id, step_id, output_key, type, name,
                         inline_text, preview_text, external_url, storage_key, size_bytes,
-                        content_sha256, expires_at
+                        content_sha256, content, expires_at
                     ) VALUES (
                         :tenant_id, :artifact_id, :task_id, :step_id, :output_key, :type, :name,
                         :inline_text, :preview_text, NULLIF(:external_url, ''),
                         NULLIF(:storage_key, ''), :size_bytes, NULLIF(:content_sha256, ''),
-                        :expires_at
+                        :content, :expires_at
                     )
                     RETURNING *
                     """,
@@ -349,6 +358,9 @@ class PostgresArtifactStore:
                         storage_key=record.storage_key,
                         size_bytes=record.size_bytes,
                         content_sha256=record.content_sha256,
+                        # 空字节写 NULL 而不是 `''::bytea`：`text` / `link` 类产物
+                        # 本来就没有二进制内容，"没有"与"零字节文件"要能区分开。
+                        content=record.content or None,
                         expires_at=as_datetime(record.expires_at)
                         or as_datetime(_default_expires_at()),
                     ),
@@ -438,14 +450,18 @@ class PostgresArtifactStore:
     ) -> ArtifactRecord | None:
         """保存新版本（`version + 1`，旧版本压入 `version_history`）。
 
+        **`content_sha256` 每次保存都重算**（硬约束第 2 条）：本方法只负责存值，
+        不负责算摘要——调用方（`task_service`）用 `sanitizer.digest()` 重算后传入。
+        这里绝不允许"内容没变就沿用旧摘要"的优化，否则前端缓存会拿到旧文件。
+
         Args:
             tenant_id: 企业 ID。
             artifact_id: 产物 ID。
             inline_text: 新版本正文（已脱敏）。
             preview_text: 新预览。
-            content_sha256: 内容摘要。
-            content: 新文件字节（PG 后端不落库，仅用于摘要与大小）。
-            content_type: MIME 类型。
+            content_sha256: 内容摘要（调用方已重算）。
+            content: 新文件字节；空则按内存后端同语义回落到 `inline_text` 的 UTF-8 字节。
+            content_type: MIME 类型（当前 PG 表未持久化该列，见模块说明）。
 
         Returns:
             ArtifactRecord | None: 更新后的产物行。
@@ -464,7 +480,12 @@ class PostgresArtifactStore:
             }
         )
         history = history[-MAX_VERSION_HISTORY:]
-        size = len(content) if content else len(inline_text.encode("utf-8"))
+        # 与内存实现 `content or inline_text.encode("utf-8")` **严格同语义**：
+        # 调用方没给字节时，新版本的内容就是新正文的 UTF-8 字节。
+        # 在 Python 侧算好再绑定，不在 SQL 里写 COALESCE/convert_to——
+        # 参数类型推断交给 asyncpg 的 bytea 上下文，比让 PG 去解 COALESCE 更稳。
+        effective_content = content or inline_text.encode("utf-8")
+        size = len(effective_content)
         async with tenant_scope(tenant_id, settings=self._settings) as uow:
             repo = _ArtifactRepository(uow)
             row = await repo.fetch_one(
@@ -473,6 +494,7 @@ class PostgresArtifactStore:
                    SET inline_text = :inline_text,
                        preview_text = :preview_text,
                        content_sha256 = :content_sha256,
+                       content = :content,
                        size_bytes = :size_bytes,
                        version = COALESCE(version, 1) + 1,
                        version_history = CAST(:version_history AS jsonb)
@@ -484,6 +506,7 @@ class PostgresArtifactStore:
                     inline_text=inline_text,
                     preview_text=preview_text,
                     content_sha256=content_sha256,
+                    content=effective_content,
                     size_bytes=size,
                     version_history=json.dumps(history, ensure_ascii=False),
                 ),
@@ -557,8 +580,35 @@ def _to_artifact(row: Mapping[str, Any]) -> ArtifactRecord:
         expires_at=_timestamp(row.get("expires_at")),
         created_at=_timestamp(row.get("created_at")),
         updated_at=_timestamp(row.get("updated_at")) or _timestamp(row.get("created_at")),
+        content=_as_bytes(row.get("content")),
         content_type=str(row.get("content_type", "") or "text/plain; charset=utf-8"),
     )
+
+
+def _as_bytes(value: Any) -> bytes:
+    """把 `bytea` 列读回来的值规范成 `bytes`。
+
+    为什么单独一个函数（而不是 `bytes(row.get("content") or b"")`）：
+
+    - 列可能是 `NULL`（`text` / `link` 类产物本来就没有二进制内容）→ 返回 `b""`，
+      调用方 `if not content` 的回落分支才成立；
+    - asyncpg 在某些版本/驱动组合下把 `bytea` 读成 `memoryview`，
+      而 `memoryview or b""` 的真值判断与后续 `len()` / `startswith` 行为不一致；
+    - 老库未跑 `0005` 时行里**没有** `content` 这个键 → `row.get` 返回 `None`，
+      同样落到 `b""`，不会因为缺列把整条读取链路炸掉（降级行为与 B22 之前一致）。
+    - `bytearray` 一并收掉：`bytes(bytearray)` 是拷贝，不会与行对象共享可变缓冲。
+
+    Args:
+        value: 数据库行的 `content` 值。
+
+    Returns:
+        bytes: 二进制内容；空值返回 `b""`。
+    """
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    return b""
 
 
 def _timestamp(value: Any) -> str:
