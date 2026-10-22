@@ -151,10 +151,40 @@ async def http_exception_handler(_request: Request, exc: Exception) -> JSONRespo
     return _json_error(mapped, status=exc.status_code)
 
 
+def _sqlstate_of(exc: BaseException) -> str:
+    """沿异常链尽力取出 PostgreSQL SQLSTATE。
+
+    数据库错误经仓储层抛出后，原始异常可能被 `asyncpg` / `SQLAlchemy` 包装一层，
+    故依次检查自身与 `__cause__` / `__context__`，以及 SQLAlchemy 的 `.orig`。
+
+    Args:
+        exc: 未捕获异常。
+
+    Returns:
+        SQLSTATE 字符串；取不到时返回空串。
+
+    Notes:
+        只提取 SQLSTATE 这类**定位用**元数据，不提取 SQL 参数值，避免业务数据入日志。
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        candidates = (
+            getattr(current, "sqlstate", None),
+            getattr(getattr(current, "orig", None), "sqlstate", None),
+        )
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate:
+                return candidate
+        current = current.__cause__ or current.__context__
+    return ""
+
+
 async def unhandled_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     """未捕获异常处理器 → 30003。
 
-    只记录异常类型与堆栈到日志，对外返回「系统繁忙，请稍后再试」。
+    只记录异常类型、SQLSTATE 与堆栈到日志，对外返回「系统繁忙，请稍后再试」。
 
     Args:
         _request: FastAPI 请求对象。
@@ -162,12 +192,18 @@ async def unhandled_error_handler(_request: Request, exc: Exception) -> JSONResp
 
     Returns:
         JSONResponse: 30003 统一失败响应。
+
+    Notes:
+        对外响应体**不得**包含列名、表名、SQLSTATE（`test_task_repo_pg.py` 有断言）。
+        SQLSTATE 只进日志，用于定位「列不存在 / 权限不足」这类现场问题——
+        缺了它，30003 在排障时等于没有信息。
     """
     logger.error(
         "unhandled_exception",
         exc_info=exc,
         error_code=int(ErrorCode.INTERNAL_ERROR),
         exception_type=type(exc).__name__,
+        sqlstate=_sqlstate_of(exc) or None,
     )
     return _json_error(ErrorCode.INTERNAL_ERROR)
 
