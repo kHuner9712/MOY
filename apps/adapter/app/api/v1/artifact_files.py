@@ -56,10 +56,31 @@ async def download_artifact(
         content=content,
         media_type=record.content_type or "application/octet-stream",
         headers={
-            "Content-Disposition": f'inline; filename="{filename}"',
+            "Content-Disposition": _content_disposition(filename),
             "X-Artifact-Version": str(version),
         },
     )
+
+
+def _content_disposition(filename: str) -> str:
+    """构造 `Content-Disposition`（中文文件名必须走 RFC 5987 的 `filename*`）。
+
+    **为什么必须这样写**（B26 e2e 实测暴露的 P0）：HTTP 头按 latin-1 编码，
+    直接写 `filename="发布排期表.csv"` 会在响应序列化时抛
+    `UnicodeEncodeError`，整条下载链路 500——而阶段三的产物名**几乎全是中文**
+    （发布排期表 / 筛选评分表 / 录用通知），等于"所有产物都下不了"。
+    ASCII 兜底名保证老客户端也能落地一个文件，`filename*` 保证现代客户端拿到中文名。
+
+    Args:
+        filename: 产物名称（可含中文）。
+
+    Returns:
+        str: 形如 `inline; filename="artifact.csv"; filename*=UTF-8''%E4%B8%AD.csv`。
+    """
+    from urllib.parse import quote
+
+    fallback = filename.encode("ascii", "replace").decode("ascii").replace('"', "_")
+    return f"inline; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"
 
 
 __all__: list[str] = ["router"]
