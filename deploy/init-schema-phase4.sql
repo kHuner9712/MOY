@@ -141,3 +141,125 @@ BEGIN
         RAISE NOTICE 'phase4: 未找到 officeai_app（非标准部署），跳过显式授权';
     END IF;
 END $grant$;
+
+-- ---------------------------------------------------------------------------
+-- 6. pgvector 扩展（记忆向量）
+--
+-- ⚠ 必须由 initdb（超级用户）执行：`vector` 的
+--   `pg_available_extension_versions.trusted = false`，应用角色 `officeai_app`
+--   是 NOSUPERUSER，**永远建不出这个扩展**（实测 pgvector 0.8.7）。
+--   存量库升级时由 DBA 手工执行同一句。
+-- ---------------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- ---------------------------------------------------------------------------
+-- 7. 记忆三表（迁移 0009 的入网落点）
+--
+-- `user_memory` 事实 / `memory_embedding` 向量 / `user_memory_setting` 开关。
+-- 记忆是个人数据：RLS 只保证租户边界，`user_id` 边界由仓储层强制。
+-- 维度固定 1024（决策 A-2）：换 embedding 模型必须重建该列（先 DROP INDEX）。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_memory (
+    tenant_id              TEXT        NOT NULL,
+    memory_id              TEXT        NOT NULL,
+    user_id                TEXT        NOT NULL,
+    category               TEXT        NOT NULL
+                           CHECK (category IN ('identity','org','preference',
+                                               'convention','constraint','project')),
+    content                TEXT        NOT NULL CHECK (content <> ''),
+    confidence             TEXT        NOT NULL DEFAULT 'high'
+                           CHECK (confidence IN ('high','low')),
+    source_conversation_id TEXT        NOT NULL DEFAULT '',
+    source_message_id      TEXT        NOT NULL DEFAULT '',
+    superseded_by          TEXT,
+    normalized_hash        TEXT        NOT NULL DEFAULT '',
+    hit_count              INTEGER     NOT NULL DEFAULT 1 CHECK (hit_count >= 1),
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, memory_id)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_recall
+    ON user_memory (tenant_id, user_id, category, updated_at DESC)
+    WHERE superseded_by IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_hash
+    ON user_memory (tenant_id, user_id, category, normalized_hash)
+    WHERE superseded_by IS NULL AND normalized_hash <> '';
+
+CREATE TABLE IF NOT EXISTS memory_embedding (
+    tenant_id  TEXT        NOT NULL,
+    memory_id  TEXT        NOT NULL,
+    model      TEXT        NOT NULL DEFAULT '',
+    dim        INTEGER     NOT NULL,
+    embedding  vector(1024) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, memory_id)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_embedding_hnsw
+    ON memory_embedding USING hnsw (embedding vector_cosine_ops);
+
+CREATE TABLE IF NOT EXISTS user_memory_setting (
+    tenant_id         TEXT        NOT NULL,
+    user_id           TEXT        NOT NULL,
+    enabled           BOOLEAN     NOT NULL DEFAULT TRUE,
+    category_switches JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, user_id)
+);
+
+-- ---------------------------------------------------------------------------
+-- 8. 后台任务表（迁移 0010 的入网落点）
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS background_job (
+    tenant_id    TEXT        NOT NULL,
+    job_id       TEXT        NOT NULL,
+    kind         TEXT        NOT NULL
+                 CHECK (kind IN ('memory_extract','tenant_export','retention_cleanup')),
+    dedupe_key   TEXT        NOT NULL DEFAULT '',
+    payload      JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    status       TEXT        NOT NULL DEFAULT 'queued'
+                 CHECK (status IN ('queued','running','succeeded','failed','cancelled')),
+    attempts     SMALLINT    NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    max_attempts SMALLINT    NOT NULL DEFAULT 3 CHECK (max_attempts >= 1),
+    run_after    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    locked_by    TEXT        NOT NULL DEFAULT '',
+    locked_until TIMESTAMPTZ,
+    last_error   TEXT        NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at  TIMESTAMPTZ,
+    PRIMARY KEY (tenant_id, job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_job_due
+    ON background_job (run_after) WHERE status IN ('queued','running');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_job_dedupe
+    ON background_job (tenant_id, kind, dedupe_key)
+    WHERE dedupe_key <> '' AND status IN ('queued','running');
+
+-- ---------------------------------------------------------------------------
+-- 9. RLS + 授权：记忆三表与任务表都进 strict 组
+-- ---------------------------------------------------------------------------
+DO $rls_mem$
+DECLARE
+    strict_tables TEXT[] := ARRAY['user_memory', 'memory_embedding',
+                                  'user_memory_setting', 'background_job'];
+    t TEXT;
+BEGIN
+    FOREACH t IN ARRAY strict_tables LOOP
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+        EXECUTE format('DROP POLICY IF EXISTS p_tenant_isolation ON %I', t);
+        EXECUTE format(
+            'CREATE POLICY p_tenant_isolation ON %I '
+            'USING (tenant_id = current_setting(''app.tenant_id'', TRUE) '
+            '    OR current_setting(''app.tenant_id'', TRUE) = ''__platform__'') '
+            'WITH CHECK (tenant_id = current_setting(''app.tenant_id'', TRUE) '
+            '    OR current_setting(''app.tenant_id'', TRUE) = ''__platform__'')', t);
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'officeai_app') THEN
+        EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON user_memory TO officeai_app';
+        EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON memory_embedding TO officeai_app';
+        EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON user_memory_setting TO officeai_app';
+        EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON background_job TO officeai_app';
+    END IF;
+    RAISE NOTICE 'phase4: 记忆三表与 background_job 已启用 FORCE RLS 并授权';
+END $rls_mem$;

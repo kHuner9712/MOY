@@ -456,6 +456,15 @@ def _run_path_a_empty_database(superuser_dsn: str) -> list[Violation]:
             await connection.execute(f"ALTER DATABASE {name} OWNER TO {APP_ROLE}")
         finally:
             await connection.close()
+        # **扩展必须由超级用户建**：`vector` 的 trusted=false，应用角色即使
+        # 是库属主也建不出来（实测 pgvector 0.8.7）。真实部署里这一步由
+        # `init-schema-phase4.sql`（initdb 超级用户）或 DBA 完成，
+        # 空库路径在这里等价模拟一次，否则 0009 在任何环境都第一步就死。
+        installer = await asyncpg.connect(_swap_dsn(superuser_dsn, database=name))
+        try:
+            await installer.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        finally:
+            await installer.close()
 
     async def _drop() -> None:
         connection = await asyncpg.connect(_swap_dsn(superuser_dsn, database="postgres"))

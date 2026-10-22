@@ -81,13 +81,13 @@ ROLLBACK_DIRNAME: Final[str] = "rollback"
 
 #: **回滚前强制备份**的版本前缀（架构 §10.2 / R-4）。
 #:
-#: 只对「down 会删表/删数据」的迁移生效（0008 会话、0009 记忆…）。理由：
+#: 只对「down 会删表/删数据」的迁移生效（0008 会话、0009 记忆、0010 任务队列）。理由：
 #: `down` 把数据改坏比"不能回滚"更糟——回滚失败最多是原地不动，回滚成功但丢数据
 #: 是不可逆的。所以这几条必须先把整库 dump 出来，dump 不成功就**拒绝执行**。
 #:
 #: 0006/0007 只 drop 列，虽也丢值，但属"可重新采集"的派生数据（真实 MIME、
 #: 计量维度），按架构口径不纳入强制备份。
-ROLLBACK_REQUIRES_BACKUP: Final[frozenset[str]] = frozenset({"0008", "0009"})
+ROLLBACK_REQUIRES_BACKUP: Final[frozenset[str]] = frozenset({"0008", "0009", "0010"})
 
 
 def rollback_requires_backup(version: str) -> bool:
