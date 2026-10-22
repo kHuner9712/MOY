@@ -372,3 +372,28 @@ DDL 无此列 = [('task_repo.py', 'queue_position')]     ← 仅此一列
 > **`27bcb5f` 的实现比"加一行"更强**：`_sqlstate_of(exc)` **沿 `__cause__` / `.orig` 链查找**——
 > 因此**将来若引入包装层（B 档），日志仍有 SQLSTATE**；A/B 之争由此兼容而非二选一。
 > **注意**：`9a85de6` 时工作区仍 4 个文件未提交、`artifact_repo`/`plugin_repo` PG 用例未补、四档未复测 —— **不构成 B21 冻结**。
+
+
+---
+
+## 8. `P3-B21-01`（P2，测试缺陷）：日志捕获的顺序依赖
+
+**症状**：`test_pg_error_surfacing` **单跑绿、全量红**（`assert []`：一条日志都没抓到）。
+
+**真因**（`app/core/logging.py:131-136`）：`structlog.configure(..., cache_logger_on_first_use=True)`。
+`error_handler` 的 `logger` 是**模块级对象**，一旦首次使用就把处理器链**缓存**；
+`capture_logs()` 靠 `structlog.configure(processors=[LogCapture()])` 生效，**对已缓存的 logger 无效**。
+
+| 场景 | 结果 | 原因 |
+| --- | --- | --- |
+| 单跑 | 绿 | 首次使用，恰好绑在捕获配置上 |
+| 全量 | 红 | 前面的用例已让该 logger 缓存了处理器链 |
+
+**修法**：**spy 模块级 logger**（`monkeypatch.setattr(error_handler_module, "logger", spy)`），断言
+"处理器交给了 logger 什么"（`exception_type` / `sqlstate` / `exc_info`），而不是"日志框架最终输出了什么"——
+与 `c5`（spy 包住 `sanitize` 断是否被调用）同一种做法，与 structlog 的缓存/配置彻底解耦。
+
+**两版教训**：
+1. 第一版改成"先 `TestClient` 再 `capture_logs`"，**单跑 + 879 合跑都绿，但全量仍红**；
+2. 所以：**根因假设也必须用"改完能否复现绿"来验证**——只凭"解释得通"就宣布根因，
+   与"看起来绿了就算过"是同一类错。**局部绿当全绿，是这轮被反复点出的毛病，这次犯在我自己的用例上。**
