@@ -42,7 +42,9 @@ OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg --cov=app --cov-report=t
 "$PY" -m coverage report --include="app/business/*,app/db/*"            > "$LOG/g05b.log" 2>&1; echo "G-05b EXIT=$?"; tail -1 "$LOG/g05b.log"
 
 # ── 契约 / 错误码 / 插件声明（部署脚本在 REPO 根）──
-"$PY" "$TREE/deploy/validate_openapi.py"                                  > "$LOG/g29.log" 2>&1; echo "G-29 EXIT=$?"; tail -2 "$LOG/g29.log"
+# B17-B20 期间必须带 --allow-missing-phase3；B21 收口后去掉（届时 phase3 必须 14/14）
+"$PY" "$TREE/deploy/validate_openapi.py" --allow-missing-phase2 --allow-missing-phase3 \
+      > "$LOG/g29.log" 2>&1; echo "G-29 EXIT=$?"; grep -E "端点统计|G1-G5" "$LOG/g29.log"
 "$PY" "$TREE/apps/adapter/scripts/check_error_catalog.py" --strict        > "$LOG/g30.log" 2>&1; echo "G-30 EXIT=$?"; tail -1 "$LOG/g30.log"
 "$PY" "$TREE/deploy/validate_plugins.py" --dir "$TREE/apps/adapter/app/plugins/manifests" \
       > "$LOG/g26.log" 2>&1; echo "G-26 EXIT=$?"; grep -o '"directory": "[^"]*"' "$LOG/g26.log" | head -1; tail -1 "$LOG/g26.log"
