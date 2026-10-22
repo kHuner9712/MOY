@@ -1,0 +1,259 @@
+{
+  "plugin_id": "plg_hr_admin",
+  "name": "行政人事工作台",
+  "summary": "从招聘到公文的日常事务助手",
+  "description": "写招聘说明、按简历给出可辩驳的初评、为进入面试的候选人准备提纲并发出邀约，也能起草录用通知与各类公文。所有涉及金额的位置一律留空由你填写，对外发送前都会先请你确认；简历无法读取时会如实标注，不会猜测内容。适合日常招聘与行政事务的连续处理，每一步的产出都能单独查看与复制。",
+  "category": "hr",
+  "icon_key": "users",
+  "vendor": "official",
+  "version": "1.0.0",
+  "min_platform_version": "1.0.0",
+  "changelog": "首个版本：招聘说明、简历初评、面试提纲、邀约、录用通知与公文起草。",
+  "capabilities": [
+    {
+      "key": "personal.knowledge.read",
+      "required": true
+    },
+    {
+      "key": "personal.tool.use",
+      "required": true
+    },
+    {
+      "key": "personal.file.read",
+      "required": true
+    },
+    {
+      "key": "org.directory.read",
+      "required": true
+    },
+    {
+      "key": "org.external.publish",
+      "required": true
+    }
+  ],
+  "settings_schema": [
+    {
+      "key": "invite_channel",
+      "label": "默认邀约渠道",
+      "type": "select",
+      "options": [
+        "邮件",
+        "飞书",
+        "企业微信"
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "key": "position",
+      "label": "岗位名称",
+      "type": "text",
+      "required": true,
+      "max_length": 64
+    },
+    {
+      "key": "department",
+      "label": "所属部门",
+      "type": "select",
+      "required": true
+    },
+    {
+      "key": "duties",
+      "label": "职责要点",
+      "type": "textarea",
+      "required": true,
+      "max_length": 2000
+    },
+    {
+      "key": "hard_requirements",
+      "label": "硬性要求",
+      "type": "textarea",
+      "required": false,
+      "max_length": 1000
+    },
+    {
+      "key": "resumes",
+      "label": "简历文件",
+      "type": "file",
+      "required": false
+    },
+    {
+      "key": "doc_type",
+      "label": "公文类型",
+      "type": "select",
+      "required": false,
+      "options": [
+        "通知",
+        "会议纪要",
+        "请示",
+        "周报"
+      ]
+    },
+    {
+      "key": "doc_points",
+      "label": "公文要素",
+      "type": "textarea",
+      "required": false,
+      "max_length": 2000
+    }
+  ],
+  "outputs": [
+    {
+      "key": "jd",
+      "label": "招聘说明",
+      "type": "text"
+    },
+    {
+      "key": "screening",
+      "label": "筛选评分表",
+      "type": "file"
+    },
+    {
+      "key": "outlines",
+      "label": "面试提纲",
+      "type": "text"
+    },
+    {
+      "key": "invitation",
+      "label": "邀约回执",
+      "type": "text"
+    },
+    {
+      "key": "offer",
+      "label": "录用通知草稿",
+      "type": "text"
+    },
+    {
+      "key": "document",
+      "label": "公文文件",
+      "type": "file"
+    }
+  ],
+  "steps": [
+    {
+      "seq": 1,
+      "title": "生成招聘说明",
+      "action": "compose",
+      "produces": [
+        "jd"
+      ],
+      "on_failure": "abort",
+      "timeout_seconds": 240
+    },
+    {
+      "seq": 2,
+      "title": "简历筛选初评",
+      "action": "understand",
+      "produces": [
+        "screening"
+      ],
+      "needs": [
+        "jd"
+      ],
+      "on_failure": "continue",
+      "timeout_seconds": 240
+    },
+    {
+      "seq": 3,
+      "title": "生成面试提纲",
+      "action": "compose",
+      "produces": [
+        "outlines"
+      ],
+      "needs": [
+        "screening"
+      ],
+      "on_failure": "continue"
+    },
+    {
+      "seq": 4,
+      "title": "安排面试邀约",
+      "action": "tool",
+      "tool_type": "email",
+      "operation": "send_message",
+      "tool_alternatives": [
+        {
+          "tool_type": "feishu",
+          "operation": "create_calendar_event"
+        },
+        {
+          "tool_type": "wecom",
+          "operation": "send_message"
+        }
+      ],
+      "produces": [
+        "invitation"
+      ],
+      "needs": [
+        "outlines"
+      ],
+      "confirm": {
+        "reason": "邀约邮件会发给候选人，请确认时间与收件人",
+        "summary_fields": [
+          "position",
+          "department"
+        ]
+      },
+      "on_failure": "continue",
+      "timeout_seconds": 60
+    },
+    {
+      "seq": 5,
+      "title": "生成录用通知文案",
+      "action": "compose",
+      "produces": [
+        "offer"
+      ],
+      "needs": [
+        "screening"
+      ],
+      "on_failure": "continue"
+    },
+    {
+      "seq": 6,
+      "title": "撰写行政公文",
+      "action": "render_file",
+      "produces": [
+        "document"
+      ],
+      "when": {
+        "input": "doc_type",
+        "in": [
+          "通知",
+          "会议纪要",
+          "请示",
+          "周报"
+        ]
+      },
+      "on_failure": "abort"
+    }
+  ],
+  "checklist": [
+    {
+      "key": "jd",
+      "name": "招聘说明",
+      "source_step": 1
+    },
+    {
+      "key": "screening",
+      "name": "筛选评分表",
+      "source_step": 2
+    },
+    {
+      "key": "outlines",
+      "name": "面试提纲",
+      "source_step": 3
+    },
+    {
+      "key": "document",
+      "name": "公文或录用通知",
+      "source_step": 6
+    }
+  ],
+  "ui_extension": {
+    "layout": "task_workspace",
+    "nav_label": "行政人事",
+    "icon_key": "users",
+    "order": 3
+  }
+}

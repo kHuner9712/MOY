@@ -1,0 +1,231 @@
+{
+  "plugin_id": "plg_dev_workbench",
+  "name": "前端研发工作台",
+  "summary": "从一句需求到仓库里的一次提交",
+  "description": "填写需求、选好仓库，工作台会先拆解需求要点、给出技术方案并等你确认；确认后生成代码与用例文件，提交前再确认一次，最后给出包含提交记录与合并请求的核查清单。全过程每一步都能看到产出，离开页面也会继续推进，回来还能查看每一步留下了什么、哪一步没做成以及该怎么补。",
+  "category": "dev",
+  "icon_key": "code",
+  "vendor": "official",
+  "version": "1.0.0",
+  "min_platform_version": "1.0.0",
+  "changelog": "首个版本：需求理解、方案确认、代码与用例生成、提交仓库、结果核查。",
+  "capabilities": [
+    {
+      "key": "personal.tool.use",
+      "required": true
+    },
+    {
+      "key": "org.repo.write",
+      "required": true
+    },
+    {
+      "key": "personal.file.read",
+      "required": true
+    }
+  ],
+  "settings_schema": [
+    {
+      "key": "default_repo",
+      "label": "默认代码仓库",
+      "type": "text"
+    },
+    {
+      "key": "default_branch",
+      "label": "默认分支",
+      "type": "text"
+    }
+  ],
+  "inputs": [
+    {
+      "key": "title",
+      "label": "需求标题",
+      "type": "text",
+      "required": true,
+      "max_length": 80
+    },
+    {
+      "key": "requirement",
+      "label": "需求描述",
+      "type": "textarea",
+      "required": true,
+      "max_length": 4000
+    },
+    {
+      "key": "repo",
+      "label": "目标仓库",
+      "type": "select",
+      "required": true
+    },
+    {
+      "key": "branch_policy",
+      "label": "分支策略",
+      "type": "select",
+      "required": true,
+      "options": [
+        "新建分支",
+        "指定分支"
+      ]
+    },
+    {
+      "key": "stack",
+      "label": "技术栈偏好",
+      "type": "text",
+      "required": false,
+      "max_length": 64
+    },
+    {
+      "key": "attachments",
+      "label": "参考文档",
+      "type": "file",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "key_points",
+      "label": "需求要点",
+      "type": "table"
+    },
+    {
+      "key": "plan",
+      "label": "技术方案",
+      "type": "text"
+    },
+    {
+      "key": "code_files",
+      "label": "代码文件",
+      "type": "file"
+    },
+    {
+      "key": "test_files",
+      "label": "用例文件",
+      "type": "file"
+    },
+    {
+      "key": "commit",
+      "label": "提交记录",
+      "type": "link"
+    },
+    {
+      "key": "pull_request",
+      "label": "合并请求",
+      "type": "link"
+    }
+  ],
+  "steps": [
+    {
+      "seq": 1,
+      "title": "理解需求",
+      "action": "understand",
+      "produces": [
+        "key_points"
+      ],
+      "on_failure": "abort"
+    },
+    {
+      "seq": 2,
+      "title": "生成技术方案",
+      "action": "compose",
+      "produces": [
+        "plan"
+      ],
+      "needs": [
+        "key_points"
+      ],
+      "confirm": {
+        "reason": "方案确认后再生成代码，避免返工",
+        "summary_fields": [
+          "key_points",
+          "plan"
+        ]
+      },
+      "on_failure": "retry",
+      "timeout_seconds": 240
+    },
+    {
+      "seq": 3,
+      "title": "生成代码文件",
+      "action": "compose",
+      "produces": [
+        "code_files"
+      ],
+      "needs": [
+        "plan"
+      ],
+      "on_failure": "retry",
+      "timeout_seconds": 240
+    },
+    {
+      "seq": 4,
+      "title": "生成单元测试",
+      "action": "compose",
+      "produces": [
+        "test_files"
+      ],
+      "needs": [
+        "code_files"
+      ],
+      "on_failure": "skip_and_mark",
+      "timeout_seconds": 240
+    },
+    {
+      "seq": 5,
+      "title": "提交到指定仓库",
+      "action": "tool",
+      "tool_type": "github",
+      "operation": "create_pull_request",
+      "produces": [
+        "commit",
+        "pull_request"
+      ],
+      "needs": [
+        "code_files",
+        "test_files"
+      ],
+      "confirm": {
+        "reason": "提交会写入仓库，请确认仓库与分支",
+        "summary_fields": [
+          "repo",
+          "branch_policy"
+        ]
+      },
+      "on_failure": "abort",
+      "timeout_seconds": 60
+    },
+    {
+      "seq": 6,
+      "title": "结果核查",
+      "action": "summarize",
+      "produces": [],
+      "on_failure": "continue"
+    }
+  ],
+  "checklist": [
+    {
+      "key": "key_points",
+      "name": "需求要点",
+      "source_step": 1
+    },
+    {
+      "key": "code_files",
+      "name": "代码文件",
+      "source_step": 3
+    },
+    {
+      "key": "test_files",
+      "name": "用例文件",
+      "source_step": 4
+    },
+    {
+      "key": "commit",
+      "name": "提交记录与合并请求",
+      "source_step": 5
+    }
+  ],
+  "ui_extension": {
+    "layout": "task_workspace",
+    "nav_label": "前端研发",
+    "icon_key": "code",
+    "order": 1
+  }
+}

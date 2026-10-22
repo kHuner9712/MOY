@@ -10,6 +10,8 @@
 - 0：成功；
 - 10001-14999：领域业务错误（模型 / RAG / Agent / 工具 / 权限）；
 - 15001-15999：计费与订阅错误（阶段二 B09，架构文档 §7.1）；
+- 16001-16099：插件域（阶段三，**16001 已注销不复用**，从 16002 起）；
+- 17001-17099：任务域（阶段三，重试语义）；
 - 20000-20999：通用业务错误；
 - 30000-30999：系统错误。
 """
@@ -102,6 +104,39 @@ class ErrorCode(IntEnum):
     ORDER_ALREADY_PROCESSED = 15008
     #: 核销金额校验失败（OPS5）
     ORDER_AMOUNT_MISMATCH = 15009
+
+    # ---------------- 插件域 16002-16099（阶段三） ----------------
+    #
+    # 注：16001 是阶段二提议后废弃的值，按「注销值不复用」原则**跳过**（D-22 /
+    # PRD A.3 约束②）。这里刻意留出空位，任何人不得把它填回去。
+    #: 目录无行 / 已下架 / 已隐藏
+    PLUGIN_NOT_FOUND = 16002
+    #: 无安装行 / 已卸载
+    PLUGIN_NOT_INSTALLED = 16003
+    #: 已停用（`disabled` 下建任务）
+    PLUGIN_DISABLED = 16004
+    #: 必需能力未授权 / 运行中被撤销
+    CAPABILITY_NOT_GRANTED = 16005
+    #: 企业级能力总开关未开启
+    CAPABILITY_POLICY_BLOCKED = 16006
+    #: 最低平台版本不满足
+    PLUGIN_VERSION_INCOMPATIBLE = 16007
+    #: 无上一版本可回退
+    PLUGIN_ROLLBACK_UNAVAILABLE = 16008
+    #: 前置插件未满足
+    PLUGIN_DEPENDENCY_MISSING = 16009
+    #: 并发安装/启停/版本指针冲突
+    PLUGIN_STATE_CONFLICT = 16010
+    #: 未安装/未使用即评价
+    PLUGIN_REVIEW_NOT_ALLOWED = 16011
+    #: 目标版本不存在
+    PLUGIN_VERSION_NOT_FOUND = 16012
+
+    # ---------------- 任务域 17001-17099（阶段三） ----------------
+    #: WF1 在不可重试的任务状态被调用
+    TASK_NOT_RETRYABLE = 17001
+    #: 步骤失败汇总（**仅内部/审计文案**，A3 永不返回该码）
+    TASK_STEP_FAILED = 17002
 
     # ---------------- 系统错误 30001-30099 ----------------
     DOWNSTREAM_UNAVAILABLE = 30001
@@ -317,6 +352,86 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
         400,
         "订单金额与应付金额不一致，请核对后重试",
         "核销金额校验失败",
+    ),
+    # 插件域（阶段三）
+    ErrorCode.PLUGIN_NOT_FOUND: ErrorSpec(
+        ErrorCode.PLUGIN_NOT_FOUND,
+        404,
+        "该插件已下架，去市场看看其他插件",
+        "目录无行或已 hidden/offline",
+    ),
+    ErrorCode.PLUGIN_NOT_INSTALLED: ErrorSpec(
+        ErrorCode.PLUGIN_NOT_INSTALLED,
+        400,
+        "该插件还没有添加，请先在插件市场添加",
+        "无安装行或已卸载",
+    ),
+    ErrorCode.PLUGIN_DISABLED: ErrorSpec(
+        ErrorCode.PLUGIN_DISABLED,
+        400,
+        "该插件已停用，请联系管理员启用",
+        "status=disabled 下建任务",
+    ),
+    ErrorCode.CAPABILITY_NOT_GRANTED: ErrorSpec(
+        ErrorCode.CAPABILITY_NOT_GRANTED,
+        403,
+        "缺少所需能力，请重新授权后再试",
+        "必需能力未授或运行中被撤销",
+    ),
+    ErrorCode.CAPABILITY_POLICY_BLOCKED: ErrorSpec(
+        ErrorCode.CAPABILITY_POLICY_BLOCKED,
+        403,
+        "该能力尚未对企业开放，请联系管理员开启",
+        "plugin_capability_policy=false",
+    ),
+    ErrorCode.PLUGIN_VERSION_INCOMPATIBLE: ErrorSpec(
+        ErrorCode.PLUGIN_VERSION_INCOMPATIBLE,
+        400,
+        "该插件需要更新版本的产品后才能使用，请联系管理员",
+        "min_platform_version 不满足",
+    ),
+    ErrorCode.PLUGIN_ROLLBACK_UNAVAILABLE: ErrorSpec(
+        ErrorCode.PLUGIN_ROLLBACK_UNAVAILABLE,
+        400,
+        "只能恢复到上一个版本，如需更早版本请联系管理员",
+        "无 previous_version",
+    ),
+    ErrorCode.PLUGIN_DEPENDENCY_MISSING: ErrorSpec(
+        ErrorCode.PLUGIN_DEPENDENCY_MISSING,
+        400,
+        "该插件需要先添加配套插件才能使用",
+        "requires_plugins 未满足；具体插件名走 data.missing_plugins[]",
+    ),
+    ErrorCode.PLUGIN_STATE_CONFLICT: ErrorSpec(
+        ErrorCode.PLUGIN_STATE_CONFLICT,
+        409,
+        "插件状态已变化，请刷新后重试",
+        "并发安装/启停或版本指针竞争",
+    ),
+    ErrorCode.PLUGIN_REVIEW_NOT_ALLOWED: ErrorSpec(
+        ErrorCode.PLUGIN_REVIEW_NOT_ALLOWED,
+        403,
+        "使用过这个插件才能评价",
+        "未安装或未使用即评价",
+    ),
+    ErrorCode.PLUGIN_VERSION_NOT_FOUND: ErrorSpec(
+        ErrorCode.PLUGIN_VERSION_NOT_FOUND,
+        404,
+        "该插件版本不存在",
+        "target_version 无效",
+    ),
+    # 任务域（阶段三）
+    ErrorCode.TASK_NOT_RETRYABLE: ErrorSpec(
+        ErrorCode.TASK_NOT_RETRYABLE,
+        400,
+        "该任务无法重试，请查看任务状态",
+        "WF1 在非 failed/cancelled/waiting_confirm 态被调用",
+    ),
+    ErrorCode.TASK_STEP_FAILED: ErrorSpec(
+        ErrorCode.TASK_STEP_FAILED,
+        200,
+        "任务执行未能完成，可重试",
+        "仅内部汇总与审计文案；A3 不返回该码（步骤失败走状态）",
     ),
     # 系统错误
     ErrorCode.DOWNSTREAM_UNAVAILABLE: ErrorSpec(

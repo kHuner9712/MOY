@@ -1,0 +1,229 @@
+{
+  "plugin_id": "plg_content_ops",
+  "name": "内容运营工作台",
+  "summary": "一个主题，多平台稿件与发布排期表",
+  "description": "输入主题并选择平台，工作台先检索企业素材，没有可靠素材时会如实标注、不编造内容；随后按平台策划选题、生成稿件与配图建议，排出发布计划并等你确认后发布。未接入的平台会给出可下载的稿件与发布指引，发布状态如实显示为待人工发布，不会伪造发布成功的回执。全过程每一步都能看到产出与来源。",
+  "category": "content",
+  "icon_key": "pen",
+  "vendor": "official",
+  "version": "1.0.0",
+  "min_platform_version": "1.0.0",
+  "changelog": "首个版本：素材检索、选题策划、稿件与配图建议、发布排期、发布。",
+  "capabilities": [
+    {
+      "key": "personal.knowledge.read",
+      "required": true
+    },
+    {
+      "key": "personal.tool.use",
+      "required": true
+    },
+    {
+      "key": "personal.file.read",
+      "required": true
+    },
+    {
+      "key": "org.external.publish",
+      "required": true
+    }
+  ],
+  "settings_schema": [
+    {
+      "key": "default_channel",
+      "label": "默认发布平台",
+      "type": "select",
+      "options": [
+        "微信公众号",
+        "邮件"
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "key": "topic",
+      "label": "运营主题",
+      "type": "text",
+      "required": true,
+      "max_length": 200
+    },
+    {
+      "key": "channels",
+      "label": "目标平台",
+      "type": "multi_select",
+      "required": true,
+      "options": [
+        "微信公众号",
+        "邮件",
+        "小红书",
+        "抖音"
+      ]
+    },
+    {
+      "key": "audience",
+      "label": "目标受众",
+      "type": "text",
+      "required": false,
+      "max_length": 100
+    },
+    {
+      "key": "window",
+      "label": "时间窗",
+      "type": "text",
+      "required": true,
+      "max_length": 64
+    },
+    {
+      "key": "source",
+      "label": "素材来源",
+      "type": "select",
+      "required": true,
+      "options": [
+        "知识库",
+        "上传文件"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "key": "materials",
+      "label": "素材要点",
+      "type": "table"
+    },
+    {
+      "key": "angles",
+      "label": "选题与标题候选",
+      "type": "table"
+    },
+    {
+      "key": "articles",
+      "label": "平台稿件",
+      "type": "text"
+    },
+    {
+      "key": "image_hints",
+      "label": "配图建议",
+      "type": "text"
+    },
+    {
+      "key": "schedule",
+      "label": "发布排期表",
+      "type": "file"
+    },
+    {
+      "key": "receipt",
+      "label": "发布回执",
+      "type": "text"
+    }
+  ],
+  "steps": [
+    {
+      "seq": 1,
+      "title": "检索素材",
+      "action": "retrieve",
+      "produces": [
+        "materials"
+      ],
+      "on_failure": "continue"
+    },
+    {
+      "seq": 2,
+      "title": "选题策划",
+      "action": "compose",
+      "produces": [
+        "angles"
+      ],
+      "needs": [
+        "materials"
+      ],
+      "on_failure": "abort"
+    },
+    {
+      "seq": 3,
+      "title": "生成稿件",
+      "action": "compose",
+      "produces": [
+        "articles"
+      ],
+      "needs": [
+        "angles"
+      ],
+      "on_failure": "retry",
+      "timeout_seconds": 240
+    },
+    {
+      "seq": 4,
+      "title": "配图建议",
+      "action": "compose",
+      "produces": [
+        "image_hints"
+      ],
+      "needs": [
+        "articles"
+      ],
+      "on_failure": "continue"
+    },
+    {
+      "seq": 5,
+      "title": "安排发布排期",
+      "action": "render_file",
+      "produces": [
+        "schedule"
+      ],
+      "needs": [
+        "articles"
+      ],
+      "on_failure": "abort"
+    },
+    {
+      "seq": 6,
+      "title": "发布",
+      "action": "tool",
+      "tool_type": "wechat_mp",
+      "operation": "publish_article",
+      "tool_alternatives": [
+        {
+          "tool_type": "email",
+          "operation": "send_message"
+        }
+      ],
+      "produces": [
+        "receipt"
+      ],
+      "needs": [
+        "schedule"
+      ],
+      "confirm": {
+        "reason": "发布会对外可见，请确认平台与时间",
+        "summary_fields": [
+          "channels",
+          "window"
+        ]
+      },
+      "on_failure": "continue",
+      "timeout_seconds": 60
+    }
+  ],
+  "checklist": [
+    {
+      "key": "articles",
+      "name": "三平台稿件",
+      "source_step": 3
+    },
+    {
+      "key": "schedule",
+      "name": "排期表",
+      "source_step": 5
+    },
+    {
+      "key": "receipt",
+      "name": "发布回执",
+      "source_step": 6
+    }
+  ],
+  "ui_extension": {
+    "layout": "task_workspace",
+    "nav_label": "内容运营",
+    "icon_key": "pen",
+    "order": 2
+  }
+}

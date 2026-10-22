@@ -48,6 +48,9 @@ REPO_ROOT = ADAPTER_ROOT.parent.parent
 #: 架构文档（阶段二错误码扩展表所在文档）
 ARCHITECTURE_DOC = REPO_ROOT / "docs" / "architecture-phase2.md"
 
+#: 阶段三架构文档（插件域 16002-16012 / 任务域 17001-17002 的登记表在 §5.4）
+ARCHITECTURE_PHASE3_DOC = REPO_ROOT / "docs" / "architecture-phase3.md"
+
 #: 后端错误码枚举（唯一权威实现）
 ERRORS_PY = ADAPTER_ROOT / "app" / "core" / "errors.py"
 
@@ -151,6 +154,49 @@ def parse_architecture_codes(path: Path) -> dict[str, str]:
         codes[matched.group(1)] = cells[4]
     if not codes:
         raise ValueError(f"{path} 的 §7.1 小节未解析出任何错误码")
+    return codes
+
+
+def parse_phase3_codes(path: Path) -> dict[str, str]:
+    """解析阶段三架构文档 §5.4 表里的「码 → 域」映射。
+
+    该表与阶段二 §7.1 形态不同：码列不带 `**` 加粗，且没有「域」列。
+    因此本函数按**码段**推域（`160xx → 插件`、`170xx → 任务`），
+    并且只扫描 §5.4 小节、遇到 `**不新增码**` 前的行——那里之后的表格
+    混有「复用既有码」的说明，不能当成新登记码（否则会把 13002/15001
+    误算成本阶段新增）。
+
+    Args:
+        path: 阶段三架构文档路径。
+
+    Returns:
+        dict[str, str]: ``错误码 → 域``。
+
+    Raises:
+        FileNotFoundError: 文档不存在。
+        ValueError: 找不到 §5.4 小节，或小节内解析不出任何码。
+    """
+    text = path.read_text(encoding="utf-8")
+    start = text.find("### 5.4")
+    if start < 0:
+        raise ValueError(f"{path} 中找不到 §5.4 新增错误码小节")
+    end = text.find("**不新增码**", start)
+    section = text[start : end if end > start else len(text)]
+
+    codes: dict[str, str] = {}
+    for line in section.splitlines():
+        row = line.strip()
+        if not row.startswith("|"):
+            continue
+        cells = [cell.strip().strip("*") for cell in row.strip("|").split("|")]
+        if not cells:
+            continue
+        if not re.fullmatch(r"\d{5}", cells[0]):
+            continue
+        code = cells[0]
+        codes[code] = "插件" if code.startswith("160") else "任务"
+    if not codes:
+        raise ValueError(f"{path} 的 §5.4 小节未解析出任何错误码")
     return codes
 
 
@@ -331,20 +377,21 @@ def run(pending_arg: str) -> int:
     Returns:
         int: 0 表示全部通过，1 表示存在失败项。
     """
-    for path in (ARCHITECTURE_DOC, ERRORS_PY, BUSINESS_ERRORS_TS):
+    for path in (ARCHITECTURE_DOC, ARCHITECTURE_PHASE3_DOC, ERRORS_PY, BUSINESS_ERRORS_TS):
         if not path.exists():
             return _fail(f"缺少输入文件：{path}")
 
     try:
         pending_domains = resolve_pending(pending_arg)
         arch_codes = parse_architecture_codes(ARCHITECTURE_DOC)
+        arch_codes.update(parse_phase3_codes(ARCHITECTURE_PHASE3_DOC))
         backend_codes = parse_backend_codes(ERRORS_PY)
         frontend_codes = parse_frontend_codes(BUSINESS_ERRORS_TS)
     except ValueError as exc:
         return _fail(str(exc))
 
     print(
-        f"[INFO] 架构 §7.1 = {len(arch_codes)} 码；"
+        f"[INFO] 架构 §7.1 + §5.4 = {len(arch_codes)} 码；"
         f"errors.py = {len(set(backend_codes.values()))} 码；"
         f"business-errors.ts = {len(frontend_codes)} 码；"
         f"放行域 = {sorted(pending_domains) or '无（严格）'}"

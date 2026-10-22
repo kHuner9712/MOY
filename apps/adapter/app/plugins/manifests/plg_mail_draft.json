@@ -1,0 +1,124 @@
+{
+  "plugin_id": "plg_mail_draft",
+  "name": "邮件起草",
+  "summary": "按要点起草一封得体的邮件并发出",
+  "description": "告诉工作台收件人、目的与要点，它会起草一封语气得体的邮件，并在发送前把标题、正文与收件人一起给你确认；确认后通过你已连接的邮箱发出，并把发送结果如实告诉你。语气可选正式或简洁，正文会控制在一屏内，方便对方快速读完。草稿会同时留存在任务记录里，需要时可以改完再发一次。",
+  "category": "collab",
+  "icon_key": "mail",
+  "vendor": "official",
+  "version": "1.0.0",
+  "min_platform_version": "1.0.0",
+  "changelog": "首个版本：邮件起草、发送确认、发送结果反馈。",
+  "capabilities": [
+    {
+      "key": "personal.tool.use",
+      "required": true
+    },
+    {
+      "key": "org.external.publish",
+      "required": true
+    }
+  ],
+  "settings_schema": [
+    {
+      "key": "signature",
+      "label": "邮件签名",
+      "type": "text"
+    }
+  ],
+  "inputs": [
+    {
+      "key": "recipient",
+      "label": "收件人",
+      "type": "email",
+      "required": true
+    },
+    {
+      "key": "purpose",
+      "label": "邮件目的",
+      "type": "text",
+      "required": true,
+      "max_length": 200
+    },
+    {
+      "key": "key_points",
+      "label": "要说清的要点",
+      "type": "textarea",
+      "required": true,
+      "max_length": 1000
+    },
+    {
+      "key": "tone",
+      "label": "语气",
+      "type": "select",
+      "required": true,
+      "options": [
+        "正式",
+        "简洁"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "key": "draft",
+      "label": "邮件正文",
+      "type": "text"
+    },
+    {
+      "key": "receipt",
+      "label": "发送结果",
+      "type": "text"
+    }
+  ],
+  "steps": [
+    {
+      "seq": 1,
+      "title": "起草邮件",
+      "action": "compose",
+      "produces": [
+        "draft"
+      ],
+      "on_failure": "retry"
+    },
+    {
+      "seq": 2,
+      "title": "确认并发送",
+      "action": "tool",
+      "tool_type": "email",
+      "operation": "send_message",
+      "produces": [
+        "receipt"
+      ],
+      "needs": [
+        "draft"
+      ],
+      "confirm": {
+        "reason": "邮件会发送给收件人，请确认正文与收件人",
+        "summary_fields": [
+          "recipient",
+          "purpose"
+        ]
+      },
+      "on_failure": "continue",
+      "timeout_seconds": 60
+    }
+  ],
+  "checklist": [
+    {
+      "key": "draft",
+      "name": "邮件正文",
+      "source_step": 1
+    },
+    {
+      "key": "receipt",
+      "name": "发送结果",
+      "source_step": 2
+    }
+  ],
+  "ui_extension": {
+    "layout": "task_workspace",
+    "nav_label": "邮件起草",
+    "icon_key": "mail",
+    "order": 6
+  }
+}

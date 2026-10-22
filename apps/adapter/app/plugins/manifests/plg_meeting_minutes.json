@@ -1,0 +1,117 @@
+{
+  "plugin_id": "plg_meeting_minutes",
+  "name": "会议纪要",
+  "summary": "把会议材料整理成纪要与待办清单",
+  "description": "上传会议材料或录音整理稿，工作台先抽取议题与结论，再生成结构化纪要与待办清单：谁在什么时候做什么。纪要与待办会一起归档到团队文档，方便会后直接跟进；材料里没有提到的部分不会补写，待办责任人留空时会提示你补充。纪要支持按结论、待办分段查看，也能整段复制到别处使用。",
+  "category": "collab",
+  "icon_key": "clipboard",
+  "vendor": "official",
+  "version": "1.0.0",
+  "min_platform_version": "1.0.0",
+  "changelog": "首个版本：材料抽取、纪要生成、归档到团队文档。",
+  "capabilities": [
+    {
+      "key": "personal.file.read",
+      "required": true
+    },
+    {
+      "key": "personal.tool.use",
+      "required": true
+    }
+  ],
+  "settings_schema": [
+    {
+      "key": "archive_folder",
+      "label": "归档位置",
+      "type": "text"
+    }
+  ],
+  "inputs": [
+    {
+      "key": "meeting_title",
+      "label": "会议名称",
+      "type": "text",
+      "required": true,
+      "max_length": 64
+    },
+    {
+      "key": "materials",
+      "label": "会议材料",
+      "type": "file",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "key": "points",
+      "label": "议题与结论",
+      "type": "table"
+    },
+    {
+      "key": "minutes",
+      "label": "会议纪要",
+      "type": "text"
+    },
+    {
+      "key": "archive_link",
+      "label": "归档链接",
+      "type": "link"
+    }
+  ],
+  "steps": [
+    {
+      "seq": 1,
+      "title": "抽取议题与结论",
+      "action": "understand",
+      "produces": [
+        "points"
+      ],
+      "on_failure": "abort"
+    },
+    {
+      "seq": 2,
+      "title": "撰写会议纪要",
+      "action": "compose",
+      "produces": [
+        "minutes"
+      ],
+      "needs": [
+        "points"
+      ],
+      "on_failure": "retry"
+    },
+    {
+      "seq": 3,
+      "title": "归档到团队文档",
+      "action": "tool",
+      "tool_type": "feishu",
+      "operation": "create_doc",
+      "produces": [
+        "archive_link"
+      ],
+      "needs": [
+        "minutes"
+      ],
+      "on_failure": "continue",
+      "timeout_seconds": 60
+    }
+  ],
+  "checklist": [
+    {
+      "key": "minutes",
+      "name": "会议纪要",
+      "source_step": 2
+    },
+    {
+      "key": "archive_link",
+      "name": "归档链接",
+      "source_step": 3
+    }
+  ],
+  "ui_extension": {
+    "layout": "task_workspace",
+    "nav_label": "会议纪要",
+    "icon_key": "clipboard",
+    "order": 5
+  }
+}

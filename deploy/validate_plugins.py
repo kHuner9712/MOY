@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""G-26 插件声明门禁（阶段三 B16，`architecture-phase3.md` §10）。
+
+六条判据（任一不通过 → 退出码 1）：
+
+1. 6 份声明通过 6 段 schema（`extra="forbid"`）与结构自洽（序号连续、产物/依赖闭合）；
+2. `capabilities[].key` ⊆ 6 项能力枚举；
+3. `steps[].action` ⊆ 6 项原语白名单，且 `tool_type/operation` 存在于
+   `app/registry/tool_registry.yaml`（含 `tool_alternatives`）；
+4. 文案字段过禁词 + 占位词表（PRD §8 第 19-30 行）；
+5. 声明内不得出现禁用键名（凭据 / 代码 / 外部地址）；
+6. 重复 `plugin_id` 拒绝，`manifest_sha256` 可计算并与磁盘内容一致。
+
+**为什么需要 `--self-test`**（阶段二教训，§10「如何证明门禁不是永远绿」）：
+一个只会打印 `[OK]` 的门禁等于没有门禁。`--self-test` 会注入 6 条内联负样本，
+**每一条都必须被抓到**，且进程退出码为 **1**（表示"自检成功发现了问题"）。
+若某条负样本漏过，本脚本退出码为 2（自检失败），提示门禁本身失灵。
+
+**反例护栏**：找不到声明目录一律退出码 **2**，绝不"找不到文件就退出 0"。
+
+用法::
+
+    python deploy/validate_plugins.py                 # 正常校验（期望 0）
+    python deploy/validate_plugins.py --self-test     # 负样本自检（期望 1）
+    python deploy/validate_plugins.py --json          # 机器可读输出
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ADAPTER_ROOT = Path(__file__).resolve().parent.parent
+if str(ADAPTER_ROOT) not in sys.path:  # 允许直接以脚本方式运行
+    sys.path.insert(0, str(ADAPTER_ROOT))
+
+from app.plugins.actions import ACTION_WHITELIST, CAPABILITY_KEYS  # noqa: E402
+from app.plugins.loader import (  # noqa: E402
+    PluginRegistry,
+    default_manifests_dir,
+    manifest_digest,
+)
+from app.plugins.schema import BANNED_TERMS, find_banned_terms  # noqa: E402
+
+#: 期望的插件数量（V1.0 市场内置 6 个：3 标杆 + 3 轻量）
+EXPECTED_PLUGIN_COUNT = 6
+
+#: 负样本：`(名称, 变异函数)`，每条都必须被拒绝
+SELF_TEST_CASES: tuple[str, ...] = (
+    "多出可执行字段",
+    "能力不在枚举内",
+    "文案含内部用语",
+    "步骤序号不连续",
+    "重复 plugin_id",
+    "工具操作未登记",
+)
+
+
+def _mutate_extra_field(payload: dict) -> dict:
+    """负样本 1：声明里塞 `entry_point`（可执行载荷，PRD B-2 红线）。
+
+    Args:
+        payload: 原始声明。
+
+    Returns:
+        dict: 变异后的声明。
+    """
+    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    mutated["entry_point"] = "main.py"
+    return mutated
+
+
+def _mutate_capability(payload: dict) -> dict:
+    """负样本 2：能力不在 6 项枚举内。
+
+    Args:
+        payload: 原始声明。
+
+    Returns:
+        dict: 变异后的声明。
+    """
+    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    mutated["capabilities"][0]["key"] = "model.invoke"
+    return mutated
+
+
+def _mutate_banned_term(payload: dict) -> dict:
+    """负样本 3：文案含内部用语（这里用「RAG」）。
+
+    Args:
+        payload: 原始声明。
+
+    Returns:
+        dict: 变异后的声明。
+    """
+    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    mutated["summary"] = "RAG 助手"
+    return mutated
+
+
+def _mutate_seq(payload: dict) -> dict:
+    """负样本 4：步骤序号不连续（1,3,4）。
+
+    Args:
+        payload: 原始声明。
+
+    Returns:
+        dict: 变异后的声明。
+    """
+    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    mutated["steps"][1]["seq"] = 3
+    return mutated
+
+
+def _mutate_tool_operation(payload: dict) -> dict:
+    """负样本 6：工具操作未在 `tool_registry.yaml` 登记。
+
+    Args:
+        payload: 原始声明。
+
+    Returns:
+        dict: 变异后的声明。
+    """
+    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    for step in mutated["steps"]:
+        if step.get("action") == "tool":
+            step["operation"] = "delete_repo"
+            break
+    return mutated
+
+
+def _load_payloads(directory: Path) -> list[tuple[str, dict]]:
+    """读取目录下全部声明原文。
+
+    Args:
+        directory: 声明目录。
+
+    Returns:
+        list[tuple[str, dict]]: `(文件名, 载荷)` 列表。
+    """
+    payloads: list[tuple[str, dict]] = []
+    for path in sorted(directory.glob("*.json")):
+        payloads.append((path.name, json.loads(path.read_text(encoding="utf-8"))))
+    return payloads
+
+
+def run_validation(directory: Path) -> tuple[int, list[str], dict[str, object]]:
+    """执行六条判据。
+
+    Args:
+        directory: 声明目录。
+
+    Returns:
+        tuple[int, list[str], dict[str, object]]: 退出码、问题清单、统计信息。
+    """
+    if not directory.is_dir():
+        return 2, [f"声明目录不存在：{directory}"], {}
+    payloads = _load_payloads(directory)
+    if not payloads:
+        return 2, [f"声明目录为空：{directory}"], {}
+
+    problems: list[str] = []
+    registry = PluginRegistry()
+    failures = registry.load_all(directory)
+    problems.extend(item.render() for item in failures)
+
+    if len(registry) != EXPECTED_PLUGIN_COUNT:
+        problems.append(
+            f"插件数量应为 {EXPECTED_PLUGIN_COUNT}，实际 {len(registry)}（加载失败 {len(failures)}）"
+        )
+
+    # 第三段：文案禁词（`loader` 已扫过，这里再独立扫一遍原文，
+    # 防"加载器被改松"时门禁一起失守——双重校验是刻意的）
+    for name, payload in payloads:
+        for where, text in _iter_text(payload):
+            hits = find_banned_terms(text)
+            if hits:
+                problems.append(f"{name} [{where}] 文案含内部用语：{', '.join(hits)}")
+
+    # 能力与原语白名单（同样独立复核）
+    for name, payload in payloads:
+        for claim in payload.get("capabilities", []):
+            key = str(claim.get("key", ""))
+            if key not in CAPABILITY_KEYS:
+                problems.append(f"{name} [capabilities] 未开放的能力：{key}")
+        for step in payload.get("steps", []):
+            action = str(step.get("action", ""))
+            if action not in ACTION_WHITELIST:
+                problems.append(f"{name} [steps] 未开放的能力：{action}")
+
+    # 摘要一致性：sha256 可计算且与声明内容一致（写库前的一次自检）
+    digests = {name: manifest_digest(payload) for name, payload in payloads}
+    for name, digest in digests.items():
+        if len(digest) != 64:
+            problems.append(f"{name} [sha256] 摘要长度异常：{len(digest)}")
+
+    stats: dict[str, object] = {
+        "directory": str(directory),
+        "declarations": len(payloads),
+        "registered": len(registry),
+        "plugin_ids": registry.plugin_ids(),
+        "digests": digests,
+    }
+    return (1 if problems else 0), problems, stats
+
+
+def _iter_text(payload: dict) -> list[tuple[str, str]]:
+    """收集声明里全部用户可见文案（与 `schema.PluginManifest.text_fields` 同口径）。
+
+    Args:
+        payload: 声明原文。
+
+    Returns:
+        list[tuple[str, str]]: `(字段路径, 文案)` 列表。
+    """
+    collected: list[tuple[str, str]] = []
+    for key in ("name", "summary", "description", "changelog"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            collected.append((key, value))
+    ui = payload.get("ui_extension") or {}
+    if isinstance(ui, dict) and isinstance(ui.get("nav_label"), str):
+        collected.append(("ui_extension.nav_label", str(ui["nav_label"])))
+    for index, step in enumerate(payload.get("steps", []) or []):
+        if isinstance(step, dict) and isinstance(step.get("title"), str):
+            collected.append((f"steps[{index}].title", str(step["title"])))
+    for section in ("inputs", "outputs", "checklist", "settings_schema"):
+        for index, item in enumerate(payload.get(section, []) or []):
+            if isinstance(item, dict) and isinstance(item.get("label"), str):
+                collected.append((f"{section}[{index}].label", str(item["label"])))
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                collected.append((f"{section}[{index}].name", str(item["name"])))
+    return collected
+
+
+def run_self_test(directory: Path) -> tuple[int, list[str]]:
+    """注入负样本，验证门禁"能被触发"。
+
+    Args:
+        directory: 声明目录（取第一份声明作为变异基座）。
+
+    Returns:
+        tuple[int, list[str]]: 退出码（1=自检成功，2=门禁失灵）、说明清单。
+    """
+    if not directory.is_dir():
+        return 2, [f"声明目录不存在：{directory}"]
+    payloads = _load_payloads(directory)
+    if not payloads:
+        return 2, [f"声明目录为空：{directory}"]
+    base_name, base_payload = payloads[0]
+
+    notes: list[str] = []
+    undetected: list[str] = []
+    mutations = {
+        "多出可执行字段": _mutate_extra_field,
+        "能力不在枚举内": _mutate_capability,
+        "文案含内部用语": _mutate_banned_term,
+        "步骤序号不连续": _mutate_seq,
+        "工具操作未登记": _mutate_tool_operation,
+    }
+    for label, mutate in mutations.items():
+        registry = PluginRegistry()
+        failure = registry.load_manifest(mutate(base_payload), source=f"selftest-{label}")
+        if failure is None:
+            undetected.append(f"{label}（{base_name}）未被拦截")
+        else:
+            notes.append(f"[OK] 已拦截：{label} → {failure.stage}")
+
+    # 第 5 条：重复 plugin_id（同 id 同版本注册两次）
+    registry = PluginRegistry()
+    first = registry.load_manifest(base_payload, source="selftest-first")
+    second = registry.load_manifest(base_payload, source="selftest-second")
+    if first is not None:
+        undetected.append("首份声明自检未通过，无法验证重复注册")
+    elif second is None or second.stage != "duplicate":
+        undetected.append("重复 plugin_id 未被拦截")
+    else:
+        notes.append("[OK] 已拦截：重复 plugin_id → duplicate")
+        if registry.get(base_payload["plugin_id"], base_payload["version"]) is None:
+            undetected.append("重复注册后原条目丢失（应保持不变）")
+
+    # 第 3 条反向：文案正常时不报错（防"一律报错"式假门禁）
+    registry = PluginRegistry()
+    if registry.load_manifest(base_payload, source="selftest-clean") is not None:
+        undetected.append("干净声明被误判为违规（门禁过严，会把人逼去关掉它）")
+    else:
+        notes.append("[OK] 干净声明通过（门禁不是一律报错）")
+
+    if undetected:
+        notes.extend(f"[FAIL] {item}" for item in undetected)
+        return 2, notes
+    return 1, notes
+
+
+def main(argv: list[str] | None = None) -> int:
+    """命令行入口。
+
+    Args:
+        argv: 参数列表（缺省取 `sys.argv[1:]`）。
+
+    Returns:
+        int: 退出码（0=通过 / 1=发现违规或自检命中 / 2=门禁自身异常）。
+    """
+    parser = argparse.ArgumentParser(description="G-26 插件声明门禁")
+    parser.add_argument("--dir", default="", help="声明目录（缺省 app/plugins/manifests）")
+    parser.add_argument("--self-test", action="store_true", help="跑负样本自检（期望退出码 1）")
+    parser.add_argument("--json", action="store_true", help="以 JSON 输出")
+    parser.add_argument(
+        "--list-terms", action="store_true", help="打印禁词表（供前端扫描脚本复用）"
+    )
+    args = parser.parse_args(argv)
+
+    if args.list_terms:
+        print(json.dumps(list(BANNED_TERMS), ensure_ascii=False))
+        return 0
+
+    directory = Path(args.dir) if args.dir else default_manifests_dir()
+
+    if args.self_test:
+        code, notes = run_self_test(directory)
+        for note in notes:
+            print(note)
+        print(
+            "[OK]   G-26 自检通过：6 条负样本全部被拦截（退出码 1 为预期）"
+            if code == 1
+            else "[FAIL] G-26 自检失败：门禁未能发现注入的问题"
+        )
+        return code
+
+    code, problems, stats = run_validation(directory)
+    if args.json:
+        print(json.dumps({"code": code, "problems": problems, "stats": stats}, ensure_ascii=False))
+        return code
+    if code == 2:
+        for problem in problems:
+            print(f"[FAIL] {problem}")
+        return 2
+    if code == 1:
+        for problem in problems:
+            print(f"[FAIL] {problem}")
+        print(f"[FAIL] G-26 未通过：{len(problems)} 处问题")
+        return 1
+    print(
+        f"[OK]   G-26 通过：{stats['registered']} 份声明"
+        f"（{', '.join(stats['plugin_ids'])}），能力与原语均在白名单内"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

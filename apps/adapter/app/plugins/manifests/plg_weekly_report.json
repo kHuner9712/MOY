@@ -1,0 +1,135 @@
+{
+  "plugin_id": "plg_weekly_report",
+  "name": "周报生成",
+  "summary": "把这一周的记录整理成一份周报",
+  "description": "自动收集你本周在知识库里的工作记录与文档，按项目归拢成条目清晰的周报：完成了什么、遇到什么阻碍、下周打算做什么。写好后可以先看一遍，确认无误再发送给指定收件人；没有记录可依据的部分会如实标注，不会替你编造工作量。周报会同时保留在任务记录里，随时可以回来复制正文或重新发送。",
+  "category": "collab",
+  "icon_key": "file-text",
+  "vendor": "official",
+  "version": "1.0.0",
+  "min_platform_version": "1.0.0",
+  "changelog": "首个版本：记录归拢、周报撰写、发送。",
+  "capabilities": [
+    {
+      "key": "personal.knowledge.read",
+      "required": true
+    },
+    {
+      "key": "personal.tool.use",
+      "required": true
+    },
+    {
+      "key": "org.external.publish",
+      "required": true
+    }
+  ],
+  "settings_schema": [
+    {
+      "key": "default_receiver",
+      "label": "默认收件人",
+      "type": "text"
+    }
+  ],
+  "inputs": [
+    {
+      "key": "period",
+      "label": "汇报周期",
+      "type": "text",
+      "required": true,
+      "max_length": 32
+    },
+    {
+      "key": "focus",
+      "label": "本周重点",
+      "type": "text",
+      "required": false,
+      "max_length": 100
+    },
+    {
+      "key": "receiver",
+      "label": "收件人",
+      "type": "email",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "key": "materials",
+      "label": "本周记录要点",
+      "type": "table"
+    },
+    {
+      "key": "report",
+      "label": "周报正文",
+      "type": "text"
+    },
+    {
+      "key": "receipt",
+      "label": "发送状态",
+      "type": "text"
+    }
+  ],
+  "steps": [
+    {
+      "seq": 1,
+      "title": "归拢本周记录",
+      "action": "retrieve",
+      "produces": [
+        "materials"
+      ],
+      "on_failure": "continue"
+    },
+    {
+      "seq": 2,
+      "title": "撰写周报",
+      "action": "compose",
+      "produces": [
+        "report"
+      ],
+      "needs": [
+        "materials"
+      ],
+      "on_failure": "retry"
+    },
+    {
+      "seq": 3,
+      "title": "发送周报",
+      "action": "tool",
+      "tool_type": "email",
+      "operation": "send_message",
+      "produces": [
+        "receipt"
+      ],
+      "needs": [
+        "report"
+      ],
+      "confirm": {
+        "reason": "周报会发送给收件人，请确认内容与收件人",
+        "summary_fields": [
+          "receiver",
+          "period"
+        ]
+      },
+      "on_failure": "continue",
+      "timeout_seconds": 60
+    }
+  ],
+  "checklist": [
+    {
+      "key": "report",
+      "name": "周报正文",
+      "source_step": 2
+    },
+    {
+      "key": "receipt",
+      "name": "发送状态",
+      "source_step": 3
+    }
+  ],
+  "ui_extension": {
+    "layout": "task_workspace",
+    "nav_label": "周报生成",
+    "icon_key": "file-text",
+    "order": 4
+  }
+}
