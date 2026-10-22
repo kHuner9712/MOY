@@ -39,9 +39,12 @@ import argparse
 import asyncio
 import hashlib
 import re
+import shutil
+import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Protocol
 
@@ -75,6 +78,29 @@ MIGRATION_LOCK_KEY: Final[int] = 7326017
 
 #: 回滚脚本目录名（迁移目录下的子目录）
 ROLLBACK_DIRNAME: Final[str] = "rollback"
+
+#: **回滚前强制备份**的版本前缀（架构 §10.2 / R-4）。
+#:
+#: 只对「down 会删表/删数据」的迁移生效（0008 会话、0009 记忆…）。理由：
+#: `down` 把数据改坏比"不能回滚"更糟——回滚失败最多是原地不动，回滚成功但丢数据
+#: 是不可逆的。所以这几条必须先把整库 dump 出来，dump 不成功就**拒绝执行**。
+#:
+#: 0006/0007 只 drop 列，虽也丢值，但属"可重新采集"的派生数据（真实 MIME、
+#: 计量维度），按架构口径不纳入强制备份。
+ROLLBACK_REQUIRES_BACKUP: Final[frozenset[str]] = frozenset({"0008", "0009"})
+
+
+def rollback_requires_backup(version: str) -> bool:
+    """该版本的回滚是否必须先备份。
+
+    Args:
+        version: 版本号（形如 `0008_conversation_message`）。
+
+    Returns:
+        bool: 需要备份返回 True。
+    """
+    return version[:4] in ROLLBACK_REQUIRES_BACKUP
+
 
 #: 事务控制语句（**只认行首语句**）
 #:
@@ -683,6 +709,8 @@ async def rollback_migrations(
     database: MigrationDatabase,
     versions: Sequence[str],
     sql_dir: Path | None = None,
+    *,
+    backup: Callable[[str], bool] | None = None,
 ) -> list[str]:
     """回滚指定版本（**倒序**执行，不自动级联）。
 
@@ -692,16 +720,21 @@ async def rollback_migrations(
 
     因此如果还存在**更晚**的已应用版本，直接拒绝并列出它们——要求使用者逐个显式回滚。
 
+    **强制备份（R-4）**：`0008`/`0009` 这类 down 会删表的版本，必须先备份。
+    `backup` 回调返回 False（或压根没提供）即**中止**——「回滚成功但丢数据」比
+    「回滚不了」更糟：前者不可逆，后者只是原地不动。
+
     Args:
         database: 迁移数据库实现。
         versions: 要回滚的版本号列表。
         sql_dir: SQL 目录，缺省自动定位。
+        backup: 备份回调（入参版本号，返回是否成功）；仅对需要备份的版本调用。
 
     Returns:
         list[str]: 实际回滚的版本（倒序）。
 
     Raises:
-        ApiError: 版本无 down 脚本、或仍有更晚版本已应用（30004）。
+        ApiError: 版本无 down 脚本、仍有更晚版本已应用、或强制备份失败（30004）。
     """
     directory = sql_dir or resolve_sql_dir()
     scripts = discover_rollback_scripts(directory)
@@ -732,6 +765,24 @@ async def rollback_migrations(
                     "本命令不自动级联，请先逐个回滚它们（按版本号倒序）。"
                 ),
             )
+        if rollback_requires_backup(version):
+            if backup is None:
+                raise ApiError(
+                    ErrorCode.CONFIG_ERROR,
+                    internal_detail=(
+                        f"拒绝回滚 {version}：该版本会删表/删数据，必须先备份。"
+                        "本次调用未提供备份能力（CLI 需要可用的 pg_dump）。"
+                    ),
+                )
+            if not backup(version):
+                raise ApiError(
+                    ErrorCode.CONFIG_ERROR,
+                    internal_detail=(
+                        f"拒绝回滚 {version}：备份失败或产物为空。"
+                        "回滚失败只是原地不动，回滚丢数据不可逆——先修好备份再回滚。"
+                    ),
+                )
+            logger.info("rollback_backup_succeeded", version=version)
         sql = scripts[version].read_text(encoding="utf-8")
         logger.info("rollback_applying", version=version, path=str(scripts[version]))
         executed = await database.apply_rollback(version, sql)
@@ -740,6 +791,61 @@ async def rollback_migrations(
             applied.pop(version, None)
             logger.info("rollback_applied", version=version)
     return rolled_back
+
+
+def _backup_before_rollback(settings: Settings, sql_dir: Path, version: str) -> bool:
+    """回滚前整库备份（R-4，`pg_dump -Fc`）。
+
+    为什么是**整库**而不是只 dump 目标表：down 脚本里的 DDL 可能连带影响索引、
+    序列、策略；只 dump 两张表看起来更"精准"，实际恢复时经常缺东西。整库 dump
+    在私有化规模（单库几十 GB 以内）完全可接受，且恢复路径唯一。
+
+    Args:
+        settings: 配置实例（取 DSN）。
+        sql_dir: SQL 根目录（备份落在 `migrations/rollback/<ts>/`）。
+        version: 即将回滚的版本号（用于文件名）。
+
+    Returns:
+        bool: 备份成功且产物非空返回 True。
+    """
+    directory = (
+        sql_dir
+        / MIGRATIONS_DIRNAME
+        / ROLLBACK_DIRNAME
+        / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"before_{version}.dump"
+    dsn = normalize_database_url(settings.database_url).replace(
+        "postgresql+asyncpg://", "postgresql://", 1
+    )
+    # 用 `shutil.which` 解析成绝对路径：容器与客户机上的安装位置不同（写死绝对路径
+    # 会让同一份代码在两种环境里各挂一半），而 `which` 的结果作为**绝对路径**传给
+    # subprocess，既跨环境可用，又不留"靠 PATH 执行任意同名程序"的口子。
+    pg_dump = shutil.which("pg_dump")
+    if pg_dump is None:
+        logger.error("rollback_backup_pg_dump_missing", version=version)
+        return False
+    try:
+        completed = subprocess.run(  # noqa: S603 - 可执行路径已解析为绝对路径
+            [pg_dump, "--no-owner", "-Fc", "-f", str(target), dsn],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        logger.error("rollback_backup_pg_dump_missing", version=version)
+        return False
+    if completed.returncode != 0:
+        logger.error(
+            "rollback_backup_failed", version=version, detail=(completed.stderr or "")[:400]
+        )
+        return False
+    if not target.is_file() or target.stat().st_size == 0:
+        logger.error("rollback_backup_empty", version=version, path=str(target))
+        return False
+    logger.info("rollback_backup_written", version=version, path=str(target))
+    return True
 
 
 def _build_database(settings: Settings) -> MigrationDatabase:
@@ -807,8 +913,8 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="+",
         metavar="VERSION",
         help=(
-            "回滚指定版本（倒序执行 deploy/migrations/rollback/NNNN_*.sql 并删台账行）；"
-            "不自动级联：更晚的版本必须显式列出"
+            "回滚指定版本（倒序执行 migrations/rollback/NNNN_*.down.sql 并删台账行）；"
+            "不自动级联（更晚版本须显式列出）；0008/0009 回滚前强制 pg_dump 备份"
         ),
     )
     parser.add_argument(
@@ -849,7 +955,12 @@ async def _run_cli(argv: list[str] | None = None) -> int:
     try:
         if args.rollback:
             # 回滚与 check/apply 是互斥入口：它不产出 ApplyPlan（不需要比对漂移）
-            rolled_back = await rollback_migrations(database, args.rollback, directory)
+            rolled_back = await rollback_migrations(
+                database,
+                args.rollback,
+                directory,
+                backup=lambda item: _backup_before_rollback(settings, directory, item),
+            )
             plan = None
         elif args.check:
             plan = await check_migrations(database, directory)
