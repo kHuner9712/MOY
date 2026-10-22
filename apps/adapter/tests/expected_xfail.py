@@ -193,10 +193,17 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         # 实测 `grep -rn "风险" app/plugins/` 在引擎与人事声明里 **0 命中**——
         # 护栏只覆盖了 Offer 金额与排期时间，没有"风险为空则该行判失败重跑"。
         # 后果：模型返回空风险时该行仍算通过，评分表看起来齐全。
-        "status": "open",
-        "pinned_by": "PRD P0-P3-21 行 260/261「风险」为空判该行失败 / 引擎护栏无此判据",
-        "due_batch": "B30",
-        "due_action": "引擎补行级质量门：风险为空则该行标失败并重跑（与 Offer 金额护栏同层）",
+        "status": "fixed",
+        # 关闭依据（5c11690 + f661ff7）：引擎第四道护栏 `_guard_screening`——
+        # 缺列 / 某行空 / 零行放行 / 别名容忍（风险|risk|risk 点）；
+        # **f661ff7 是自证阶段发现的漏判修正**：真实链路产出的是 markdown 表格
+        # （模型 data.content 原样落 inline_text），只按 CSV 解析会"整行一列"→
+        # 缺列不触发、逐行判空也判不出 → 每次筛选都假绿。现同时认 CSV 与 markdown。
+        # 判据落点：tests/unit/test_guard_screening.py（23 条，含 7 处改坏即红自证）
+        # + e2e test_blank_risk_row_fails_the_screening_step（产品级自证）。
+        "pinned_by": "tests/unit/test_guard_screening.py + e2e 空风险用例",
+        "due_batch": "B21",
+        "due_action": "已落地：引擎补行级质量门，空风险该步 failed 且 retryable=True",
     },
     {
         "id": "P3-B22-06",
@@ -206,10 +213,15 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         # 上传不限量，第 21 份会被照常处理，用户拿不到该提示。
         # 另：PRD 要求 pdf 简历解析，本版无 PDF 解析能力（仅 docx），
         # 属"能力缺口"而非"判据缺失"，一并记录以便阶段四排期。
-        "status": "open",
-        "pinned_by": "PRD P0-P3-21 行 261 验收②「一次最多 20 份」/ 无上传计数校验",
-        "due_batch": "B30",
-        "due_action": "加上传份数校验（>20 拒绝并给分批提示）；PDF 解析能力缺口单列阶段四评估",
+        "status": "fixed",
+        # 关闭依据（c707774）：声明式 `InputSpec.max_items`（加性可选，仅 file/multi_select）
+        # + `preflight()` 数量校验（列表/元组计数，单字符串按 1 份不误拒），
+        # 人事声明的 `resumes` 加一行 `"max_items": 20`。
+        # 主理人独立复验：1/20 份通过、21/25 份 20001、单字符串不误拒（消息逐字见 PRD）。
+        # **仍未覆盖的部分单列**：PDF 解析能力（本版仅 docx）属能力缺口，不在本条。
+        "pinned_by": "tests/unit/test_guard_screening.py（max_items 组）/ engine.preflight",
+        "due_batch": "B21",
+        "due_action": "已落地：>20 份拒绝并给「一次最多 20 份，请分批上传」；PDF 解析另立能力缺口",
     },
 )
 
