@@ -79,6 +79,23 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {"id": "P3-B19-02", "level": "P0", "status": "fixed"},  # b75f0ab（空库 apply 直接语法失败）
     # 同一文件的第二个缺陷：0004 无条件 ALTER 在已初始化库必失败（权限模型，非语法）→ 三分支
     {"id": "P3-B19-03", "level": "P1", "status": "fixed"},  # d75aa3a（init 脚本补列）
+    # B20 两条挂账（到期 B21，到期即红）
+    {
+        "id": "P3-B20-01",
+        "level": "P1",
+        "status": "open",
+        "pinned_by": "G-05 覆盖率（business+db）",
+        "due_batch": "B21",
+        "due_action": "补测至 business+db ≥88%（当前 84.84%，差 3.16pp）",
+    },
+    {
+        "id": "P3-B20-02",
+        "level": "P1",
+        "status": "open",
+        "pinned_by": "TC-P3-HR23-02 / 追溯表 §3.4 ⑨ 组",
+        "due_batch": "B21",
+        "due_action": "补 R3 样本 5 条（3 面议类必判失败 + 2 合法值通过）并实测",
+    },
 )
 
 
