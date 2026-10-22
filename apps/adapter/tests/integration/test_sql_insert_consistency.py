@@ -71,7 +71,12 @@ def split_top(text: str) -> list[str]:
 
 
 def ddl_columns() -> set[str]:
-    """从 `deploy/**.sql` 的 `CREATE TABLE` 里抽出全部列名（跨表并集）。
+    """从 `deploy/**.sql` 抽出全部列名：`CREATE TABLE` 括号体 + `ALTER … ADD COLUMN`。
+
+    **必须包含 `ALTER TABLE … ADD COLUMN`**：本项目"后补列"是常态（`0004` 一次补了
+    `confirmed_step_seq` / `version` / `version_history` 三列）。只解析 `CREATE TABLE`
+    会把所有后补列判成"不存在"——**那是系统性假红，面积比它想防的真缺陷更大**
+    （B19 复盘时本判据就误报过一次 `confirmed_step_seq`）。
 
     Returns:
         set[str]: 列名集合；用于判断 SQL 是否引用了不存在的列。
@@ -88,6 +93,13 @@ def ddl_columns() -> set[str]:
                 head = re.match(r"\s*([a-z_][a-z0-9_]*)\s+", line)
                 if head and head.group(1).upper() not in _DDL_KEYWORDS:
                     columns.add(head.group(1))
+        # 后补列：ALTER TABLE <表> … ADD COLUMN [IF NOT EXISTS] <列>
+        for match in re.finditer(
+            r"ADD\s+COLUMN(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z_][a-z0-9_]*)",
+            text,
+            re.I,
+        ):
+            columns.add(match.group(1))
     return columns
 
 
@@ -117,6 +129,20 @@ def test_splitter_counterexample() -> None:
         "CAST(:v AS jsonb)",
         "NULLIF(:w, '')",
     ]
+
+
+def test_ddl_parser_includes_alter_add_column() -> None:
+    """反例自检：`ALTER TABLE … ADD COLUMN` 的列必须被解析进来。
+
+    B19 复盘时，本判据的第一版只解析 `CREATE TABLE`，于是把 `0004` 里
+    `ALTER TABLE plugin_task ADD COLUMN IF NOT EXISTS confirmed_step_seq …`
+    补的列判成"不存在"——**假红**。后补列是迁移的常态，漏解析它会让门禁噪声大到被关掉。
+    """
+    known = ddl_columns()
+    for column in ("confirmed_step_seq", "version", "version_history"):
+        assert column in known, f"`ALTER TABLE … ADD COLUMN` 补的列未被解析：{column}"
+    # `queue_position` 在任何迁移里都不存在（它是派生值）——必须**不**在集合里
+    assert "queue_position" not in known, "`queue_position` 不该出现在 DDL 列集合里（它是派生值）"
 
 
 def test_insert_column_value_arity_matches() -> None:
