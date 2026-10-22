@@ -401,6 +401,17 @@ async def test_personal_capability_is_ignored_by_repo(store: PostgresPluginStore
     这是"个人能力恒开"在**持久化层**的边界：`plugin_capability_policy` 的语义就是
     "企业能否关掉某项 org 能力"，把 `personal.*` 写进去会让"管理员关掉了我的个人知识库"
     成为可能——所以宁可**静默丢弃**（服务层再抛 `20001` 给用户），也不存在库。
+
+    **这不是数据库保证，是调用约定**：`plugin_capability_policy` 表上**没有** `personal.*`
+    的 CHECK 约束，过滤发生在 `save_policies` 里的 `if capability in ORG_CAPABILITIES`。
+    也就是说：任何绕过仓储层直接写库的路径（运维脚本 / 未来的批量导入）**可以把
+    `personal.*` 写进去**，而 DB 不会拦。真正守"个人能力恒开"的是服务层 20001 +
+    这一处仓储过滤，两道都在应用侧。下一个人若要在别处"依赖这个假设"，
+    请先确认那条路径一定经过 `save_policies`。
+
+    **若要让它变成数据库保证**，需要一条 `CHECK (capability NOT LIKE 'personal.%')`
+    的迁移——但按"应用角色不做 DDL"的既定口径（阶段二 `0002` 与阶段三 `0004` 同一结论），
+    这属于阶段四的 DBA 动作，不在本批。
     """
     saved = await store.save_policies(
         TENANT_ID,
