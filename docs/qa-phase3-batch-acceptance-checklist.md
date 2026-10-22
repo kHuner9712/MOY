@@ -1,0 +1,413 @@
+# 第三阶段 批次验收清单（按架构 §9 编号：B16–B21 + 前端批次）
+
+> 用途：**批次验收的判定书**。team-lead 按本清单逐项勾选即完成批次验收；工程师按本清单自测即知道「怎么算过」。
+> 配套：`docs/qa-phase3-test-plan.md`（用例与门禁判据的唯一来源）。
+> **编号口径（2026-10-23 对齐架构 §9，以此为准）**：B16 声明模型+加载器+G-26 ｜ B17 市场与安装（PL1-PL5 + PL13）｜ B18 生命周期（PL6-PL12）｜ B19 任务引擎 + A 域扩展 + 9 表 ｜ B20 三插件装配与降级矩阵 ｜ B21 端点基线与门禁。
+> **B20 过大 → 按验收粒度拆 B20-1 / B20-2，但代码编号仍是 B20 一个批次一个 commit**（主理人裁定：不破坏与架构/工程的编号一致性）。
+> **前端批次沿用架构 B22-B27**（B22 已落库 `41310ba`）：**UI25 → B23**、**UI24 → B24**，不再叫「前端批次」，也不另立编号。
+> **端点口径（v3.2.0 终稿）**：插件域 **14**（PL1-PL14，新增 PL14 `PUT /plugins/{id}/grants`）+ 任务域 **2**（WF1 retry、**WF2 产物编辑**）= **16**；三基线 **30 / 38 / 16 = 84**。
+> 作者：严过关（QA 工程师）· 日期：2026-10-23 · 版本：**v1.1（重编号）**
+
+---
+
+## 0. 使用方式（5 步，缺一步不算验收）
+
+| 步 | 动作 | 责任人 | 产出 |
+| --- | --- | --- | --- |
+| 1 | 工程师提交批次 commit，并附**自测证据包**（§0.2） | Engineer | commit SHA + 证据包 |
+| 2 | QA **导出该 SHA** 到独立目录复核（不读活工作区） | QA | 导出路径记录 |
+| 3 | QA 跑本批「实跑命令」+ 通用门禁块（§0.1） | QA | 命令 + 退出码 + 关键输出 |
+| 4 | QA 按「验收项表」逐条判定，输出 `PASS / FAIL(带定位)` | QA | 批次验收结论 |
+| 5 | team-lead 勾选本清单并归档 | team-lead | 勾选后的本文件（或批次报告引用） |
+
+### 0.1 通用门禁命令块（每批必跑，复制即用）
+
+```bash
+PY="<python>"                 # 主仓 apps/adapter/.venv 解释器
+DSN="postgresql://officeai_app:***@127.0.0.1:55433/officeai"
+TREE="<导出目录>"              # git archive <SHA> | tar -x -C <导出目录>
+
+cd "$TREE/apps/adapter"
+"$PY" -m ruff check .                        # G-01 期望 All checks passed
+"$PY" -m ruff format --check .               # G-02 期望 N files already formatted
+"$PY" -m mypy app                            # G-03 期望 Success: no issues found
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg -rxX           # G-04 期望 0 failed/0 skipped/0 xfail/0 xpass
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q -m p0 --run-pg          # G-24 期望 0 failed/0 skipped
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg --cov=app --cov-report=term   # G-05
+"$PY" -m coverage report --include="app/business/*,app/db/*"
+cd "$TREE" && "$PY" deploy/validate_openapi.py                          # G-29 期望 core=30 / phase2=38 / phase3 全实现
+cd "$TREE/apps/adapter" && "$PY" scripts/check_error_catalog.py --strict # G-30（与阶段二 G-13 同一脚本扩段）
+```
+
+### 0.2 工程师自测证据包（缺项直接退回，不进验收）
+
+① 本批 commit SHA；② 上述命令的**原始输出**（不允许只写「已通过」）；③ 本批新增/变更端点的**契约 diff**（`docs/api/README.md` + 基线 JSON 同一 commit）；④ 新增错误码三处同步位置；⑤ 已知未完成项清单；⑥ 若动前端：`tsc`/`lint`/`build` 输出与受影响页面清单。
+
+### 0.3 p0 分布与累计（按架构 §9 编号）
+
+| 批次 | 本批 p0 | 累计 p0 | 主要用例前缀 |
+| --- | --- | --- | --- |
+| B16 | 7 | 7 | PL01、PL05 |
+| B17 | **19** | **26** | MK06、MK07、PL03（含 **PL14** 的 3 条）、MK10-02 |
+| B18 | **16** | **42** | PL02-01、MK08（含 **PL5 重复安装**）、PL04、MK09、MK10-01 |
+| B19 | **26** | **68** | PL02-02~07、WF11、**WF12（含 WF2 编辑 4 条）**、WF13、WF14 |
+| **B20-1** | 13 | **81** | DEV15~17、E2E-DEV |
+| **B20-2** | 28 | **109** | CNT18~20、HR21~23、E2E-CNT/HR |
+| B21 | 0（门禁批次） | 109 | —（G-29/G-30 + G3-10/G3-11 + 阶段二零回退） |
+| **B23** | **0**（界面复核） | 109 | —（复核 MK06-04 / PL03-05 / PL03-07 的界面层） |
+| **B24** | **7** | **116** | UI24、UI25 |
+
+> 说明：B21 是**收口批次**，不新增 p0，验收对象是三基线（30/38/**16**，合计 84）、错误码一致性（含 `17002` 不外泄 + 内部码豁免）与阶段二零回退；**p0 116 全绿在 B24 收口**。B23 只做界面层复核（主理人已确认记 0 条新 p0，避免与 B17 重复计数）。
+
+---
+
+## B16 声明模型 + 加载器 + 6 份 manifest + G-26 schema
+
+**范围**：manifest 6 段声明、机械校验、加载失败留因、重复标识、拒绝自带依赖、开发文档与样例插件。
+**用例**：`TC-P3-PL01-01~04`、`TC-P3-PL05-01~03`（**7 条 p0**）。
+**不含**（按架构 §9 归 B19）：超时、并发排队、任务执行、停用后拦截——这些是任务引擎的验收点，不是声明/加载器的。
+
+**准入**：架构已给 manifest 字段表与插件目录约定；G-26 脚本可执行；6 份 manifest 与 1 份样例插件已入库。
+
+| # | 验收项 | 判据（可断言） | 谁跑 |
+| --- | --- | --- | --- |
+| 1 | 6 份 manifest 全通过 | `validate_manifests.py --strict` exit 0；6 份均加载成功 | QA |
+| 2 | 非法声明不加载 | 12 个负样本**均不出现**在加载结果，且留 **12 条**失败原因（`plugin_id` + 原因码） | QA |
+| 3 | 声明与展示一致 | `step_titles[]` == manifest `steps[].title`（逐项 `==`） | QA |
+| 4 | 重复标识 | 第二次注册失败，原条目字段快照 diff 为空 | QA |
+| 5 | 自带依赖被拒 | manifest 含依赖段 → 加载失败 + 原因「不支持自带依赖」 | QA |
+| 6 | 文案在声明期拦截 | 名称含「RAG」等禁词 → 加载失败（不是等到渲染期） | QA |
+| 7 | 文档 6 节齐全 | 声明字段表/能力枚举/输入规范/输出类型/界面规范/允许接口清单 | QA |
+| 8 | 文档与代码一致 | 「允许调用的接口」集合 **==** 代码端点集合（双向差集空） | QA |
+| 9 | 样例插件可跑 | 固定输入跑通 1 次任务，产物 ≥1，无人工参数注入 | QA |
+| 10 | G-26 可红 | `--self-test` **exit 1**（12 负样本全命中）；正样本 4 个判绿不误报 | QA |
+
+**实跑命令**
+
+```bash
+cd "$TREE/apps/adapter"
+"$PY" apps/plugins/tools/validate_manifests.py --strict
+"$PY" apps/plugins/tools/validate_manifests.py --self-test          # 期望 exit 1
+"$PY" -m pytest tests/unit/test_manifest_validation.py -q           # 8 条
+"$PY" -m pytest tests/integration/test_plugin_manifest_load.py -q
+```
+
+**通过判据**：10 项全过 + 通用门禁 + 累计 p0 ≥7。
+**常见退回原因**：① 只测合法声明，12 负样本漏检；② `--self-test` 返回 0（脚本不会报错）却当绿；③ 禁词只在渲染期拦，声明期放行；④ 文档接口清单写了代码里没有的端点；⑤ **把超时/排队写进本批**（应在 B19）。
+
+---
+
+## B17 市场与安装（PL1 列表 / PL2 详情 / PL3 已安装 / PL4 能力 / PL5 安装 / PL13 配置 / **PL14 改本人授权**）
+
+**范围**：市场浏览与详情、能力清单与逐项授权、安装（含企业开关）、已安装列表的「最近使用时间」。
+**用例**：`TC-P3-MK06-01~04`、`TC-P3-MK07-01~04`、`TC-P3-PL03-01~10`、`TC-P3-MK10-02`（**19 条 p0**）。
+
+**准入**：能力→端点映射表已给定（G-28 输入）；错误码 `16001-16006` 已分配并三处同步；市场分类枚举与 6 份 manifest 对齐。
+
+| # | 验收项 | 判据 | 谁跑 |
+| --- | --- | --- | --- |
+| 1 | 市场集合对齐 | `market.items` 的 `plugin_id` 集合 **==** manifest 集合 S（不硬编码 6） | QA |
+| 2 | 分类/关键字/排序 | 过滤项分类全为 `dev`；关键字大小写/空格差异结果集合相等；三种排序序列两两不同 | QA |
+| 3 | 分页无重叠 | 第 1、2 页 `plugin_id` 交集空；`total` 与累计一致；无匹配时空列表 + 空态文案 | QA |
+| 4 | 免费版整页提示 | 「当前套餐不含插件能力，升级后即可使用」+ 升级入口；**无错误码** | QA |
+| 5 | 详情页一致 | `capabilities[]` 条数 == capabilities 端点条数；`step_titles[]` 顺序一致 | QA |
+| 6 | 主按钮 4 态 | 安装 / 打开工作台 / 启用 / 更新，映射全对 | QA |
+| 7 | 无评价空态 | 「还没有人评价，用过后可以来说说」（有该文本节点，非空表格） | QA |
+| 8 | 能力条数 1:1 | `GET capabilities` 条数 == manifest 声明（研发 = **3**）；每项含 5 个字段 | QA |
+| 9 | 拒必需能力 | 取消②→安装失败 + 文案「该插件需要「使用你已连接的办公工具」才能提交代码」+ 按钮置灰 | QA |
+| 10 | 部分授权降级 | 只授权②③→安装成功、`denied_capabilities==[⑤]`；步骤 5「未完成：未授权写入代码仓库」+「去授权」 | QA |
+| 11 | 撤销 ≤5s | 撤销②→立即调用 `16005`；恢复后 retry 成功；TTL 边界用注入时钟验证 | QA |
+| 12 | **报错顺序（新口径）** | 同时满足「套餐不支持 / 未授权 / 企业策略关闭」时，返回顺序 **`15001` → `16005` → `16006`**；三者 CTA 不同（升级套餐 / 重新授权 / 找管理员） | QA |
+| 13 | 企业开关（两处都断言） | ①**PL1 顶层含 `org_capabilities` 且恰好 3 项**（`{capability_key, org_switch_enabled}`）；②**PL4 逐插件 6 项**且每项含 `org_switch_enabled`；③`false` → 安装失败 + `16006`；④`true` → 成功且 `granted_capabilities` 含⑤；⑤两次表现必须不同 | QA |
+| 14 | **PL14 改本人授权** | `PUT /plugins/{id}/grants` 改本人（撤③加④）：响应 `granted_capabilities[]`/`denied_capabilities[]`/`required_capabilities[]` 与请求一致 | QA |
+| 15 | **PL14 幂等** | 同 `Idempotency-Key` 重复提交 → 结果收敛（授权状态不变、审计仅 1 条） | QA |
+| 16 | **PL14 两条反例** | ①撤 `required=true` → 失败（`16005` 语义）且授权不变；②用 A 的 token 改 B 的授权 → 越权拒绝（`20003` 语义）且双方授权均不变 | QA |
+| 17 | 最近使用时间 | `last_used_at` == 最近一次任务 `created_at`；无任务为 `null` 且页面「尚未使用」 | QA |
+| 18 | G-30 可红 | `--strict` exit 0；删 1 条前端映射 → exit 非 0；`16001` 未被复用 | QA |
+
+**实跑命令**
+
+```bash
+cd "$TREE/apps/adapter"
+"$PY" -m pytest tests/integration/test_plugin_market.py tests/integration/test_plugin_detail.py -q
+"$PY" -m pytest tests/integration/test_plugin_authz.py -q   # 含 PL14 三条
+"$PY" scripts/check_error_catalog.py --strict
+```
+
+**通过判据**：**18 项**全过 + 通用门禁 + 累计 p0 **≥26**。
+**常见退回原因**：① `16005`/`16006` 合并成一个码；② 报错顺序反了（用户被引到错误出路）；③ 撤销后仍可调用；④ 前端硬编码开关为 `true`（第 13 项必须两次表现不同）；⑤ 市场数量硬编码 6。
+
+---
+
+## B18 生命周期（PL6 状态 / PL7 卸载 / PL8 升级 / PL9 回退 / PL10 配置 / PL11-12 评价）
+
+**范围**：安装即启用、启停、卸载保留历史、版本升级与恢复上一版本、评价 upsert。
+**用例**：`TC-P3-PL02-01`（未安装即改状态 → **`16003`**）、`TC-P3-MK08-01~06`、`TC-P3-PL04-01~04`、`TC-P3-MK09-01~04`、`TC-P3-MK10-01`（**16 条 p0**）。
+
+**准入**：安装表与版本快照表的唯一约束已落迁移；步骤定义随版本存档方案已定。
+
+| # | 验收项 | 判据 | 谁跑 |
+| --- | --- | --- | --- |
+| 1 | 未安装不可改状态 | `PATCH state` → **`16003`**（该码只用于「未安装却调 PL6/PL7/PL8/PL9/PL10/PL12」）；`GET installed` 不含（无隐式创建） | QA |
+| 2 | 安装即启用 | 安装后 `status=enabled`（不断言 `installed` 中间态） | QA |
+| 3 | 启停往返 | `disabled` → `enabled`；禁用后宿主页置灰 + 文案 | QA |
+| 4 | 卸载保留历史 | `GET installed` 不含；历史任务仍可查且详情可打开（只读） | QA |
+| 5 | 卸载时有在跑任务 | 允许卸载 + `running_task_count==1`；任务最终 completed | QA |
+| 6 | 二次确认后果文案 | 禁用含「…已发起的任务会继续完成」；卸载含「历史任务记录会保留但不能再发起新任务」「已生成的产物 180 天后清理」 | QA |
+| 7 | 升级生效 | `installed_version==1.1.0`、`has_update==false`、任务可执行 | QA |
+| 8 | 升级幂等 | 连点两次 → 版本记录**仅 1 条**，`previous_version` 未被覆盖 | QA |
+| 9 | 只能回退一次 | 首次回 `1.0.0`；第二次 `16007`（或 20005）且版本不变 | QA |
+| 10 | **历史任务用快照** | 升级改步骤标题后，升级前任务的 `step_titles` 与升级前逐项相等；回滚后仍相等 | QA |
+| 11 | 更新标记 | 发新版本 → 该行出现目标版本号；更新后「已是最新」 | QA |
+| 12 | 评价覆盖更新 | 同成员两次 → 仅 1 条且为第二次；`rating_avg` 与均值差 ≤0.1 | QA |
+| 13 | 评价权限与参数 | 未安装 → `16013`；`rating=6` → 参数错误 +「评分请选择 1 到 5 星」 | QA |
+| 14 | 匿名不含真实身份 | `author_name=="某位同事"`；响应 0 处真实姓名/邮箱 | QA |
+| 15 | 唯一约束（`pg`） | 同企业同插件仅 1 条安装记录；并发安装不产生 2 条 | QA |
+| 16 | **PL5 重复安装幂等** | 已安装再调 PL5 → **200 + `already_installed=true`**（**不是 `16003`**）；`granted_capabilities[]` 与 `settings` **不变**；审计仅 **1 条** `plugin.install` | QA |
+
+**实跑命令**
+
+```bash
+cd "$TREE/apps/adapter"
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_lifecycle.py -q --run-pg
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_version.py tests/integration/test_plugin_review.py -q --run-pg
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_isolation.py -q --run-pg
+```
+
+**通过判据**：**16 项**全过 + 通用门禁 + 累计 p0 **≥42**。
+**常见退回原因**：① 卸载级联删历史任务；② 升级后用当前模板渲染历史任务（第 10 项）；③ 连点升级产生两条版本记录；④ `last_used_at` 用 `updated_at`；⑤ 内存后端绿但 `pg` 唯一约束缺失。
+
+---
+
+## B19 任务引擎 + A 域扩展 + 9 表（超时 / 排队 / 续跑 / 步骤产物 / 核查清单）
+
+**范围**：任务执行与状态机、超时与取消、并发排队与自动转运行、步骤级进度与产物、**产物编辑（WF2：版本/重导出/脱敏）**、失败与重试、人工接管、历史筛选与核查清单。
+**用例**：`TC-P3-PL02-02~07`（6）、`TC-P3-WF11-01~05`（5）、**`TC-P3-WF12-01~08`（8，含 WF2）**、`TC-P3-WF13-01~04`（4）、`TC-P3-WF14-01~03`（3）= **26 条 p0**。
+> **本次从 B16 移入的 6 条**：`PL02-02`（任务带 `plugin_id`）、`PL02-03`（**超时不丢产物**）、`PL02-04`（**3 并发第 4 个排队返 200+queued**）、`PL02-05`（停用后拦截执行）、`PL02-06`（直连底座被拒）、`PL02-07`（**排队自动转 running**）。
+> 对应检查单项 **6 项**（下表 #1-#4、#7、#8），其中「超时」1 项、「排队」2 项（不报错 + 自动转运行）。
+
+**准入**：A2/A3/A4 的加性字段已进基线（`checklist[]`/`artifacts[]`/`failure{}`）；9 张表迁移幂等；事件推送 A6 可用。
+
+| # | 验收项 | 判据 | 谁跑 |
+| --- | --- | --- | --- |
+| 1 | 任务带插件标识 | `A2?plugin_id=X` 能筛出，`plugin_id` 与入参相等 | QA |
+| 2 | **超时不丢产物** | 5s 超时 → 状态「未完成（超时）」；已完成步骤 `artifacts.length ≥1` **仍可取** | QA |
+| 3 | **排队不报错（ADJ-1）** | 第 4 个任务 **HTTP 200 + `status=queued` + `queue_position ≥1`**；**不是 4xx/429** | QA |
+| 4 | **排队自动转运行（ADJ-1 追加）** | 在跑任务完成后排队任务自动 `running`（无需重提），`queue_position` 递减，最终 4 个全 completed | QA |
+| 5 | 首事件及时 | 桩模式首个 `step` 事件 < 5s，连跑 3 次稳定 | QA |
+| 6 | 状态单调 + 进度算法 + **枚举权威** | 10 次轮询 `status_index` 非递减；6 步完成 3 步 → `progress==50.0`（误差 <1e-6）；步骤状态 **⊆ `pending/running/completed/failed/skipped`**（`waiting_confirm` 是任务级，不得出现在步骤上） | QA |
+| 7 | 停用后拦截执行 | 禁用后执行 → **`16004`**（`PLUGIN_DISABLED`；**不得写成 `16003`**）+ 文案「该插件已停用，请联系管理员启用」 | QA |
+| 8 | 直连底座被拒 | 构造直连调用 → 拒绝且底座桩计数 **0** | QA |
+| 9 | 断线补齐 | 断网 30s 恢复后 `step_id` 集合相等、无重复无缺失 | QA |
+| 10 | 无技术词 | DOM `node`/`step_id`/`workflow`/`prompt`/`LLM` **0 命中** | QA |
+| 11 | 产物归属 | 每个 `artifact_id` 反查 `task_id` 唯一；已完成步骤 `artifacts.length ≥1` | QA |
+| 12 | **失败走状态不走码** | 注入失败 → `code==0`、`failure.retryable==true`、3 个动作齐 | QA |
+| 13 | 重试语义 | 新任务 `retry_of`=原任务；前序步骤 `skipped` 且 `artifact_id` **复用**；原任务 `status/updated_at` 不变 | QA |
+| 14 | 未失败不可重试 | `16011`；界面无重试按钮 | QA |
+| 15 | 接管不自动继续 | 时钟 +15min 仍 `waiting_confirm` | QA |
+| 16 | 诊断文本干净 | 复制文本 `\b[1-3]\d{4}\b` 0 命中、无 `Traceback` | QA |
+| 17 | 四维筛选 | 插件/状态/发起人/时间 4 条独立 + 1 条组合，返回集合**精确相等** | QA |
+| 18 | 核查清单 | 项数 4/3/4，名称**逐字相等**，`status ∈ {verified, pending_manual}` | QA |
+| 19 | 越权查看 | 非发起人且无管理权 → 权限错误 +「你没有权限查看该任务」，响应体不含任务名/产物名 | QA |
+| 20 | 保留期静态断言（原 G-31 降级） | 保留期字段存在且默认 **180**；过期文案常量存在（**不断言真实清理**） | QA |
+| 21 | 迁移幂等 | 9 张表连跑两遍迁移均通过；表数符合基线 | QA |
+| 22 | **WF2 编辑：版本与下载一致** | 保存后 `version` **+1**、`version_history[]` 含旧版本且内容逐字一致、**下载拿到新版本**（sha256 == 保存内容；不得「存了但下载还是旧的」） | QA |
+| 23 | **WF2 非可编辑类型必须拒** | `type=link` / `type=file`（代码文件、提交记录）调 WF2 → 拒绝且产物 sha256 不变（否则 AC-02 结果物核查作废） | QA |
+| 24 | **WF2 重导出与 sha 重算** | 改字段后导出的 docx 可解压出 `word/document.xml` 且含新值；`content_sha256` **已重算**（≠ 旧 sha）；`version_history` +1 | QA |
+| 25 | **WF2 编辑后必须重跑脱敏（一票否决）** | 用含敏感词的 content 保存 → 产物中该词被消解；**不得因「用户改过」跳过 sanitize**；审计留 1 条编辑记录 | QA |
+
+**实跑命令**
+
+```bash
+cd "$TREE/apps/adapter"
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_lifecycle.py -q --run-pg -k "queue or timeout or disabled"
+"$PY" -m pytest tests/integration/test_workflow_progress.py tests/integration/test_workflow_artifacts.py -q
+"$PY" -m pytest tests/integration/test_workflow_retry.py tests/integration/test_workflow_history.py -q
+"$PY" -m pytest tests/unit/test_artifact_retention.py -q
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_migrate.py -q --run-pg
+```
+
+**通过判据**：**25 项**全过 + 通用门禁 + 累计 p0 **≥68**。
+**常见退回原因**：① 超时把已完成产物一起清空（第 2 项）；② 第 4 个任务返回 429（违反 ADJ-1）；③ 排队任务不自动启动（第 4 项）；④ 步骤失败返回非 0 `code`（前端整屏报错，违反 FLOW-04）；⑤ 重试把前序步骤重跑；⑥ 产物挂任务级而非步骤级；⑦ 核查清单用 `in` 而不是 `==`。
+
+---
+
+## B20 三插件装配与降级矩阵（验收粒度拆 B20-1 / B20-2，代码编号仍为 B20）
+
+**总范围**：三个标杆插件（研发 / 内容 / 人事）的装配、输入输出、人工接管点、能力降级矩阵与端到端结果物。
+**p0 合计 41 条**，按验收粒度拆两屏：
+- **B20-1 研发插件端到端**：`TC-P3-DEV15-01~03`、`DEV16-01~03`、`DEV17-01~03`、`E2E-DEV-01~04` = **13 条**
+- **B20-2 内容 + 人事插件端到端**：`TC-P3-CNT18-01~04`、`CNT19-01~03`、`CNT20-01~03`、`HR21-01~03`、`HR22-01~03`、`HR23-01~04`、`E2E-CNT-01~04`、`E2E-HR-01~04` = **28 条**
+
+**准入**：本地 bare 仓库夹具与 `github_stub`/`wechat_mp_stub`/`mail_stub`/`wecom_stub` 可用；`fail_injector` 可按步骤注入；金额豁免清单已写成 fixture 常量。
+
+### B20-1 研发插件（13 条 p0，2025 年 13 项）
+
+| # | 验收项 | 判据 | 谁跑 |
+| --- | --- | --- | --- |
+| 1 | 必填校验 | 缺标题/描述/仓库 → 置灰并指出缺项（3 条断言） | QA |
+| 2 | 未连仓库空态 | 「还没有连接代码仓库」+ 连接入口（非报错） | QA |
+| 3 | 方案确认门 | 步骤 1、2 后 `waiting_confirm`；重做方案时步骤 1 `artifact_id` 不变、方案 `version+1` | QA |
+| 4 | 路径 ⊆ 清单 | 代码文件路径集合 ⊆ 影响文件清单；测试文件 ≥1 且含被测文件主干 | QA |
+| 5 | 空产出判失败 | 注入空产出 → 「未完成」+ 可重试；重试后 completed（不得静默通过） | QA |
+| 6 | **未确认不提交** | 未点确认 → bare 仓库 `rev-list --count` **不变** | QA |
+| 7 | **提交真实存在** | `git cat-file -e <sha>` 成功；`git show --stat` 文件数 == 产物文件数 | QA |
+| 8 | **逐字一致（HV-1 新抽样规则）** | 取**方案影响文件清单声明顺序**的第 1 个产物文件的**第一个**符合扩展名的路径 → 与仓库文件**逐字节**比对（sha256 相等 + 逐行 `==`），**3 次重复一致**；失败输出**前 200 字符 diff** | QA（HV-1） |
+| 9 | 合并请求关联 | 桩收到 **1 次** `create_pr(head=<sha>)`；`pr_url` 含 `<sha>` | QA |
+| 10 | 授权过期可恢复 | 401 → 「代码仓库的授权已过期」+「重新连接」；重连后 retry 成功 | QA |
+| 11 | 分支冲突提示 | 目标分支被更新 → 「目标分支已有新的改动，建议新建分支提交」+「改用新分支重试」 | QA |
+| 12 | 无技术词 | 界面 0 处 `diff`/`patch`/`sha` | QA |
+| 13 | 核查清单 4 项 | 名称逐字 == [需求要点, 代码文件, 用例文件, 提交记录与合并请求]，全 `verified`，重 GET 一致 | QA |
+
+### B20-2 内容 + 人事插件（28 条 p0，18 项）
+
+| # | 验收项 | 判据 | 谁跑 |
+| --- | --- | --- | --- |
+| 1 | 平台必选 / 上限 | 未选 → 置灰 +「请至少选择一个发布平台」；勾 5 → 「单次最多 4 个平台」 | QA |
+| 2 | 选题数正确 | 勾 3 → 3 组选题、每组标题 ≥3；标题字数 公众号 ≤64 / 其他 ≤40 | QA |
+| 3 | 无素材不编造 | 标「未找到可靠素材」；8 条事实表述正则 **0 命中** | QA |
+| 4 | 稿件数=平台数 | 3 篇、`platform` 互不相同、每篇 title/body/tags | QA |
+| 5 | 字数区间 | 目标 800 → 640~960（去空白字符数）；越界自动重生成 1 次 → 仍越界标「待人工调整」 | QA |
+| 6 | 草稿版本 | 编辑保存版本 +1；切回上一版本 sha256 相同 | QA |
+| 7 | **排期表 4 列（HV-2）** | 表头逐字 [平台, 标题, 计划时间, 状态]；行数 == 稿件数；CSV 逐行一致，3 次重复一致 | QA（HV-2） |
+| 8 | 过去时间被拒 | 计划时间早于当前 → 失败并指出冲突行；改时间后 retry 成功（不重跑步骤 3） | QA |
+| 9 | 回执 vs 待人工 | 公众号 `receipt_id` 非空 + `已发布`；小红书 `待人工发布` + 下载 200 + 指引非空 | QA |
+| 10 | **评分表风险非空（HV-3）** | 3 行 × 5 字段；`risk` 逐行非空；结论 ∈ 枚举；理由 ≥30 字；3 次重复一致 | QA（HV-3） |
+| 11 | 简历上限与部分失败 | 第 21 份 → 「一次最多 20 份」；加密文件行标「无法读取…」，其余行正常 | QA |
+| 12 | 提纲 ≥5 问 | 份数 == 建议面试人数；每题 `assessment_point` 非空 | QA |
+| 13 | 渠道与冲突 | 未连接渠道置灰 +「还没有连接企业微信」；冲突 → 提示 + **2 个**可选时间 | QA |
+| 14 | **金额判据只扫 offer 产物（新口径）** | 扫描范围**仅 `output_key=offer` 的产物**（简历筛选结论里的「待定」是合法值，不得误判）；`offer` 内 3 个金额字段 `==""`；R1 带单位 + R2 上下文窗口（薪资词 ±20 字符内 `\d{3,7}`）**0 命中**；豁免项固化（日期/工号/百分比/「3 个月」）；**`offer` 内出现「面议/待定」判失败**；未填金额导出被拒 | QA（HV-4） |
+| 15 | 公文导出 | 4 类各 1 篇；`.docx` 可 `python-docx` 打开、段落数 >0、大小 >0 | QA |
+| 16 | 24h 可追溯 | 时钟 +24h 后稿件版本与 `receipt_id` 仍可读，产物 sha256 不变 | QA |
+| 17 | 降级矩阵 | 缺任一能力时对应步骤「未完成：未授权…」，其余步骤正常完成（不得整体失败） | QA |
+| 18 | 门禁可红 | G-27 插件资产 `--self-test` **exit 1**（注入 1 个 `.css`） | QA |
+
+**实跑命令**
+
+```bash
+cd "$TREE/apps/adapter"
+# B20-1
+"$PY" -m pytest tests/integration/test_dev_workbench.py -q
+"$PY" -m pytest tests/integration/test_dev_commit_e2e.py -q -m e2e
+# B20-2
+"$PY" -m pytest tests/integration/test_content_workbench.py tests/integration/test_content_schedule.py -q
+"$PY" -m pytest tests/integration/test_hr_screening.py tests/integration/test_hr_interview.py tests/integration/test_hr_offer_docs.py -q
+"$PY" -m pytest tests/integration/test_plugin_e2e_content.py tests/integration/test_plugin_e2e_hr.py -q -m e2e
+cd "$TREE" && node apps/web/scripts/check-plugin-ui-assets.mjs --self-test   # 期望 exit 1
+```
+
+**通过判据**：B20-1 13 项（累计 **≥76**）+ B20-2 18 项（累计 **≥104**）全过 + 通用门禁。
+**常见退回原因**：① 只在桩里「假装提交」，bare 仓库无对象；② 抽样只断言「非空」而非逐字节；③ 未确认就能提交（接管点形同虚设）；④ 未接入平台造假回执；⑤ **金额扫描扫到简历筛选产物**，把合法的「待定」误判为违规；⑥ 缺能力时整个任务失败而非单步降级。
+
+---
+
+## B21 端点基线与门禁（收口批次，不新增 p0）
+
+**范围**：三段基线（core 30 / phase2 38 / **phase3 16**）、错误码三处一致（含 `17002` 不外泄 + 内部码豁免）、docx 依赖与插件纯净、前端五门禁、阶段二零回退。
+**p0**：0（本批只做门禁与回归；**p0 116 全绿在 B24 收口**）。
+
+**准入**：所有后端批次已合入；`docs/api/README.md` 与基线 JSON 已同步；前端已构建。
+
+| # | 验收项 | 判据 | 谁跑 |
+| --- | --- | --- | --- |
+| 1 | 三基线 | `core=30`、`phase2=38`（**不回改**）、**`phase3=16`**（PL1-PL14 + WF1/**WF2**，合计 **84**）全实现；G4 加性 diff 0 violation | QA |
+| 2 | G-29 可红 | 删 1 个 phase3 端点（含 **WF2**）/ A4 类型 array→object / 改 phase2 路径名 / A1 加必填字段 —— 5 个负样本均 exit 非 0 | QA |
+| 3 | 错误码一致 | `check_error_catalog.py --strict` exit 0（0 PENDING）；新码不撞既有段、**不复用 `16001`**、同码文案 ≤2 种 | QA |
+| 4 | 阶段二行为证据 | 抽 BL2/BL5/BL10/OPS1/OPS5/KB9 六个用例，在阶段三树上继续绿 | QA |
+| 5 | 阶段二零回退 | 阶段二 1119 用例 0 failed / 0 skipped；p0 178 全绿 | QA |
+| 6 | 前端五门禁 | 禁词（源码/自检/产物）、占位词、三态、错误码正则、插件资产全绿 | QA |
+| 7 | 覆盖率三项 | 总 ≥85%、`business+db` ≥88%、插件域新模块 ≥90% | QA |
+| 8 | **G3-10 docx 依赖与插件纯净** | 依赖登记 **16** 项且含 `python-docx`；插件目录 `import docx` **0 命中**；产物 `.docx` 可解压出 `word/document.xml` | QA |
+| 9 | **G3-11 `17002` 不外泄 + 内部码豁免** | ①`17002` 仅后端内部定义与单测允许；**A3/A4 响应、前端兜底表、任何 `message` 0 命中**；②脚本内置豁免名单 **`{17002}`**（内部码不要求前端覆盖，否则 G-13 永远红）；③反例：从名单删 `17002` → `--strict` 必须失败（证明是白名单而非关检查） | QA |
+
+**实跑命令**
+
+```bash
+cd "$TREE" && "$PY" deploy/validate_openapi.py
+cd "$TREE/apps/adapter" && "$PY" scripts/check_error_catalog.py --strict
+cd "$TREE/apps/web" && npm run typecheck && npm run lint && npm run build
+node scripts/check-banned-terms.mjs && node scripts/check-banned-terms.mjs --self-test
+node scripts/check-no-placeholders.mjs && node scripts/check-page-states.mjs
+```
+
+**通过判据**：**9 项**全过；任一红即 B21 不通过（本批没有「部分通过」）。
+**常见退回原因**：① phase2 变成 37/39（改了老契约）；② phase3 写成 14/15（漏 PL14 或 WF2）；③ 错误码新增但 `business-errors.ts` 没补；④ `17002` 出现在 `message` 或前端兜底表；⑤ 只跑契约文件不跑阶段二用例（缺行为证据）；⑥ 前端门禁 `--self-test` 返 0。
+
+---
+
+## B23 前端·市场与授权文案（3 条**界面复核**，不新增 p0）
+
+**范围**：免费版市场的降级表现、授权抽屉文案、`16006` 提示与后端一致性。
+**用例**：**0 条新 p0** —— 这三条是对 B17 已过用例的**界面层复核**（后端断言在 B17，界面文案在 B23），**不重复计 p0**，累计仍 104。
+> 口径说明（主理人 2026-10-23 已确认）：B23 三项分别对应 `MK06-04`、`PL03-05`、`PL03-07` 的**界面层**断言，按「复核」处理，**记 0 条新 p0**（后端断言属 B17），累计从 109 起算。
+
+| # | 验收项 | 判据 | 谁跑 |
+| --- | --- | --- | --- |
+| 1 | 免费版市场不降级 | 免费版打开 `/plugins` → 整页「当前套餐不含插件能力，升级后即可使用」+ 升级入口；**不是错误页、不出现错误码**（Q3-1） | QA |
+| 2 | 授权抽屉文案 | 能力项全部业务语言（0 处 `scope`/`permission`/`grant`）；按钮「同意并安装」；取消必需项的后果说明可见（W-3） | QA |
+| 3 | `16006` 提示一致 | 界面文案与后端 `message` **逐字一致**；且与 `16005` 的文案/CTA 可区分（自己授权 vs 找管理员） | QA |
+
+**实跑命令**
+
+```bash
+cd "$TREE/apps/web"
+node scripts/check-banned-terms.mjs --p3-authz-drawer    # 抽屉文案禁词
+node scripts/check-page-states.mjs --p3-plugins-page     # 免费版降级不是错误态
+```
+
+**通过判据**：3 项全过；p0 累计**仍 109**（本批不计 p0）。
+
+---
+
+## B24 前端·宿主页与合规（7 条 p0）
+
+**范围**：宿主唯一、路由、三态、未安装空态、禁词三面、插件资产 0、手工抽验。
+**用例**：`TC-P3-UI24-01~04`、`TC-P3-UI25-01~03`（**7 条 p0**）。
+
+| # | 验收项 | 判据 |
+| --- | --- | --- |
+| 1 | 宿主唯一 | 宿主组件文件数 **==1**；`pluginId` 布局分支 **0** 处 |
+| 2 | 路由齐备 | `/plugins/{id}`、`/workbench/{id}`、`/workflows/{taskId}` 存在于构建产物 |
+| 3 | 三态齐备 | 每个新页面引用 `LoadingState/EmptyState/ErrorState` 且 `ErrorState` 传 `onRetry` |
+| 4 | 未安装空态 | `/workbench/{id}` → 「该插件还没有添加」+「去市场看看」（非错误页） |
+| 5 | 禁词三面 | 源码/产物/声明文案 0 命中；`\b[1-3]\d{4}\b` 0；占位词 0 |
+| 6 | 插件资产 0 | `.css/.scss/.less/.jsx/.tsx` = 0；字体图标包 = 0；`--self-test` exit 1 |
+| 7 | 手工抽验 HV-5~8 | 各 3 次重复一致，留证齐全（抽样规则见测试方案 §4.11） |
+
+**通过判据**：7 项全过 + **p0 116 全绿** + 阶段二 1119 零回退。
+
+---
+
+## 5. 退回规则（一票否决，不进入讨论）
+
+| # | 情形 | 处理 |
+| --- | --- | --- |
+| 1 | `--run-pg` 出现 **skip** | 直接退回，不接受「环境问题」解释 |
+| 2 | 门禁 `--self-test` 返回 0（漏检）却当绿 | 退回；该门禁视为未实现 |
+| 3 | 用 `skip` / `xfail` / `assert True` 凑 p0 数 | 退回，按「伪造门禁」记 P0 流程缺陷 |
+| 4 | 契约改了但 `docs/api/README.md` 未同步，或 `phase2` 数字变化（38→37/39） | 退回（G-29 红） |
+| 5 | 结果物只有「字段存在」而无真实对象（无 git 对象 / 无文件 / 无回执 id） | 退回（AC-02 一票否决） |
+| 6 | 插件目录出现 `.css`/自有 `.jsx`，或宿主出现 `pluginId` 布局分支 | 退回（AC-04 一票否决） |
+| 7 | 验收项只写「已实现/正常」，无「可断言证据」 | 该项按未通过计 |
+| 8 | 自测证据包缺项（§0.2 六项之一） | 退回补证，合规后重新排期 |
+| 9 | **批次内容串号**（如把 B19 的超时/排队写进 B16） | 退回重报，避免「我说过了、你说没过」的扯皮 |
+
+---
+
+## 6. 用例 → 批次映射速查（与架构 §9 对齐；前端批次 B22-B27）
+
+| 批次 | 用例前缀 | 条数 | 累计 |
+| --- | --- | --- | --- |
+| B16 | PL01、PL05 | 7 | 7 |
+| B17 | MK06、MK07、PL03（含 PL14）、MK10-02 | 19 | 26 |
+| B18 | PL02-01、MK08（含 PL5 重复安装）、PL04、MK09、MK10-01 | 16 | 42 |
+| B19 | PL02-02~07、WF11、WF12（含 WF2）、WF13、WF14 | 26 | 68 |
+| B20-1 | DEV15~17、E2E-DEV | 13 | 81 |
+| B20-2 | CNT18~20、HR21~23、E2E-CNT/HR | 28 | 109 |
+| B21 | —（门禁批次，含 G3-10/G3-11） | 0 | 109 |
+| B23 | —（界面复核，不新增 p0） | 0 | 109 |
+| B24 | UI24、UI25 | 7 | **116** |
+
+---
+
+*编制：严过关（QA 工程师）· 2026-10-23 · v1.1 按架构 §9 重编号；判据来源 `docs/qa-phase3-test-plan.md`。*
