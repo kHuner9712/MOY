@@ -16,6 +16,11 @@
 3. **码 → 注册表**：``ErrorCode`` 每个成员都必须在 ``ERROR_REGISTRY`` 中有
    ``ErrorSpec``（漏注册 → 运行时 ``KeyError``）。
 
+4. **反查僵尸码 + 具名分类**：`对外` 码必须至少被 1 处生产代码引用
+   （``ErrorCode.<常量名>`` 形态）。阶段三域（``160``/``170``）0 引用 = **红**；
+   阶段一/二历史码 0 引用 = ``[WARN]``（可见不阻塞）；``visibility="预留"``
+   的码（B27 ``12004``）不计僵尸，但每次运行具名打印 ``[RESERVED]``。
+
 设计口径（为什么允许「按批次放行」而不是一律默认失败）：
 
 - G-13 的判据是「已登记的码不得漂移」，**尚未开始批次**的码默认失败会让上一批的
@@ -110,8 +115,13 @@ DEFAULT_FORBID_INTERNAL = "17002"
 
 #: 反查的作用域：阶段三新增码（插件域 `160xx` / 任务域 `170xx`）。
 #:
-#: 为什么只查这两段：阶段一/二有 5 个历史码（`11005` / `12002` / `12004` / `12005` /
-#: `15006`）从未被 `ErrorCode.<常量名>` 引用过，属于阶段二遗留（另立批次收口），
+#: 为什么只查这两段：阶段一/二曾有 5 个历史码（`11005` / `12002` / `12004` / `12005` /
+#: `15006`）从未被 `ErrorCode.<常量名>` 引用过。B27 已逐个收口，**各有去向**：
+#: - `11005` → 接线：R7 底座检索失败改抛 `11005`（HTTP 200，对齐冻结契约）；
+#: - `15006` → 接线：额度用尽软提示走 `data.notice_code`（`code` 恒 0，不停服）；
+#: - `12002` / `12005` → 注销：任务失败全走状态机、工具语义已被 `13002`/`16005`
+#:   覆盖，与内部码 `17002` 重复；按「注销值不复用」原则从代码与文档中删除；
+#: - `12004` → 预留：任务超时走状态机不走错误码，保留槽位并按 `[RESERVED]` 放行。
 #: 把它们拉进本门禁会让「阶段三每批都因为历史债红着」，于是所有人学会无视这条门禁——
 #: 门禁一旦可以被无视，就等于不存在。
 #: 处理方式：作用域内 0 引用 = **红**；作用域外 0 引用 = **每次运行都打印**的
@@ -424,6 +434,25 @@ def internal_codes() -> set[str]:
     return {str(int(spec.code)) for spec in ERROR_REGISTRY.values() if spec.visibility == "内部"}
 
 
+def reserved_codes() -> set[str]:
+    """从注册表读出「预留码」（`visibility="预留"`）。
+
+    预留码是**已登记但暂不接线**的码（B27：`12004` 任务超时——阶段三设计里
+    任务超时走状态机不走错误码，但配置项与设计意图仍在，保留槽位）。
+    与 `internal_codes()` 同形，但纪律**不同**：
+
+    * 不要求被端点引用（G-13 反查放行，每次运行具名打印 `[RESERVED]`）；
+    * 仍**要求**前端兜底表覆盖（随时可能上线，前端要继续能翻译它）；
+    * 架构文档登记行**必须**带预留标注（理由 + 指向文档），否则属私设预留。
+
+    Returns:
+        set[str]: 预留码集合（形如 `{"12004"}`）。
+    """
+    from app.core.errors import ERROR_REGISTRY
+
+    return {str(int(spec.code)) for spec in ERROR_REGISTRY.values() if spec.visibility == "预留"}
+
+
 def resolve_unreferenced_pending(batch_arg: str) -> set[str]:
     """把批次参数解析为「允许暂时无人引用」的码集合。
 
@@ -481,22 +510,27 @@ def check_external_referenced(
     referenced: set[str],
     internal: set[str],
     allowed: set[str],
+    reserved: set[str],
 ) -> CheckResult:
     """反查僵尸码：`对外` 码必须至少被 1 处生产代码引用。
 
     `16010` 曾经就是「声明了、门禁也绿、但没有任何端点会返回它」的僵尸码——
     正查（码 → 注册表）发现不了，只有反查（码 → 引用）能抓。
 
+    预留码（`visibility="预留"`）不计入僵尸集合，但**每次运行都具名打印**
+    `[RESERVED]`：放行必须是显式且可见的，与 `[PENDING]` 同一条纪律。
+
     Args:
         backend_codes: ``errors.py`` 的「常量名 → 码」。
         referenced: 被引用的码集合。
         internal: 内部码集合（内部码不进前端，也不要求被端点引用）。
         allowed: 按批次放行的码（引用端点尚未落地）。
+        reserved: 预留码集合（暂不接线，架构文档已登记）。
 
     Returns:
         CheckResult: 校验结果。
     """
-    external = set(backend_codes.values()) - internal
+    external = set(backend_codes.values()) - internal - reserved
     in_scope = {code for code in external if code.startswith(REFERENCE_SCOPE_PREFIXES)}
     out_scope = external - in_scope
     zombies = sorted(in_scope - referenced - allowed)
@@ -504,6 +538,8 @@ def check_external_referenced(
     legacy = sorted(out_scope - referenced)
     for code in pending:
         print(f"[PENDING] 对外码暂无引用（引用端点未落地，按批次放行）：{code}")
+    for code in sorted(reserved):
+        print(f"[RESERVED] {code}（架构文档已登记为预留，暂不接线）")
     for code in legacy:
         print(f"[WARN] 历史遗留码从未被端点引用（阶段一/二债，另立批次收口，不阻塞本批）：{code}")
     if zombies:
@@ -517,6 +553,8 @@ def check_external_referenced(
         detail += f"（{len(pending)} 个按批次放行）"
     if legacy:
         detail += f"；另有 {len(legacy)} 个历史遗留码 0 引用（[WARN]，见上）"
+    if reserved:
+        detail += f"；{len(reserved)} 个预留码暂不接线（[RESERVED]，见上）"
     return CheckResult("对外码 → 端点引用", True, detail)
 
 
@@ -617,6 +655,7 @@ def run(pending_arg: str, unreferenced_arg: str, forbid_arg: str) -> int:
         backend_codes = parse_backend_codes(ERRORS_PY)
         frontend_codes = parse_frontend_codes(BUSINESS_ERRORS_TS)
         internal = internal_codes()
+        reserved = reserved_codes()
         referenced = referenced_codes(backend_codes)
     except ValueError as exc:
         return _fail(str(exc))
@@ -638,7 +677,9 @@ def run(pending_arg: str, unreferenced_arg: str, forbid_arg: str) -> int:
         check_architecture_landed(arch_codes, backend_codes, pending_domains),
         check_frontend_superset(backend_codes, frontend_codes),
         check_registry_complete(),
-        check_external_referenced(backend_codes, referenced, internal, unreferenced_allowed),
+        check_external_referenced(
+            backend_codes, referenced, internal, unreferenced_allowed, reserved
+        ),
         check_internal_unreferenced(backend_codes, referenced, internal),
         check_forbid_internal(forbidden),
     ]

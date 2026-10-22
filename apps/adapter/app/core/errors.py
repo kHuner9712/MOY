@@ -60,6 +60,9 @@ class ErrorCode(IntEnum):
     TASK_NOT_FOUND = 12001
     TASK_EXECUTION_FAILED = 12002
     TASK_CANCELLED = 12003
+    #: 预留（B27）：任务超时在阶段三设计里走状态机（`failed` + `_summary_text`），
+    #: 不走错误码；配置项与设计意图仍在，故保留槽位并显式标注（架构 v1.0 登记行
+    #: 已带预留说明，G-13 按 `[RESERVED]` 具名放行）。任何人不得删除本行。
     TASK_TIMEOUT = 12004
     TASK_TOOL_NOT_GRANTED = 12005
 
@@ -160,9 +163,15 @@ class ErrorSpec:
     http_status: int
     message: str
     internal: str
-    #: 可见性：`对外` 的码前端兜底表必须有；`内部` 的码前端**必须没有**
-    #: （架构 §5.4 硬约束 ②：`17002` 只允许出现在后端内部实现与单测，
-    #:  不得进前端兜底表、不得出现在任何返回值与示例里）。
+    #: 可见性（三取值，纪律各不同）：
+    #: - `对外`（默认）：前端兜底表**必须**有该码；
+    #: - `内部`：前端**必须没有**（架构 §5.4 硬约束 ②：`17002` 只允许出现在
+    #:   后端内部实现与单测，不得进前端兜底表、不得出现在任何返回值与示例里）；
+    #: - `预留`：已登记但**暂不接线**的码（B27 `12004`）。纪律：
+    #:   ① 架构文档登记行**必须**带预留标注（理由 + 指向文档），否则属私设预留；
+    #:   ② G-13 门禁按具名 `[RESERVED]` 打印放行，不进僵尸码清单；
+    #:   ③ 前端兜底表仍**必须**覆盖（随时可能上线，前端要继续能翻译它）；
+    #:   ④ 任何人不得把预留码当僵尸码删除，也不得在未接架构文档的情况下上线。
     visibility: str = "对外"
 
 
@@ -251,7 +260,11 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
     ),
     ErrorCode.TASK_CANCELLED: ErrorSpec(ErrorCode.TASK_CANCELLED, 200, "任务已取消", "终态冲突"),
     ErrorCode.TASK_TIMEOUT: ErrorSpec(
-        ErrorCode.TASK_TIMEOUT, 200, "任务执行超时，请重试", "单步/整体超时"
+        ErrorCode.TASK_TIMEOUT,
+        200,
+        "任务执行超时，请重试",
+        "单步/整体超时（预留：任务超时走状态机，见 architecture-phase3.md §3.5）",
+        visibility="预留",
     ),
     ErrorCode.TASK_TOOL_NOT_GRANTED: ErrorSpec(
         ErrorCode.TASK_TOOL_NOT_GRANTED, 200, "该步骤需要的工具尚未连接", "依赖工具未授权"
