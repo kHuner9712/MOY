@@ -86,7 +86,7 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         "status": "open",
         "pinned_by": "G-05 覆盖率（business+db）",
         "due_batch": "B21",
-        "due_action": "缺口 100% 在 db 层（db 79.01%）；补 task/plugin/artifact 三个 PG repo 至 ≥88%",
+        "due_action": "缺口全在 db 层（79.01%）：补 task/plugin/artifact 三个 PG repo",
     },
     {
         "id": "P3-B20-02",
