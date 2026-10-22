@@ -239,7 +239,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_step_seq
     ON plugin_task_step (tenant_id, task_id, seq);
 
 -- ---------------------------------------------------------------------------
--- 9. 产物（text ≤32KB 内联已脱敏；file 走对象存储键，不暴露存储地址）
+-- 9. 产物（text ≤32KB 内联已脱敏；file 的真实字节进 `content`，不暴露存储地址）
+--
+-- `content BYTEA`（B22 补，迁移 `0005` 同源）：
+--   文件类产物（docx / xlsx / zip）的字节必须落库，否则 PG（私有化）后端下载时
+--   只能回落到 `inline_text` 的文本预览——「导出 Word 公文」拿到的是文本而不是文件。
+--   允许 NULL：`text` / `link` / `table` 类产物本来就没有二进制内容。
+--   存储地址依旧不经 API 暴露，下载一律走平台代理 `/files/artifacts/{token}`。
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS plugin_artifact (
     tenant_id      TEXT        NOT NULL,
@@ -256,6 +262,7 @@ CREATE TABLE IF NOT EXISTS plugin_artifact (
     storage_key    TEXT,
     size_bytes     BIGINT      NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
     content_sha256 CHAR(64),
+    content        BYTEA,                                                 -- 二进制内容（B22）
     version        SMALLINT    NOT NULL DEFAULT 1 CHECK (version >= 1),  -- WF2 版本（B19）
     version_history JSONB      NOT NULL DEFAULT '[]'::jsonb,             -- 旧版本可回看/下载
     expires_at     TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '180 days',
