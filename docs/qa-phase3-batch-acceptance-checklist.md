@@ -36,7 +36,7 @@ cd "$TREE/apps/adapter"
 "$PY" -m ruff check .                                  > "$LOG/g01.log" 2>&1; echo "G-01 EXIT=$?"; tail -1 "$LOG/g01.log"
 "$PY" -m ruff format --check .                         > "$LOG/g02.log" 2>&1; echo "G-02 EXIT=$?"; tail -1 "$LOG/g02.log"
 "$PY" -m mypy app                                      > "$LOG/g03.log" 2>&1; echo "G-03 EXIT=$?"; tail -1 "$LOG/g03.log"
-OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg -rxX                > "$LOG/g04.log" 2>&1; echo "G-04 EXIT=$?"; tail -3 "$LOG/g04.log"
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg -rxX                > "$LOG/g04.log" 2>&1; echo "G-04 EXIT=$?"; tail -3 "$LOG/g04.log"   # 期望 0 failed / 0 skipped / xfailed == EXPECTED_XFAIL
 OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q -m p0 --run-pg               > "$LOG/g24.log" 2>&1; echo "G-24 EXIT=$?"; tail -2 "$LOG/g24.log"
 OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg --cov=app --cov-report=term > "$LOG/g05.log" 2>&1; echo "G-05 EXIT=$?"; grep "^TOTAL" "$LOG/g05.log"
 "$PY" -m coverage report --include="app/business/*,app/db/*"            > "$LOG/g05b.log" 2>&1; echo "G-05b EXIT=$?"; tail -1 "$LOG/g05b.log"
@@ -44,15 +44,21 @@ OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg --cov=app --cov-report=t
 # ── 契约 / 错误码 / 插件声明（部署脚本在 REPO 根）──
 "$PY" "$TREE/deploy/validate_openapi.py"                                  > "$LOG/g29.log" 2>&1; echo "G-29 EXIT=$?"; tail -2 "$LOG/g29.log"
 "$PY" "$TREE/apps/adapter/scripts/check_error_catalog.py" --strict        > "$LOG/g30.log" 2>&1; echo "G-30 EXIT=$?"; tail -1 "$LOG/g30.log"
-"$PY" "$TREE/deploy/validate_plugins.py"                                  > "$LOG/g26.log" 2>&1; echo "G-26 EXIT=$?"; tail -2 "$LOG/g26.log"
-"$PY" "$TREE/deploy/validate_plugins.py" --self-test                      > "$LOG/g26s.log" 2>&1; echo "G-26SELF EXIT=$? (期望 1)"; tail -2 "$LOG/g26s.log"
+"$PY" "$TREE/deploy/validate_plugins.py" --dir "$TREE/apps/adapter/app/plugins/manifests" \
+      > "$LOG/g26.log" 2>&1; echo "G-26 EXIT=$?"; grep -o '"directory": "[^"]*"' "$LOG/g26.log" | head -1; tail -1 "$LOG/g26.log"
+"$PY" "$TREE/deploy/validate_plugins.py" --dir "$TREE/apps/adapter/app/plugins/manifests" --self-test \
+      > "$LOG/g26s.log" 2>&1; echo "G-26SELF EXIT=$? (期望 1)"; tail -2 "$LOG/g26s.log"
+
+# ── 归档身份（写进报告固定字段：门禁验的是哪棵树）──
+echo "ARCHIVE_SHA=$(git -C "$REPO" rev-parse <SHA>)" | tee "$LOG/archive-identity.txt"
+echo "ARCHIVE_TREE=$TREE" | tee -a "$LOG/archive-identity.txt"
 ```
 
 > **退出码纪律（主理人 2026-10-23 抽验教训，强制）**：`cmd | tail -3; echo $?` 取到的是 **`tail` 的退出码（恒 0）**，会把「自检通过=1」误判成「永远绿」。**所有门禁必须重定向到日志后单独取 `$?`**；前端三个 `.mjs` 扫描器同理。**违反此纪律的输出一律视为无效证据（见 §5 第 10 条）。**
 
 ### 0.2 工程师自测证据包（缺项直接退回，不进验收）
 
-① 本批 commit SHA；② 上述命令的**原始输出**（不允许只写「已通过」）；③ 本批新增/变更端点的**契约 diff**（`docs/api/README.md` + 基线 JSON 同一 commit）；④ 新增错误码三处同步位置；⑤ 已知未完成项清单；⑥ 若动前端：`tsc`/`lint`/`build` 输出与受影响页面清单。
+① 本批 commit SHA；② 上述命令的**原始输出**（不允许只写「已通过」），且 pytest 汇总行必须给出**四列** `passed / failed / skipped / xfailed` 与**两个数字**（`EXPECTED_XFAIL` vs 实际 `xfailed`）；③ 本批新增/变更端点的**契约 diff**（`docs/api/README.md` + 基线 JSON 同一 commit）；④ 新增错误码三处同步位置；⑤ 已知未完成项清单；⑥ 若动前端：`tsc`/`lint`/`build` 输出与受影响页面清单；⑦ **归档身份**：被验的 commit SHA + 导出目录绝对路径；**所有带目录扫描的门禁（G-26 等）必须显式传 `--dir` 并附日志里的 `"directory": "..."` 行**——不带 `--dir` 时会扫到「已安装 app 包」而非导出树，形成**假隔离**（2026-10-23 QA 实测：在 `/tmp` 导出目录跑，日志显示扫的是主工作区）。
 
 ### 0.3 p0 分布与累计（按架构 §9 编号）
 
@@ -69,6 +75,17 @@ OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg --cov=app --cov-report=t
 | **B24** | **7** | **117** | UI24、UI25 |
 
 > 说明：B21 是**收口批次**，不新增 p0，验收对象是三基线（30/38/**16**，合计 84）、错误码一致性（含 `17002` 不外泄 + 内部码豁免）与阶段二零回退；**p0 117 全绿在 B24 收口**。B23 只做界面层复核（主理人已确认记 0 条新 p0，避免与 B17 重复计数）。
+
+### 0.4 汇总口径（**xfail/skip 定死**，与测试方案 §2.6 同源）
+
+| 规则 | 判据 |
+| --- | --- |
+| `skipped` | **任何批次、任何模式都必须为 0**。自检类文件在正常模式下**不收集**（不是 `skipif`）；实现二选一：①文件名不带 `test_` 前缀（pytest 默认不收集，**首选**——零改全局配置）；②`conftest.py` 的 `collect_ignore`。`skip` 没有到期日，`xfail` 有编号 |
+| `xfailed` | 正常模式允许 `xfailed == EXPECTED_XFAIL`（`tests/expected_xfail.py` 的模块常量，唯一真源）；**批次完成后按归属表下降**（`EXPECTED_XFAIL_BY_BATCH`：B16=6 → B17=2 → B19=0，阶段终态 0）。**只要求该批归属的 xfail 全部转 pass，不要求一次归 0** |
+| 汇总断言 | pytest 汇总必须同时打印 **`EXPECTED_XFAIL`** 与**实际 `xfailed`**；不等即红（多=新增未登记缺陷；少=已修复但常量未减，强制摘标记） |
+| 验收报告 | 自动化测试列写**四列** `passed / failed / skipped / xfailed`，不得只写三列 |
+
+**判定示例**：`4 passed + 6 xfailed + 0 skipped` = 合格；`4 passed + 6 xfailed + 2 skipped` = 红；`10 passed + 0 xfailed` 但常量仍为 6 = 红。
 
 ---
 
@@ -413,6 +430,7 @@ node scripts/check-page-states.mjs --p3-plugins-page   > "$LOG/b23-freeplan.log"
 | 8 | 自测证据包缺项（§0.2 六项之一） | 退回补证，合规后重新排期 |
 | 9 | **批次内容串号**（如把 B19 的超时/排队写进 B16） | 退回重报，避免「我说过了、你说没过」的扯皮 |
 | 10 | **用管道取门禁退出码**（`cmd \| tail -n; echo $?`）或未附「EXIT=」原始行 | 该证据视为无效，按未跑处理（易把「自检=1」误判成「恒绿」） |
+| 11 | **`skipped > 0`**，或用 `skipif` 代替 `collect_ignore` 掩盖自检文件；或 `xfailed` 与 `EXPECTED_XFAIL` 不等 | 退回；skip 视为「无到期日的假绿」，xfail 不等视为「缺陷台账与实际脱节」 |
 
 ---
 

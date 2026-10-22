@@ -35,6 +35,7 @@ from types import ModuleType
 import pytest
 
 from app.core.errors import ERROR_REGISTRY, ErrorCode
+from tests.expected_xfail import EXPECTED_XFAIL, EXPECTED_XFAIL_BY_BATCH
 
 pytestmark = pytest.mark.integration
 
@@ -107,11 +108,10 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
     },
 ]
 
-#: **当前仍应 xfail 的条数——显式常量，必须人工维护**
-#:
-#: 刻意不用 `len(...)` 推导：若有人「删掉一条登记 + 同时改这个数」，漂移会被掩盖。
-#: 写成常量后，任何变化都必须改这里 —— 这条断言的价值就在"逼人手动确认"。
-EXPECTED_ACTIVE_XFAIL = 6
+#: 预期 xfail 条数来自**唯一真源** `tests/expected_xfail.py`（团队 §0.4 口径），
+#: 本文件不重复定义，避免"骨架里 6、门禁里 5"这种双份漂移。
+#: 刻意不由 `len(DEFERRED_CASES)` 推导：那会让「删一条用例 + 删一条登记」互相掩盖。
+EXPECTED_ACTIVE_XFAIL = EXPECTED_XFAIL
 
 
 # ===========================================================================
@@ -326,7 +326,11 @@ def test_d1_deferred_registry_matches_markers() -> None:
     for case in active:
         batch = str(case["batch"])
         per_batch[batch] = per_batch.get(batch, 0) + 1
+    assert per_batch == dict(EXPECTED_XFAIL_BY_BATCH), (
+        f"[骨架汇总 ⑨] 分批剩余与 `EXPECTED_XFAIL_BY_BATCH` 不一致："
+        f"实际 {per_batch}、期望 {dict(EXPECTED_XFAIL_BY_BATCH)}。"
+        "只比总数会漏掉「把 B17 的条目错标成 B19」这类批次归属错误"
+    )
     assert sum(per_batch.values()) == EXPECTED_ACTIVE_XFAIL, (
-        f"[骨架汇总 ⑨] 各批剩余合计 {sum(per_batch.values())} != {EXPECTED_ACTIVE_XFAIL}："
-        f"分批剩余 {per_batch}"
+        f"[骨架汇总 ⑩] 各批剩余合计 {sum(per_batch.values())} != {EXPECTED_ACTIVE_XFAIL}"
     )
