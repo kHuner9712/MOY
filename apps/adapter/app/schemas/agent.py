@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.common import PageQuery
 from app.schemas.model import ModelProfile, Usage
+from app.schemas.task import StepArtifact, StepFailure
 
 
 class TaskStatus(StrEnum):
@@ -203,12 +204,17 @@ class Artifact(BaseModel):
         name: 产物名称。
         download_url: 下载地址（`file` 类型）。
         url: 外部链接（`link` 类型）。
+        output_key: 产物键（与插件声明 `outputs[].key` 对齐，阶段三加性字段）。
+        content_sha256: 内容摘要（前端据此判断"文件到底换没换"，阶段三加性字段）。
     """
 
     type: ArtifactType = Field(default=ArtifactType.TEXT, description="产物类型")
     name: str = Field(default="", description="产物名称")
     download_url: str | None = Field(default=None, description="下载地址")
     url: str | None = Field(default=None, description="外部链接")
+    # **加性字段**：缺省空串，阶段一响应逐字不变（B19 一票否决项）
+    output_key: str = Field(default="", description="产物键（阶段三加性字段）")
+    content_sha256: str = Field(default="", description="内容摘要（阶段三加性字段）")
 
 
 class TaskResult(BaseModel):
@@ -258,6 +264,11 @@ class TaskDetailData(BaseModel):
     confirm: dict[str, Any] | None = Field(default=None, description="人工接管信息（加性字段）")
 
 
+#: 步骤失败信息（A4 `steps[].failure` = `app.schemas.task.StepFailure`）。
+#:
+#: **只从 `app/schemas/task.py` 引入，不在本文件再定义一份同名模型**：
+#: 同名类在两个模块各定义一次会让 OpenAPI 里出现两个 `StepFailure` schema
+#: （互相覆盖），前端据此生成的类型会随机取到其中一份。
 class StepItem(BaseModel):
     """任务步骤条目（`title` / `output_summary` 为业务语言，底座节点类型名不暴露）。
 
@@ -269,6 +280,8 @@ class StepItem(BaseModel):
         started_at: 开始时间。
         finished_at: 完成时间。
         output_summary: 输出摘要。
+        artifacts: 该步产物（阶段三加性字段，A3/A4 工作流可视化要用）。
+        failure: 该步失败信息（阶段三加性字段，PRD E-9：就地展示、不弹错）。
     """
 
     step_id: str = Field(description="步骤 ID")
@@ -278,6 +291,15 @@ class StepItem(BaseModel):
     started_at: str | None = Field(default=None, description="开始时间，ISO 8601 格式")
     finished_at: str | None = Field(default=None, description="完成时间，ISO 8601 格式")
     output_summary: str | None = Field(default=None, description="输出摘要")
+    # **加性字段**：缺省空列表，阶段一响应逐字不变。
+    #
+    # 这两个字段曾经漏在契约里，而服务层**已经**在构造 `StepItem` 时塞了
+    # `artifacts=` / `failure=`——pydantic 默认忽略未声明字段（不报错），
+    # 于是"填了等于没填"，前端永远拿不到步骤产物。加回来才算真的对外可见。
+    artifacts: list[StepArtifact] = Field(
+        default_factory=list, description="该步产物（阶段三加性字段）"
+    )
+    failure: StepFailure | None = Field(default=None, description="该步失败信息（阶段三加性字段）")
 
 
 class StepsData(BaseModel):

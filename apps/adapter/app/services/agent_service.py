@@ -42,6 +42,7 @@ from app.schemas.agent import (
 )
 from app.schemas.common import build_page, sse_frame
 from app.schemas.model import Usage
+from app.schemas.task import ArtifactVersionItem, StepArtifact, StepFailure
 
 logger = get_logger(__name__)
 
@@ -101,6 +102,22 @@ def _total_units_of(native_data: dict[str, Any]) -> int:
         return int(native_data.get("total_tokens", 0) or 0)
     except (TypeError, ValueError):  # pragma: no cover - 下游字段类型异常
         return 0
+
+
+def _as_int(value: Any, default: int) -> int:
+    """把任意上游值收敛成整数（**不抛**，坏值退回缺省）。
+
+    Args:
+        value: 上游原始值（可能是 `str` / `None` / 非法串）。
+        default: 无法转换时的缺省值。
+
+    Returns:
+        int: 整数结果。
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class AgentService:
@@ -332,20 +349,11 @@ class AgentService:
         outputs = payload.get("outputs", {})
         result = None
         if isinstance(outputs, dict) and outputs:
-            artifacts: list[Artifact] = []
-            raw_artifacts = outputs.get("artifacts", [])
-            if isinstance(raw_artifacts, list):
-                for item in raw_artifacts:
-                    if not isinstance(item, dict):
-                        continue
-                    artifacts.append(
-                        Artifact(
-                            type=ArtifactType(item.get("type", "text")),
-                            name=str(item.get("name", "")),
-                            download_url=item.get("download_url"),
-                            url=item.get("url"),
-                        )
-                    )
+            artifacts: list[Artifact] = [
+                self._map_native_artifact(item)
+                for item in (outputs.get("artifacts") or [])
+                if isinstance(item, dict)
+            ]
             result = TaskResult(summary=str(outputs.get("summary", "")), artifacts=artifacts)
 
         progress = 100 if status == TaskStatus.COMPLETED else 0
@@ -380,6 +388,71 @@ class AgentService:
             raise ApiError(ErrorCode.TASK_NOT_FOUND, internal_detail=f"task_id={task_id}")
         return self._steps.get(task_id, StepsData(task_id=task_id, steps=[]))
 
+    @staticmethod
+    def _map_native_artifact(item: dict[str, Any]) -> Artifact:
+        """把底座产物项映射为自研产物（A3 `result.artifacts[]` / A4 `steps[].artifacts[]`）。
+
+        只做字段搬迁与类型收敛，**不补造数据**：底座没给的字段一律留空串，
+        前端据此判断"没有摘要"而不是"摘要是 0"。
+
+        Args:
+            item: 底座产物项（`type` / `name` / `download_url` / `url` /
+                `output_key` / `content_sha256`）。
+
+        Returns:
+            Artifact: 自研产物。
+        """
+        try:
+            artifact_type = ArtifactType(str(item.get("type", "text")))
+        except ValueError:  # 底座出现未知类型时退回 text，不让一个字段把整页打红
+            artifact_type = ArtifactType.TEXT
+        return Artifact(
+            type=artifact_type,
+            name=str(item.get("name", "")),
+            download_url=item.get("download_url"),
+            url=item.get("url"),
+            output_key=str(item.get("output_key", "") or item.get("key", "") or ""),
+            content_sha256=str(item.get("content_sha256", "") or item.get("sha256", "") or ""),
+        )
+
+    @staticmethod
+    def _map_native_step_artifact(item: dict[str, Any]) -> StepArtifact:
+        """把底座产物项映射为步骤产物（A4 `steps[].artifacts[]`）。
+
+        Args:
+            item: 底座产物项。
+
+        Returns:
+            StepArtifact: 步骤产物。
+        """
+        history = item.get("version_history")
+        versions: list[ArtifactVersionItem] = []
+        if isinstance(history, list):
+            for entry in history:
+                if not isinstance(entry, dict):
+                    continue
+                versions.append(
+                    ArtifactVersionItem(
+                        version=max(_as_int(entry.get("version"), 1), 1),
+                        created_at=str(entry.get("created_at", "") or ""),
+                        download_url=entry.get("download_url"),
+                        content_sha256=str(entry.get("content_sha256", "") or ""),
+                    )
+                )
+        return StepArtifact(
+            artifact_id=str(item.get("artifact_id", "") or item.get("id", "") or ""),
+            output_key=str(item.get("output_key", "") or item.get("key", "") or ""),
+            type=str(item.get("type", "text") or "text"),
+            name=str(item.get("name", "")),
+            version=max(_as_int(item.get("version"), 1), 1),
+            download_url=item.get("download_url"),
+            url=item.get("url"),
+            preview_text=str(item.get("preview_text", "") or ""),
+            content_sha256=str(item.get("content_sha256", "") or item.get("sha256", "") or ""),
+            editable=bool(item.get("editable", False)),
+            version_history=versions,
+        )
+
     def transform_node_event(self, event: dict[str, Any]) -> StepItem | None:
         """将底座原生节点事件转换为自研步骤条目。
 
@@ -402,6 +475,9 @@ class AgentService:
         status = _STEP_STATUS_MAP.get(native_status, StepStatus.RUNNING)
         sequence = int(data.get("index", 0) or 0) + 1
         title = str(data.get("title", "")) or f"步骤 {sequence}"
+        # 产物与失败信息**从同一条节点事件里取**（`node_finished` 才带 `outputs`），
+        # 不另外补造：前端要的是"这一步产出了什么 / 为什么没成"，不是占位符。
+        outputs = data.get("outputs")
         return StepItem(
             step_id=f"{_STEP_PREFIX}{sequence}",
             sequence=sequence,
@@ -409,7 +485,42 @@ class AgentService:
             status=status,
             started_at=data.get("started_at"),
             finished_at=data.get("finished_at"),
-            output_summary=self._summarize_outputs(data.get("outputs")),
+            output_summary=self._summarize_outputs(outputs),
+            artifacts=[
+                self._map_native_step_artifact(item)
+                for item in (outputs.get("artifacts") if isinstance(outputs, dict) else None) or []
+                if isinstance(item, dict)
+            ],
+            failure=self._node_failure(data, status),
+        )
+
+    @staticmethod
+    def _node_failure(data: dict[str, Any], status: StepStatus) -> StepFailure | None:
+        """从节点事件里提取步骤失败信息（A4 `steps[].failure`）。
+
+        **文案必须是业务语言**：底座原始报错（含节点类型、下游 URL 等）只进日志，
+        不拼进 `reason_text`——用户看不懂，也可能把内部实现细节带到前端。
+
+        Args:
+            data: 节点事件 `data` 对象。
+            status: 已映射的步骤状态。
+
+        Returns:
+            StepFailure | None: 失败信息；未失败返回 `None`。
+        """
+        if status != StepStatus.FAILED:
+            return None
+        # 底座原始报错只进日志：`reason_text` 是给用户看的一句话，不含节点类型、
+        # 下游地址等技术细节；`operator_action` 是"照做就能继续"的动作。
+        native_error = data.get("error") or data.get("error_message") or ""
+        if native_error:
+            logger.warning(
+                "agent_step_failed", step_hint=str(data.get("title", "")), detail=str(native_error)
+            )
+        return StepFailure(
+            reason_text="这一步没有处理成功，后面的步骤需要它才能继续",
+            retryable=True,
+            operator_action="可以点「重试这一步」，已完成的步骤不会重跑",
         )
 
     @staticmethod

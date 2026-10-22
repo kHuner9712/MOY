@@ -1040,6 +1040,8 @@ class TaskService:
                         name=item.name,
                         download_url=self._download_url(item),
                         url=item.external_url or None,
+                        output_key=item.output_key,
+                        content_sha256=item.content_sha256,
                     )
                     for item in artifacts
                 ],
@@ -1088,15 +1090,13 @@ class TaskService:
                 started_at=step.started_at or None,
                 finished_at=step.finished_at or None,
                 output_summary=step.output_summary or None,
-                artifacts=[
-                    self._step_artifact(item).model_dump() for item in by_step.get(step.step_id, [])
-                ],
+                artifacts=[self._step_artifact(item) for item in by_step.get(step.step_id, [])],
                 failure=(
                     StepFailure(
                         reason_text=step.reason_text,
                         retryable=step.retryable,
                         operator_action=step.operator_action,
-                    ).model_dump()
+                    )
                     if step.status == STEP_FAILED
                     else None
                 ),
