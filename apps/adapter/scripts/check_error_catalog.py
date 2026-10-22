@@ -99,9 +99,8 @@ OPENAPI_DIR = REPO_ROOT / "docs" / "api"
 #: 中批每跑一次都是假红；若直接关掉反查，`16010` 这类僵尸码又会重新长出来。
 #: 因此放行必须是**按批次的具名白名单**，且每次运行打印 `[PENDING]`；
 #: 批次落地后**必须立刻**把条目删掉并把默认值改回 ``none``。
-PENDING_UNREFERENCED_BY_BATCH: dict[str, tuple[str, ...]] = (
-    {}
-)  # B19 已落地 `16004`（A1）与 `17001`（WF1）：白名单清零，禁止再放行
+#: **B19 已落地 `16004`（A1）与 `17001`（WF1）：白名单已清零，禁止再放行。**
+PENDING_UNREFERENCED_BY_BATCH: dict[str, tuple[str, ...]] = {}
 
 #: 默认放行的批次（与 `DEFAULT_PENDING` 同体例：落地即清零）
 DEFAULT_UNREFERENCED_PENDING = "none"
