@@ -43,6 +43,8 @@ coverage.xml
 .coverage
 .coverage.*
 coverage.json
+# CI 的 junit 报告（P0-4 起由 pytest --junitxml 生成，用于断言 skipped=0）
+junit.xml
 .tox/
 .nox/
 

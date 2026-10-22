@@ -34,7 +34,43 @@ jobs:
   quality-gate:
     name: Lint / 类型 / 测试
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+
+    # ==================================================================
+    # 真实 PostgreSQL 服务（审计 OA-AUDIT-001 / P0-4）
+    #
+    # 此前本 workflow **没有 PG 服务**，注释里写着"integration 用例一律 SKIP"，
+    # 后果是 141 条 PG 用例（含 test_tenant_isolation.py 的 15 条租户隔离用例）
+    # 在 CI 中从未执行，而无 PG 口径的覆盖率实测只有 **84.19% < 85%** ——
+    # 门禁**不可能通过**，且多租户隔离这条最高红线在 CI 里等于没验。
+    #
+    # 镜像与 `deploy/images.lock` 的 postgres 条目保持一致（18.6-alpine）。
+    # ==================================================================
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: officeai
+          POSTGRES_PASSWORD: oa_ci_pw
+          POSTGRES_DB: officeai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U officeai"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # 测试库连接串：**必须是原生 `postgresql://`**
+      # （`test_pg_error_surfacing.py` 直接把它交给 asyncpg，带 `+asyncpg` 会报
+      #  invalid DSN；SQLAlchemy 一侧由 `to_async_dsn` 自行改写，两边都兼容。）
+      OA_TEST_DATABASE_URL: postgresql://officeai_app:oa_ci_pw@localhost:5432/officeai
+      OA_TEST_SUPERUSER_DATABASE_URL: postgresql://officeai:oa_ci_pw@localhost:5432/officeai
+      # 缺陷台账的"当前批次"：`tests/expected_xfail.py::current_batch()` 不给默认值，
+      # 缺失即抛错（缺失即红）。**批次推进时必须同步上调本值**——一旦调到 B30，
+      # 台账中 3 条 `due_batch=B30` 的 open 缺陷会正确地判为「已过期」并报红。
+      OA_BATCH: B21
 
     steps:
       - name: 检出代码
@@ -51,6 +87,47 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+
+      # ------------------------------------------------------------------
+      # 准备 PostgreSQL（审计 OA-AUDIT-001 / P0-4）
+      #
+      # 顺序与 `deploy/docker-entrypoint-initdb.d` 一致：基线 schema → 应用角色 → 迁移。
+      # 应用角色必须是 `NOSUPERUSER NOBYPASSRLS`：超级用户永久绕过 RLS，
+      # 用它跑隔离用例会"全绿但无效"，夹具的 `assert_rls_not_bypassed` 会直接 fail。
+      # ------------------------------------------------------------------
+      - name: 准备 PostgreSQL（应用角色 + 基线 schema + 迁移）
+        run: |
+          set -euo pipefail
+
+          # runner 通常自带 psql，但不做隐式假设：缺了就装（幂等，约 10s）
+          command -v psql >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          }
+
+          export PGPASSWORD=oa_ci_pw
+          PSQL="psql -h localhost -U officeai -d officeai -v ON_ERROR_STOP=1 -q"
+
+          $PSQL -f ../../deploy/init-schema-phase2.sql
+          $PSQL -f ../../deploy/init-schema-phase3.sql
+          $PSQL -f ../../deploy/init-app-role.sql
+
+          # `init-app-role.sql` 用占位口令建角色，该文件自身的运维要求就是
+          # 「首次部署后必须立即改密」。这里改成与超级用户同口令——测试夹具
+          # 派生 scratch 库时依赖「两者同口令」这一既有约定（派生规则见
+          # `tests/integration/pg_fixture.py::_derive_superuser_dsn`）。
+          $PSQL -c "ALTER ROLE officeai_app PASSWORD 'oa_ci_pw';"
+
+          for f in ../../deploy/migrations/000*.sql; do
+            echo "== 应用迁移：$f"
+            $PSQL -f "$f"
+          done
+
+          # 自检证据：应用角色必须 bypassrls=f
+          $PSQL -tAc "SELECT 'app_role_bypassrls=' || rolbypassrls FROM pg_roles WHERE rolname='officeai_app'"
+          $PSQL -tAc "SELECT 'app_role_bypassrls=' || rolbypassrls FROM pg_roles WHERE rolname='officeai_app'" | grep -q 'bypassrls=f'
+          $PSQL -tAc "SELECT 'tables=' || count(*) FROM information_schema.tables WHERE table_schema='public'"
+          $PSQL -tAc "SELECT 'policies=' || count(*) FROM pg_policies"
 
       # ------------------------------------------------------------------
       # 门禁 1：Lint（ruff check）
@@ -103,16 +180,17 @@ jobs:
           echo "G-26 自检通过：6 条负样本全部被拦截"
 
       # ------------------------------------------------------------------
-      # 门禁 4c：迁移脚本（静态，B21）
+      # 门禁 4c：迁移脚本（B21）
       # 钉住 0004 那两次事故：① `END $$` 与 `DO $guard$` 标签不配 → 空库语法崩；
       # ② 无条件 `ALTER TABLE` → 已初始化库属主崩。
-      # **双路径实跑不在 CI 跑**：本 workflow 没有 PG 服务（integration 用例一律
-      # SKIP）。它是本地/准出门禁，交付前由责任人执行并留证据：
-      #   OA_TEST_DATABASE_URL=… python deploy/validate_migrations.py --run-pg
-      # 少跑这一条 = 只验了一条路径，等于没验（空库暴露语法崩、已初始化库暴露属主崩）。
+      #
+      # 审计 OA-AUDIT-001 / P0-4：本 workflow 现已提供 PostgreSQL 服务，
+      # 因此**双路径实跑进入 CI**（此前注释写着"没有 PG 服务、只跑静态"）。
+      # 少跑这一条 = 只验了一条路径，等于没验：
+      # 空库暴露语法崩、已初始化库暴露属主崩。
       # ------------------------------------------------------------------
-      - name: 迁移门禁（静态）
-        run: python ../../deploy/validate_migrations.py
+      - name: 迁移门禁（静态 + 双路径实跑）
+        run: python ../../deploy/validate_migrations.py --run-pg
 
       - name: 迁移门禁自检（可红证明）
         run: |
@@ -127,19 +205,82 @@ jobs:
           echo "迁移门禁自检通过：3 类负样本全部被拦截"
 
       # ------------------------------------------------------------------
+      # 门禁 4d：打包完整性（G-32，审计 OA-AUDIT-001 P0-1）
+      # 钉住的事故：`pyproject.toml` 手工枚举 `packages`，漏登 `app.business` /
+      # `app.db` / `app.plugins` → `pip wheel` 产物里这三个包 0 个文件。
+      # Dockerfile 用 `pip install .`（**非 editable**），容器启动即 ImportError；
+      # 而本地 editable 安装把缺陷完全掩盖，全量测试照常全绿。
+      # 三条判据：包齐全 / 包内资源已声明 / 声明非空。
+      # ------------------------------------------------------------------
+      - name: 打包完整性门禁（G-32）
+        run: python ../../deploy/validate_packaging.py
+
+      - name: 打包门禁自检（可红证明）
+        run: |
+          set +e
+          python ../../deploy/validate_packaging.py --self-test
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "打包门禁自检未按预期命中负样本（退出码 $code，期望 1）"
+            exit 1
+          fi
+          echo "打包门禁自检通过：3 类负样本全部被拦截"
+
+      # ------------------------------------------------------------------
       # 门禁 5：测试 + 覆盖率 ≥ 85%（G-05 硬地板）
       # 阶段二测试方案 §2.1 G-05：总覆盖率下限 85%，业务层（app/business）
       # 阶段门目标 90.5%；此前的 80% 是阶段一口径，W-01 豁免单已到期。
       # 说明：当前批次实测值见 docs/qa-phase2-w1-report.md；未达标即禁合并，
       # 不允许用 --cov-fail-under 参数临时放宽（W-01 单约束）。
+      #
+      # 审计 OA-AUDIT-001 / P0-4：**必须带 `--run-pg`**。无 PG 时 141 条用例跳过，
+      # 覆盖率实测只有 84.19%（<85%）——门禁不可能通过，且隔离用例一条没跑。
+      # 带 PG 后实测：1597 passed / 0 skipped / 覆盖率 89.81%。
+      #
+      # 另：`--run-pg` 下**不允许有 skip**（QA 口径：带 PG 时 skipped 即红），
+      # 因此这里额外断言 skipped=0，防止将来某个 PG 夹具静默退化成 skip。
       # ------------------------------------------------------------------
       - name: pytest（含覆盖率门禁）
         run: |
           pytest tests -q \
+            --run-pg \
+            --junitxml=junit.xml \
             --cov=app \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
             --cov-fail-under=85
+
+      - name: 断言无静默跳过（带 PG 口径 skipped 必须为 0）
+        run: |
+          python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("junit.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+          tests = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          failures = sum(int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in suites)
+
+          print(f"用例 {tests} / 跳过 {skipped} / 失败+错误 {failures}")
+          # QA 口径：带 --run-pg 时 skipped 必须为 0（夹具静默退化成 skip = 假绿）
+          if skipped:
+              print(f"[FAIL] 带 --run-pg 仍有 {skipped} 条用例被跳过，PG 夹具可能已退化")
+              sys.exit(1)
+          if failures:
+              print(f"[FAIL] 存在 {failures} 条失败/错误")
+              sys.exit(1)
+          print("[OK] 带 PG 口径 0 跳过、0 失败")
+          PY
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adapter-junit
+          path: apps/adapter/junit.xml
+          retention-days: 14
 
       - name: 上传覆盖率报告
         if: always()
