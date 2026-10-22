@@ -39,11 +39,11 @@ from app.core.config import Settings
 from app.core.errors import ERROR_REGISTRY, ErrorCode
 from tests.expected_xfail import (
     DEFECT_LEDGER,
-    EXPECTED_OPEN,
+    EXPECTED_OPEN_CASES,
     EXPECTED_RED,
     EXPECTED_XFAIL,
     EXPECTED_XFAIL_BY_BATCH,
-    OPEN_HISTORY,
+    OPEN_CASES_HISTORY,
     RED_HISTORY,
 )
 
@@ -603,17 +603,19 @@ def test_d1_deferred_registry_matches_markers() -> None:
 
     # ⑪ 未闭口总量 = xfail + red：只盯 xfailed 会把「xfail 改 red」当成进度
     open_now = len(xfail_names) + len(red_cases)
-    assert open_now == EXPECTED_OPEN, (
-        f"[骨架汇总 ⑪] 未闭口总量应为 {EXPECTED_OPEN}（xfail {len(xfail_names)} + red "
+    assert open_now == EXPECTED_OPEN_CASES, (
+        f"[骨架汇总 ⑪] 未闭口总量应为 {EXPECTED_OPEN_CASES}（xfail {len(xfail_names)} + red "
         f"{len(red_cases)} = {open_now}）。改状态标记不算进度——必须两个桶之和下降"
     )
 
     # ⑫ 单调不增：历史序列本身不得回升，且末值必须等于当前常量
-    assert all(OPEN_HISTORY[i] >= OPEN_HISTORY[i + 1] for i in range(len(OPEN_HISTORY) - 1)), (
-        f"[骨架汇总 ⑫] 未闭口总量历史出现回升：{OPEN_HISTORY}"
-    )
-    assert OPEN_HISTORY[-1] == EXPECTED_OPEN, (
-        f"[骨架汇总 ⑫] 历史末值 {OPEN_HISTORY[-1]} != 当前常量 {EXPECTED_OPEN}（漏记历史）"
+    assert all(
+        OPEN_CASES_HISTORY[i] >= OPEN_CASES_HISTORY[i + 1]
+        for i in range(len(OPEN_CASES_HISTORY) - 1)
+    ), f"[骨架汇总 ⑫] 未闭口用例历史出现回升：{OPEN_CASES_HISTORY}"
+    assert OPEN_CASES_HISTORY[-1] == EXPECTED_OPEN_CASES, (
+        f"[骨架汇总 ⑫] 历史末值 {OPEN_CASES_HISTORY[-1]}"
+        f" != 当前常量 {EXPECTED_OPEN_CASES}（漏记历史）"
     )
 
     # ⑬ 三个常量必须满足算术恒等：open = xfail + red。
@@ -621,8 +623,8 @@ def test_d1_deferred_registry_matches_markers() -> None:
     #    也不能靠改常量把总量做小（⑪ 校验 open 常量，⑬ 校验三者自洽）。
     #    注意 red 允许随批次上升（新交付代码发现缺陷是正常现象），因此**不对 red 判单调**；
     #    「批次签收时 red 必须为 0」由检查单 §0.4 的签收条件约束（测试无法得知"正在签收"）。
-    assert EXPECTED_OPEN == EXPECTED_XFAIL + EXPECTED_RED, (
-        f"[骨架汇总 ⑬] 常量不自洽：EXPECTED_OPEN({EXPECTED_OPEN}) != "
+    assert EXPECTED_OPEN_CASES == EXPECTED_XFAIL + EXPECTED_RED, (
+        f"[骨架汇总 ⑬] 常量不自洽：EXPECTED_OPEN_CASES({EXPECTED_OPEN_CASES}) != "
         f"EXPECTED_XFAIL({EXPECTED_XFAIL}) + EXPECTED_RED({EXPECTED_RED})"
     )
     assert RED_HISTORY[-1] == EXPECTED_RED, (
