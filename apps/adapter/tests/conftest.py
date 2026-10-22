@@ -42,7 +42,7 @@ from app.core.idempotency import (
     build_fingerprint,
     reset_idempotency_manager,
 )
-from app.core.logging import reset_logging_for_test
+from app.core.logging import configure_logging, reset_logging_for_test
 from app.core.ratelimit import RateLimiter, reset_rate_limiter
 from app.db.repositories.billing_repo import reset_billing_store
 from app.db.repositories.credential_repo import reset_credential_stores
@@ -171,6 +171,15 @@ def _reset_all() -> None:
     reset_rate_limiter()
     reset_dify_client()
     reset_keycloak_client()
+    # **日志绑定的跨用例污染**（2026-10-23 收口期修复）：
+    # `configure_logging()` 在 configure 时把 structlog 的 factory 绑到 `sys.stdout`。
+    # 若某用例在 `capsys` 期间触发 configure（`test_migrate_cli.py` 即如此），
+    # 绑定的是 pytest 的 CaptureIO，用例一结束该流即被关闭——此后**任何**日志调用
+    # 都抛 `ValueError: I/O operation on closed file`。
+    # 表现为"该文件之后成片变红"，而根因在它前面（实测：带它 51 failed / 排除它 928 passed）。
+    # 在每个用例边界重新绑定到当前 sys.stdout，把这个坑闭在源头。
+    reset_logging_for_test()
+    configure_logging()
     reset_model_service()
     reset_rag_service()
     reset_agent_service()
