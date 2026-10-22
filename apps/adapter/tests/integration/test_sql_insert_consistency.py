@@ -149,12 +149,12 @@ def test_insert_column_value_arity_matches() -> None:
     """每条 INSERT 的列数必须等于值数（`P3-B19-04` 的直接判据）。"""
     statements = insert_statements()
     # 防空转：扫描为空时"0 处不一致"毫无意义（假绿）
-    assert statements, f"未扫描到任何 INSERT 语句——判据输入为空，结论不成立（REPO_ROOT={REPO_ROOT}）"
+    assert statements, (
+        f"未扫描到任何 INSERT 语句——判据输入为空，结论不成立（REPO_ROOT={REPO_ROOT}）"
+    )
 
     mismatches = [
-        (name, len(cols), len(vals))
-        for name, cols, vals in statements
-        if len(cols) != len(vals)
+        (name, len(cols), len(vals)) for name, cols, vals in statements if len(cols) != len(vals)
     ]
     assert not mismatches, f"INSERT 列数与值数不一致（文件, 列, 值）：{mismatches}"
 
@@ -168,9 +168,6 @@ def test_insert_columns_exist_in_ddl() -> None:
     assert statements, "未扫描到任何 INSERT 语句——判据输入为空，结论不成立"
 
     unknown = [
-        (name, column)
-        for name, cols, _ in statements
-        for column in cols
-        if column not in known
+        (name, column) for name, cols, _ in statements for column in cols if column not in known
     ]
     assert not unknown, f"INSERT 引用了 DDL 中不存在的列（文件, 列）：{unknown}"
