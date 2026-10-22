@@ -85,7 +85,7 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {
         "id": "P3-B19-04",
         "level": "P0",
-        "status": "open",
+        "status": "fixed",  # 9a85de6 修；改坏即红已验证（删一列→报 column/value 不匹配→20 红），还原 28 passed
         "pinned_by": "SQL↔DDL 静态门禁 + PG create_task 用例",
         "due_batch": "B21",
         "due_action": "①修复已提交②PG create_task 走通③改坏即红（工作区不算）",
