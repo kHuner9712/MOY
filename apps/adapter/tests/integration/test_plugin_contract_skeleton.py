@@ -760,7 +760,7 @@ def test_d1_deferred_registry_matches_markers() -> None:
     # ⑯ open 缺陷必须有到期机制：due_batch + due_action，且未过期
     #    只记「谁钉住」(pinned_by) 不够——没有到期，P2 会被无限推后（技术债复利）
     now_batch = current_batch()  # 缺失 OA_BATCH 即 KeyError → 红（默认必须指向报错）
-    #    **收集后单次断言**：逐条 assert 只报第一个，工程侧会变成"修一条→再跑→再看到一条"的多轮修复；
+    #    **收集后单次断言**：逐条 assert 只报第一个 → 修一条要再跑一轮才看到下条；
     #    一次报全 + `len(problems)` 让"命中几条"可数（与"三种红三种文案"合起来 = 可操作的红）。
     problems: list[str] = []
     for item in DEFECT_LEDGER:
