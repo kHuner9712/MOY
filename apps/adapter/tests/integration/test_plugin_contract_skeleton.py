@@ -37,7 +37,14 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.core.errors import ERROR_REGISTRY, ErrorCode
-from tests.expected_xfail import EXPECTED_XFAIL, EXPECTED_XFAIL_BY_BATCH
+from tests.expected_xfail import (
+    EXPECTED_OPEN,
+    EXPECTED_RED,
+    EXPECTED_XFAIL,
+    EXPECTED_XFAIL_BY_BATCH,
+    OPEN_HISTORY,
+    RED_HISTORY,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -88,6 +95,7 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
         "batch": "B18",
         "why": "PL5 响应缺 already_installed 常驻字段（B17 已交付 PL5，但字段缺失）",
         "status": "red",
+        "defect": "P3-B17-01",
     },
     {
         "name": "test_b2_pl14_update_grants_before_install_returns_16003",
@@ -102,6 +110,7 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
         "batch": "B18",
         "why": "依赖 already_installed 与重复安装零增量（B17 未达标）",
         "status": "red",
+        "defect": "P3-B17-01",
     },
     {
         "name": "test_c2_pl13_capability_policy_idempotent_by_idempotency_key",
@@ -109,6 +118,7 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
         "batch": "B18",
         "why": "PL13 写后回读只返 3 项，契约要求全量 6 项",
         "status": "red",
+        "defect": "P3-B17-02",
     },
     {
         "name": "test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched",
@@ -496,12 +506,48 @@ def test_d1_deferred_registry_matches_markers() -> None:
         "只比总数会漏掉「把 B18 的条目错标成 B19」这类归属错误"
     )
 
-    red_names = sorted(str(c["name"]) for c in DEFERRED_CASES if c["status"] == "red")
-    if red_names:
-        # 红条目不是"未实现"，而是"实现有缺陷"——必须在批次报告里列为缺陷，不能沉淀成背景红
-        assert all(str(c["batch"]) for c in DEFERRED_CASES if c["status"] == "red"), (
-            f"[骨架汇总 ⑨] red 条目必须标注归属批次：{red_names}"
+    red_cases = [c for c in DEFERRED_CASES if c["status"] == "red"]
+    red_names = sorted(str(c["name"]) for c in red_cases)
+
+    # ⑨ red 不是"未实现"，而是"实现有缺陷"——必须能追到缺陷编号与到期批次
+    for case in red_cases:
+        assert case.get("defect"), (
+            f"[骨架汇总 ⑨] red 条目 {case['name']} 缺 defect 编号（只有批次追不到责任/工单）"
         )
+        assert str(case["batch"]), f"[骨架汇总 ⑨] red 条目 {case['name']} 缺到期批次"
+
+    # ⑩ red 条数必须等于显式常量（批次结束应被人工下调到 0）
+    assert len(red_cases) == EXPECTED_RED, (
+        f"[骨架汇总 ⑩] 预期 red {EXPECTED_RED} 条，实际 {len(red_cases)} 条：{red_names}"
+    )
+
+    # ⑪ 未闭口总量 = xfail + red：只盯 xfailed 会把「xfail 改 red」当成进度
+    open_now = len(xfail_names) + len(red_cases)
+    assert open_now == EXPECTED_OPEN, (
+        f"[骨架汇总 ⑪] 未闭口总量应为 {EXPECTED_OPEN}（xfail {len(xfail_names)} + red "
+        f"{len(red_cases)} = {open_now}）。改状态标记不算进度——必须两个桶之和下降"
+    )
+
+    # ⑫ 单调不增：历史序列本身不得回升，且末值必须等于当前常量
+    assert all(OPEN_HISTORY[i] >= OPEN_HISTORY[i + 1] for i in range(len(OPEN_HISTORY) - 1)), (
+        f"[骨架汇总 ⑫] 未闭口总量历史出现回升：{OPEN_HISTORY}"
+    )
+    assert OPEN_HISTORY[-1] == EXPECTED_OPEN, (
+        f"[骨架汇总 ⑫] 历史末值 {OPEN_HISTORY[-1]} != 当前常量 {EXPECTED_OPEN}（漏记历史）"
+    )
+
+    # ⑬ 三个常量必须满足算术恒等：open = xfail + red。
+    #    这样「把 xfail 改成 red」既不能让 xfailed 白降（⑩ 校验 red 常量），
+    #    也不能靠改常量把总量做小（⑪ 校验 open 常量，⑬ 校验三者自洽）。
+    #    注意 red 允许随批次上升（新交付代码发现缺陷是正常现象），因此**不对 red 判单调**；
+    #    「批次签收时 red 必须为 0」由检查单 §0.4 的签收条件约束（测试无法得知"正在签收"）。
+    assert EXPECTED_OPEN == EXPECTED_XFAIL + EXPECTED_RED, (
+        f"[骨架汇总 ⑬] 常量不自洽：EXPECTED_OPEN({EXPECTED_OPEN}) != "
+        f"EXPECTED_XFAIL({EXPECTED_XFAIL}) + EXPECTED_RED({EXPECTED_RED})"
+    )
+    assert RED_HISTORY[-1] == EXPECTED_RED, (
+        f"[骨架汇总 ⑬] red 历史末值 {RED_HISTORY[-1]} != 当前常量 {EXPECTED_RED}（漏记历史）"
+    )
 
 
 def test_d2_no_pytest_fail_placeholder() -> None:

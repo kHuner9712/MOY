@@ -98,6 +98,7 @@ echo "ARCHIVE_TREE=$TREE" | tee -a "$LOG/archive-identity.txt"
 | `xfailed` | 正常模式允许 `xfailed == EXPECTED_XFAIL`（`tests/expected_xfail.py` 的模块常量，唯一真源）；**批次完成后按归属表下降**（`EXPECTED_XFAIL_BY_BATCH`：B16=6 → B17=2 → B19=0，阶段终态 0）。**只要求该批归属的 xfail 全部转 pass，不要求一次归 0** |
 | 汇总断言 | pytest 汇总必须同时打印 **`EXPECTED_XFAIL`** 与**实际 `xfailed`**；不等即红（多=新增未登记缺陷；少=已修复但常量未减，强制摘标记） |
 | 验收报告 | 自动化测试列写**四列** `passed / failed / skipped / xfailed`，不得只写三列 |
+| **`red`（已实现但红着）** | 单独计数 `EXPECTED_RED`（`tests/expected_xfail.py`），且必须满足 `EXPECTED_OPEN == EXPECTED_XFAIL + EXPECTED_RED`。**批次签收要求 `EXPECTED_RED == 0`**——否则等于「带着红缺陷签收」。red 随批次上升是正常的（新交付代码暴露缺陷），**但不得用它把 `xfailed` 做小**：把 xfail 改 red 时 `xfailed` 会降，而 `EXPECTED_OPEN` 必须同步不动或下降，改不动就说明只是洗了标记 |
 
 **判定示例**：`4 passed + 6 xfailed + 0 skipped` = 合格；`4 passed + 6 xfailed + 2 skipped` = 红；`10 passed + 0 xfailed` 但常量仍为 6 = 红。
 
