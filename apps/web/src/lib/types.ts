@@ -1360,6 +1360,40 @@ export interface TaskConfirmInfo {
   summary: Record<string, unknown>;
 }
 
+/** 产物类型（WF2：前三个可编辑，后三个只读） */
+export type ArtifactType = 'draft' | 'doc' | 'table' | 'link' | 'file' | 'text';
+
+/** 可编辑并重新导出的产物类型（WF2） */
+export const EDITABLE_ARTIFACT_TYPES: readonly ArtifactType[] = Object.freeze(['draft', 'doc', 'table']);
+
+/** 重新导出格式（WF2 可选参数） */
+export type ArtifactRenderFormat = 'docx' | 'md' | 'csv';
+
+/**
+ * 判断产物是否可编辑（WF2）。
+ *
+ * 只读类型（`link` / `file` / `text`）**不得出现编辑入口**，连按钮都不渲染。
+ *
+ * @param type - 产物类型
+ * @returns 可编辑返回 true
+ */
+export function isEditableArtifactType(type: ArtifactType): boolean {
+  return EDITABLE_ARTIFACT_TYPES.includes(type);
+}
+
+/** WF2 编辑产物请求：content 必填，render_format 可选（缺省沿用原格式） */
+export interface TaskArtifactUpdateRequest {
+  content: string;
+  render_format?: ArtifactRenderFormat;
+}
+
+/** WF2 编辑产物结果：version 每次 +1，下载拿到的是新版本 */
+export interface TaskArtifactUpdateResult {
+  artifact_id: string;
+  version: number;
+  download_url: string;
+}
+
 /** 步骤产物（A4 `steps[].artifacts[]`，5 类渲染见 ArtifactCard） */
 export interface TaskArtifact {
   artifact_id: string;
@@ -1367,7 +1401,13 @@ export interface TaskArtifact {
   step_id?: string;
   /** 对应声明里的 outputs[].key */
   output_key?: string;
-  type: 'text' | 'link' | 'file' | 'table';
+  /**
+   * 产物类型：
+   * - `draft` 稿件 / `doc` 文档 / `table` 表格 → **可编辑并重新导出**（WF2）；
+   * - `link` 提交记录或外链 / `file` 代码文件 → **只读**，界面不给编辑入口；
+   * - `text` 为既有文本类别名，按只读处理（不提供编辑入口）。
+   */
+  type: ArtifactType;
   name: string;
   /** 文本类内容（已脱敏，≤32KB） */
   inline_text?: string | null;
