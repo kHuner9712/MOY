@@ -75,11 +75,16 @@ images:
   # ---------------------------------------------------------------------
   # 基础设施层
   # ---------------------------------------------------------------------
-  - name: postgres
-    tag: "18.6-alpine"
+  # 阶段四 T4-03 起用 **pgvector 官方镜像**（PG 18 + pgvector 0.8.x）：
+  # 迁移 `0009` 第一步是 `CREATE EXTENSION vector`，纯 postgres 镜像没有该扩展，
+  # 记忆内核会连表都建不出来。digest 为本机实测（docker pull 输出）。
+  - name: pgvector/pgvector
+    tag: "pg18"
     license: PostgreSQL-License
-    role: 关系库
+    role: 关系库（业务库 + 记忆向量）
     source: docker-hub
+    digest: "sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11"
+    note: pgvector 0.8.7；替代原 postgres:18.6-alpine（同一 PG 大版本，多一个扩展）
 
   # Valkey 取代 Redis（BSD-3-Clause），规避 RSALv2/SSPL 双许可风险
   # ✅ D-06 已于 2026-10-21 由创始人授权主理人正式批准（docs/decisions/0004）

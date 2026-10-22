@@ -44,11 +44,13 @@ jobs:
     # 在 CI 中从未执行，而无 PG 口径的覆盖率实测只有 **84.19% < 85%** ——
     # 门禁**不可能通过**，且多租户隔离这条最高红线在 CI 里等于没验。
     #
-    # 镜像与 `deploy/images.lock` 的 postgres 条目保持一致（18.6-alpine）。
+    # 镜像必须带 pgvector：迁移 0009 第一步就是 `CREATE EXTENSION vector`，
+    # 纯 `postgres:18.6-alpine` 缺该扩展，会让记忆内核的用例在 CI 里必然红。
+    # 与 `deploy/images.lock` 的 `pgvector/pgvector` 条目保持一致。
     # ==================================================================
     services:
       postgres:
-        image: postgres:18.6-alpine
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_USER: officeai
           POSTGRES_PASSWORD: oa_ci_pw

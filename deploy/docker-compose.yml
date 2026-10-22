@@ -33,7 +33,10 @@ services:
   # 基础设施层
   # ---------------------------------------------------------------------
   postgres:
-    image: postgres:18.6-alpine
+    # 阶段四 T4-03 起改为 **pgvector 官方镜像**：迁移 0009 第一步是
+    # `CREATE EXTENSION vector`，纯 postgres 镜像没有该扩展 → 记忆三表建不出来。
+    # 同一 PG 大版本（18），只多一个扩展；登记见 deploy/images.lock。
+    image: pgvector/pgvector:pg18
     container_name: oa-postgres
     restart: unless-stopped
     environment:
