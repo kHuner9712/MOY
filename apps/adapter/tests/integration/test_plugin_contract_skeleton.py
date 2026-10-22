@@ -630,7 +630,8 @@ def test_c4_wf2_non_editable_types_rejected_without_version_bump(monkeypatch) ->
         "[TC-P3-WF12-06 ④] 拒绝后 inline_text 变了（先写后校验）"
     )
     assert len(rejected_writes) == audit_before_reject, (
-        f"[TC-P3-WF12-06 ⑤] 被拒请求仍写了审计：新增 {len(rejected_writes) - audit_before_reject} 条"
+        f"[TC-P3-WF12-06 ⑤] 被拒请求仍写了审计："
+        f"新增 {len(rejected_writes) - audit_before_reject} 条"
     )
 
 
