@@ -71,6 +71,11 @@ class GenerationContext(BaseModel):
 
     history_window: int = Field(default=20, ge=0, le=200, description="携带的历史轮数")
     memory_hints: list[str] = Field(default_factory=list, description="上层记忆注入")
+    #: 历史来源（阶段四 B-2）：`server`（默认，读自研库）/ `client`（逃生门，用入参）。
+    #: 默认 server 是**行为变更**，故保留 client 一档做灰度对比与既有用例逃生。
+    assemble_from: Literal["server", "client"] = Field(
+        default="server", description="历史来源：server=服务端库，client=入参"
+    )
 
 
 class GenerationOptions(BaseModel):
@@ -97,8 +102,13 @@ class GenerateRequest(BaseModel):
         options: 生成参数。
     """
 
+    #: 会话 ID。阶段四起**可选**（架构 §4.3 B-1）：缺省时服务端生成
+    #: `conv_` + ULID 并在 `data.conversation_id` 返回。必填→可选对既有调用方
+    #: 不破坏（老调用照传），因此是向后兼容变更。
     conversation_id: str = Field(
-        min_length=1, max_length=128, description="会话 ID，形如 conv_01HF8..."
+        default="",
+        max_length=128,
+        description="会话 ID（缺省由服务端生成，形如 conv_01HF8...）",
     )
     profile: ModelProfile = Field(description="能力档位")
     messages: list[ChatMessage] = Field(min_length=1, description="当前轮消息")
