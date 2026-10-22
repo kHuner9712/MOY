@@ -411,7 +411,12 @@ class PluginService:
                     has_update=version_tuple(latest) > version_tuple(record.version),
                     status=record.status,
                     last_used_at=record.last_used_at,
-                    running_task_count=0,
+                    # 真实在跑数（占并发额度的口径，含 waiting_confirm）。
+                    # 曾硬编码 0：已安装列表永远显示"0 个任务在跑"，
+                    # 用户在**有任务真在跑**时点卸载/停用，弹窗却告诉他"没有任务"。
+                    running_task_count=await self._tasks.count_occupying(
+                        auth.tenant_id, record.plugin_id
+                    ),
                 )
             )
         total = len(items)
@@ -776,7 +781,7 @@ class PluginService:
         """停用或启用插件（PL6）。
 
         **停用不打断在跑任务**（PRD P0-P3-02 ⑤）：只改安装态，任务继续完成；
-        `running_task_count` 回给前端做提示（B19 接入任务计数，本批为 0）。
+        `running_task_count` 回给前端做提示（取自任务仓储的占用口径，含 `waiting_confirm`）。
         启用时要重新确认「能力授权仍在 + 企业开关仍开」——停用期间管理员可能把
         企业能力关掉了，直接启用会得到一个"看起来能用、一跑就 16006"的插件。
 
@@ -793,7 +798,8 @@ class PluginService:
         """
         installation = await self._require_live(plugin_id, auth)
         if installation.status == status:
-            return StateData(plugin_id=plugin_id, status=status, running_task_count=0)
+            _, running = await self._task_counts(plugin_id, auth)
+            return StateData(plugin_id=plugin_id, status=status, running_task_count=running)
         if status == STATUS_ENABLED:
             manifest = self._registry.get(plugin_id, installation.version)
             if manifest is not None:
@@ -841,7 +847,8 @@ class PluginService:
             actor_role=auth.roles[0] if auth.roles else "",
             change_summary={"status": {"from": installation.status, "to": updated.status}},
         )
-        return StateData(plugin_id=plugin_id, status=updated.status, running_task_count=0)
+        _, running = await self._task_counts(plugin_id, auth)
+        return StateData(plugin_id=plugin_id, status=updated.status, running_task_count=running)
 
     # ------------------------------------------------------------------
     # PL7 卸载

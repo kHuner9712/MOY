@@ -386,3 +386,45 @@ def test_upgrade_request_requires_semver_length() -> None:
 
     with pytest.raises(ValidationError):
         UpgradeRequest(target_version="")
+
+
+@pytest.mark.asyncio
+async def test_state_change_and_installed_list_report_real_running_counts() -> None:
+    """停用/已安装列表也要报**真实**在跑任务数（同一个硬编码 0 的另一半）。
+
+    为什么单独立一条：卸载那条只钉住 PL7，而用户在**停用**（PL6）与**已安装列表**（PL3）
+    上看到的是同一类提示。曾有三处独立硬编码 `running_task_count=0`：
+    `list_installed` 的每项、`set_state` 的状态未变分支、`set_state` 的变更后返回。
+    **只修卸载等于只修了三分之一**——另外两处仍会告诉用户"没有任务在跑"。
+    """
+    tasks = InMemoryTaskStore()
+    fixture = await _installed(_settings(), tasks=tasks)
+    seeded = (
+        ("task_lc_running2", "running"),
+        ("task_lc_waiting2", "waiting_confirm"),
+        ("task_lc_done2", "completed"),
+    )
+    for task_id, status in seeded:
+        await tasks.create_task(
+            TaskRecord(
+                tenant_id=TENANT,
+                task_id=task_id,
+                plugin_id=PLUGIN,
+                conversation_id="conv_lc",
+                initiator_id=OWNER.user_id,
+                status=status,
+            )
+        )
+
+    # ① 停用：返回的在跑数必须是 2（running + waiting_confirm 都占并发额度）
+    data = await fixture.service.set_state(plugin_id=PLUGIN, status=STATUS_DISABLED, auth=OWNER)
+    assert data.running_task_count == 2, "停用响应必须报真实在跑数，不能是 0"
+
+    # ② 重复停用（状态未变分支）同样要报真实数
+    again = await fixture.service.set_state(plugin_id=PLUGIN, status=STATUS_DISABLED, auth=OWNER)
+    assert again.running_task_count == 2, "状态未变分支也必须报真实在跑数"
+
+    # ③ 已安装列表每项都要报真实数
+    listed = await fixture.service.installed(auth=OWNER)
+    target = next(item for item in listed.items if item.plugin_id == PLUGIN)
+    assert target.running_task_count == 2, "已安装列表必须报真实在跑数"
