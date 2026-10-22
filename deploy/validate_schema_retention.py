@@ -5,9 +5,11 @@
 
 | 检查项 | 期望 | 为什么是这条 |
 | --- | --- | --- |
-| 列存在 | `plugin_task.expires_at` 在（`plugin_artifact.expires_at` 同项） | 留存期靠这一列表达；没有它"180 天"只能写在文档里 |
-| 列类型 | `timestamp with time zone` | 跨时区部署时 `timestamp` 会让"到期"偏移一小时，清理任务就会早/晚跑 |
-| 默认值 | `now() + INTERVAL '180 days'`（= 180 天） | PRD Q3-5 / ADJ-8 的唯一口径；90 天、30 天都是**法规口径变更**，必须走评审 |
+| 列存在 | `plugin_task.expires_at` 在（产物表同项） | 留存期靠这一列表达；没有它"180
+天"只能写在文档里 |
+| 列类型 | `timestamp with time zone` | 跨时区时 `timestamp` 会让"到期"偏移一小时，清理会早/晚跑 |
+| 默认值 | `now() + INTERVAL '180 days'`（180 天） | PRD Q3-5 / ADJ-8 唯一口径；改天数属法规变更，
+须评审 |
 
 **为什么默认值要单独查**：`expires_at` 存在但默认值写错（例如抄了 `plugin_artifact`
 的 90 天）是**最可能发生且最难发现**的漂移——列在、类型对、代码能跑，
@@ -20,13 +22,15 @@
    `INTERVAL '180 days'` 改成 `'90 days'`；
 2. `python deploy/validate_schema_retention.py` → **退出码 1**，输出::
 
-       [FAIL] 0003_phase3_plugin_tables.sql:plugin_task.expires_at: 默认留存期应为 180 天，实际 90 天（原文 90 days）
+       [FAIL] 0003_phase3_plugin_tables.sql:plugin_task.expires_at:
+              默认留存期应为 180 天，实际 90 天（原文 90 days）
 
 3. 还原后重跑 → **退出码 0**（`[OK] 留存门禁通过…`）；
 4. 在**真实库**上再走一遍（`--run-pg`）：把库里的默认值 `ALTER` 成 90 天 →
    **退出码 1**，输出::
 
-       [FAIL] pg:plugin_task.expires_at: 默认留存期应为 180 天，实际 90（默认值表达式 "(now() + '90 days'::interval)"）
+       [FAIL] pg:plugin_task.expires_at: 默认留存期应为 180 天，实际 90
+              （默认值表达式 "(now() + '90 days'::interval)"）
 
    改回 180 天 → **退出码 0**。
 
@@ -78,7 +82,7 @@ EXPECTED_DATA_TYPE: Final[str] = "timestamp with time zone"
 #: 测试环境变量（与应用角色一致）
 APP_DSN_ENV: Final[str] = "OA_TEST_DATABASE_URL"
 
-#: `CREATE TABLE <name> ( ... );` 的定位（非贪婪到第一个右括号行）
+#: `CREATE TABLE <name> (...)` 的定位（表体由括号深度扫描，不靠正则吃括号）
 CREATE_TABLE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<table>[a-z_][a-z0-9_]*)\s*\(",
     re.IGNORECASE,
@@ -91,7 +95,8 @@ BLOCK_COMMENT: Final[re.Pattern[str]] = re.compile(r"/\*.*?\*/", re.DOTALL)
 #: `expires_at` 列定义（类型 + 默认值都要能取到）
 EXPIRES_COLUMN: Final[re.Pattern[str]] = re.compile(
     r"\bexpires_at\s+(?P<type>[A-Za-z][A-Za-z0-9_ ]*?)\s+NOT\s+NULL\s+DEFAULT\s+"
-    r"(?P<default>now\(\)\s*\+\s*(?:INTERVAL\s*)?'(?P<amount>\d+)\s*(?P<unit>day|days|month|months)'"
+    r"(?P<default>now\(\)\s*\+\s*(?:INTERVAL\s*)?"
+    r"'(?P<amount>\d+)\s*(?P<unit>day|days|month|months)'"
     r"(?:::interval)?)",
     re.IGNORECASE,
 )
@@ -193,7 +198,7 @@ def check_text(label: str, text: str) -> list[Violation]:
         list[Violation]: 违规清单。
     """
     violations: list[Violation] = []
-    found = {name: body for name, body in iter_create_tables(strip_comments(text))}
+    found = dict(iter_create_tables(strip_comments(text)))
     for table in TARGET_TABLES:
         body = found.get(table)
         if body is None:
@@ -211,7 +216,9 @@ def check_text(label: str, text: str) -> list[Violation]:
         column_type = " ".join(match.group("type").split()).lower()
         if column_type != "timestamptz":
             violations.append(
-                Violation(where, f"列类型必须是 timestamptz，实际 {column_type!r}（跨时区会算错到期日）")
+                Violation(
+                    where, f"列类型必须是 timestamptz，实际 {column_type!r}（跨时区会算错到期日）"
+                )
             )
         amount = int(match.group("amount"))
         unit = match.group("unit").lower()
@@ -220,8 +227,7 @@ def check_text(label: str, text: str) -> list[Violation]:
             violations.append(
                 Violation(
                     where,
-                    f"默认留存期应为 {RETENTION_DAYS} 天，实际 {days} 天"
-                    f"（原文 {amount} {unit}）",
+                    f"默认留存期应为 {RETENTION_DAYS} 天，实际 {days} 天（原文 {amount} {unit}）",
                 )
             )
     return violations
@@ -331,7 +337,8 @@ async def run_pg_check(dsn: str) -> list[Violation]:
             violations.append(
                 Violation(
                     where,
-                    f"默认留存期应为 {RETENTION_DAYS} 天，实际 {days if days is not None else '无法解析'}"
+                    f"默认留存期应为 {RETENTION_DAYS} 天，"
+                    f"实际 {days if days is not None else '无法解析'}"
                     f"（默认值表达式 {expression!r}）",
                 )
             )
@@ -459,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             pg_violations = asyncio.run(run_pg_check(dsn))
-        except Exception as exc:  # noqa: BLE001 - 连不上库属门禁自身异常
+        except Exception as exc:
             print(f"[FAIL] 连接数据库失败：{type(exc).__name__}: {exc}")
             return 2
         violations.extend(pg_violations)
