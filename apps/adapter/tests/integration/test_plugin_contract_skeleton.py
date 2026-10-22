@@ -257,9 +257,10 @@ def test_b1_pl05_already_installed_field_is_always_present() -> None:
 async def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
     """TC-P3-PL03-11：未安装直接改授权 → `16003`，且**不产生任何副作用**。
 
-    三重断言（只断返回码会放过「报错但已写库」的实现）：
-    ① 码值 `16003`（该插件还没有添加）；
-    ② `plugin_grant` **无新增行**（读回为空集合）；
+    四条断言（缺任一条都只能算「部分验证」）：
+    ⓿ **场景前提**：该插件确实没有安装行（否则三条断言会跑在错场景里）；
+    ① 码值 `16003`（该插件还没有添加，不是 `16004`、不是成功）；
+    ② `plugin_grant` **无该成员的行**（按 `plugin_id + user_id` 双键查）；
     ③ 审计**无** `plugin.capability_grant` 事件。
     """
     from app.business.audit_service import (
@@ -303,6 +304,12 @@ async def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
         audit=audit,
     )
 
+    # ⓿ 场景前提：必须"确实未安装"——否则三条断言会跑在一个不该出现的场景里
+    #   （若实现顺手建了安装行，返回 16003 反而是"把已装当未装"，错得更多）
+    assert await store.get_installation(tenant, plugin_id) is None, (
+        f"[TC-P3-PL03-11 ⓿] 前置不成立：{plugin_id} 已存在安装行，本用例将验错场景"
+    )
+
     with pytest.raises(ApiError) as excinfo:
         await service.update_grants(
             plugin_id=plugin_id,
@@ -314,8 +321,9 @@ async def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
     assert excinfo.value.code is ErrorCode.PLUGIN_NOT_INSTALLED, (
         f"[TC-P3-PL03-11 ①] 未安装改授权必须返回 16003，实际 {excinfo.value.code}"
     )
+    # ② 按 plugin_id + user_id 双键查：只按 plugin_id 会把其他成员的行算进来（多人场景假红）
     assert await grants.snapshot(tenant, plugin_id, owner.user_id) == frozenset(), (
-        "[TC-P3-PL03-11 ②] 拒绝路径不得留下任何 plugin_grant 行（防「报错但已写库」）"
+        "[TC-P3-PL03-11 ②] 拒绝路径不得为该成员写入任何 plugin_grant 行（防「报错但已写库」）"
     )
     entries = await audit.recent(tenant, action=ACTION_PLUGIN_CAPABILITY_GRANT)
     assert entries == [], (
