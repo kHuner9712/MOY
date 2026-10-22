@@ -55,22 +55,24 @@ dev = [
 [project.scripts]
 officeai-adapter = "app.main:main"
 
-[tool.setuptools]
-packages = [
-    "app",
-    "app.api",
-    "app.api.v1",
-    "app.clients",
-    "app.core",
-    "app.middleware",
-    "app.registry",
-    "app.schemas",
-    "app.services",
-    "app.tools",
-]
+# 包清单**改为自动发现**（审计 OA-AUDIT-001 / P0-1）：
+#
+# 此前为手工枚举的 `packages = [...]`，漏登了 `app.business`（22 文件）、
+# `app.db` + `app.db.repositories`（23 文件）、`app.plugins`（7 文件）——
+# 实测 `pip wheel` 产物中这三个包 **0 个文件**。由于 Dockerfile 用
+# `pip install .`（**非 editable**），容器一启动即 ImportError，
+# 84 个端点中绝大多数起不来；本地 editable 安装掩盖了该缺陷，故测试全绿。
+#
+# 根因是「手工清单随新增模块漂移」，因此改为 `find:` 自动发现：
+# 任何新增子包自动纳入，无需同步维护清单，从机制上消除复发。
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.setuptools.package-data]
 "app.registry" = ["*.yaml"]
+# 插件声明由 `app/plugins/loader.py::default_manifests_dir()` 按包内相对路径读取
+# （`Path(__file__).parent / "manifests"`），**必须**随包分发，否则容器内 6 份插件全丢。
+"app.plugins" = ["manifests/*.json"]
 
 # ===========================================================================
 # ruff —— Lint 与格式化（架构文档 9.6 强制门禁）
