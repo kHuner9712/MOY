@@ -601,8 +601,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--allow-missing-phase3",
         action="store_true",
         help=(
-            "允许 baseline-phase3-14.json 中尚未实现的端点（B17-B20 期间 CI 使用）；"
-            "B21 收口后必须去掉，届时插件域 14 条全部落地"
+            "允许 baseline-phase3-16.json 中尚未实现的端点（B17-B19 期间 CI 使用）；"
+            "B19 收口后必须去掉，届时插件域 14 条 + 任务域 WF1/WF2 共 16 条全部落地"
         ),
     )
     parser.add_argument(
@@ -642,8 +642,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     docs_dir = REPO_ROOT / "docs" / "api"
     core_path = docs_dir / "baseline-core-30.json"
     phase2_path = docs_dir / "baseline-phase2-38.json"
-    # 阶段三插件域基线（B17 起逐步补齐至 14 条，B21 收口）
-    phase3_path = docs_dir / "baseline-phase3-14.json"
+    # 阶段三基线（插件域 PL1-PL14 + 任务域 WF1/WF2，共 16 条；B17 起逐个落地，B19 收口）
+    phase3_path = docs_dir / "baseline-phase3-16.json"
     snapshot_path = docs_dir / "openapi.snapshot.json"
     openapi_path = docs_dir / "openapi.json"
 

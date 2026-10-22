@@ -43,6 +43,7 @@ from app.db.repositories.plugin_repo import (
     STATUS_ENABLED,
     STATUS_UNINSTALLED,
     CatalogRecord,
+    InstallationConflictError,
     InstallationRecord,
     PluginStore,
     get_plugin_store,
@@ -522,30 +523,42 @@ class PluginService:
 
         version = context.catalog.latest_version
         already_installed = context.installation is not None and context.installation.is_live
-        installation = await self._store.save_installation(
-            InstallationRecord(
-                tenant_id=auth.tenant_id,
-                plugin_id=plugin_id,
-                version=version,
-                previous_version=(
-                    context.installation.version if context.installation is not None else ""
-                ),
-                status=STATUS_ENABLED,
-                settings=request.settings,
-                capability_version=(
-                    (context.installation.capability_version + 1)
-                    if context.installation is not None
-                    else 1
-                ),
-                installed_by=auth.user_id,
-                installed_at=(
-                    context.installation.installed_at
-                    if context.installation is not None
-                    else now_iso()
-                ),
-                enabled_at=now_iso(),
-            )
+        record = InstallationRecord(
+            tenant_id=auth.tenant_id,
+            plugin_id=plugin_id,
+            version=version,
+            previous_version=(
+                context.installation.version if context.installation is not None else ""
+            ),
+            status=STATUS_ENABLED,
+            settings=request.settings,
+            capability_version=(
+                (context.installation.capability_version + 1)
+                if context.installation is not None
+                else 1
+            ),
+            installed_by=auth.user_id,
+            installed_at=(
+                context.installation.installed_at if context.installation is not None else now_iso()
+            ),
+            enabled_at=now_iso(),
         )
+        if context.installation is None:
+            # 首次安装走「仅插入」：并发两个请求都判"未安装"时，后到者撞唯一键
+            # `uq_installation_active` → `16010`（架构 §5.4 场景 ①）。
+            # 这里**不能**用 upsert —— 那会让后到者静默覆盖先到者的配置。
+            try:
+                installation = await self._store.create_installation(record)
+            except InstallationConflictError as exc:
+                logger.warning(
+                    "plugin_install_conflict", tenant_id=auth.tenant_id, plugin_id=plugin_id
+                )
+                raise ApiError(
+                    ErrorCode.PLUGIN_STATE_CONFLICT,
+                    internal_detail=f"concurrent install {plugin_id}: {exc}",
+                ) from exc
+        else:
+            installation = await self._store.save_installation(record)
         # 重复添加（已添加状态再点一次）：**不动授权、不写审计、不改安装数**
         # —— 那是 PL14（授权）与 PL6（停用）的职责。重复点按钮不该产生"授权被重置"
         # 或"审计里多一条安装"的副作用（TC-P3-MK08-06）。
@@ -950,6 +963,10 @@ class PluginService:
     ) -> VersionData:
         """切换版本（升级/回滚共用），双指针互换。
 
+        **乐观锁**：只允许在「观测到的版本仍是当前版本」时切换。两个管理员同时
+        点升级/回退时，后提交者会看到指针已被改 → `16010`（架构 §5.4 场景 ②），
+        而不是把 `previous_version` 写成中间态（那会让"只能回退一次"变成"回退到自己"）。
+
         Args:
             installation: 当前安装行。
             target_version: 目标版本。
@@ -958,22 +975,31 @@ class PluginService:
 
         Returns:
             VersionData: 变更结果。
+
+        Raises:
+            ApiError: 版本指针已被并发修改（16010）。
         """
-        updated = await self._store.save_installation(
-            InstallationRecord(
+        updated = await self._store.swap_version(
+            installation.tenant_id,
+            installation.plugin_id,
+            expected_version=installation.version,
+            target_version=target_version,
+        )
+        if updated is None:
+            logger.warning(
+                "plugin_version_conflict",
                 tenant_id=installation.tenant_id,
                 plugin_id=installation.plugin_id,
-                version=target_version,
-                previous_version=installation.version,
-                status=installation.status,
-                settings=installation.settings,
-                capability_version=installation.capability_version + 1,
-                installed_by=installation.installed_by,
-                installed_at=installation.installed_at,
-                enabled_at=installation.enabled_at,
-                disabled_at=installation.disabled_at,
+                expected=installation.version,
+                action=action,
             )
-        )
+            raise ApiError(
+                ErrorCode.PLUGIN_STATE_CONFLICT,
+                internal_detail=(
+                    f"version pointer changed: {installation.plugin_id}"
+                    f" expected {installation.version} -> {target_version}"
+                ),
+            )
         catalog = await self._store.get_catalog(installation.plugin_id)
         latest = catalog.latest_version if catalog is not None else target_version
         await self._audit.record(

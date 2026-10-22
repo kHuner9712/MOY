@@ -11,10 +11,6 @@
   "changelog": "首个版本：招聘说明、简历初评、面试提纲、邀约、录用通知与公文起草。",
   "capabilities": [
     {
-      "key": "personal.knowledge.read",
-      "required": true
-    },
-    {
       "key": "personal.tool.use",
       "required": true
     },

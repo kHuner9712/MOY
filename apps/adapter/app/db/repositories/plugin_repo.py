@@ -212,6 +212,22 @@ class InstallationRecord:
         return self.status in LIVE_STATUSES
 
 
+class InstallationConflictError(RuntimeError):
+    """安装行并发写入冲突（业务层翻译为 `16010`）。
+
+    只用于**两个**场景（架构 §5.4 `16010` 的内部含义，多一个都不许）：
+
+    1. 首次安装的唯一键冲突（`uq_installation_active`：并发两个请求都判"未安装"，
+       其中一个插入时撞主键）；
+    2. `plugin_installation.version` 指针竞争（并发升级/回退时，乐观锁
+       `WHERE version = 观测到的版本` 命中 0 行）。
+
+    **不复用给**"缺授权（16005）/企业未开放（16006）/未添加（16003）"等语义冲突——
+    那是各自语义码的职责，把它们塞进 `16010` 会让前端失去「该刷新」与「该补授权」
+    的区分。
+    """
+
+
 class PluginStore(Protocol):
     """插件域存储契约（内存 / PostgreSQL 双实现）。"""
 
@@ -257,6 +273,21 @@ class PluginStore(Protocol):
 
     async def save_installation(self, record: InstallationRecord) -> InstallationRecord:
         """写入（或按 `(tenant_id, plugin_id)` 更新）安装行。"""
+        ...
+
+    async def create_installation(self, record: InstallationRecord) -> InstallationRecord:
+        """**仅插入**安装行；行已存在时抛 `InstallationConflictError`（唯一键语义）。"""
+        ...
+
+    async def swap_version(
+        self,
+        tenant_id: str,
+        plugin_id: str,
+        *,
+        expected_version: str,
+        target_version: str,
+    ) -> InstallationRecord | None:
+        """乐观锁切换版本指针；`version` 已被他人改动时返回 `None`（指针竞争）。"""
         ...
 
     async def get_grants(self, tenant_id: str, plugin_id: str, user_id: str) -> set[str]:
@@ -525,6 +556,64 @@ class InMemoryPluginStore:
                 or (current.installed_at if current else now_iso()),
             )
             self._installations[(record.tenant_id, record.plugin_id)] = payload
+        return payload
+
+    async def create_installation(self, record: InstallationRecord) -> InstallationRecord:
+        """**仅插入**安装行（模拟 `uq_installation_active` 唯一键）。
+
+        并发安装的判据必须是"插入时才发现已存在"，不能用"先查后插"——
+        先查后插在并发下两个请求都读到"没有"，然后各写一次，后者覆盖前者，
+        用户看到的是"装成功了但版本/配置被另一个请求改掉"。
+
+        Args:
+            record: 安装行。
+
+        Returns:
+            InstallationRecord: 落库后的安装行。
+
+        Raises:
+            InstallationConflictError: 该企业已存在该插件的安装行。
+        """
+        key = (record.tenant_id, record.plugin_id)
+        async with self._lock:
+            if key in self._installations:
+                raise InstallationConflictError(
+                    f"installation exists: {record.tenant_id}/{record.plugin_id}"
+                )
+            payload = replace(record, installed_at=record.installed_at or now_iso())
+            self._installations[key] = payload
+        return payload
+
+    async def swap_version(
+        self,
+        tenant_id: str,
+        plugin_id: str,
+        *,
+        expected_version: str,
+        target_version: str,
+    ) -> InstallationRecord | None:
+        """乐观锁切换版本指针（并发升级/回退时指针被他人改动 → 返回 `None`）。
+
+        Args:
+            tenant_id: 企业 ID。
+            plugin_id: 插件标识。
+            expected_version: 调用方观测到的当前版本。
+            target_version: 目标版本。
+
+        Returns:
+            InstallationRecord | None: 切换后的安装行；指针已被改动返回 None。
+        """
+        async with self._lock:
+            current = self._installations.get((tenant_id, plugin_id))
+            if current is None or current.version != expected_version:
+                return None
+            payload = replace(
+                current,
+                version=target_version,
+                previous_version=current.version,
+                capability_version=current.capability_version + 1,
+            )
+            self._installations[(tenant_id, plugin_id)] = payload
         return payload
 
     # ------------------------------------------------------------------
@@ -997,6 +1086,105 @@ class PostgresPluginStore:
             raise ApiError(ErrorCode.INTERNAL_ERROR, internal_detail="installation upsert lost")
         return _to_installation(row)
 
+    async def create_installation(self, record: InstallationRecord) -> InstallationRecord:
+        """**仅插入**安装行（`ON CONFLICT DO NOTHING` → 冲突翻译成 `InstallationConflictError`）。
+
+        为什么不用 `ON CONFLICT DO UPDATE`：并发安装时后者会让两个请求都"成功"，
+        且后到者把先到者的 `settings`/`capability_version` 覆盖掉——用户看到已安装，
+        但配置不是自己刚填的那份。这里宁可返回 `16010`（请刷新后重试），
+        也不静默覆盖（架构 §5.4 `16010` 场景 ①）。
+
+        Args:
+            record: 安装行。
+
+        Returns:
+            InstallationRecord: 落库后的安装行。
+
+        Raises:
+            InstallationConflictError: 唯一键 `uq_installation_active` 冲突（并发安装）。
+        """
+        async with tenant_scope(record.tenant_id, settings=self._settings) as uow:
+            repo = _InstallationRepository(uow)
+            row = await repo.fetch_one(
+                f"""
+                INSERT INTO {INSTALLATION_TABLE} (
+                    tenant_id, plugin_id, version, previous_version, status, settings,
+                    capability_version, installed_by, enabled_at, disabled_at, uninstalled_at
+                ) VALUES (
+                    :tenant_id, :plugin_id, :version, NULLIF(:previous_version, ''), :status,
+                    CAST(:settings AS jsonb), :capability_version, :installed_by,
+                    CAST(NULLIF(:enabled_at, '') AS timestamptz),
+                    CAST(NULLIF(:disabled_at, '') AS timestamptz),
+                    CAST(NULLIF(:uninstalled_at, '') AS timestamptz)
+                )
+                ON CONFLICT (tenant_id, plugin_id) DO NOTHING
+                RETURNING tenant_id, plugin_id, version, previous_version, status, settings,
+                          capability_version, installed_by, installed_at, enabled_at,
+                          disabled_at, uninstalled_at, last_used_at
+                """,
+                repo.params(
+                    plugin_id=record.plugin_id,
+                    version=record.version,
+                    previous_version=record.previous_version,
+                    status=record.status,
+                    settings=json.dumps(record.settings, ensure_ascii=False, sort_keys=True),
+                    capability_version=record.capability_version,
+                    installed_by=record.installed_by,
+                    enabled_at=record.enabled_at,
+                    disabled_at=record.disabled_at,
+                    uninstalled_at=record.uninstalled_at,
+                ),
+            )
+        if row is None:
+            raise InstallationConflictError(
+                f"installation exists: {record.tenant_id}/{record.plugin_id}"
+            )
+        return _to_installation(row)
+
+    async def swap_version(
+        self,
+        tenant_id: str,
+        plugin_id: str,
+        *,
+        expected_version: str,
+        target_version: str,
+    ) -> InstallationRecord | None:
+        """乐观锁切换版本指针（`WHERE version = :expected`，命中 0 行即指针竞争）。
+
+        Args:
+            tenant_id: 企业 ID。
+            plugin_id: 插件标识。
+            expected_version: 调用方观测到的当前版本。
+            target_version: 目标版本。
+
+        Returns:
+            InstallationRecord | None: 切换后的安装行；指针已被他人改动返回 None。
+        """
+        async with tenant_scope(tenant_id, settings=self._settings) as uow:
+            repo = _InstallationRepository(uow)
+            row = await repo.fetch_one(
+                f"""
+                UPDATE {INSTALLATION_TABLE}
+                   SET previous_version = version,
+                       version = :target_version,
+                       capability_version = capability_version + 1
+                 WHERE tenant_id = :tenant_id
+                   AND plugin_id = :plugin_id
+                   AND version = :expected_version
+                RETURNING tenant_id, plugin_id, version, previous_version, status, settings,
+                          capability_version, installed_by, installed_at, enabled_at,
+                          disabled_at, uninstalled_at, last_used_at
+                """,
+                repo.params(
+                    plugin_id=plugin_id,
+                    expected_version=expected_version,
+                    target_version=target_version,
+                ),
+            )
+        if row is None:
+            return None
+        return _to_installation(row)
+
     # ------------------------------------------------------------------
     # 授权
     # ------------------------------------------------------------------
@@ -1328,6 +1516,7 @@ __all__: list[str] = [
     "VERSION_TABLE",
     "CatalogRecord",
     "InMemoryPluginStore",
+    "InstallationConflictError",
     "InstallationRecord",
     "PluginStore",
     "PostgresPluginStore",

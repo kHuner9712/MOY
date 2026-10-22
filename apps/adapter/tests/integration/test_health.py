@@ -269,17 +269,17 @@ def test_exactly_30_business_endpoints(client: TestClient) -> None:
     docs_dir = pathlib.Path(__file__).resolve().parents[4] / "docs" / "api"
     phase2 = {
         (str(item["method"]).upper(), str(item["path"]))
-        for item in json.loads(
-            (docs_dir / "baseline-phase2-38.json").read_text(encoding="utf-8")
-        )["endpoints"]
+        for item in json.loads((docs_dir / "baseline-phase2-38.json").read_text(encoding="utf-8"))[
+            "endpoints"
+        ]
     }
     # 阶段三插件域（phase3=14，B17 起分批登记）：核心基线计数同样要把它们排除，
     # 否则一旦挂载 /plugins，核心 30 的冻结断言就会误报。
     phase3 = {
         (str(item["method"]).upper(), str(item["path"]))
-        for item in json.loads(
-            (docs_dir / "baseline-phase3-14.json").read_text(encoding="utf-8")
-        )["endpoints"]
+        for item in json.loads((docs_dir / "baseline-phase3-16.json").read_text(encoding="utf-8"))[
+            "endpoints"
+        ]
     }
     assert len(operations - phase2 - phase3) == 30
 

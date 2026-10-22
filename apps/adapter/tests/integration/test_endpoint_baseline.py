@@ -30,7 +30,7 @@ VALIDATOR_PATH = REPO_ROOT / "deploy" / "validate_openapi.py"
 
 #: 基线文件路径
 CORE_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-core-30.json"
-PHASE3_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase3-14.json"
+PHASE3_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase3-16.json"
 PHASE2_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase2-38.json"
 SNAPSHOT_PATH = REPO_ROOT / "docs" / "api" / "openapi.snapshot.json"
 
@@ -143,7 +143,7 @@ def test_repository_passes_gates_with_allow_missing_phase2() -> None:
     assert failures == [], [item.render() for item in failures]
     assert stats["core"] == 30
     assert stats["phase2"] == 38
-    assert stats["phase3"] <= 14, "插件域端点不得超过冻结上限"
+    assert stats["phase3"] <= 16, "阶段三端点不得超过冻结上限（PL1-PL14 + WF1/WF2）"
 
 
 def _load_snapshot() -> dict[str, Any]:
@@ -173,7 +173,7 @@ def test_cli_returns_zero_in_strict_mode_after_b10() -> None:
     这正是该门禁的设计意图：放宽期结束，端点基线进入冻结状态。
     缺失检测能力由 `test_cli_returns_nonzero_when_endpoint_missing` 用合成 schema 兜住。
     """
-    # 阶段三 14 条尚未全部落地（B17 起分批登记）→ 严格模式需显式放行 phase3；
+    # 阶段三 16 条尚未全部落地（B17 起分批登记）→ 严格模式需显式放行 phase3；
     # B21 收口后本行改回 `["--no-write-openapi"]` 且必须仍为 0。
     assert validator.main(["--no-write-openapi", "--allow-missing-phase3"]) == 0
 
