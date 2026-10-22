@@ -35,13 +35,17 @@ from tests.integration.test_sql_insert_consistency import split_top
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[4]
 
 #: 迁移文件
-MIGRATION_0005: Final[Path] = REPO_ROOT / "deploy" / "migrations" / "0005_phase3_artifact_content.sql"
+MIGRATION_0005: Final[Path] = (
+    REPO_ROOT / "deploy" / "migrations" / "0005_phase3_artifact_content.sql"
+)
 
 #: 阶段三基线脚本
 INIT_PHASE3: Final[Path] = REPO_ROOT / "deploy" / "init-schema-phase3.sql"
 
 #: 仓储实现
-ARTIFACT_REPO: Final[Path] = REPO_ROOT / "apps" / "adapter" / "app" / "db" / "repositories" / "artifact_repo.py"
+ARTIFACT_REPO: Final[Path] = (
+    REPO_ROOT / "apps" / "adapter" / "app" / "db" / "repositories" / "artifact_repo.py"
+)
 
 #: 迁移门禁脚本（静态判据的**唯一真源**，不在这里另写一份规则）
 VALIDATOR: Final[Path] = REPO_ROOT / "deploy" / "validate_migrations.py"
@@ -126,7 +130,9 @@ def test_init_schema_phase3_declares_content_column() -> None:
     """
     validator = _load_validator()
     text = validator.strip_sql_noise(INIT_PHASE3.read_text(encoding="utf-8"))
-    assert validator._column_declared(text, "plugin_artifact", "content"), (
+    # 刻意复用门禁那份（私有的）列解析器：判据同源，避免"用例的解析规则"与
+    # "门禁的解析规则"各写一份后悄悄漂移。
+    assert validator._column_declared(text, "plugin_artifact", "content"), (  # noqa: SLF001
         "init-schema-phase3.sql 的 plugin_artifact 建表语句缺 content 列"
     )
 
@@ -168,9 +174,8 @@ def test_repository_insert_carries_content_column() -> None:
 def test_repository_save_version_updates_content_column() -> None:
     """`save_version` 的 `UPDATE` 必须写 `content`（否则改版后下载还是旧文件）。"""
     text = ARTIFACT_REPO.read_text(encoding="utf-8")
-    assert re.search(r"UPDATE\s+\{?ARTIFACT_TABLE\}?\s+SET[^;]*?content\s*=\s*:content", text, re.S), (
-        "save_version 的 UPDATE 没有写 content 列"
-    )
+    pattern = r"UPDATE\s+\{?ARTIFACT_TABLE\}?\s+SET[^;]*?content\s*=\s*:content"
+    assert re.search(pattern, text, re.S), "save_version 的 UPDATE 没有写 content 列"
 
 
 # ===========================================================================

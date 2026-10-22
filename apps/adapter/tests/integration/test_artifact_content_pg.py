@@ -515,7 +515,7 @@ async def test_download_endpoint_still_falls_back_to_inline_text(
         response = await client.get(f"/files/artifacts/{token}")
 
     assert response.status_code == 200
-    assert response.content == "周报正文".encode("utf-8")
+    assert response.content == "周报正文".encode()
 
 
 # ===========================================================================
