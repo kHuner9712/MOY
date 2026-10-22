@@ -259,3 +259,23 @@
 > 这与"负样本必须带 TC 编号"是同一层要求：**红要能被指认到具体缺陷**。
 
 **所有"改坏"操作在导出树副本（`/tmp/qa-b21-mut`）上进行，绝不改工作区**——否则会制造新的"工作区脏、树里干净"。
+
+### 7.1 修复可用里程碑 `9a85de6`（实测，**非 B21 冻结**）
+
+| 证据 | 命令/位置 | 结果 |
+| --- | --- | --- |
+| **内容自证** | `git show 9a85de6:…/task_repo.py` → INSERT 列/值 | **24 / 24**，**不含 `queue_position`** ✅ |
+| **全树静态扫描** | 导出树跑 SQL↔DDL 扫描 | 29 条 INSERT、**违规 0**（HEAD 原 2 处）✅ |
+| **PG 仓储用例** | `test_task_repo_pg.py --run-pg` | **28 passed** ✅ |
+| **归属（复盘）** | 提交 message | `fix(adapter): … （P3-B19-04）` ✅ |
+
+**三项功能检查**：
+| 检查 | 用例 | 结果 |
+| --- | --- | --- |
+| `create_task` → `get_task` 读回全字段 | `test_create_task_roundtrips_all_fields` | 通过 |
+| `list_queued` 位次 1..n（建任务即回填） | `test_queued_tasks_get_derived_positions`（断言 `[1,2]`，新建位次 3） | 通过 |
+| 异常分支"能看到原始 PG 错误" | **无用例**；探针：`SELECT queue_position …` → `UndefinedColumnError: column "queue_position" does not exist` | **列名可见**；`__cause__ = None`（未包装，属现状设计） |
+
+> **口径待定（A/B）**：A=原始异常不丢、日志可见即达标（现状）；B=要求 `ApiError(...) from exc` 显式链（需 repo 层加包装）。
+> 本文倾向 A：**"能不丢原始错误"比"必须挂 cause"更本质**。
+> **注意**：`9a85de6` 时工作区仍 4 个文件未提交、`artifact_repo`/`plugin_repo` PG 用例未补、四档未复测 —— **不构成 B21 冻结**。
