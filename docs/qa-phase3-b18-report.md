@@ -7,7 +7,7 @@
 | 复核方式 | `git archive 79f868c` → `/tmp/qa-b18`，QA 骨架文件取仓库 HEAD 版本覆盖后执行 |
 | 归档身份 | `79f868c202ee80a40b2db08f9b966eb22311f470` / `/tmp/qa-b18` |
 | 验证日期 | 2026-10-22 |
-| **判定** | **FAIL**（D1/D2 已修复 ✅；但 3 项新/遗留问题阻断：G-13 未修、0003 空库路径失败、checksum 漂移） |
+| **判定** | **PASS（首轮 FAIL → 复验 PASS）**：`79f868c` 判 FAIL（D3/D4 未修、D5 环境）；**`a705d2b` 复验全绿，转 PASS**（见 §8） |
 
 ---
 
@@ -103,3 +103,33 @@
 
 > **用途**：`red` 条目的 `defect` 字段必须是上表编号之一，且**编号唯一、与 open 状态条目双向相等**——
 > 否则"填个编号"只是填字游戏（编造编号台账里没有；复用编号则数量对不上）。
+
+
+---
+
+## 8. 复验（`a705d2b`）：**PASS**
+
+| # | 判据 | 实测（`a705d2b` 隔离树） | 判定 |
+| --- | --- | --- | --- |
+| 1 | `test_g11_*` 两遍各 5 passed | **第 1 遍 5 passed**、**第 2 遍 5 passed**（无 checksum 漂移） | ✅ |
+| 2 | `already_installed` 两路径 + 授权不变 + 审计 1 条 | `False` / `True` / 审计 **1** 条 / 授权不变 | ✅ |
+| 3 | PL13 **6 项** + 与 PL4 **交集值一致** | 6 项；`org.repo.write=False`→PL4 读 `False`；`org.external.publish=True`→读 `True` | ✅ |
+| 4 | `check_error_catalog --strict` | **EXIT 0**，且日志明示「内部码未进前端兜底表（豁免 `['17002']`）」 | ✅ |
+| 5 | `phase3` 计数（带容差） | `core=30 phase2=38/38 **phase3=14/16**（未实现 0）`，`--allow-missing-phase2 --allow-missing-phase3` → EXIT 0 | ✅ |
+| 6 | 骨架 | **9 passed / 2 xfailed / 0 skipped**（常量已同步为 `2 / 0 / 2`） | ✅ |
+| 7 | 插件域回归（附加） | `test_plugin_market/state` + `unit/test_plugin_install/lifecycle/loader` → **63 passed** | ✅ |
+
+### 8.1 缺陷状态更新
+
+| 编号 | 原状态 | 现状态 |
+| --- | --- | --- |
+| P3-B17-01（`already_installed`） | ❌ | ✅ **fixed**（`79f868c` 起，复验确认两路径） |
+| P3-B17-02（PL13 回读 3 项） | ❌ | ✅ **fixed**（复验 6 项） |
+| P3-B18-01（`0003` 只对账） | ❌ | ✅ **fixed**（`b5dbd69`：`to_regclass` 守卫 + 幂等建表 + 建完对账；g11 两遍绿） |
+| P3-B18-02（checksum 漂移） | ❌ | **环境性，非缺陷**（`0003` 未发布，改迁移后旧测试库 checksum 必然不匹配；改用全新库后无漂移。team-lead 处置：验证一律用全新库） |
+| P3-B18-03（G-13 `17002` 方向相反） | ❌ | ✅ **fixed**（`c340e70`：`ErrorSpec.visibility` + 内部码豁免 + 正向检查「内部码进前端即红」） |
+
+> 复验口径说明：D5 首轮判 FAIL 是我的判断口径问题——**把环境态当缺陷**。已在报告中改为环境性并注明处置（全新库验证），后续批次不再计入缺陷。
+
+### 8.2 结论
+`a705d2b` 起 **B18 PASS**。首个 FAIL 判定（`79f868c`）保留为历史记录：其价值在于 D3/D4 是**在冻结之后才修**的，若不复核就会把"已修"记成"未修"。
