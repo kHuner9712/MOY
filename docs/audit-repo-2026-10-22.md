@@ -7,7 +7,7 @@
 | 审计范围 | 全仓 Monorepo（`apps/adapter`、`apps/web`、`deploy`、`docs`、`.github/workflows`） |
 | 代码基线 | `main` @ `dc3ff1e`（工作区另有 1 项未提交修改 + 1 个游离文件） |
 | 审计方式 | **实测复跑**（非纸面核对）：本地全量执行 17 道 CI 门禁 + 打包构建 + 静态红线扫描 |
-| 审计结论 | **有条件通过**：工程治理成熟度显著高于行业同类，但存在 **4 项 P0**，其中 2 项会导致**交付物不可用/隔离失效** |
+| 审计结论 | **有条件通过**：工程治理成熟度显著高于行业同类，但存在 **3 项 P0 + 1 项潜伏 P1**（P0-1 初判过重，已于 2026-10-23 下调），其中 P0-2 会导致**隔离失效**、P0-4 会使**门禁永久红** |
 
 ---
 
@@ -64,7 +64,10 @@
 
 ## 三、P0 级问题（阻塞交付，必须立即整改）
 
-### P0-1 · 适配层 wheel 缺失三个核心包，容器镜像一启动即崩
+> 条目编号沿用初判（P0-1 仍叫 P0-1），但 P0-1 的**严重度已下调为 P1（潜伏）**，
+> 原因见该节"影响"段与文末自我修正说明。其余 3 条维持 P0。
+
+### P0-1 · 适配层 wheel 缺失三个核心包（**影响面已修正：潜伏缺陷，非启动即崩**）
 
 - **证据**：`apps/adapter/pyproject.toml` → `[tool.setuptools] packages` 只声明了 10 个子包，**未包含** `app.business`（22 文件）、`app.db`（23 文件）、`app.plugins`（7 文件）。
 - **实测**：执行 `pip wheel . --no-deps` 得到 `officeai_adapter-1.0.0-py3-none-any.whl`（72 个文件），解包核对：
@@ -77,8 +80,22 @@
     app/plugins    0 个文件   ← 缺失
   ```
 
-- **影响**：`apps/adapter/Dockerfile` 用 `pip install .`（**非 editable**）构建运行镜像 → 容器内 `import app.business` / `app.db` / `app.plugins` 直接 ImportError → **全部业务、数据、插件端点不可用，84 个端点中绝大多数起不来**。本地测试之所以全绿，是因为本地是 editable 安装（`.pth` finder 指向源码树），把缺陷完全掩盖了。
-- **违反原则**：「首版即商用，拒绝 Demo 级产物」。
+- **影响（2026-10-23 复核实测修正，原判过重）**：
+  缺陷**真实存在于交付镜像中**——对运行中的 `officeai/adapter:1.0.0` 实测，
+  `/opt/venv/lib/python3.13/site-packages/app/` 只有 `api/clients/core/main/middleware/registry/schemas/services/tools`，
+  **确无 `business` / `db` / `plugins`**；`cd /tmp`（脱离源码目录）后
+  `import app.business` 直接 `ModuleNotFoundError`。
+  但**容器本身能正常启动**：Dockerfile 运行阶段有 `COPY app ./app` + `WORKDIR /app` +
+  `CMD uvicorn app.main:app`，`cwd` 下的源码树**遮蔽**了 site-packages，
+  实测容器内 `/app/app/business` 存在、6 份插件声明就位、服务 healthy。
+  本地全绿同理（editable 的 `.pth` finder 指向源码树）。
+  → 因此这是**潜伏缺陷**，触发条件明确且苛刻程度中等：
+  ① 运行方式改为 wheel-only（去掉 `COPY app` 或换 `WORKDIR`）即刻崩；
+  ② 任何外部 `pip install officeai-adapter` 的消费方拿不到业务能力；
+  ③ 控制台脚本 `officeai-adapter` 在非 `/app` 目录运行同样失败。
+  **据此把本条从 P0 下调为 P1（潜伏）**——它不阻塞阶段三交付，但会在交付形态
+  任何变化时立即引爆，属"迟早要还"的类型，修复仍然必要。
+- **违反原则**：「首版即商用，拒绝 Demo 级产物」（潜伏缺陷同样是债，只是不立即致命）。
 - **整改**：
   1. `[tool.setuptools] packages` 补全 `app.business`、`app.db`、`app.plugins`（含各自子包）；
   2. `[tool.setuptools.package-data]` 增补 `"app.plugins" = ["manifests/*.json"]`；
@@ -216,7 +233,13 @@
   P2-1 ~ P2-8
 ```
 
-**最后一条建议**：本次审计暴露出的共性问题不是"某段代码写错了"，而是**「门禁写在 CI 里，但 CI 从未真正跑过」**——4 项 P0 中，3 项（P0-1 打包、P0-3 密钥兜底、P0-4 门禁必红）都是典型的"只有真跑才会暴露"的缺陷。恢复 GitHub Actions 额度、让 17 道门禁在每次推送上真跑一次，其价值高于本次列出的任何单条整改。
+**最后一条建议**：本次审计暴露出的共性问题不是"某段代码写错了"，而是**「门禁写在 CI 里，但 CI 从未真正跑过」**——P0-3（密钥兜底）、P0-4（门禁必红）、P1-2（扫描误报）都是典型的"只有真跑才会暴露"的缺陷。恢复 GitHub Actions 额度、让 17 道门禁在每次推送上真跑一次，其价值高于本次列出的任何单条整改。
+
+> **本报告的自我修正（2026-10-23）**：P0-1 原判"容器一启动即崩"**过重**。
+> 经对运行中镜像实测，缺陷真实存在（site-packages 确缺三包），但被
+> `WORKDIR /app` + `COPY app ./app` 的源码树遮蔽，容器可正常服务。
+> 已下调为 P1（潜伏），详见该节"影响"段。留此记录以说明：
+> **审计结论也要能被后续实测推翻**，否则报告本身就成了新的"自述绿灯"。
 
 ---
 
@@ -230,7 +253,7 @@
 
 | 编号 | 问题 | 修复提交 | 状态 |
 | --- | --- | --- | --- |
-| P0-1 | 打包清单缺 `app.business` / `app.db` / `app.plugins`，容器启动即 ImportError | `d55a959` | ✅ 已修复 |
+| P0-1 | 打包清单缺 `app.business` / `app.db` / `app.plugins`；镜像 site-packages 实测确缺，靠 cwd 源码树遮蔽（**已由 P0 下调为 P1 潜伏**） | `d55a959` | ✅ 已修复 |
 | P0-2 | 应用角色 DSN 覆盖修复未入库，HEAD 部署等于关闭 RLS | `a5893dd` | ✅ 已入库 |
 | P0-3 | 内部 API 密钥明文兜底（私有化 3 处 + SaaS 4 处） | `fc3df7b` | ✅ 已修复（**密钥待轮换**） |
 | P0-4 | CI 无 PG 服务 + `OA_BATCH` 缺失 → 覆盖率门禁必红 | `0eb5df3` | ✅ 已修复 |
