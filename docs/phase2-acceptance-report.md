@@ -6,7 +6,7 @@
 | 报告版本 | v1.0（终稿） |
 | 验收日期 | 2026-10-22 |
 | 验收人 | 齐活林（交付总监） |
-| 代码基线 | `develop` @ **`3b82df2`**（阶段二起点 `321d4f1`，共 **51 个提交 / 225 文件 / +80,166 −1,142**） |
+| 代码基线 | `main` @ **`3b82df2`**（阶段二起点 `321d4f1`，共 **51 个提交 / 225 文件 / +80,166 −1,142**） |
 | 验收依据 | `docs/plan-v1.0.md` 第 9-16 周排期；`docs/prd-phase2-increment.md` v1.1（24 条 P0）；`docs/architecture-phase2.md` v2.0（15 批次 / 38 端点）；`docs/qa-phase2-test-plan.md` v1.3（178 用例 / 25 门禁） |
 | 独立验证 | `docs/qa-phase2-w1-report.md`、`w1-r03-report.md`、`w2-report.md`、`w2-r2-report.md`、`w3-report.md`、`w3-r2-report.md`；门禁证据 `docs/phase2-gate-evidence.md` |
 | **验收结论** | **✅ 通过（PASS）**：15/15 批次完成，38/38 新端点就绪，**0 个未关闭 P0/P1** |

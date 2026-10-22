@@ -5,7 +5,7 @@
 | 文档版本 | v3.2.2（阶段三架构定稿·封版） |
 | 文档性质 | 内部交付文档（供交付总监、产品经理、工程师、QA 消费） |
 | 上游输入 | `docs/prd-phase3-increment.md` **v1.2 已封版**（606 行 / 25 条 P0 / 6 条 P1 / 4 条 P2 / **16 新增端点** + 4 处扩展 / 16 项错误码需求 / **10 条勘误**）；`docs/prd-phase3-traceability.md`（291 行 / 117 断言 / 25 TC / 12 门禁 / 15 项结果物核查 / 金额三规则）；`docs/architecture-v1.0.md`（30 端点冻结基线 + 红线）；`docs/architecture-phase2.md`（38 端点基线 + 业务库范式）；`docs/phase2-acceptance-report.md` §6 |
-| 代码基线 | `develop` @ `db7aea7`（core=30 / phase2=38、1119 测试、总覆盖率 89.99%） |
+| 代码基线 | `main` @ `db7aea7`（core=30 / phase2=38、1119 测试、总覆盖率 89.99%） |
 | 作者 | 高见远（架构师） |
 | 日期 | 2026-10-23 |
 | 状态 | 待评审（评审通过即为阶段三契约基线） |

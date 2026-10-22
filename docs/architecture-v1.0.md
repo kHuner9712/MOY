@@ -1489,6 +1489,17 @@ graph LR
 - `release/*`：版本冻结，仅 bugfix；`hotfix/*`：生产热修；
 - 提交信息：`type(scope): 说明`（feat/fix/refactor/test/docs/chore）。
 
+> **现状说明（审计 OA-AUDIT-001 / P1-4，2026-10-22）**
+> 截至当前，仓库**实际只有 `main` 一个分支**（`git branch -a` 无 `develop`），
+> 全部交付提交均直落 `main`。因此各处文档登记的代码基线已统一改为
+> `` `main` @ <sha> ``（涉及的基线 `321d4f1` / `db7aea7` / `3b82df2` /
+> `4923e1f` / `d363909` / `046c432` 经 `git merge-base --is-ancestor` 核验，
+> **均在 `main` 历史内**，可正常追溯）。
+>
+> 两条路选一条即可，但**不要长期维持"文档写 develop、实际只有 main"**：
+> ① 采用主干开发，把本节 Git Flow 修订为 `main` + `feature/*`；
+> ② 恢复 `develop` 作为集成分支，并让后续交付按本节执行。
+
 ## 9.5 环境变量规范
 
 | 变量 | 示例 | 说明 |

@@ -7,7 +7,7 @@
 | 核对人 | 齐活林（交付总监） |
 | 核对依据 | `docs/plan-v1.0.md`（24 周排期）、`docs/prd-phase2-increment.md`（24 条 P0 / 38 新端点）、`docs/architecture-phase2.md`（15 批次分解）、`docs/qa-phase2-test-plan.md`（178 用例 / 25 门禁） |
 | 核对方法 | 代码事实核对（源码清点 + 端点基线门禁实跑 + 测试实跑 + 真实 PostgreSQL 隔离验证）＋ QA 六份独立报告交叉验证；**不采信口头进度** |
-| 代码基线 | `develop` @ `3b82df2`（阶段二终局） |
+| 代码基线 | `main` @ `3b82df2`（阶段二终局） |
 | 测试基线 | `pytest -q --run-pg` → **1119 passed / 0 failed / 0 skipped**；P0 用例 **178 条全绿**；总覆盖率 **89.99%**；端点基线 `core=30 phase2=38/38` |
 
 ---
