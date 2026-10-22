@@ -342,13 +342,16 @@ class RagService:
                 chunk_policy=chunk_policy,
                 document_id=new_document_id(),
             )
-            return UploadDocumentData(
-                document_id=record.document_id,
-                file_name=record.file_name,
-                index_status=IndexStatus(record.index_status),
-                stage=DocumentStage(record.stage),
-                chunk_policy=ChunkPolicy(record.chunk_policy),
-                progress=record.progress,
+            return await self._with_quota_notice(
+                UploadDocumentData(
+                    document_id=record.document_id,
+                    file_name=record.file_name,
+                    index_status=IndexStatus(record.index_status),
+                    stage=DocumentStage(record.stage),
+                    chunk_policy=ChunkPolicy(record.chunk_policy),
+                    progress=record.progress,
+                ),
+                auth,
             )
 
         api_key = await self._api_key_for(base_id, auth)
@@ -385,13 +388,44 @@ class RagService:
             document_id=f"{_DOC_PREFIX}{native_file_id}",
             native_status=str(created.payload.get("indexing_status", "waiting")),
         )
-        return UploadDocumentData(
-            document_id=record.document_id,
-            file_name=record.file_name,
-            index_status=IndexStatus(record.index_status),
-            stage=DocumentStage(record.stage),
-            chunk_policy=ChunkPolicy(record.chunk_policy),
-            progress=record.progress,
+        return await self._with_quota_notice(
+            UploadDocumentData(
+                document_id=record.document_id,
+                file_name=record.file_name,
+                index_status=IndexStatus(record.index_status),
+                stage=DocumentStage(record.stage),
+                chunk_policy=ChunkPolicy(record.chunk_policy),
+                progress=record.progress,
+            ),
+            auth,
+        )
+
+    async def _with_quota_notice(
+        self, data: UploadDocumentData, auth: AuthContext
+    ) -> UploadDocumentData:
+        """给 R3 成功响应补上非阻断额度提示（B27 `15006`）。
+
+        为什么是 `data.notice_*` 而不是错误码：超额用户**仍然可以上传**
+        （PRD 5.3 只要求"暂停后续处理/提醒"，不要求拒收），而前端 `unwrap()`
+        把非 0 `code` 当异常抛——提示走 `code` 会让"上传成功"变成弹错误框。
+
+        单一真源：委托 `UsageService.quota_notice()`（判据与 M4/BL5 同源的
+        `over_quota_warning`），本类不重算额度公式。
+
+        Args:
+            data: R3 响应数据（已构造完成）。
+            auth: 鉴权上下文。
+
+        Returns:
+            UploadDocumentData: 带提示字段的响应数据（无提示时原样返回）。
+        """
+        notice_code, notice_message = await self._usage.quota_notice(
+            tenant_id=self._tenant_of(auth), user_id=auth.user_id
+        )
+        if not notice_code:
+            return data
+        return data.model_copy(
+            update={"notice_code": notice_code, "notice_message": notice_message}
         )
 
     async def _resolve_base_policy(self, base_id: str, auth: AuthContext) -> ChunkPolicy:

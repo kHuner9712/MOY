@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
 from app.core.config import Settings, get_settings
+from app.core.errors import ERROR_REGISTRY, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.db.repositories.usage_repo import (
@@ -482,6 +483,41 @@ class UsageService:
             daily_trend=tuple(trend),
             event_counts=counts,
         )
+
+    async def quota_notice(self, *, tenant_id: str, user_id: str) -> tuple[int, str]:
+        """取"额度将要用尽"的**非阻断提示**（B27 `15006` 的唯一出品口）。
+
+        为什么是"非阻断"：PRD 5.3 的软限制要求是「提醒而不是拦停」——超额用户
+        仍可继续用，只是每条成功响应顺带告诉前端"额度已用尽，建议升级"。
+        因此本方法的返回值挂在响应 `data.notice_code` / `data.notice_message`
+        上，**`code` 恒为 0**（前端 `unwrap()` 把非 0 `code` 当异常抛，
+        提示一旦走 `code` 就会变成弹错误框，与"不停服、不弹错"直接冲突）。
+
+        **单一真源**：判据只有一个——`snapshot().over_quota_warning`，与 M4 用量页
+        和 BL5 管理视图同源同口径（D-12）。这里**不重算**一套额度公式：
+        两套算法必然漂移，而"账单页说没超、对话页说超了"是最难解释的一类缺陷。
+
+        判据自带"无订阅不提示"：`over_quota_warning` 的表达式含 `total_units > 0`，
+        所以无订阅 / 免费壳 / 桩模式（额度总量为 0）天然不提示。
+
+        Args:
+            tenant_id: 租户 ID。
+            user_id: 用户 ID（提示按**个人**额度口径，与企业视图无关）。
+
+        Returns:
+            tuple[int, str]: `(错误码, 业务文案)`；未达额度上限时为 `(0, "")`。
+        """
+        if not tenant_id or not user_id:
+            return 0, ""
+        try:
+            snapshot = await self.snapshot(tenant_id=tenant_id, user_id=user_id)
+        except Exception as exc:  # 提示失败绝不能影响主流程（对话/上传/建任务）
+            logger.warning("quota_notice_failed", detail=type(exc).__name__)
+            return 0, ""
+        if not snapshot.over_quota_warning:
+            return 0, ""
+        spec = ERROR_REGISTRY[ErrorCode.QUOTA_EXHAUSTED]
+        return int(spec.code), spec.message
 
     async def tenant_snapshot(
         self, *, tenant_id: str, period: str = "", group_by: str = ""

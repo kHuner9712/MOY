@@ -196,6 +196,8 @@ class UploadDocumentData(BaseModel):
         stage: 文档处理阶段（五态，与三态语义一致）。
         chunk_policy: 本次实际使用的内容切分精细度（未指定时取库级设置，便于核对）。
         progress: 进度百分比（0-100）。
+        notice_code: 非阻断提示码（B27 加性字段：额度用尽为 `15006`，否则 0）。
+        notice_message: 非阻断提示文案（`notice_code` 为 0 时为空串）。
     """
 
     document_id: str = Field(description="文档 ID，形如 doc_01HF8...")
@@ -206,6 +208,10 @@ class UploadDocumentData(BaseModel):
         default=ChunkPolicy.DEFAULT, description="内容切分精细度：default 标准 / fine 精细"
     )
     progress: int = Field(default=0, ge=0, le=100, description="进度百分比")
+    #: **非阻断提示**（PRD 5.3：超额仍接收上传，绝不拦停）：只挂在成功响应的
+    #: `data` 里，外层 `code` 恒为 0；放在 `code` 会让"上传成功"变成弹错误框。
+    notice_code: int = Field(default=0, ge=0, description="非阻断提示码（额度用尽为 15006）")
+    notice_message: str = Field(default="", description="非阻断提示文案（无提示时为空串）")
 
 
 class IndexStatusData(BaseModel):

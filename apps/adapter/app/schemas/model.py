@@ -158,6 +158,8 @@ class GenerateData(BaseModel):
         finish_reason: 结束原因。
         usage: 业务化用量。
         citations: 引用片段列表。
+        notice_code: 非阻断提示码（B27 加性字段：额度用尽为 `15006`，否则 0）。
+        notice_message: 非阻断提示文案（`notice_code` 为 0 时为空串）。
     """
 
     generation_id: str = Field(description="生成记录 ID，形如 gen_01HF8...")
@@ -165,6 +167,11 @@ class GenerateData(BaseModel):
     finish_reason: FinishReason = Field(default=FinishReason.STOP, description="结束原因")
     usage: Usage = Field(default_factory=Usage, description="业务化用量")
     citations: list[Citation] = Field(default_factory=list, description="引用片段列表")
+    #: **非阻断提示**（PRD 5.3 软限制）：只挂在成功响应里，外层 `code` 恒为 0。
+    #: 放在 `data` 而非 `code` 是硬约束——前端 `unwrap()` 把非 0 `code` 当异常抛，
+    #: 提示走 `code` 就会变成弹错误框，等于把"提醒"做成"停服"。
+    notice_code: int = Field(default=0, ge=0, description="非阻断提示码（额度用尽为 15006）")
+    notice_message: str = Field(default="", description="非阻断提示文案（无提示时为空串）")
 
 
 class ProfileItem(BaseModel):
@@ -287,7 +294,13 @@ class StreamDoneData(BaseModel):
     Attributes:
         finish_reason: 结束原因。
         usage: 业务化用量。
+        notice_code: 非阻断提示码（额度用尽为 `15006`，否则 0）。
+        notice_message: 非阻断提示文案（`notice_code` 为 0 时为空串）。
     """
 
     finish_reason: FinishReason = Field(default=FinishReason.STOP, description="结束原因")
     usage: Usage = Field(default_factory=Usage, description="业务化用量")
+    #: **非阻断提示挂在终帧**：流式期间不得插帧（会打断前端渲染与滚动），
+    #: 提示只在 `done` 帧一次性下发；`code` 语义在 SSE 里由帧类型承担，仍恒为 0。
+    notice_code: int = Field(default=0, ge=0, description="非阻断提示码（额度用尽为 15006）")
+    notice_message: str = Field(default="", description="非阻断提示文案（无提示时为空串）")

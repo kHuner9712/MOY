@@ -281,3 +281,106 @@ async def test_usage_store_singleton_memory_backend() -> None:
     assert store is get_usage_store(_settings())
     reset_usage_store()
     assert get_usage_store(_settings()) is not store
+
+
+# ---------------------------------------------------------------------------
+# B27：`quota_notice()` —— `15006` 的唯一出品口（非阻断提示）
+#
+# 红线：提示走 `data.notice_code`，`code` 恒 0。本组只测"单一真源"这一层：
+# 判据必须是 `snapshot().over_quota_warning`（与 M4/BL5 同源），不得另算一套。
+# ---------------------------------------------------------------------------
+
+
+async def _seed_subscription(*, seats: int = 5) -> int:
+    """给 `TENANT` 开一个专业版订阅并返回额度总量。
+
+    Args:
+        seats: 席位数（专业版最小 5）。
+
+    Returns:
+        int: 套餐额度总量。
+    """
+    from app.business.subscription_service import SubscriptionService
+    from app.db.repositories.billing_repo import get_billing_store
+    from app.schemas.billing import ChangeSubscriptionRequest
+
+    conf = _settings()
+    await SubscriptionService(conf, get_billing_store(conf)).change(
+        tenant_id=TENANT,
+        actor_id=USER,
+        request=ChangeSubscriptionRequest(plan_code="professional", seats=seats, action="upgrade"),
+    )
+    quota = await InMemoryUsageStore().quota(TENANT)
+    assert quota.total_units > 0
+    return quota.total_units
+
+
+async def test_quota_notice_returns_15006_when_over_quota() -> None:
+    """达标/超额 → `(15006, 注册表文案)`。"""
+    from app.core.errors import ERROR_REGISTRY, ErrorCode
+
+    total = await _seed_subscription()
+    service = _service()
+    await service.record_generation(
+        tenant_id=TENANT, user_id=USER, generation_id="gen_notice_over", units=total
+    )
+
+    code, message = await service.quota_notice(tenant_id=TENANT, user_id=USER)
+    assert code == int(ErrorCode.QUOTA_EXHAUSTED) == 15006
+    assert message == ERROR_REGISTRY[ErrorCode.QUOTA_EXHAUSTED].message
+    assert message, "提示文案不得为空（前端要直接展示）"
+
+
+async def test_quota_notice_silent_when_under_quota() -> None:
+    """未达上限 → `(0, "")`（不打扰用户）。"""
+    total = await _seed_subscription()
+    service = _service()
+    await service.record_generation(
+        tenant_id=TENANT, user_id=USER, generation_id="gen_notice_under", units=total // 2
+    )
+
+    assert await service.quota_notice(tenant_id=TENANT, user_id=USER) == (0, "")
+
+
+async def test_quota_notice_silent_without_subscription() -> None:
+    """无订阅（额度总量 0）→ `(0, "")`。
+
+    判据 `over_quota_warning` 含 `total_units > 0`，因此免费壳与桩模式天然不提示；
+    这条钉住"不要用 `used >= 0` 之类的简化判据"。
+    """
+    service = _service()
+    await service.record_generation(
+        tenant_id=TENANT, user_id=USER, generation_id="gen_notice_nosub", units=10
+    )
+    snapshot = await service.snapshot(tenant_id=TENANT, user_id=USER)
+    assert snapshot.total_units == 0
+    assert await service.quota_notice(tenant_id=TENANT, user_id=USER) == (0, "")
+
+
+async def test_quota_notice_silent_without_identity() -> None:
+    """缺少租户/用户标识 → `(0, "")`（不查库、不报错）。"""
+    service = _service()
+    assert await service.quota_notice(tenant_id="", user_id=USER) == (0, "")
+    assert await service.quota_notice(tenant_id=TENANT, user_id="") == (0, "")
+
+
+async def test_quota_notice_never_raises_on_store_failure() -> None:
+    """计量读取失败不得影响主流程：吞掉异常并返回无提示。"""
+
+    class _BrokenStore(InMemoryUsageStore):
+        """取快照时抛异常的存储替身。"""
+
+        async def quota(self, tenant_id: str) -> object:
+            """模拟存储故障。
+
+            Args:
+                tenant_id: 租户 ID。
+
+            Raises:
+                RuntimeError: 固定抛出。
+            """
+            del tenant_id
+            raise RuntimeError("store exploded")
+
+    service = UsageService(_settings(), store=_BrokenStore(), directory=NullUsageDirectory())
+    assert await service.quota_notice(tenant_id=TENANT, user_id=USER) == (0, "")

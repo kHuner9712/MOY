@@ -147,6 +147,26 @@ def _total_units_of(event: dict[str, Any]) -> int:
     return int(usage.get("prompt_tokens", 0) or 0) + int(usage.get("completion_tokens", 0) or 0)
 
 
+def _with_notice(data: GenerateData, notice: tuple[int, str]) -> GenerateData:
+    """给生成结果补上非阻断额度提示（B27 `15006`）。
+
+    为什么是加性字段而不是错误码：前端 `unwrap()` 把非 0 `code` 当异常抛，
+    提示一旦走 `code` 就变成弹错误框 —— 与 PRD 5.3「软限制、不停服、不弹错」
+    直接冲突。`notice` 为 `(0, "")` 时原样返回（不改动对象，零开销）。
+
+    Args:
+        data: 生成结果。
+        notice: `(提示码, 提示文案)`；`(0, "")` 表示无提示。
+
+    Returns:
+        GenerateData: 补上提示字段的生成结果。
+    """
+    code, message = notice
+    if not code:
+        return data
+    return data.model_copy(update={"notice_code": code, "notice_message": message})
+
+
 @dataclass(slots=True)
 class CitationContext:
     """流式引用回链的上下文（M2 专用）。
@@ -413,6 +433,9 @@ class ModelService:
             message_count=len(request.messages),
             knowledge_base_count=len(authorized),
         )
+        # 非阻断额度提示（B27 `15006`）：判据 = 与 M4/BL5 同源的 `over_quota_warning`。
+        # 只挂在 `data.notice_*` 上，外层 `code` 恒为 0——超额**不拦停**（PRD 5.3）。
+        notice = await self._quota_notice(auth)
 
         if self._settings.mock_mode:
             stub = self._stub_generate(request)
@@ -423,7 +446,7 @@ class ModelService:
                 auth=auth,
                 source="settled",
             )
-            return stub
+            return _with_notice(stub, notice)
 
         response = await self._dify.post(
             _DIFY_CHAT_PATH, self._build_downstream_payload(request, user_id)
@@ -446,7 +469,7 @@ class ModelService:
             auth=auth,
             source="settled",
         )
-        return settled
+        return _with_notice(settled, notice)
 
     async def _settle_generation(
         self,
@@ -492,6 +515,23 @@ class ModelService:
                 detail=type(exc).__name__,
             )
             return False
+
+    async def _quota_notice(self, auth: AuthContext | None) -> tuple[int, str]:
+        """取本次请求的非阻断额度提示（B27 `15006`）。
+
+        单一真源：委托 `UsageService.quota_notice()`，其判据就是 M4/BL5 的同一份
+        `snapshot().over_quota_warning`——本类**不重算**额度公式（两套算法必然漂移）。
+
+        Args:
+            auth: 鉴权上下文（`None` 或缺失用户时无提示）。
+
+        Returns:
+            tuple[int, str]: `(提示码, 提示文案)`；无提示时为 `(0, "")`。
+        """
+        user_id = auth.user_id if auth is not None else ""
+        if not user_id:
+            return 0, ""
+        return await self._usage.quota_notice(tenant_id=self._tenant_of(auth), user_id=user_id)
 
     def _build_downstream_payload(
         self, request: GenerateRequest, user_id: str = ""
@@ -703,6 +743,10 @@ class ModelService:
             base_names=await self._base_names(tenant_id, tuple(authorized)),
         )
         generation_id = new_generation_id()
+        # 非阻断额度提示（B27 `15006`）：**在流开始前算好**，只挂在终帧 `done` 上。
+        # 为什么不中途插帧：流式期间插入非 delta 帧会打断前端渲染与自动滚动；
+        # 为什么不改 `error` 帧：超额不是错误，PRD 5.3 要求"提醒而非拦停"。
+        notice = await self._quota_notice(auth)
         logger.info(
             "model_stream_started",
             conversation_id=request.conversation_id,
@@ -718,7 +762,7 @@ class ModelService:
         downstream_total: int | None = None
 
         if self._settings.mock_mode:
-            async for frame in self._stub_stream(generation_id, request):
+            async for frame in self._stub_stream(generation_id, request, notice=notice):
                 produced_chars += _delta_text_of(frame)
                 yield frame
             await self._settle_generation(
@@ -752,7 +796,7 @@ class ModelService:
                         produced_chars += len(rest)
                         yield sse_frame("delta", StreamDeltaData(text=rest).model_dump())
                     downstream_total = _total_units_of(event)
-                mapped_frame = self._transform_stream_event(event, citation_ctx)
+                mapped_frame = self._transform_stream_event(event, citation_ctx, notice=notice)
                 if mapped_frame is not None:
                     yield mapped_frame
         except ApiError as exc:
@@ -783,7 +827,11 @@ class ModelService:
                     )
 
     def _transform_stream_event(
-        self, event: dict[str, Any], citation_ctx: CitationContext | None = None
+        self,
+        event: dict[str, Any],
+        citation_ctx: CitationContext | None = None,
+        *,
+        notice: tuple[int, str] = (0, ""),
     ) -> str | None:
         """将底座原生流式事件转换为自研 SSE 帧。
 
@@ -794,6 +842,7 @@ class ModelService:
         Args:
             event: 底座原生事件字典。
             citation_ctx: 引用回链上下文（缺省时引用帧只带既有字段）。
+            notice: 非阻断额度提示 `(码, 文案)`，只挂在 `done` 帧（B27 `15006`）。
 
         Returns:
             str | None: 自研 SSE 帧；无需下发的事件返回 `None`。
@@ -816,7 +865,12 @@ class ModelService:
                 completion_units=int(usage_raw.get("completion_tokens", 0)),
                 total_units=int(usage_raw.get("total_tokens", 0)),
             )
-            done = StreamDoneData(finish_reason=FinishReason.STOP, usage=usage)
+            done = StreamDoneData(
+                finish_reason=FinishReason.STOP,
+                usage=usage,
+                notice_code=notice[0],
+                notice_message=notice[1],
+            )
             return sse_frame("done", done.model_dump())
 
         if native_event == "error":
@@ -890,13 +944,18 @@ class ModelService:
         return prompt_units + completion_units
 
     async def _stub_stream(
-        self, generation_id: str, request: GenerateRequest
+        self,
+        generation_id: str,
+        request: GenerateRequest,
+        *,
+        notice: tuple[int, str] = (0, ""),
     ) -> AsyncIterator[str]:
         """构造桩模式流式序列（T01）。
 
         Args:
             generation_id: 生成记录 ID。
             request: 生成请求。
+            notice: 非阻断额度提示 `(码, 文案)`，只挂在终帧 `done`（B27 `15006`）。
 
         Yields:
             str: SSE 文本帧序列。
@@ -913,6 +972,8 @@ class ModelService:
                 completion_units=sum(len(chunk) for chunk in chunks),
                 total_units=self._stub_units(request),
             ),
+            notice_code=notice[0],
+            notice_message=notice[1],
         )
         logger.info("model_stream_completed", generation_id=generation_id)
         yield sse_frame("done", done.model_dump())

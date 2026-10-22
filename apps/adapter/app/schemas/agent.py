@@ -133,6 +133,8 @@ class CreateTaskData(BaseModel):
         status: 任务状态。
         created_at: 创建时间。
         estimated_seconds: 预计耗时（秒）。
+        notice_code: 非阻断提示码（B27 加性字段：额度用尽为 `15006`，否则 0）。
+        notice_message: 非阻断提示文案（`notice_code` 为 0 时为空串）。
     """
 
     task_id: str = Field(description="任务 ID，形如 task_01HF8...")
@@ -145,6 +147,10 @@ class CreateTaskData(BaseModel):
     queue_position: int | None = Field(
         default=None, description="排队位次（并发超限时有值，加性字段）"
     )
+    #: **非阻断提示**（PRD 5.3：超额仍建任务，绝不拦停）：只挂在成功响应的
+    #: `data` 里，外层 `code` 恒为 0；放在 `code` 会让"建任务成功"变成弹错误框。
+    notice_code: int = Field(default=0, ge=0, description="非阻断提示码（额度用尽为 15006）")
+    notice_message: str = Field(default="", description="非阻断提示文案（无提示时为空串）")
 
 
 class TaskItem(BaseModel):

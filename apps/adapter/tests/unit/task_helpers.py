@@ -136,6 +136,22 @@ class FakeUsageService:
         self.calls.append((task_id, units))
         return True
 
+    async def quota_notice(self, *, tenant_id: str, user_id: str) -> tuple[int, str]:
+        """替身：非阻断额度提示（B27 `15006` 的接线点）。
+
+        默认返回 `(0, "")`：绝大多数任务用例不关心额度提示，
+        关心超额的用例请注入真实 `UsageService`（单一真源在那边）。
+
+        Args:
+            tenant_id: 企业 ID（未使用）。
+            user_id: 用户 ID（未使用）。
+
+        Returns:
+            tuple[int, str]: 恒 `(0, "")`（未超额，无提示）。
+        """
+        del tenant_id, user_id
+        return 0, ""
+
 
 class EchoGateway:
     """按 `produces` 产出文本产物的原语替身（用于推进流程）。

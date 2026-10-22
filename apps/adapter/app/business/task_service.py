@@ -247,7 +247,8 @@ class TaskService:
         if idem_key:
             existing = await self._tasks.find_by_idem(auth.tenant_id, plugin_id, idem_key)
             if existing is not None:
-                return await self._create_data(existing, manifest)
+                recorded = await self._create_data(existing, manifest)
+                return await self._with_quota_notice(recorded, auth)
         else:
             # 没带幂等键 → 给它一个**一次性的唯一键**。
             #
@@ -314,23 +315,51 @@ class TaskService:
             queue_position=record.queue_position,
         )
         if is_queued:
-            return CreateTaskData(
-                task_id=task_id,
-                status=TaskStatus.QUEUED,
-                created_at=record.started_at,
-                estimated_seconds=0,
-                plugin_id=plugin_id,
-                steps_total=len(steps),
-                retry_of=retry_of or None,
-                queue_position=record.queue_position,
+            return await self._with_quota_notice(
+                CreateTaskData(
+                    task_id=task_id,
+                    status=TaskStatus.QUEUED,
+                    created_at=record.started_at,
+                    estimated_seconds=0,
+                    plugin_id=plugin_id,
+                    steps_total=len(steps),
+                    retry_of=retry_of or None,
+                    queue_position=record.queue_position,
+                ),
+                auth,
             )
 
         if copy_steps_from is not None and from_step > 1:
             await self._replay_prior_steps(record, copy_steps_from, manifest)
         await self._advance_record(record)
         latest = await self._tasks.get_task(auth.tenant_id, task_id) or record
-        data = await self._create_data(latest, manifest)
-        return data
+        return await self._with_quota_notice(await self._create_data(latest, manifest), auth)
+
+    async def _with_quota_notice(self, data: CreateTaskData, auth: AuthContext) -> CreateTaskData:
+        """给 A1 成功响应补上非阻断额度提示（B27 `15006`）。
+
+        为什么是 `data.notice_*` 而不是错误码：超额用户**仍然可以建任务**
+        （PRD 5.3 软限制），前端 `unwrap()` 把非 0 `code` 当异常抛，
+        提示走 `code` 会让"建任务成功"变成弹错误框，等于把提醒做成停服。
+
+        单一真源：委托 `UsageService.quota_notice()`（判据与 M4/BL5 同源的
+        `over_quota_warning`），本类不重算额度公式。
+
+        Args:
+            data: A1 响应数据（已构造完成）。
+            auth: 鉴权上下文。
+
+        Returns:
+            CreateTaskData: 带提示字段的响应数据（无提示时原样返回）。
+        """
+        notice_code, notice_message = await self._usage.quota_notice(
+            tenant_id=auth.tenant_id, user_id=auth.user_id
+        )
+        if not notice_code:
+            return data
+        return data.model_copy(
+            update={"notice_code": notice_code, "notice_message": notice_message}
+        )
 
     async def _create_data(self, record: TaskRecord, manifest: PluginManifest) -> CreateTaskData:
         """把任务行转成 A1 响应。
