@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Final
 
 from app.core.errors import ApiError, ErrorCode
@@ -22,6 +23,47 @@ from app.db.session import UnitOfWork
 
 #: 合法 SQL 标识符（小写字母、数字、下划线，且不以数字开头）
 _IDENTIFIER_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+#: 视为「空时间」的取值（空串 / None 一律写 NULL）
+_EMPTY_TIME_VALUES: Final[frozenset[str]] = frozenset({"", "null", "none"})
+
+
+def as_datetime(value: Any) -> datetime | None:
+    """把 ISO-8601 字符串 / `datetime` 转成 `datetime`（空值返回 None）。
+
+    **为什么必须有这个函数**（B21c 实测的 P0）：asyncpg 对 `timestamptz` 参数
+    走类型化绑定，**只接受 `datetime` 实例**；而本项目的领域模型把时间统一存成
+    ISO 字符串（`now_iso()`），于是 `CAST(:expires_at AS timestamptz)` 这种写法
+    在 SQLAlchemy 里会被推断成 timestamptz 参数，传字符串直接报
+    `TypeError: expected a datetime.date or datetime.datetime instance, got 'str'`。
+    现象同样被包装成"系统繁忙，请稍后再试"，完全看不出是时间类型问题。
+
+    比"去掉 CAST"更正确：去掉 CAST 也改变不了 asyncpg 的类型推断，只是把错误推到
+    更后面。**真正要做的是把值转成 datetime**。
+
+    Args:
+        value: ISO 字符串、`datetime`、或空值。
+
+    Returns:
+        datetime | None: 转换结果；空值 / 无法解析返回 None（宁可写 NULL，不炸事务）。
+
+    Raises:
+        ApiError: 不处理——非法时间按"缺省"处理，避免一条脏数据中断整条链路。
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or text.lower() in _EMPTY_TIME_VALUES:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def assert_identifier(name: str) -> str:
@@ -156,4 +198,4 @@ class BaseRepository:
         return await self._uow.execute(sql, parameters or self.params())
 
 
-__all__ = ["BaseRepository", "assert_identifier"]
+__all__ = ["BaseRepository", "as_datetime", "assert_identifier"]

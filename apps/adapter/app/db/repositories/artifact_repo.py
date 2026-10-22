@@ -26,7 +26,7 @@ from typing import Any, Final, Protocol
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
-from app.db.repositories.base import BaseRepository
+from app.db.repositories.base import BaseRepository, as_datetime
 from app.db.session import tenant_scope
 
 logger = get_logger(__name__)
@@ -283,7 +283,15 @@ class InMemoryArtifactStore:
 
 
 class _ArtifactRepository(BaseRepository):
-    """产物表仓储基类。"""
+    """产物表仓储基类。
+
+    `table` **必须显式声明**：`BaseRepository.__init__` 在进入事务后第一件事就是
+    `assert_identifier(table)`，空表名直接抛 `30003`——而这发生在任何 SQL 之前，
+    所以漏声明时 `PostgresArtifactStore` 的**每个方法**都失败，现场只看到
+    "系统繁忙，请稍后再试"（B21c 实测）。同 `plugin_repo` 的四个子类必须一致。
+    """
+
+    table = ARTIFACT_TABLE
 
 
 class PostgresArtifactStore:
@@ -324,7 +332,7 @@ class PostgresArtifactStore:
                         :tenant_id, :artifact_id, :task_id, :step_id, :output_key, :type, :name,
                         :inline_text, :preview_text, NULLIF(:external_url, ''),
                         NULLIF(:storage_key, ''), :size_bytes, NULLIF(:content_sha256, ''),
-                        CAST(:expires_at AS timestamptz)
+                        :expires_at
                     )
                     RETURNING *
                     """,
@@ -341,7 +349,8 @@ class PostgresArtifactStore:
                         storage_key=record.storage_key,
                         size_bytes=record.size_bytes,
                         content_sha256=record.content_sha256,
-                        expires_at=record.expires_at or _default_expires_at(),
+                        expires_at=as_datetime(record.expires_at)
+                        or as_datetime(_default_expires_at()),
                     ),
                 )
             if row is not None:

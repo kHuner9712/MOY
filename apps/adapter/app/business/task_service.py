@@ -248,6 +248,17 @@ class TaskService:
             existing = await self._tasks.find_by_idem(auth.tenant_id, plugin_id, idem_key)
             if existing is not None:
                 return await self._create_data(existing, manifest)
+        else:
+            # 没带幂等键 → 给它一个**一次性的唯一键**。
+            #
+            # 为什么不能留空串（B21c 实测的 P0）：`plugin_task` 上有
+            # `UNIQUE (tenant_id, plugin_id, idem_key)` 且 `idem_key NOT NULL`，
+            # 空串是一个**真实取值**，会被唯一索引当作同一个键——于是
+            # 「同一插件建第二个任务」直接 `UniqueViolationError`（对外表现仍是
+            # "系统繁忙，请稍后再试"）。内存后端没有这个唯一约束，所以全绿。
+            #
+            # 语义上这也是对的：幂等只在"客户端主动给了键"时才生效，没给就是**另一单**。
+            idem_key = new_resource_id("idem")
 
         plans = self._engine.plan(manifest, request.inputs)
         steps = self._build_steps(plans, auth.tenant_id, "", request.inputs)

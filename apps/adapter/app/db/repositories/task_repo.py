@@ -30,7 +30,7 @@ from typing import Any, Final, Protocol
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
-from app.db.repositories.base import BaseRepository
+from app.db.repositories.base import BaseRepository, as_datetime
 from app.db.session import tenant_scope
 
 logger = get_logger(__name__)
@@ -46,13 +46,43 @@ OCCUPYING_STATUSES: Final[tuple[str, ...]] = ("running", "waiting_confirm")
 #: 终态（不再推进）
 TERMINAL_STATUSES: Final[tuple[str, ...]] = ("completed", "failed", "cancelled")
 
-#: 任务可变字段白名单（防动态列名注入）
+#: 排队态（**不是错误**：并发超限时任务停在这里等额度，A1 返回 200 + queue_position）
+STATUS_QUEUED: Final[str] = "queued"
+
+#: 任务**模型层**可变字段白名单（防动态列名注入）。
+#:
+#: `queue_position` 在这里，但**不是** `plugin_task` 的存储列——它是派生值
+#: （排队语义 = `status='queued'` + `started_at` 先来后到，见 `idx_task_status_time`）。
+#: 内存后端可以直接改它（就是内存里的一个字段）；PG 端由
+#: `_PG_TASK_COLUMNS` 过滤掉，读取时由 `list_queued()` 回填位次。
 TASK_MUTABLE_FIELDS: Final[frozenset[str]] = frozenset(
     {
         "status",
         "progress",
         "current_step_seq",
         "queue_position",
+        "result_summary",
+        "checklist",
+        "warnings",
+        "error_message",
+        "confirm_step_seq",
+        "confirmed_step_seq",
+        "cancel_requested",
+        "usage_units",
+        "finished_at",
+        "inputs",
+    }
+)
+
+#: 真正存在的 `plugin_task` 列（PG 端写库前用它过滤"模型有、库里没有"的字段）。
+#:
+#: 与 DDL 一一对应；新增列时**两处都要改**（`init-schema-phase3.sql` + 这里），
+#: 否则会出现"字段能改、写库丢掉"的静默偏差。
+_PG_TASK_COLUMNS: Final[frozenset[str]] = frozenset(
+    {
+        "status",
+        "progress",
+        "current_step_seq",
         "result_summary",
         "checklist",
         "warnings",
@@ -556,11 +586,21 @@ class InMemoryTaskStore:
 
 
 class _TaskRepository(BaseRepository):
-    """任务表仓储基类（统一表名）。"""
+    """任务表仓储基类（统一表名）。
+
+    `table` **必须显式声明**：`BaseRepository.__init__` 会对它跑
+    `assert_identifier()`，空表名直接抛 `30003`——而这一步在**任何 SQL 执行之前**，
+    所以漏声明时整个 `PostgresTaskStore` 的每个方法都失败，且被包装成
+    "系统繁忙，请稍后再试"，现场完全看不出是表名问题（B21c 实测）。
+    """
+
+    table = TASK_TABLE
 
 
 class _StepRepository(BaseRepository):
     """步骤表仓储基类（统一表名）。"""
+
+    table = STEP_TABLE
 
 
 class PostgresTaskStore:
@@ -590,18 +630,17 @@ class PostgresTaskStore:
                 INSERT INTO {TASK_TABLE} (
                     tenant_id, task_id, plugin_id, plugin_version, conversation_id,
                     initiator_id, trigger_type, status, progress, current_step_seq,
-                    queue_position, inputs, result_summary, checklist, warnings,
-                    error_message, retry_of, from_step, confirm_step_seq,
-                    confirm_step_seq, confirmed_step_seq, cancel_requested,
-                    usage_units, idem_key, expires_at
+                    inputs, result_summary, checklist, warnings, error_message,
+                    retry_of, from_step, confirm_step_seq, confirmed_step_seq,
+                    cancel_requested, usage_units, idem_key, started_at, expires_at
                 ) VALUES (
                     :tenant_id, :task_id, :plugin_id, :plugin_version, :conversation_id,
                     :initiator_id, :trigger_type, :status, :progress, :current_step_seq,
-                    :queue_position, CAST(:inputs AS jsonb), :result_summary,
+                    CAST(:inputs AS jsonb), :result_summary,
                     CAST(:checklist AS jsonb), CAST(:warnings AS jsonb), NULLIF(:error_message, ''),
-                    NULLIF(:retry_of, ''), NULLIF(:from_step, 0), NULLIF(:confirm_step_seq, 0),
+                    NULLIF(:retry_of, ''), NULLIF(:from_step, 0), :confirm_step_seq,
                     :confirmed_step_seq, :cancel_requested, :usage_units, :idem_key,
-                    CAST(:expires_at AS timestamptz)
+                    COALESCE(:started_at, now()), :expires_at
                 )
                 RETURNING *
                 """,
@@ -609,7 +648,13 @@ class PostgresTaskStore:
             )
         if row is None:  # pragma: no cover - RETURNING 缺失属数据库异常
             raise ApiError(ErrorCode.INTERNAL_ERROR, internal_detail="task insert lost")
-        return _to_task(row)
+        created = _to_task(row)
+        if created.status == STATUS_QUEUED:
+            # `queue_position` 不是存储列（见 TASK_MUTABLE_FIELDS 注释），排队位次
+            # 由 `started_at` 先来后到**派生**：落库后按同一口径回填，保证
+            # A1 返回给前端的 `queue_position` 与 `list_queued` 看到的一致。
+            created.queue_position = await self._queue_rank(record.tenant_id, record.plugin_id, row)
+        return created
 
     async def get_task(self, tenant_id: str, task_id: str) -> TaskRecord | None:
         """读取任务行。
@@ -726,12 +771,17 @@ class PostgresTaskStore:
         for key, value in fields.items():
             if key not in TASK_MUTABLE_FIELDS:
                 raise ApiError(ErrorCode.INTERNAL_ERROR, internal_detail=f"task field {key}")
+            if key not in _PG_TASK_COLUMNS:
+                # 模型层有、库里没有的字段（目前只有 `queue_position`）：**静默跳过**，
+                # 读取时由 `list_queued()` 派生。抛错会让"释放额度后重排位次"
+                # 这条正常业务路径在 PG 上直接失败。
+                continue
             if key in {"checklist", "warnings", "inputs"}:
                 assignments.append(f"{key} = CAST(:{key} AS jsonb)")
                 params[key] = json.dumps(value, ensure_ascii=False)
             elif key == "finished_at":
-                assignments.append("finished_at = CAST(NULLIF(:finished_at, '') AS timestamptz)")
-                params[key] = value
+                assignments.append("finished_at = :finished_at")
+                params[key] = as_datetime(value)
             else:
                 assignments.append(f"{key} = :{key}")
                 params[key] = value
@@ -806,26 +856,53 @@ class PostgresTaskStore:
         return queued[0] if queued else None
 
     async def list_queued(self, tenant_id: str, plugin_id: str) -> list[TaskRecord]:
-        """列出排队任务。
+        """列出排队任务（位次**派生**，不读存储列）。
+
+        `queue_position` 不是 `plugin_task` 的列：排队语义是
+        「`status='queued'` + 按 `started_at` 先来后到」。因此在取回后按顺序
+        回填 `1..n`，与 `InMemoryTaskStore` 的口径一致，也让 A1 返回给前端的
+        `queue_position` 有确定来源。
 
         Args:
             tenant_id: 企业 ID。
             plugin_id: 插件标识。
 
         Returns:
-            list[TaskRecord]: 排队任务（按位次）。
+            list[TaskRecord]: 排队任务（按位次，`queue_position` 已回填）。
         """
         async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
             repo = _TaskRepository(uow)
             rows = await repo.fetch_all(
                 f"""
                 SELECT * FROM {TASK_TABLE}
-                 WHERE tenant_id = :tenant_id AND plugin_id = :plugin_id AND status = 'queued'
-                 ORDER BY queue_position, started_at
+                 WHERE tenant_id = :tenant_id AND plugin_id = :plugin_id
+                   AND status = '{STATUS_QUEUED}'
+                 ORDER BY started_at, task_id
                 """,
                 repo.params(plugin_id=plugin_id),
             )
-        return [_to_task(row) for row in rows]
+        queued = [_to_task(row) for row in rows]
+        for index, record in enumerate(queued, start=1):
+            record.queue_position = index
+        return queued
+
+    async def _queue_rank(self, tenant_id: str, plugin_id: str, row: Mapping[str, Any]) -> int:
+        """取某个排队任务在队列里的位次（1 起）。
+
+        Args:
+            tenant_id: 企业 ID。
+            plugin_id: 插件标识。
+            row: 刚插入的任务行（至少含 `task_id`）。
+
+        Returns:
+            int: 位次；该任务已不在队列里时回落到队列长度（至少 1）。
+        """
+        target = str(row["task_id"])
+        queued = await self.list_queued(tenant_id, plugin_id)
+        for index, record in enumerate(queued, start=1):
+            if record.task_id == target:
+                return index
+        return max(1, len(queued))
 
     async def create_steps(self, records: Iterable[StepRecord]) -> list[StepRecord]:
         """批量插入步骤骨架。
@@ -847,8 +924,7 @@ class PostgresTaskStore:
                         retryable, output_summary, reason_text, operator_action
                     ) VALUES (
                         :tenant_id, :step_id, :task_id, :seq, :title, :action, :status, :attempt,
-                        :retryable, :output_summary, NULLIF(:reason_text, ''),
-                        NULLIF(:operator_action, '')
+                        :retryable, :output_summary, :reason_text, :operator_action
                     )
                     RETURNING *
                     """,
@@ -912,9 +988,13 @@ class PostgresTaskStore:
             if key not in STEP_MUTABLE_FIELDS:
                 raise ApiError(ErrorCode.INTERNAL_ERROR, internal_detail=f"step field {key}")
             if key in {"started_at", "finished_at"}:
-                assignments.append(f"{key} = CAST(NULLIF(:{key}, '') AS timestamptz)")
+                assignments.append(f"{key} = :{key}")
+                params[key] = as_datetime(value)
+                continue
             elif key in {"reason_text", "operator_action"}:
-                assignments.append(f"{key} = NULLIF(:{key}, '')")
+                # 这两列在 DDL 里是 `NOT NULL DEFAULT ''`：写成 NULL 会直接触发
+                # `NotNullViolationError`（B21c 实测），所以空串就存空串。
+                assignments.append(f"{key} = :{key}")
             else:
                 assignments.append(f"{key} = :{key}")
             params[key] = value
@@ -949,7 +1029,7 @@ class PostgresTaskStore:
                 f"""
                 UPDATE {STEP_TABLE}
                    SET status = 'pending', attempt = 0, retryable = FALSE,
-                       reason_text = NULL, operator_action = NULL, output_summary = '',
+                       reason_text = '', operator_action = '', output_summary = '',
                        started_at = NULL, finished_at = NULL, duration_ms = 0
                  WHERE tenant_id = :tenant_id AND task_id = :task_id AND seq >= :seq
                 RETURNING step_id
@@ -991,11 +1071,11 @@ def _task_filters(
         clause += " AND initiator_id = :initiator_id"
         params["initiator_id"] = initiator_id
     if created_from:
-        clause += " AND started_at >= CAST(:created_from AS timestamptz)"
-        params["created_from"] = created_from
+        clause += " AND started_at >= :created_from"
+        params["created_from"] = as_datetime(created_from)
     if created_to:
-        clause += " AND started_at <= CAST(:created_to AS timestamptz)"
-        params["created_to"] = created_to
+        clause += " AND started_at <= :created_to"
+        params["created_to"] = as_datetime(created_to)
     return clause, params
 
 
@@ -1018,7 +1098,6 @@ def _task_params(record: TaskRecord) -> dict[str, Any]:
         "status": record.status,
         "progress": record.progress,
         "current_step_seq": record.current_step_seq,
-        "queue_position": record.queue_position or 0,
         "inputs": json.dumps(record.inputs, ensure_ascii=False),
         "result_summary": record.result_summary,
         "checklist": json.dumps(record.checklist, ensure_ascii=False),
@@ -1031,7 +1110,9 @@ def _task_params(record: TaskRecord) -> dict[str, Any]:
         "cancel_requested": record.cancel_requested,
         "usage_units": record.usage_units,
         "idem_key": record.idem_key,
-        "expires_at": record.expires_at or _expires_at(),
+        # `started_at` 由调用方给（内存后端同样尊重它）；没给就交给 DDL 的 now()
+        "started_at": as_datetime(record.started_at),
+        "expires_at": as_datetime(record.expires_at) or as_datetime(_expires_at()),
     }
 
 
@@ -1064,9 +1145,8 @@ def _to_task(row: Mapping[str, Any]) -> TaskRecord:
         status=str(row.get("status", "pending")),
         progress=int(row.get("progress", 0) or 0),
         current_step_seq=int(row.get("current_step_seq", 0) or 0),
-        queue_position=(
-            int(row["queue_position"]) if row.get("queue_position") is not None else None
-        ),
+        # `queue_position` 由 `list_queued()` 派生回填，读单行时恒为 None
+        queue_position=None,
         inputs=_json_field(row.get("inputs")),
         result_summary=str(row.get("result_summary", "") or ""),
         checklist=_json_list(row.get("checklist")),
