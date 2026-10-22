@@ -151,6 +151,33 @@ export const QUERY_KEYS = {
   opsMetrics: (range: string): ApiQueryKey => ['ops', 'metrics', range],
   /** 运营-系统配置 */
   opsSettings: (): ApiQueryKey => ['ops', 'settings'],
+
+  // ------------------------------------------------------------ 插件与任务
+  /** 插件市场列表（分类 / 关键字 / 排序 / 分页） */
+  plugins: (params: Record<string, unknown> = {}): ApiQueryKey => ['plugins', 'market', params],
+  /** 插件详情（含能力、步骤标题、版本） */
+  plugin: (pluginId: string): ApiQueryKey => ['plugins', pluginId],
+  /** 插件能力清单（PL4） */
+  pluginCapabilities: (pluginId: string): ApiQueryKey => ['plugins', pluginId, 'capabilities'],
+  /** 插件评价列表（PL11） */
+  pluginReviews: (pluginId: string, page: number): ApiQueryKey => [
+    'plugins',
+    pluginId,
+    'reviews',
+    page,
+  ],
+  /** 已安装插件（PL3）；`status` 为 `all` 时不带筛选 */
+  installedPlugins: (status: string = 'all'): ApiQueryKey => ['plugins', 'installed', status],
+  /** 插件任务列表（A2） */
+  pluginTasks: (params: Record<string, unknown> = {}): ApiQueryKey => [
+    'plugin-tasks',
+    'list',
+    params,
+  ],
+  /** 任务详情（A3） */
+  pluginTask: (taskId: string): ApiQueryKey => ['plugin-tasks', taskId],
+  /** 任务步骤（A4） */
+  pluginTaskSteps: (taskId: string): ApiQueryKey => ['plugin-tasks', taskId, 'steps'],
 } as const;
 
 /**

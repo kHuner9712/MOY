@@ -193,24 +193,39 @@ export interface SearchSegment {
 // Agent 服务
 // ---------------------------------------------------------------------------
 
-/** 任务状态（自研五态） */
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+/** 任务状态（自研五态 + 阶段三加性新增 `waiting_confirm` = 等人工接管） */
+export type TaskStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting_confirm'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
-/** 步骤状态 */
+/**
+ * 步骤状态（与后端 `plugin_task_step.status` 逐字一致）。
+ *
+ * 注意：`waiting_confirm` 是**任务级**状态，步骤此时仍为 `pending`；
+ * 时间线组件为展示统一另接受 `succeeded` 作为 `completed` 的同义值。
+ */
 export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
-/** 任务产物 */
-export interface Artifact {
-  type: 'file' | 'link' | 'text';
-  name: string;
-  download_url?: string | null;
-  url?: string | null;
-}
+/**
+ * 任务产物（兼容别名）。
+ *
+ * 阶段三把产物的完整形态收敛为 `TaskArtifact`（含 5 类内容、过期时间等），
+ * 这里保留 `Artifact` 名字，避免既有引用失效。
+ */
+export type Artifact = TaskArtifact;
 
-/** 任务结果 */
+/** 任务结果（阶段三加性：核查清单 + 告警） */
 export interface TaskResult {
   summary: string;
   artifacts: Artifact[];
+  /** 结果物核查清单（三插件项数固定为 4 / 3 / 4） */
+  checklist?: TaskChecklistItem[];
+  /** 降级继续时的告警（「哪一步没做成、影响什么」） */
+  warnings?: TaskWarning[];
 }
 
 /** 任务条目 */
@@ -235,6 +250,10 @@ export interface TaskItem {
   created_at: string;
   updated_at: string;
   result?: TaskResult | null;
+  /** 插件任务所属插件（阶段三加性；无插件为空） */
+  plugin_id?: string | null;
+  /** 降级告警条数（阶段三加性，列表页展示「N 条提醒」） */
+  warning_count?: number;
 }
 
 /** 任务步骤 */
@@ -246,6 +265,14 @@ export interface TaskStep {
   started_at: string | null;
   finished_at: string | null;
   output_summary: string | null;
+  /** 该步产物（阶段三加性）；已完成步骤至少 1 个 */
+  artifacts?: TaskArtifact[];
+  /** 失败信息（阶段三加性）；成功或未执行为 null */
+  failure?: TaskStepFailure | null;
+  /** 已尝试次数（0..1，重试上限 1 次） */
+  attempt?: number;
+  /** 耗时（毫秒） */
+  duration_ms?: number | null;
 }
 
 /** 自研任务事件类型 */
@@ -1023,3 +1050,391 @@ export interface Conversation {
 
 /** 业务语言文案中的提示级别 */
 export type ToastLevel = 'success' | 'error' | 'info' | 'warning';
+
+// ---------------------------------------------------------------------------
+// 阶段三：插件域（PL1-PL13，架构文档 §5.2）
+//
+// 命名口径：
+// - 字段名一律 snake_case，与适配层逐字对齐，不做驼峰转换；
+// - 能力 key（`personal.*` / `org.*`）**只用于请求与判断**，界面展示必须走
+//   `lib/capability-labels.ts` 的业务名称，key 不得进 DOM（G-16 断言）。
+// ---------------------------------------------------------------------------
+
+/** 插件分类（PRD 六分类，市场筛选用） */
+export type PluginCategoryKey = 'dev' | 'content' | 'hr' | 'data' | 'collab' | 'other';
+
+/** 我在这个插件上的状态 */
+export type PluginInstalledStatus = 'none' | 'enabled' | 'disabled';
+
+/** 市场排序方式 */
+export type PluginMarketSort = 'recommended' | 'newest' | 'rating';
+
+/** 启停状态（PL6 请求取值） */
+export type PluginState = 'enabled' | 'disabled';
+
+/** 能力的授权层（个人能力不可被企业关闭；企业能力受总开关控制） */
+export type CapabilityCategory = 'personal' | 'org';
+
+/** 授权能力 key（封闭 6 项，架构文档 §2.2） */
+export type PluginCapabilityKey =
+  | 'personal.knowledge.read'
+  | 'personal.tool.use'
+  | 'personal.file.read'
+  | 'org.directory.read'
+  | 'org.repo.write'
+  | 'org.external.publish';
+
+/** 能力条目（授权抽屉逐项展示：名称 / 为什么需要 / 不同意的后果） */
+export interface PluginCapabilityItem {
+  capability_key: PluginCapabilityKey | string;
+  display_name: string;
+  /** 为什么需要这项能力（业务语言） */
+  reason: string;
+  /** 不同意的后果（业务语言） */
+  denial_effect: string;
+  category: CapabilityCategory;
+  /** 是否必需：必需能力未授权则不可安装（PL5 返回 16005） */
+  required: boolean;
+  /**
+   * 企业是否已开启该项能力（PL4 返回，**前端禁止硬编码**）。
+   *
+   * 个人能力（personal.*）恒为 true；企业能力关闭时安装会拿到 16006。
+   */
+  org_switch_enabled: boolean;
+}
+
+/** 市场列表条目（PL1） */
+export interface PluginMarketItem {
+  plugin_id: string;
+  name: string;
+  summary: string;
+  category: PluginCategoryKey | string;
+  icon_key: string;
+  rating_avg: number;
+  rating_count: number;
+  latest_version: string;
+  installed_status: PluginInstalledStatus;
+  has_update: boolean;
+  /** 当前套餐是否可安装；false 时市场照常展示，仅在安装/启用时拦截 */
+  installable: boolean;
+}
+
+/** 市场分类项（PL1 `categories[]`，count 为该分类下可见插件数） */
+export interface PluginCategoryItem {
+  key: string;
+  name: string;
+  count: number;
+}
+
+/** 市场列表响应（PL1） */
+export interface PluginMarketData {
+  items: PluginMarketItem[];
+  meta: PageMeta;
+  categories: PluginCategoryItem[];
+}
+
+/** 插件产物声明（PL2 `outputs[]`，驱动结果区渲染） */
+export interface PluginOutputSpec {
+  key: string;
+  label: string;
+  type: 'text' | 'link' | 'file' | 'table';
+}
+
+/** 插件配置项声明（PL2 `settings_schema[]`，键必须 ⊆ 本表才可写 PL10） */
+export interface PluginSettingSpec {
+  key: string;
+  label: string;
+  type: 'text' | 'select';
+  options?: string[];
+}
+
+/** 版本简介（PL2 `versions[]`，只保留最近 2 个版本） */
+export interface PluginVersionBrief {
+  version: string;
+  published_at: string;
+}
+
+/**
+ * 版本说明。
+ *
+ * 契约里 PL2 记作 `changelog[]`，而声明文件里 `changelog` 是单个字符串（≤300 字），
+ * 因此两种形态都要能接：渲染前统一用 `toStringArray()` 归一。
+ */
+export type PluginChangelog = string[] | string;
+
+/** 插件详情（PL2） */
+export interface PluginDetail {
+  plugin_id: string;
+  name: string;
+  summary: string;
+  description: string;
+  category: PluginCategoryKey | string;
+  icon_key: string;
+  vendor?: string;
+  rating_avg: number;
+  rating_count: number;
+  latest_version: string;
+  capabilities: PluginCapabilityItem[];
+  /** 步骤标题（用户只看到标题；执行原语不进界面） */
+  step_titles: string[];
+  outputs: PluginOutputSpec[];
+  settings_schema: PluginSettingSpec[];
+  changelog?: PluginChangelog;
+  versions: PluginVersionBrief[];
+  installed_status: PluginInstalledStatus;
+  /** 已安装版本；未安装时为空串 */
+  installed_version: string;
+  has_update: boolean;
+  installable: boolean;
+}
+
+/** 能力清单响应（PL4） */
+export interface PluginCapabilitiesData {
+  items: PluginCapabilityItem[];
+  /** 我已授权的能力 key */
+  granted_capabilities: string[];
+  /** 企业能力开关最后更新时间 */
+  org_switch_updated_at: string;
+  /** 当前套餐是否可安装 */
+  installable: boolean;
+  /**
+   * 企业能力开关快照（可选）。
+   *
+   * 设计以 `items[].org_switch_enabled` 为准；本字段仅为兼容后端可能下发的扁平视图，
+   * 前端不得据此覆盖逐能力字段（见 B22 回传的歧义点 #3）。
+   */
+  org_capabilities?: string[];
+}
+
+/** 已安装条目（PL3） */
+export interface InstalledPluginItem {
+  plugin_id: string;
+  name: string;
+  category: PluginCategoryKey | string;
+  version: string;
+  latest_version: string;
+  has_update: boolean;
+  status: Exclude<PluginInstalledStatus, 'none'>;
+  /** 最近使用时间；从未使用为 null */
+  last_used_at: string | null;
+  running_task_count: number;
+}
+
+/** 安装请求（PL5）：grants 必须覆盖声明的全部必需能力 */
+export interface PluginInstallRequest {
+  grants: Record<string, boolean>;
+  settings?: Record<string, unknown>;
+}
+
+/** 安装结果（PL5） */
+export interface PluginInstallResult {
+  plugin_id: string;
+  status: PluginState;
+  version: string;
+  granted_capabilities: string[];
+  denied_capabilities: string[];
+}
+
+/** 启停结果（PL6）：running_task_count 供「在跑任务不受影响」提示 */
+export interface PluginStateResult {
+  plugin_id: string;
+  status: PluginState;
+  running_task_count: number;
+}
+
+/** 卸载结果（PL7）：历史任务与产物保留 */
+export interface PluginUninstallResult {
+  plugin_id: string;
+  uninstalled: boolean;
+  running_task_count: number;
+  kept_task_count: number;
+}
+
+/** 升级结果（PL8） */
+export interface PluginUpgradeResult {
+  plugin_id: string;
+  version: string;
+  previous_version: string;
+  has_update: boolean;
+}
+
+/** 回退结果（PL9） */
+export interface PluginRollbackResult {
+  plugin_id: string;
+  version: string;
+  previous_version: string;
+}
+
+/** 配置保存结果（PL10） */
+export interface PluginSettingsResult {
+  plugin_id: string;
+  settings: Record<string, unknown>;
+  updated_at: string;
+}
+
+/** 评价条目（PL11） */
+export interface PluginReviewItem {
+  review_id: string;
+  rating: number;
+  content: string;
+  /** 匿名评价时为「某位同事」 */
+  author_name: string;
+  department_name: string;
+  created_at: string;
+}
+
+/** 评价列表响应（PL11） */
+export interface PluginReviewsData {
+  items: PluginReviewItem[];
+  meta: PageMeta;
+  rating_avg: number;
+  rating_count: number;
+}
+
+/** 提交评价请求（PL12）：同一成员重复提交为覆盖更新 */
+export interface PluginReviewRequest {
+  rating: number;
+  content: string;
+  anonymous: boolean;
+}
+
+/** 提交评价结果（PL12），rating_avg/count 由服务端重算 */
+export interface PluginReviewResult {
+  review_id: string;
+  rating: number;
+  created_at: string;
+  rating_avg: number;
+  rating_count: number;
+}
+
+/** 企业能力开关条目（PL13） */
+export interface CapabilityPolicyItem {
+  capability: PluginCapabilityKey | string;
+  display_name: string;
+  enabled: boolean;
+  updated_by_name: string;
+  updated_at: string;
+}
+
+/** 企业能力开关写请求（PL13）：只允许 org.* 三项 */
+export interface CapabilityPolicyRequest {
+  policies: Array<{ capability: string; enabled: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
+// 阶段三：任务域加性扩展（A1-A4 与 WF1，架构文档 §5.3）
+// ---------------------------------------------------------------------------
+
+/**
+ * 任务结果里的核查清单项。
+ *
+ * `status` 三态：已核查 / 待人工确认（降级跳过时标待确认）/ 未核查。
+ */
+export interface TaskChecklistItem {
+  /** 清单项稳定标识 */
+  key: string;
+  /** 用户可见的核查项名称 */
+  name: string;
+  /** 产出该项的步骤序号 */
+  source_step: number;
+  status: 'checked' | 'pending' | 'unchecked';
+}
+
+/** 任务告警（降级继续时「哪一步没做成、影响什么」） */
+export interface TaskWarning {
+  step_seq: number;
+  /** 业务语言说明 */
+  message: string;
+}
+
+/** 人工接管信息（A3 `confirm`）：任务停在某步等用户决定 */
+export interface TaskConfirmInfo {
+  step_seq: number;
+  reason: string;
+  /** 需要用户重点看的字段值摘要 */
+  summary: Record<string, unknown>;
+}
+
+/** 步骤产物（A4 `steps[].artifacts[]`，5 类渲染见 ArtifactCard） */
+export interface TaskArtifact {
+  artifact_id: string;
+  task_id?: string;
+  step_id?: string;
+  /** 对应声明里的 outputs[].key */
+  output_key?: string;
+  type: 'text' | 'link' | 'file' | 'table';
+  name: string;
+  /** 文本类内容（已脱敏，≤32KB） */
+  inline_text?: string | null;
+  /** 表格类预览（前 5 行） */
+  preview_text?: string | null;
+  /** 链接类地址（http/https） */
+  external_url?: string | null;
+  /** 文件类下载地址 */
+  storage_key?: string | null;
+  size_bytes?: number | null;
+  /** 过期时间（180 天），过期后提示「产物已过期，可重新发起任务」 */
+  expires_at?: string | null;
+  created_at?: string;
+}
+
+/** 步骤失败信息（A4 `steps[].failure`）：失败是状态，不是整页错误 */
+export interface TaskStepFailure {
+  /** 业务语言原因 */
+  reason_text: string;
+  /** 是否可重试（决定是否展示「重试本步」） */
+  retryable: boolean;
+  /** 建议动作（业务语言） */
+  operator_action: string;
+}
+
+/** 任务详情（A3） */
+export interface TaskDetail {
+  task_id: string;
+  conversation_id?: string;
+  goal: string;
+  status: TaskStatus;
+  progress: number;
+  current_step: string | null;
+  plugin_id?: string | null;
+  /** 重试来源任务 */
+  retry_of?: string | null;
+  steps_total?: number;
+  result: TaskResult | null;
+  /** 人工接管信息；非 waiting_confirm 时为 null */
+  confirm?: TaskConfirmInfo | null;
+  usage?: { total_units?: number };
+  created_at?: string;
+  updated_at: string;
+}
+
+/** WF1 重试请求（唯一的任务级写端点） */
+export interface TaskRetryRequest {
+  /** 从第几步重跑；不传由后端按状态推断 */
+  from_step?: number;
+  /** 仅 waiting_confirm 态使用：继续 / 重做 */
+  decision?: 'continue' | 'redo';
+}
+
+/** WF1 重试结果 */
+export interface TaskRetryResult {
+  task_id: string;
+  retry_of: string;
+  status: TaskStatus;
+  from_step: number;
+}
+
+/** A1 创建插件任务时的排队信息（并发上限 3，超出排队） */
+export interface TaskQueueInfo {
+  /** 是否进入排队（仅排队时下发） */
+  queued?: boolean;
+  /** 前面还有几个任务在跑（仅排队时下发） */
+  ahead_count?: number;
+  /**
+   * 排队位次（可选）。
+   *
+   * 契约以 `queued + ahead_count` 为准；本字段为后端可能附带的冗余位次，
+   * 前端展示优先用 `ahead_count`（见 B22 回传的歧义点 #4）。
+   */
+  queue_position?: number;
+}

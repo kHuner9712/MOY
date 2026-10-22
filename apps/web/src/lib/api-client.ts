@@ -17,6 +17,29 @@
 // ---------------------------------------------------------------------------
 
 import type {
+  CapabilityPolicyItem,
+  CapabilityPolicyRequest,
+  InstalledPluginItem,
+  PluginCapabilitiesData,
+  PluginDetail,
+  PluginInstallRequest,
+  PluginInstallResult,
+  PluginMarketData,
+  PluginMarketSort,
+  PluginReviewRequest,
+  PluginReviewResult,
+  PluginReviewsData,
+  PluginRollbackResult,
+  PluginSettingsResult,
+  PluginState,
+  PluginStateResult,
+  PluginUninstallResult,
+  PluginUpgradeResult,
+  TaskDetail,
+  TaskQueueInfo,
+  TaskRetryRequest,
+  TaskRetryResult,
+  TaskStatus,
   ActionGroup,
   AuditLogItem,
   BatchMemberRequest,
@@ -610,7 +633,12 @@ export const knowledgeApi = {
 
 /** Agent 服务接口 */
 export const agentApi = {
-  /** A1 创建任务 */
+  /**
+   * A1 创建任务。
+   *
+   * 阶段三加性扩展：带 `plugin_id` 时按插件声明校验 `inputs` 并走本地任务引擎；
+   * 不带时行为与阶段一**完全一致**（底座代理双模式）。
+   */
   createTask(body: {
     conversation_id: string;
     goal: string;
@@ -618,31 +646,42 @@ export const agentApi = {
     tool_grants?: string[];
     inputs?: Record<string, unknown>;
     options?: { max_steps?: number; timeout_seconds?: number };
-  }): Promise<{ task_id: string; status: string; created_at: string; estimated_seconds: number }> {
+    /** 插件任务必填；有值时 `inputs` 按插件声明校验 */
+    plugin_id?: string;
+  }): Promise<{
+    task_id: string;
+    status: TaskStatus;
+    created_at: string;
+    estimated_seconds: number;
+    /** 重试产生的新任务会带上来源任务 id */
+    retry_of?: string;
+    /** 总步数（插件任务为声明步骤数） */
+    steps_total?: number;
+  } & TaskQueueInfo> {
     return request('POST', '/agent/tasks', { body });
   },
 
-  /** A2 任务列表 */
-  listTasks(params: { page?: number; page_size?: number; status?: string } = {}): Promise<
-    PageResult<TaskItem>
-  > {
+  /** A2 任务列表（阶段三加性筛选：插件 / 发起人 / 创建时间范围） */
+  listTasks(
+    params: {
+      page?: number;
+      page_size?: number;
+      status?: string;
+      plugin_id?: string;
+      initiator_id?: string;
+      created_from?: string;
+      created_to?: string;
+    } = {},
+  ): Promise<PageResult<TaskItem>> {
     return request('GET', '/agent/tasks', { query: params });
   },
 
-  /** A3 任务状态查询 */
-  getTask(taskId: string): Promise<{
-    task_id: string;
-    status: string;
-    progress: number;
-    current_step: string | null;
-    result: { summary: string; artifacts: Array<Record<string, unknown>> } | null;
-    usage: { total_units: number };
-    updated_at: string;
-  }> {
+  /** A3 任务详情（含核查清单、告警与人工接管信息） */
+  getTask(taskId: string): Promise<TaskDetail> {
     return request('GET', `/agent/tasks/${taskId}`);
   },
 
-  /** A4 步骤详情 */
+  /** A4 步骤详情（每步含产物与失败信息） */
   listSteps(taskId: string): Promise<{ task_id: string; steps: TaskStep[] }> {
     return request('GET', `/agent/tasks/${taskId}/steps`);
   },
@@ -650,6 +689,18 @@ export const agentApi = {
   /** A5 取消任务 */
   cancelTask(taskId: string): Promise<{ task_id: string; status: string; updated_at: string }> {
     return request('POST', `/agent/tasks/${taskId}/cancel`);
+  },
+
+  /**
+   * WF1 重试 / 继续 / 重做（阶段三唯一的任务级写端点）。
+   *
+   * - `waiting_confirm` + `decision=continue`：原地推进，不新建任务；
+   * - `waiting_confirm` + `decision=redo`：新建任务，只重跑确认步及其下游；
+   * - `failed` + `from_step`：新建任务，前序产物复制不重跑；
+   * - 其余状态一律 17001（「该任务无法重试，请查看任务状态」）。
+   */
+  retryTask(taskId: string, body: TaskRetryRequest = {}): Promise<TaskRetryResult> {
+    return request('POST', `/agent/tasks/${taskId}/retry`, { body });
   },
 
   /** A6 任务事件推送 */
@@ -1086,6 +1137,102 @@ export const opsApi = {
   /** OPS8 修改系统配置（只改传入项） */
   updateSettings(body: UpdateOpsSettingsRequest): Promise<OpsSettings> {
     return request('PATCH', '/ops/settings', { body });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 插件域 PL1-PL13（架构文档 §5.2）
+// ---------------------------------------------------------------------------
+
+/**
+ * 插件接口（阶段三 13 个端点）。
+ *
+ * 统一说明：
+ * - 全部走本文件的 `request()`，`{code,message,data}` 非 0 抛 `BusinessError`；
+ * - 写接口默认携带 `Idempotency-Key`（`request()` 对非 GET 自动加）；
+ * - 套餐拦截点在 PL5/PL6（`15001`），**不在** PL1/PL2/PL4——
+ *   市场与详情照常返回，只是列表项 `installable=false`。
+ */
+export const pluginsApi = {
+  /** PL1 市场列表（分类 / 关键字 / 排序 / 分页） */
+  market(
+    params: {
+      category?: string;
+      keyword?: string;
+      sort?: PluginMarketSort;
+      page?: number;
+      page_size?: number;
+    } = {},
+  ): Promise<PluginMarketData> {
+    return request('GET', '/plugins/market', { query: params });
+  },
+
+  /** PL2 插件详情（含能力、步骤标题、产物声明、版本、评价统计） */
+  detail(pluginId: string): Promise<PluginDetail> {
+    return request('GET', `/plugins/market/${pluginId}`);
+  },
+
+  /** PL3 我已安装的插件（可按状态筛选） */
+  installed(params: { status?: PluginState } = {}): Promise<PageResult<InstalledPluginItem>> {
+    return request('GET', '/plugins/installed', { query: params });
+  },
+
+  /** PL4 能力清单（逐能力返回 `org_switch_enabled`，前端不得硬编码） */
+  capabilities(pluginId: string): Promise<PluginCapabilitiesData> {
+    return request('GET', `/plugins/${pluginId}/capabilities`);
+  },
+
+  /** PL5 安装（`grants` 必须覆盖全部必需能力，否则 16005） */
+  install(pluginId: string, body: PluginInstallRequest): Promise<PluginInstallResult> {
+    return request('POST', `/plugins/${pluginId}/install`, { body });
+  },
+
+  /** PL6 启用 / 停用（停用不打断在跑任务，响应给 running_task_count） */
+  setState(pluginId: string, status: PluginState): Promise<PluginStateResult> {
+    return request('PATCH', `/plugins/${pluginId}/state`, { body: { status } });
+  },
+
+  /** PL7 卸载（历史任务与产物保留，响应给 kept_task_count） */
+  uninstall(pluginId: string): Promise<PluginUninstallResult> {
+    return request('DELETE', `/plugins/${pluginId}`);
+  },
+
+  /** PL8 升级到指定版本 */
+  upgrade(pluginId: string, targetVersion: string): Promise<PluginUpgradeResult> {
+    return request('POST', `/plugins/${pluginId}/upgrade`, {
+      body: { target_version: targetVersion },
+    });
+  },
+
+  /** PL9 回退到上一个版本（无上一版本时 16008） */
+  rollback(pluginId: string): Promise<PluginRollbackResult> {
+    return request('POST', `/plugins/${pluginId}/rollback`);
+  },
+
+  /** PL10 保存插件配置（键必须 ⊆ `settings_schema`） */
+  setSettings(
+    pluginId: string,
+    settings: Record<string, unknown>,
+  ): Promise<PluginSettingsResult> {
+    return request('PUT', `/plugins/${pluginId}/settings`, { body: { settings } });
+  },
+
+  /** PL11 评价列表（含聚合评分） */
+  reviews(
+    pluginId: string,
+    params: { page?: number; page_size?: number } = {},
+  ): Promise<PluginReviewsData> {
+    return request('GET', `/plugins/${pluginId}/reviews`, { query: params });
+  },
+
+  /** PL12 提交评价（同一成员重复提交为覆盖更新） */
+  submitReview(pluginId: string, body: PluginReviewRequest): Promise<PluginReviewResult> {
+    return request('POST', `/plugins/${pluginId}/reviews`, { body });
+  },
+
+  /** PL13 企业能力总开关（仅 org.* 三项；个人能力恒开） */
+  setCapabilityPolicy(body: CapabilityPolicyRequest): Promise<{ policies: CapabilityPolicyItem[] }> {
+    return request('PUT', '/plugins/capability-policy', { body });
   },
 };
 
