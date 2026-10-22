@@ -258,7 +258,7 @@ async def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
     """TC-P3-PL03-11：未安装直接改授权 → `16003`，且**不产生任何副作用**。
 
     四条断言（缺任一条都只能算「部分验证」）：
-    ⓿ **场景前提**：该插件确实没有安装行（否则三条断言会跑在错场景里）；
+    ⓿ **场景前提（两条断言）**：该成员无授权行 **且** 该插件无安装行；
     ① 码值 `16003`（该插件还没有添加，不是 `16004`、不是成功）；
     ② `plugin_grant` **无该成员的行**（按 `plugin_id + user_id` 双键查）；
     ③ 审计**无** `plugin.capability_grant` 事件。
@@ -304,8 +304,12 @@ async def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
         audit=audit,
     )
 
-    # ⓿ 场景前提：必须"确实未安装"——否则三条断言会跑在一个不该出现的场景里
-    #   （若实现顺手建了安装行，返回 16003 反而是"把已装当未装"，错得更多）
+    # ⓿ 场景前提（两条，必须先于其余断言）：
+    #   把"未安装"从「构造事实」变成「断言事实」——否则 setup 若预置了安装行/授权行，
+    #   ①②③ 仍会全绿，而验的是"已装改授权"这个完全不同的场景。
+    assert await grants.snapshot(tenant, plugin_id, owner.user_id) == frozenset(), (
+        f"[TC-P3-PL03-11 ⓿] 前置不成立：该成员在 {plugin_id} 已有授权行，后续断言验错场景"
+    )
     assert await store.get_installation(tenant, plugin_id) is None, (
         f"[TC-P3-PL03-11 ⓿] 前置不成立：{plugin_id} 已存在安装行，本用例将验错场景"
     )
