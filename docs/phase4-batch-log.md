@@ -304,9 +304,12 @@ DDL 与台账退回两步——正好是 T4-01.4 要修的缺陷本身。处置�
 - 单加 `greenlet` 会**反向**出问题：FastAPI 的 async 端点帧反而丢失 → 合并覆盖率从 89.82% 掉到 86.95%。
 - **正确口径：`concurrency = greenlet,thread`（两者都要）**。同一份代码：默认 89.82% → 单 greenlet 86.95% → **两者 91.28%**。
 
-> 建议（未在本批实施，避免改动已冻结的覆盖率基线定义）：在 `pyproject.toml` 的
-> `[tool.coverage.run]` 加 `concurrency = ["greenlet", "thread"]`，并单独提交一次。
-> 在此之前，引用覆盖率请注明所用口径，否则不同模式下的数字不可比。
+> **已按主理人裁定落地**：`pyproject.toml` 的 `[tool.coverage.run]` 已写入
+> `concurrency = ["greenlet", "thread"]`（单独提交 `test(cov): 修正 async 覆盖率口径`）。
+>
+> ⚠ **跨阶段数字不可比**：阶段三记录的 **90.78 / 90.26 / 80.89** 是**旧口径（仅 thread）**，
+> 与阶段四起的新口径**不可直接比较**。门槛数值**不下调**——新口径只会更高，
+> 属测量修正，不是放水。此后引用覆盖率必须注明"greenlet+thread 口径"。
 
 ## 14. 手工验收路径（QA 执行脚本）
 
