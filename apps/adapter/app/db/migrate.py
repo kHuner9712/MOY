@@ -10,6 +10,8 @@
 | `--check` | 只校验：缺失版本、checksum 漂移（已应用版本文件被手工改动） |
 | `--apply` | 增量执行未应用的脚本，逐脚本记录 `version + checksum` |
 | 回滚 | 手写反向 SQL（`deploy/migrations/rollback/00NN_*.sql`），**不自动执行** |
+| 孤儿台账 | 有记录无脚本 → 每次运行**列出**（`[WARN]`）；`--prune-orphans [--yes]` 清理 |
+| 版本改名 | `MIGRATION_ALIASES` 把旧版本号认领到新脚本（`0002_billing_callback_unique` → 现名） |
 
 为什么不引 Alembic：项目只有一条线性单团队迁移队列，Alembic 需额外
 `alembic.ini` + `env.py` + 版本目录，且异步引擎配置易错（架构文档 2.1 结论第 6 条已裁决）。
@@ -24,6 +26,7 @@ import argparse
 import asyncio
 import hashlib
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Protocol
@@ -66,6 +69,16 @@ class Migration:
     checksum: str
 
 
+#: 版本改名别名（旧版本号 → 现脚本版本号）。
+#:
+#: 为什么需要：`0002` 曾叫 `0002_billing_callback_unique`，改名后旧库里留着旧名台账行。
+#: 不改别名的话，旧库要么报「版本表有记录但无文件」（沉默通过，换台机器才发现不一致），
+#: 要么逼所有人手工改台账——前者危险、后者不可运维。
+MIGRATION_ALIASES: dict[str, str] = {
+    "0002_billing_callback_unique": "0002_callback_idempotency_selfcheck",
+}
+
+
 @dataclass(slots=True)
 class ApplyPlan:
     """迁移计划。
@@ -75,11 +88,15 @@ class ApplyPlan:
         drifted: 已应用但文件内容已变的版本（启动必须失败）。
         unapplied_existing: 已存在脚本但版本表无记录的版本（等价于 pending）。
         checked: 已应用且校验通过的版本数。
+        orphans: 版本表里有记录、但磁盘上**已无对应脚本**的版本（含别名已指向新名的旧名）。
+        aliased: 通过别名映射认领的旧版本号（`旧名 → 新名`），不算孤儿。
     """
 
     pending: list[Migration] = field(default_factory=list)
     drifted: list[tuple[str, str, str]] = field(default_factory=list)
     checked: int = 0
+    orphans: list[str] = field(default_factory=list)
+    aliased: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def is_consistent(self) -> bool:
@@ -104,6 +121,10 @@ class MigrationDatabase(Protocol):
 
     async def record(self, version: str, checksum: str) -> None:
         """记录版本与 checksum（幂等 upsert）。"""
+        ...
+
+    async def delete_versions(self, versions: Sequence[str]) -> int:
+        """删除指定台账行（**只用于清理孤儿**），返回删除条数。"""
         ...
 
     async def close(self) -> None:
@@ -225,6 +246,17 @@ def build_plan(available: list[Migration], applied: dict[str, str]) -> ApplyPlan
         ApplyPlan: 计划结果（`drifted` 非空表示必须中止）。
     """
     plan = ApplyPlan()
+    shipped = {migration.version for migration in available}
+    for recorded_version in sorted(applied):
+        if recorded_version in shipped:
+            continue
+        target = MIGRATION_ALIASES.get(recorded_version)
+        if target is not None and target in shipped:
+            # 旧名已被新脚本认领：不重复执行，也不当孤儿（只需人工确认后可 prune）
+            plan.aliased.append((recorded_version, target))
+            continue
+        # 已记录但**盘上没有对应文件**：沉默通过比报错危险（换台机器就两边不一致）
+        plan.orphans.append(recorded_version)
     for migration in available:
         recorded = applied.get(migration.version)
         if recorded is None:
@@ -326,6 +358,23 @@ class AsyncpgMigrationDatabase:
             version,
             checksum,
         )
+
+    async def delete_versions(self, versions: Sequence[str]) -> int:
+        """删除指定台账行（**仅孤儿清理入口**使用，不动其他行）。
+
+        Args:
+            versions: 版本号列表。
+
+        Returns:
+            int: 实际删除条数。
+        """
+        if not versions:
+            return 0
+        connection = await self._connect()
+        result = await connection.execute(  # type: ignore[attr-defined]
+            "DELETE FROM schema_migration WHERE version = ANY($1::text[])", list(versions)
+        )
+        return int(str(result).split()[-1] or 0)
 
     async def close(self) -> None:
         """关闭连接。"""
@@ -480,6 +529,12 @@ def _build_parser() -> argparse.ArgumentParser:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true", help="只校验版本与 checksum，不执行 SQL")
     group.add_argument("--apply", action="store_true", help="增量执行未应用的迁移脚本")
+    parser.add_argument(
+        "--prune-orphans",
+        action="store_true",
+        help="清理台账里「已无对应脚本」的孤儿行（默认 dry-run，需配 --yes 才真删）",
+    )
+    parser.add_argument("--yes", action="store_true", help="与 --prune-orphans 配合：确认执行删除")
     parser.add_argument("--sql-dir", default="", help="SQL 目录（缺省自动定位 deploy/）")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出结果（CI 用）")
     return parser
@@ -518,6 +573,21 @@ async def _run_cli(argv: list[str] | None = None) -> int:
         return 1
     finally:
         await database.close()
+
+    for old, new in plan.aliased:
+        print(f"[INFO] 版本别名 {old} → {new}（旧台账行已由新脚本认领，可 prune）")
+    if plan.orphans:
+        # 孤儿必须**每次都说出来**：沉默通过会让"另一台机器上不一致"变成谜案
+        print(f"[WARN] 台账有 {len(plan.orphans)} 个孤儿版本（磁盘已无对应脚本）：{plan.orphans}")
+    if args.prune_orphans:
+        candidates = sorted(set(plan.orphans) | {old for old, _ in plan.aliased})
+        if not candidates:
+            print("[OK]   没有需要清理的孤儿版本")
+        elif not args.yes:
+            print(f"[DRYRUN] 将删除以下台账行：{candidates}（加 --yes 执行）")
+        else:
+            removed = await database.delete_versions(candidates)
+            print(f"[OK]   已删除 {removed} 条孤儿台账行：{candidates}")
 
     if not plan.is_consistent:
         for version, recorded, current in plan.drifted:
