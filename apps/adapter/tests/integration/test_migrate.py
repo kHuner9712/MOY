@@ -82,6 +82,37 @@ class FakeMigrationDatabase:
         """记录版本。"""
         self.applied[version] = checksum
 
+    async def apply_migration(self, migration: Migration) -> bool:
+        """执行迁移（内存替身：已应用则跳过，与 PG 实现的锁内判定同语义）。
+
+        Args:
+            migration: 待应用的迁移。
+
+        Returns:
+            bool: 真的执行了返回 True；已应用返回 False。
+        """
+        if migration.version in self.applied:
+            return False
+        self.executed_scripts.append(migration.path.read_text(encoding="utf-8"))
+        self.applied[migration.version] = migration.checksum
+        return True
+
+    async def apply_rollback(self, version: str, sql: str) -> bool:
+        """执行回滚（内存替身）。
+
+        Args:
+            version: 版本号。
+            sql: 回滚脚本内容。
+
+        Returns:
+            bool: 执行了返回 True；版本未应用返回 False。
+        """
+        if version not in self.applied:
+            return False
+        self.executed_scripts.append(sql)
+        self.applied.pop(version, None)
+        return True
+
     async def close(self) -> None:
         """关闭连接。"""
         self.closed = True

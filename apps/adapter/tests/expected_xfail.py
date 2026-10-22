@@ -180,8 +180,18 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         # `text/plain; charset=utf-8`，于是下载 docx 时浏览器可能按文本渲染
         # （`Content-Disposition: attachment` 未设、`filename*` 已正确）。
         # 影响面：内存后端与 PG 后端**一致**，不是本次改动引入。
-        "status": "open",
-        "pinned_by": "下载响应 MIME 恒 text/plain / plugin_artifact 缺 content_type 列",
+        "status": "fixed",
+        # 关闭依据（阶段四 T4-01.5）：
+        # ① 迁移 `0006_plugin_artifact_content_type.sql` 加 `content_type VARCHAR(128) NULL`
+        #    （三段式守卫：init 建的新库零 DDL / 空库补列 / 无权限给可照做的报错）；
+        #    两份编排的 `init-schema-phase3.sql` 已直接建列，新装库无需 DDL；
+        # ② 写入三处归一化真实 MIME：PG `add_artifacts` INSERT、PG `save_version` UPDATE、
+        #    内存 `add_artifacts`/`save_version`，以及读取侧 `_to_artifact` 的老库回落，
+        #    统一走 `artifact_repo.resolve_content_type()`（扩展名 > 类型 > 声明 > 兜底）；
+        # ③ `docx` → application/vnd.openxmlformats-officedocument.wordprocessingml.document，
+        #    `md` → text/markdown; charset=utf-8，`csv` → text/csv; charset=utf-8。
+        # 判据落点：`tests/integration/test_artifact_content_pg.py`（真库，含 MIME 断言）。
+        "pinned_by": "test_artifact_content_pg.py / 0006 迁移",
         "due_batch": "B30",
         "due_action": "加 content_type TEXT 列并在渲染/写入三处赋值；下载端点按实际类型返回",
     },

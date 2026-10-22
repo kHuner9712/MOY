@@ -263,6 +263,7 @@ CREATE TABLE IF NOT EXISTS plugin_artifact (
     size_bytes     BIGINT      NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
     content_sha256 CHAR(64),
     content        BYTEA,                                                 -- 二进制内容（B22）
+    content_type   VARCHAR(128),                                          -- 下载 MIME（阶段四 0006）
     version        SMALLINT    NOT NULL DEFAULT 1 CHECK (version >= 1),  -- WF2 版本（B19）
     version_history JSONB      NOT NULL DEFAULT '[]'::jsonb,             -- 旧版本可回看/下载
     expires_at     TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '180 days',
@@ -359,3 +360,46 @@ INSERT INTO plugin_catalog (
      '告诉工作台收件人、目的与要点，它会起草一封语气得体的邮件，并在发送前把标题、正文与收件人一起给你确认；确认后通过你已连接的邮箱发出，并把发送结果如实告诉你。语气可选正式或简洁，正文会控制在一屏内，方便对方快速读完。草稿会同时留存在任务记录里，需要时可以改完再发一次。',
      'mail', '1.0.0', 4.1, 4, 14, 'available', 6)
 ON CONFLICT (tenant_id, plugin_id) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- 12. 阶段四加性变更的前置落点（迁移 0007：usage_event 四列）
+--
+-- 为什么这几列写在本文件而不是 init-schema-phase2.sql：
+--   阶段二脚本是迁移链的**基线**（`schema_migration` 里 `0001_phase2_init` 的
+--   checksum 在每台已部署的库上都已接管为真实摘要）。改它会立刻被判
+--   `migration checksum drift`（30004 启动失败），是**不可接受**的运维代价。
+--   而 initdb 只按文件名顺序跑一次、且以超级用户身份——阶段三脚本是该链上
+--   最后一个仍可安全追加的地方，所以把「阶段四对既有表的两处加性变更」中的
+--   `usage_event` 部分放在这里（`plugin_artifact.content_type` 已在上面
+--   CREATE TABLE 里直接建好）。
+--
+-- 幂等性：`IF NOT EXISTS` + `to_regclass` 守卫，重复执行零改动。
+-- 空库/未初始化库：`usage_event` 不存在时整段跳过，不 RAISE
+--   （空库路径由迁移 0007 自己补列，迁移必须自足）。
+-- ---------------------------------------------------------------------------
+DO $phase4$
+BEGIN
+    IF to_regclass('public.usage_event') IS NULL THEN
+        RAISE NOTICE 'phase4: usage_event 不存在（阶段二脚本未跑），跳过加性变更';
+        RETURN;
+    END IF;
+    ALTER TABLE usage_event ADD COLUMN IF NOT EXISTS profile           TEXT   NOT NULL DEFAULT '';
+    ALTER TABLE usage_event ADD COLUMN IF NOT EXISTS provider          TEXT   NOT NULL DEFAULT '';
+    ALTER TABLE usage_event ADD COLUMN IF NOT EXISTS prompt_tokens     BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE usage_event ADD COLUMN IF NOT EXISTS completion_tokens BIGINT NOT NULL DEFAULT 0;
+    RAISE NOTICE 'phase4: usage_event 四列已就绪（0007 将走零 DDL 路径）';
+END $phase4$;
+
+-- ---------------------------------------------------------------------------
+-- 13. 迁移台账哨兵：`0003` 已由本脚本完成
+--
+-- 本脚本（initdb 以超级用户执行）建的表就是迁移 `0003_phase3_plugin_tables` 的内容。
+-- 不打这行哨兵的话，`python -m app.db.migrate --apply` 会在每台**新装**的库上
+-- 再跑一遍 0003：表面幂等（全是 CREATE TABLE IF NOT EXISTS），实际会让应用角色
+-- 以「非表属主」身份去重述 0003 里的 RLS 策略重声明块，把一次正常的初始化
+-- 变成一次权限事故。checksum 用与 `0001` 相同的哨兵值，首次 `--apply` 时由
+-- migrate.py 接管为真实摘要（`MANAGED_CHECKSUM_SENTINEL`）。
+-- ---------------------------------------------------------------------------
+INSERT INTO schema_migration (version, checksum)
+VALUES ('0003_phase3_plugin_tables', 'sha256:managed-by-app-db-migrate')
+ON CONFLICT (version) DO NOTHING;

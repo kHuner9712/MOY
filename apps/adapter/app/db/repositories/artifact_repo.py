@@ -48,6 +48,53 @@ READONLY_TYPES: Final[frozenset[str]] = frozenset({"link", "file"})
 #: 版本历史上限（防单产物历史无限膨胀；超出后丢最旧的，只保留最近 N 版）
 MAX_VERSION_HISTORY: Final[int] = 20
 
+#: 扩展名 → MIME（与 `plugins/renderer.py::RENDER_CONTENT_TYPES` **必须一致**）。
+#:
+#: 为什么在仓储层再写一份：渲染器只管"它自己产出的文件"，而仓储层收到的
+#: `ArtifactRecord` 还可能来自插件声明（`link`/`file`）与历史行。落库前统一
+#: 归一化，才能保证"库里存的 MIME 与下载响应声明的 MIME"永远同源（P3-B22-04）。
+EXTENSION_CONTENT_TYPES: Final[dict[str, str]] = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "md": "text/markdown; charset=utf-8",
+    "csv": "text/csv; charset=utf-8",
+    "txt": "text/plain; charset=utf-8",
+    "json": "application/json",
+    "zip": "application/zip",
+}
+
+#: 兜底 MIME（无法判定扩展名时）
+DEFAULT_CONTENT_TYPE: Final[str] = "text/plain; charset=utf-8"
+
+
+def resolve_content_type(name: str, artifact_type: str, declared: str) -> str:
+    """归一化产物的 MIME（P3-B22-04）。
+
+    优先级：**扩展名 > 产物类型 > 调用方声明 > 兜底**。
+
+    为什么扩展名优先：调用方（任务服务）在"用户编辑后重新渲染"路径上会把
+    上个版本的 `content_type` 带过来，而本次渲染可能换了格式（md → docx）。
+    以最终文件名后缀为准，才能保证「库里的 MIME 与真实字节的格式一致」——
+    这正是当初下载 docx 拿到 `text/plain` 的根因。
+
+    Args:
+        name: 产物名称（含扩展名）。
+        artifact_type: 产物类型（`text|link|file|table`）。
+        declared: 调用方声明的 MIME（可为空）。
+
+    Returns:
+        str: 归一化后的 MIME。
+    """
+    suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if suffix in EXTENSION_CONTENT_TYPES:
+        return EXTENSION_CONTENT_TYPES[suffix]
+    if artifact_type == "table":
+        # 表格统一以 CSV 落盘（`inline_text` 就是 CSV 文本）
+        return EXTENSION_CONTENT_TYPES["csv"]
+    text = (declared or "").strip()
+    if text and text != "application/octet-stream":
+        return text
+    return DEFAULT_CONTENT_TYPE
+
 
 def now_iso() -> str:
     """当前 UTC 时间（ISO 8601）。
@@ -175,6 +222,11 @@ class InMemoryArtifactStore:
                 created_at=record.created_at or now_iso(),
                 updated_at=record.updated_at or now_iso(),
                 expires_at=record.expires_at or _default_expires_at(),
+                # 与 PG 后端同一套归一化规则：两个后端产出的 MIME 必须一致，
+                # 否则"内存全绿、生产全废"会从字节问题变成类型问题（0006）
+                content_type=resolve_content_type(
+                    record.name or record.output_key, record.type, record.content_type
+                ),
             )
             self._items[(record.tenant_id, record.artifact_id)] = payload
             created.append(payload)
@@ -274,7 +326,9 @@ class InMemoryArtifactStore:
             preview_text=preview_text,
             content_sha256=content_sha256,
             content=content or inline_text.encode("utf-8"),
-            content_type=content_type,
+            content_type=resolve_content_type(
+                current.name or current.output_key, current.type, content_type
+            ),
             size_bytes=len(content) if content else len(inline_text.encode("utf-8")),
             version=current.version + 1,
             version_history=history,
@@ -329,6 +383,10 @@ class PostgresArtifactStore:
         """
         created: list[ArtifactRecord] = []
         for record in records:
+            # 落库前归一化 MIME：库里存的类型必须与真实字节的格式一致（0006）
+            content_type = resolve_content_type(
+                record.name or record.output_key, record.type, record.content_type
+            )
             async with tenant_scope(record.tenant_id, settings=self._settings) as uow:
                 repo = _ArtifactRepository(uow)
                 row = await repo.fetch_one(
@@ -336,12 +394,12 @@ class PostgresArtifactStore:
                     INSERT INTO {ARTIFACT_TABLE} (
                         tenant_id, artifact_id, task_id, step_id, output_key, type, name,
                         inline_text, preview_text, external_url, storage_key, size_bytes,
-                        content_sha256, content, expires_at
+                        content_sha256, content, content_type, expires_at
                     ) VALUES (
                         :tenant_id, :artifact_id, :task_id, :step_id, :output_key, :type, :name,
                         :inline_text, :preview_text, NULLIF(:external_url, ''),
                         NULLIF(:storage_key, ''), :size_bytes, NULLIF(:content_sha256, ''),
-                        :content, :expires_at
+                        :content, :content_type, :expires_at
                     )
                     RETURNING *
                     """,
@@ -361,6 +419,7 @@ class PostgresArtifactStore:
                         # 空字节写 NULL 而不是 `''::bytea`：`text` / `link` 类产物
                         # 本来就没有二进制内容，"没有"与"零字节文件"要能区分开。
                         content=record.content or None,
+                        content_type=content_type,
                         expires_at=as_datetime(record.expires_at)
                         or as_datetime(_default_expires_at()),
                     ),
@@ -486,6 +545,10 @@ class PostgresArtifactStore:
         # 参数类型推断交给 asyncpg 的 bytea 上下文，比让 PG 去解 COALESCE 更稳。
         effective_content = content or inline_text.encode("utf-8")
         size = len(effective_content)
+        # 同一产物换格式重渲染时，MIME 必须跟着变（名称后缀优先）
+        effective_type = resolve_content_type(
+            current.name or current.output_key, current.type, content_type
+        )
         async with tenant_scope(tenant_id, settings=self._settings) as uow:
             repo = _ArtifactRepository(uow)
             row = await repo.fetch_one(
@@ -495,6 +558,7 @@ class PostgresArtifactStore:
                        preview_text = :preview_text,
                        content_sha256 = :content_sha256,
                        content = :content,
+                       content_type = :content_type,
                        size_bytes = :size_bytes,
                        version = COALESCE(version, 1) + 1,
                        version_history = CAST(:version_history AS jsonb)
@@ -507,6 +571,7 @@ class PostgresArtifactStore:
                     preview_text=preview_text,
                     content_sha256=content_sha256,
                     content=effective_content,
+                    content_type=effective_type,
                     size_bytes=size,
                     version_history=json.dumps(history, ensure_ascii=False),
                 ),
@@ -581,7 +646,13 @@ def _to_artifact(row: Mapping[str, Any]) -> ArtifactRecord:
         created_at=_timestamp(row.get("created_at")),
         updated_at=_timestamp(row.get("updated_at")) or _timestamp(row.get("created_at")),
         content=_as_bytes(row.get("content")),
-        content_type=str(row.get("content_type", "") or "text/plain; charset=utf-8"),
+        # 老库（未跑 0006）读回来是 None：按名称/类型归一化，
+        # 而不是无条件声明 text/plain——那正是 P3-B22-04 的现场
+        content_type=resolve_content_type(
+            str(row.get("name", "") or row.get("output_key", "")),
+            str(row.get("type", "text")),
+            str(row.get("content_type", "") or ""),
+        ),
     )
 
 

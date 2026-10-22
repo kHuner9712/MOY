@@ -284,6 +284,13 @@ async def test_pg_backend_roundtrips_real_docx_bytes(
     # 摘要与字节必须自洽：`content_sha256` 是"内容有没有变"的唯一依据
     assert fetched.content_sha256 == _digest(content)
 
+    # P3-B22-04（阶段四 0006 收口）：MIME 必须从库里读回来，而不是恒回落 text/plain。
+    # 回落的后果是「下载响应把 docx 声明成文本」——字节对、类型错，网关与浏览器
+    # 都会按文本处理，用户拿到一个打不开的 .docx。
+    assert fetched.content_type == (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ), f"docx 产物读回的 MIME 不正确：{fetched.content_type!r}"
+
 
 async def test_pg_backend_content_is_tenant_isolated(
     store: PostgresArtifactStore, pg_settings: Settings

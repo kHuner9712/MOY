@@ -120,6 +120,40 @@ class FakeMigrationDatabase:
         """
         self.applied[version] = checksum
 
+    async def apply_migration(self, migration: Migration) -> bool:
+        """执行迁移（内存替身无锁，只记录"是否真的执行了"）。
+
+        语义与 PG 实现对齐：**已应用则跳过**（锁内二次判定的内存等价物），
+        这样"并发下只执行一次"在替身上也能被断言。
+
+        Args:
+            migration: 待应用的迁移。
+
+        Returns:
+            bool: 真的执行了返回 True；判定已应用返回 False。
+        """
+        if migration.version in self.applied:
+            return False
+        self.executed_scripts.append(migration.path.read_text(encoding="utf-8"))
+        self.applied[migration.version] = migration.checksum
+        return True
+
+    async def apply_rollback(self, version: str, sql: str) -> bool:
+        """执行回滚（内存替身）。
+
+        Args:
+            version: 版本号。
+            sql: 回滚脚本内容。
+
+        Returns:
+            bool: 执行了返回 True；版本未应用返回 False。
+        """
+        if version not in self.applied:
+            return False
+        self.executed_scripts.append(sql)
+        self.applied.pop(version, None)
+        return True
+
     async def delete_versions(self, versions: Any) -> int:
         """删除台账行并返回实际删除条数。
 

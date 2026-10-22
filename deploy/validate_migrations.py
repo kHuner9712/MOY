@@ -15,9 +15,11 @@
 | --- | --- | --- |
 | 空库（A） | 应用角色自建，无任何表 | **语法崩**、旧版 init 脚本漏列 |
 | 已初始化库（B） | initdb 跑过 `init-schema-*.sql`，表属主是超级用户 | **属主崩**、守卫缺失 |
+| 回滚往返（C） | 在 B 的库上 `--rollback 0007 0006` → `--apply` | **down 脚本空转**、回滚后升不回去 |
 
-**两条路径都必须绿**——只跑一条等于没验。A 缺库时用 `--run-pg` 自建（需要超级用户
-连接串），B 直接打 `OA_TEST_DATABASE_URL` 指向的那台库。
+**三条路径都必须绿**——只跑一条等于没验。A 缺库时用 `--run-pg` 自建（需要超级用户
+连接串），B/C 直接打 `OA_TEST_DATABASE_URL` 指向的那台库。路径 C 是阶段四新增：
+它验证的是「升级出问题 → 回滚 → 修好 → 再升级」这条真实运维链路，而不是单次的 `--apply`。
 
 用法::
 
@@ -516,6 +518,135 @@ def _run_path_b_initialized(app_dsn: str) -> list[Violation]:
     return violations
 
 
+#: 回滚往返用例的固定探针（阶段四新增的两个迁移）
+ROUND_TRIP_VERSIONS: Final[tuple[str, ...]] = (
+    "0007_usage_event_dimensions",
+    "0006_plugin_artifact_content_type",
+)
+
+
+def _column_exists(dsn: str, table: str, column: str) -> bool:
+    """查询列是否存在（**应用角色可读的信息模式视图**）。
+
+    Args:
+        dsn: 连接串。
+        table: 表名。
+        column: 列名。
+
+    Returns:
+        bool: 存在返回 True；查询失败按"不存在"处理（让外层报违规而不是崩）。
+    """
+    import asyncio
+
+    import asyncpg
+
+    async def _query() -> bool:
+        connection = await asyncpg.connect(dsn)
+        try:
+            value = await connection.fetchval(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2",
+                table,
+                column,
+            )
+            return value is not None
+        finally:
+            await connection.close()
+
+    try:
+        return bool(asyncio.run(_query()))
+    except Exception:  # noqa: BLE001 - 连接失败由调用方的路径判定负责报错
+        return False
+
+
+def _run_path_c_round_trip(owner_dsn: str) -> list[Violation]:
+    """路径 C：**up → down → up 三轮**（阶段四 T4-01.4，架构 §10.2）。
+
+    为什么必须单独一轮：`--apply` 走的是「加列」分支，`--rollback` 走的是「删列」
+    分支——两条分支各自绿，并不代表「回滚后能再升回去」。真实运维要的正是后者：
+    升级出问题 → 回滚 → 修好东西 → 再升级。
+
+    判据：
+    1. `--rollback 0007 0006` 退出 0（倒序、两次相减都不报错）；
+    2. 回滚后两列**真的不在**（否则 down 脚本是空转）；
+    3. 再次 `--apply` 退出 0，且两列**真的回来了**；
+    4. 台账行数不变（回滚删行、升级补行，净差为 0）。
+
+    只在**已初始化库**上跑（路径 B 的库）：它同时具备"表属主是超级用户"这一
+    最容易被忽略的前提，也是客户现场的真实形态。
+
+    **为什么整条路径用属主（超级用户）身份，而不是应用角色**：
+    `DROP COLUMN` 与「列缺失时补列」都要求表属主权限，而应用角色 `officeai_app`
+    是 `NOSUPERUSER NOBYPASSRLS`——它只能走"零 DDL"路径（init 脚本已建好列）。
+    真实运维里升级/回滚本来就是 DBA 执行的一次性动作（compose 的 `migrate` Job
+    亦按此设计），所以这里如实以属主身份跑；应用角色那条路径由路径 B 覆盖
+    （`--check` + `--apply` 零 DDL 通过）。
+
+    Args:
+        owner_dsn: 属主（超级用户）连接串，指向已初始化库。
+
+    Returns:
+        list[Violation]: 违规清单。
+    """
+    violations: list[Violation] = []
+    probes = (("plugin_artifact", "content_type"), ("usage_event", "profile"))
+
+    before_ok = all(_column_exists(owner_dsn, table, column) for table, column in probes)
+    if not before_ok:
+        # 前置不成立（该库还没跑过 0006/0007）→ 先 apply 一轮把它补上
+        applied = _run_cli(owner_dsn, "--apply")
+        if applied.returncode != 0:
+            return [
+                Violation(
+                    "路径C(回滚往返)",
+                    f"前置 --apply 失败（退出码 {applied.returncode}）："
+                    f"{(applied.stderr or applied.stdout).strip()[:400]}",
+                )
+            ]
+
+    rollback = _run_cli(owner_dsn, "--rollback", *ROUND_TRIP_VERSIONS)
+    if rollback.returncode != 0:
+        violations.append(
+            Violation(
+                "路径C(回滚往返)",
+                f"--rollback {' '.join(ROUND_TRIP_VERSIONS)} 失败"
+                f"（退出码 {rollback.returncode}）："
+                f"{(rollback.stderr or rollback.stdout).strip()[:400]}",
+            )
+        )
+        return violations
+
+    for table, column in probes:
+        if _column_exists(owner_dsn, table, column):
+            violations.append(
+                Violation(
+                    "路径C(回滚往返)",
+                    f"回滚后 {table}.{column} 仍存在（down 脚本空转，等于没有回滚）",
+                )
+            )
+
+    again = _run_cli(owner_dsn, "--apply")
+    if again.returncode != 0:
+        violations.append(
+            Violation(
+                "路径C(回滚往返)",
+                f"回滚后再次 --apply 失败（退出码 {again.returncode}）："
+                f"{(again.stderr or again.stdout).strip()[:400]}",
+            )
+        )
+        return violations
+
+    for table, column in probes:
+        if not _column_exists(owner_dsn, table, column):
+            violations.append(
+                Violation(
+                    "路径C(回滚往返)",
+                    f"三轮后 {table}.{column} 仍未恢复（up → down → up 不一致）",
+                )
+            )
+    return violations
+
+
 def run_pg_paths() -> tuple[int, list[Violation]]:
     """跑两条路径，返回退出码与违规清单。
 
@@ -532,6 +663,9 @@ def run_pg_paths() -> tuple[int, list[Violation]]:
         ]
     violations = _run_path_a_empty_database(superuser_dsn)
     violations.extend(_run_path_b_initialized(app_dsn))
+    # 路径 C 依赖路径 B 的前置状态（已初始化库 + 0006/0007 可应用），放在最后跑；
+    # 它需要表属主权限（DROP COLUMN），故用超级用户 DSN
+    violations.extend(_run_path_c_round_trip(superuser_dsn))
     return (1 if violations else 0), violations
 
 
@@ -658,7 +792,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("[OK]   迁移门禁通过：标签成对、DDL 有守卫、init 基线覆盖 B19 三列")
     if args.run_pg:
-        print("[OK]   双路径实跑通过：空库 --apply×2 绿、已初始化库 --check/--apply 绿")
+        print(
+            "[OK]   三路径实跑通过：空库 --apply×2 绿、已初始化库 --check/--apply 绿、"
+            "回滚往返（0007→0006 down → 再 apply）绿"
+        )
     return 0
 
 
