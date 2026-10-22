@@ -105,7 +105,7 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {
         "id": "P3-B20-02",
         "level": "P1",
-        "status": "open",
+        "status": "fixed",  # 6f81495：guardrails 44 passed（含 面议 两处样本）
         "pinned_by": "TC-P3-HR23-02 / 追溯表 §3.4 ⑨ 组",
         "due_batch": "B21",
         "due_action": "补 R3 样本 5 条（3 面议类必判失败 + 2 合法值通过）并实测",

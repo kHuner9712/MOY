@@ -262,13 +262,18 @@ ok = covered * 100 >= threshold_pp * total      # ✅ 整数比较
 
 > **第 0 层必须排第一**：输入错了，后面三层再严也是错的。**防空转断言**（扫描到 0 条即判"输入为空、结论不成立"）是它的最小实现。
 
-**该判据已在 `b6effcf` 上实测"能红"，并发现一处此前未记录的缺陷**：
+**该判据已在 `b6effcf` 上实测"能红"，且修正后只剩 1 处真违规**（首版误报过一处，见下）：
 ```
-b6effcf：列数≠值数 = [('task_repo.py', 25, 24)]
-          DDL 无此列 = [('task_repo.py','queue_position'), ('task_repo.py','confirmed_step_seq')]
+b6effcf（修正版，含 ALTER 解析）：DDL 列 219 | INSERT 29
+列数≠值数 = [('task_repo.py', 25, 24)]
+DDL 无此列 = [('task_repo.py', 'queue_position')]     ← 仅此一列
 ```
-→ 那处 INSERT 有 **2 个** DDL 不存在的列，**不只是 `queue_position`**；`confirmed_step_seq` 后来靠迁移补上——
-**即"代码与 DDL 同时漂移"，而非单纯"代码写错一个派生列"。**
+
+> **首版误报案例（第 1/2 层同时失守）**：初版只解析 `CREATE TABLE` 括号体，
+> 于是把 `0004` 里 `ALTER TABLE plugin_task ADD COLUMN IF NOT EXISTS confirmed_step_seq …`
+> 补的列判成"不存在"——**假红**。后补列是本项目迁移的常态（`0004` 一次补 3 列），
+> **若不解析 `ALTER … ADD COLUMN`，任何用到后补列的 INSERT 都会被误判**，噪声面积比它想防的真缺陷更大。
+> 修正后 DDL 列由 212 → **219**，`confirmed_step_seq` 误报消失。
 
 > 一句话收口：**判据的作用域不写，等于判据没写；判据的实现不写清，等于判据可以被写成错的**——
 > 而"实现写错"比"作用域没写"更危险，因为**它的错向是假绿，没人会去查一条一直是绿的门禁**。
