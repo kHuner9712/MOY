@@ -18,7 +18,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
+
+from app.plugins.renderer import RENDER_FORMATS
+
+if TYPE_CHECKING:  # 仅类型检查期引入，避免 actions ↔ schema 的运行期耦合
+    from app.plugins.schema import PluginManifest, StepSpec
 
 #: 执行原语白名单（6 项，封闭；新增即能力扩张，须改平台）
 ACTION_WHITELIST: Final[tuple[str, ...]] = (
@@ -340,6 +345,89 @@ def is_outbound_operation(tool_type: str, operation: str) -> bool:
     return (tool_type, operation) in OUTBOUND_TOOL_OPERATIONS
 
 
+def declared_tool_paths(step: StepSpec) -> tuple[tuple[str, str], ...]:
+    """取某步**声明清单**内的全部可执行路径（主工具 + 等价替代）。
+
+    这是「执行路径 ⊆ 声明清单」断言的判据来源：运行期选中的工具必须落在这个
+    集合里。声明了 `wechat_mp.publish_article` 就只能发公众号或走已声明的邮件
+    替代；**不允许**运行期凭输入临时换成声明外的第 7 种路径——那等于声明失效。
+
+    Args:
+        step: 步骤声明。
+
+    Returns:
+        tuple[tuple[str, str], ...]: `(tool_type, operation)` 清单（保持声明顺序）。
+    """
+    if step.action != "tool":
+        return ()
+    paths: list[tuple[str, str]] = [(step.tool_type or "", step.operation or "")]
+    paths.extend((alt.tool_type, alt.operation) for alt in step.tool_alternatives)
+    return tuple(paths)
+
+
+def assert_execution_path(step: StepSpec, tool_type: str = "", operation: str = "") -> None:
+    """运行期复核「执行路径 ⊆ 声明清单」（G-28 的运行期半段）。
+
+    加载期已查过一遍（`loader._check_actions`），这里再查一次是防运行期篡改：
+    声明快照落库后若被改动、或网关按输入动态换了工具，都必须在这里被拦住。
+
+    `tool_type` / `operation` **都不传**时只复核原语白名单（即"这一步的声明本身
+    是否还成立"）；要复核具体某次调用时再传这两个参数。
+
+    Args:
+        step: 步骤声明。
+        tool_type: 实际要用的工具类型（不传表示不做路径复核）。
+        operation: 实际操作标识（不传表示不做路径复核）。
+
+    Raises:
+        ValueError: 原语不在白名单，或工具路径不在声明清单内。
+    """
+    if step.action not in ACTION_WHITELIST:
+        raise ValueError(f"原语不在白名单内：{step.action}")
+    if step.action != "tool":
+        return
+    if not tool_type and not operation:
+        return
+    if (tool_type, operation) not in declared_tool_paths(step):
+        raise ValueError(f"步骤 {step.seq} 的执行路径不在声明清单内：{tool_type}.{operation}")
+
+
+def render_file_violations(manifest: PluginManifest) -> list[str]:
+    """校验 `render_file` 的两条附加约束（§2.2 / §11 冲突 12）。
+
+    **① 导出格式必须由声明给出**：格式是产物类型契约（公文必须 docx），
+    缺声明即视为错误，不允许"运行期挑一个"。
+
+    **② 不得与 `personal.file.read` 耦合**：导出是"写产物"，不需要"读用户文件"的
+    授权。反过来，声明了"读个人文件"就必须有真正的读文件支撑
+    （`inputs[].type=file` 或 `retrieve` 步骤）——否则会出现"没读任何文件却要了
+    读文件权限"的越权外观，也会让授权抽屉里的理由说不通。
+
+    Args:
+        manifest: 插件声明。
+
+    Returns:
+        list[str]: 违规描述（空表示通过）。
+    """
+    problems: list[str] = []
+    render_steps = [step for step in manifest.steps if step.action == "render_file"]
+    for step in render_steps:
+        if step.render_format not in RENDER_FORMATS:
+            problems.append(f"步骤 {step.seq} 导出文件但未声明有效的导出格式")
+    if not render_steps:
+        return problems
+    if "personal.file.read" not in manifest.capability_keys:
+        return problems
+    reads_input_files = any(item.type == "file" for item in manifest.inputs)
+    has_retrieve = any(step.action == "retrieve" for step in manifest.steps)
+    if not reads_input_files and not has_retrieve:
+        problems.append(
+            "声明了读取个人文件的能力，但既没有上传文件的输入项也没有检索步骤"
+            "（导出文件不需要读文件授权）"
+        )
+    return problems
+
+
 class ActionGateway(Protocol):
     """原语门面（实现见 `services/action_gateway.py`，由依赖注入提供）。
 
@@ -389,6 +477,7 @@ __all__: list[str] = [
     "ORG_CAPABILITIES",
     "OUTBOUND_TOOL_OPERATIONS",
     "PERSONAL_CAPABILITIES",
+    "RENDER_FORMATS",
     "RETRIEVE_CAPABILITIES",
     "TOOL_WRITE_CAPABILITY",
     "ActionGateway",
@@ -396,7 +485,10 @@ __all__: list[str] = [
     "ActionStatus",
     "ArtifactDraft",
     "RunContext",
+    "assert_execution_path",
     "capabilities_for_tool",
     "capability_display_name",
+    "declared_tool_paths",
     "is_outbound_operation",
+    "render_file_violations",
 ]

@@ -166,6 +166,7 @@
       "seq": 5,
       "title": "安排发布排期",
       "action": "render_file",
+      "render_format": "csv",
       "produces": [
         "schedule"
       ],

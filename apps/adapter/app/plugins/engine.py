@@ -21,7 +21,11 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
+import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Final
 
 from app.core.errors import ApiError, ErrorCode
@@ -35,9 +39,12 @@ from app.plugins.actions import (
     ActionResult,
     ArtifactDraft,
     RunContext,
+    assert_execution_path,
     capabilities_for_tool,
     capability_display_name,
+    declared_tool_paths,
 )
+from app.plugins.renderer import RENDER_FORMATS
 from app.plugins.sanitizer import ArtifactSanitizer
 from app.plugins.schema import PluginManifest, StepSpec
 
@@ -67,6 +74,88 @@ DEFAULT_OPERATOR_ACTION: Final[str] = "可以重试这一步"
 
 #: 说明性产物（`understand` / `compose` / `summarize`）失败不影响其他步骤时的提示后缀
 WARNING_TEMPLATE: Final[str] = "第 {seq} 步「{title}」没有完成，结果里会缺少这部分"
+
+# ----------------------------------------------------------------------
+# Offer 金额三规则（PRD P0-P3-23 ② / 追溯表 C-13 / 架构 §7.3 + §11 勘误 #3）
+# ----------------------------------------------------------------------
+#: **作用域写死**：只扫这一个产物键。`screening` 的结论枚举**合法包含**「待定」，
+#: 一旦把扫描范围放到"任务级"，每份「待定」简历都会误报成 P0 缺陷——而且方向是
+#: "看起来更严"，最容易被当成好事放过。所以这里不接受调用方传产物键。
+OFFER_OUTPUT_KEY: Final[str] = "offer"
+
+#: Offer 的三个金额字段（`bonus` 与 §7.3 的「股权」按同义处理，两边都要挡）。
+OFFER_AMOUNT_FIELDS: Final[tuple[str, ...]] = (
+    "salary",
+    "probation_salary",
+    "bonus",
+    "equity",
+)
+
+#: 金额位置**唯一允许**的两个取值（空串 = 由人事手填；或明确的「按公司标准执行」）。
+OFFER_AMOUNT_ALLOWED_VALUES: Final[tuple[str, ...]] = ("", "按公司标准执行")
+
+#: 金额违规时给用户的建议动作（**固定文案**，且不得指向"重新发起任务"）。
+#:
+#: 合规问题不能靠重跑碰运气，也不该让用户为模型的错付一整单成本；
+#: Offer 是可编辑草稿，就地改两个字段再导出即可。
+OFFER_AMOUNT_OPERATOR_ACTION: Final[str] = "清空或改为「按公司标准执行」后重新导出"
+
+#: R1：带单位的金额（`8000 元` / `1.2 万元` / `15k` / `8000/月`）
+OFFER_AMOUNT_UNIT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?<!\d)(?:[1-9]\d{0,2}(?:,\d{3})+|\d{3,})(?:\.\d{1,2})?\s*"
+    r"(?:元|万元|万|k|K|/月|每月|/年|年薪)"
+)
+
+#: R2：金额上下文关键词（窗口内出现裸数字即违规）
+OFFER_AMOUNT_CONTEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"薪|工资|待遇|补贴|奖金|年终|期权|股权|月收入|总包"
+)
+
+#: R2：裸数字（3-7 位，允许两位小数；排除更长的数字串与负数）
+OFFER_BARE_NUMBER_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?<![\d-])\d{3,7}(?:\.\d{1,2})?(?![\d-])"
+)
+
+#: R2 的上下文窗口半径（字符）
+OFFER_AMOUNT_CONTEXT_WINDOW: Final[int] = 20
+
+#: R3：金额位置的禁用表述（把金额决策甩给用户，且用户会误以为是模型给的结论）
+OFFER_AMOUNT_FORBIDDEN_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"面议|待定|可谈|可议|根据经验|视情况|依能力|面谈|另议|按市场水平"
+)
+
+# ----------------------------------------------------------------------
+# 发布排期时间校验（架构 §7.2 第 5 步）
+# ----------------------------------------------------------------------
+#: 排期表产物键（作用域同样写死）
+SCHEDULE_OUTPUT_KEY: Final[str] = "schedule"
+
+#: 排期表里「平台」列的候选键名（声明侧不固定表头，这里给一组常见写法）
+SCHEDULE_PLATFORM_KEYS: Final[tuple[str, ...]] = ("平台", "platform", "channel")
+
+#: 排期表里「计划时间」列的候选键名
+SCHEDULE_TIME_KEYS: Final[tuple[str, ...]] = (
+    "计划时间",
+    "planned_at",
+    "计划发布时间",
+    "时间",
+    "time",
+)
+
+#: 可识别的时间写法（识别不了的**不判失败**——宁可放过也不误伤用户的自由格式）
+SCHEDULE_TIME_FORMATS: Final[tuple[str, ...]] = (
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y/%m/%d %H:%M",
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+)
+
+#: 排期违规时给用户的建议动作
+SCHEDULE_OPERATOR_ACTION: Final[str] = "修改排期表里的计划时间后重新导出"
+
+#: 执行路径越界时给用户的建议动作
+PATH_OPERATOR_ACTION: Final[str] = "联系管理员确认这个插件可以做什么"
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +226,71 @@ class TaskOutcome:
     usage_units: int = 0
     failed_step_seq: int = 0
     confirm_step_seq: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class AmountScan:
+    """Offer 金额三规则的扫描结果（R1 / R2 / R3 + 字段取值）。
+
+    Attributes:
+        r1: R1（带单位金额）命中的原文片段。
+        r2: R2（金额上下文内的裸数字）命中的原文片段。
+        r3: R3（金额位置的禁用表述）命中的原文片段。
+        fields: 取值不在白名单内的金额字段键。
+    """
+
+    r1: tuple[str, ...] = ()
+    r2: tuple[str, ...] = ()
+    r3: tuple[str, ...] = ()
+    fields: tuple[str, ...] = ()
+
+    @property
+    def clean(self) -> bool:
+        """三条规则是否全部 0 命中且字段取值合规。
+
+        Returns:
+            bool: 全部合规返回 True。
+        """
+        return not (self.r1 or self.r2 or self.r3 or self.fields)
+
+    def reasons(self) -> list[str]:
+        """把命中翻译成业务语言（**不出现正则、字段名、错误码**）。
+
+        Returns:
+            list[str]: 逐条原因（空列表表示合规）。
+        """
+        reasons: list[str] = []
+        if self.fields:
+            reasons.append("金额相关的几处还没有确认，需要人事来填或选择「按公司标准执行」")
+        if self.r1:
+            reasons.append("录用通知里出现了具体金额数字")
+        if self.r2:
+            reasons.append("录用通知在薪资相关段落里出现了具体数字")
+        if self.r3:
+            reasons.append("录用通知在金额位置写了「面议」「待定」这类说法")
+        return reasons
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleScan:
+    """发布排期表的校验结果。
+
+    Attributes:
+        problems: 业务语言的问题清单（空表示通过）。
+        checked_rows: 实际解析出计划时间的行数（0 表示没有可校验的时间）。
+    """
+
+    problems: tuple[str, ...] = ()
+    checked_rows: int = 0
+
+    @property
+    def clean(self) -> bool:
+        """是否通过校验。
+
+        Returns:
+            bool: 无问题返回 True。
+        """
+        return not self.problems
 
 
 class PluginEngine:
@@ -287,8 +441,11 @@ class PluginEngine:
                 retryable=False,
             )
 
+        declared = self._declaration_check(spec)
+        if declared is not None:
+            return declared
+
         params = self._build_params(spec, ctx, inputs)
-        attempts = 0
         outcome = await self._invoke(ctx, spec, params)
         attempts = 1
         if (
@@ -305,7 +462,36 @@ class PluginEngine:
             outcome = await self._invoke(ctx, spec, params)
             attempts = 2
         outcome.attempts = attempts
-        return outcome
+        return self.guard(spec, outcome)
+
+    def _declaration_check(self, spec: StepSpec) -> StepOutcome | None:
+        """运行期再查一次「原语与执行路径 ⊆ 声明清单」（防运行期篡改）。
+
+        加载期已查过（`loader._check_actions`），但 `plugin_task.plugin_version`
+        存的是**声明快照**；快照一旦被人改过，运行期就不该照着跑。
+
+        Args:
+            spec: 步骤声明。
+
+        Returns:
+            StepOutcome | None: 声明不自洽返回失败结果；否则返回 None。
+        """
+        try:
+            assert_execution_path(spec)
+        except ValueError as exc:
+            logger.error(
+                "plugin_step_declaration_invalid",
+                step_seq=spec.seq,
+                detail=str(exc),
+            )
+            return StepOutcome(
+                status=STEP_FAILED,
+                error_code=int(ErrorCode.INTERNAL_ERROR),
+                reason_text="这一步的说明与实际做法不一致，已经停下",
+                operator_action=PATH_OPERATOR_ACTION,
+                retryable=False,
+            )
+        return None
 
     async def _invoke(self, ctx: RunContext, spec: StepSpec, params: dict[str, Any]) -> StepOutcome:
         """调用原语并把结果/异常翻译成 `StepOutcome`。
@@ -448,6 +634,20 @@ class PluginEngine:
         elif code == int(ErrorCode.CAPABILITY_NOT_GRANTED):
             operator = "重新授权后再试，或联系管理员"
             retryable = False
+        elif code == int(ErrorCode.CAPABILITY_POLICY_BLOCKED):
+            # 企业策略关闭：用户自己改不了，必须指向"找谁开"
+            operator = "请团队管理员在团队设置里开启这项能力后再试"
+            retryable = False
+        elif code == int(ErrorCode.PLUGIN_NOT_INSTALLED):
+            operator = "先在插件页面添加这个插件，再重试这一步"
+            retryable = False
+        elif code == int(ErrorCode.PLUGIN_DISABLED):
+            operator = "先在插件页面启用这个插件，再重试这一步"
+            retryable = False
+        elif code == int(ErrorCode.PLUGIN_DEPENDENCY_MISSING):
+            # 「依赖」是禁词：对用户要说"需要一起使用的插件"
+            operator = "先在插件页面启用它需要一起使用的插件，再重试这一步"
+            retryable = False
         logger.info(
             "plugin_step_failed",
             action=spec.action,
@@ -461,6 +661,136 @@ class PluginEngine:
             reason_text=error.message,
             operator_action=operator,
             retryable=retryable,
+        )
+
+    # ------------------------------------------------------------------
+    # 护栏（B20）：执行路径 ⊆ 声明清单 / Offer 金额三规则 / 排期时间
+    # ------------------------------------------------------------------
+    def guard(self, spec: StepSpec, outcome: StepOutcome) -> StepOutcome:
+        """对成功完成的步骤跑三道护栏（**作用域写死，不接受调用方传参**）。
+
+        三道护栏都只改"这一步算不算完成"，**不改任务状态机**：
+        命中即该步 `failed` + `retryable=false`，后续由 `on_failure` 决定任务走向
+        （Offer 步是 `continue`，排期步是 `abort`）。
+
+        为什么护栏放在引擎而不是网关：网关只认"下游返回了什么"，护栏要认
+        "**声明允许什么**"——声明是插件的契约，判据必须落在契约这一层。
+
+        Args:
+            spec: 步骤声明。
+            outcome: 步骤执行结果。
+
+        Returns:
+            StepOutcome: 原结果，或命中护栏后的失败结果。
+        """
+        if not outcome.ok:
+            return outcome
+        path_blocked = self._guard_tool_path(spec, outcome)
+        if path_blocked is not None:
+            return path_blocked
+        for draft in outcome.artifacts:
+            if draft.output_key == OFFER_OUTPUT_KEY:
+                blocked = self._guard_offer(outcome, draft)
+                if blocked is not None:
+                    return blocked
+            elif draft.output_key == SCHEDULE_OUTPUT_KEY:
+                blocked = self._guard_schedule(outcome, draft)
+                if blocked is not None:
+                    return blocked
+        return outcome
+
+    def _guard_tool_path(self, spec: StepSpec, outcome: StepOutcome) -> StepOutcome | None:
+        """校验实际调用的工具 ∈ 声明清单（「执行路径 ⊆ 声明清单」运行期半段）。
+
+        Args:
+            spec: 步骤声明。
+            outcome: 步骤执行结果（`tool` 步骤的 `data` 带 `tool_type`/`operation`）。
+
+        Returns:
+            StepOutcome | None: 越界返回失败结果；否则返回 None。
+        """
+        if spec.action != "tool":
+            return None
+        actual_tool = str(outcome.data.get("tool_type") or "")
+        actual_operation = str(outcome.data.get("operation") or "")
+        if not actual_tool or not actual_operation:
+            return None
+        if (actual_tool, actual_operation) in declared_tool_paths(spec):
+            return None
+        logger.error(
+            "plugin_step_path_out_of_manifest",
+            plugin_id=spec.action,
+            step_seq=spec.seq,
+            tool=actual_tool,
+            operation=actual_operation,
+        )
+        return StepOutcome(
+            status=STEP_FAILED,
+            error_code=int(ErrorCode.INTERNAL_ERROR),
+            reason_text="这一步的实际做法超出了这个插件的声明范围，已经停下",
+            operator_action=PATH_OPERATOR_ACTION,
+            retryable=False,
+            usage_units=outcome.usage_units,
+        )
+
+    def _guard_offer(self, outcome: StepOutcome, draft: ArtifactDraft) -> StepOutcome | None:
+        """对 `output_key=offer` **这一个产物**跑 R1 + R2 + R3（P0-P3-23 ②）。
+
+        Args:
+            outcome: 步骤执行结果。
+            draft: `offer` 产物草稿。
+
+        Returns:
+            StepOutcome | None: 违规返回失败结果；否则返回 None。
+        """
+        scan = scan_offer_amount(draft.inline_text)
+        if scan.clean:
+            return None
+        logger.warning(
+            "plugin_offer_amount_blocked",
+            r1=len(scan.r1),
+            r2=len(scan.r2),
+            r3=len(scan.r3),
+            fields=list(scan.fields),
+        )
+        reasons = scan.reasons()
+        return StepOutcome(
+            status=STEP_FAILED,
+            # **不把违规内容交出去**：产出为空的失败，用户只会看到"没有产出 + 怎么补"，
+            # 而不是一份需要自己找哪里违规的草稿。
+            artifacts=(),
+            data=dict(outcome.data),
+            error_code=int(ErrorCode.INTERNAL_ERROR),
+            reason_text="；".join(reasons) or "录用通知里出现了不该有的金额信息",
+            operator_action=OFFER_AMOUNT_OPERATOR_ACTION,
+            retryable=False,
+            usage_units=outcome.usage_units,
+        )
+
+    def _guard_schedule(self, outcome: StepOutcome, draft: ArtifactDraft) -> StepOutcome | None:
+        """校验排期表时间（过去时间 / 同平台同刻重复）。
+
+        Args:
+            outcome: 步骤执行结果。
+            draft: `schedule` 产物草稿（CSV）。
+
+        Returns:
+            StepOutcome | None: 违规返回失败结果；否则返回 None。
+        """
+        rows = parse_schedule_rows(draft.content)
+        scan = scan_schedule(rows)
+        if scan.clean:
+            return None
+        logger.warning("plugin_schedule_blocked", problems=list(scan.problems))
+        return StepOutcome(
+            status=STEP_FAILED,
+            artifacts=(),
+            data=dict(outcome.data),
+            error_code=int(ErrorCode.INTERNAL_ERROR),
+            reason_text="；".join(scan.problems),
+            operator_action=SCHEDULE_OPERATOR_ACTION,
+            retryable=False,
+            usage_units=outcome.usage_units,
         )
 
     # ------------------------------------------------------------------
@@ -630,19 +960,30 @@ class PluginEngine:
 
 
 def _declared_render_format(spec: StepSpec) -> str:
-    """取声明里 `render_file` 的格式（声明缺省时回落 `md`）。
+    """取声明里 `render_file` 的格式（**声明是唯一来源**）。
 
-    `StepSpec` 未单独建模 `render_format` 字段时（B20 补声明校验），
-    B19 以 `md` 为默认；**调用方无法覆盖**（不允许请求参数改格式）。
+    B20 起 `render_format` 是 `StepSpec` 的必填字段（`action="render_file"` 时），
+    加载期已由 schema 校验过；这里再兜一次"声明缺失就报错"，**不静默回落 md**
+    ——悄悄降级会让"公文必须是 docx"这条验收变成一句空话。
+
+    调用方无法覆盖：本函数的入参只有步骤声明，没有任何请求参数能参与。
 
     Args:
         spec: 步骤声明。
 
     Returns:
-        str: 渲染格式。
+        str: 渲染格式（`docx` / `md` / `csv`）。
+
+    Raises:
+        ApiError: 声明未给出格式（20001，属加载期本应拦住的声明缺陷）。
     """
     declared = getattr(spec, "render_format", "") or ""
-    return declared if declared in {"docx", "md", "csv"} else "md"
+    if declared not in RENDER_FORMATS:
+        raise ApiError(
+            ErrorCode.PARAM_INVALID,
+            internal_detail=f"step {spec.seq} render_format={declared!r} 不在白名单内",
+        )
+    return declared
 
 
 def _is_blank(value: Any) -> bool:
@@ -663,9 +1004,179 @@ def _is_blank(value: Any) -> bool:
     return False
 
 
+def scan_offer_amount(text: str = "", fields: dict[str, Any] | None = None) -> AmountScan:
+    """对 Offer 文案与其金额字段跑 R1 + R2 + R3 三规则。
+
+    **只处理传入的这一份 Offer**：调用方（引擎）已经按 `output_key=offer`
+    取好了产物，本函数不再自己去扫别的产物——作用域写在引擎里，不靠传参。
+
+    三条规则的判据（与追溯表 §3.4 逐字对齐）：
+
+    - **R1** 带单位的金额：`8000 元` / `1.2 万元` / `15k` / `8000/月`；
+    - **R2** 金额上下文（`薪|工资|待遇|补贴|奖金|年终|期权|股权|月收入|总包`）
+      前后 20 字符窗口内的裸数字：`8000` / `8,000` 之类绕过单位的写法；
+    - **R3** 金额位置的禁用表述：`面议|待定|可谈|可议|根据经验|视情况|依能力|面谈|另议|按市场水平`
+      ——这些说法等于把金额决策甩给用户，而用户会误以为结论是模型给的。
+
+    Args:
+        text: Offer 正文。
+        fields: 金额字段键值（键 ⊆ `OFFER_AMOUNT_FIELDS`）。
+
+    Returns:
+        AmountScan: 扫描结果。
+    """
+    body = text or ""
+    r1 = _unique_matches(OFFER_AMOUNT_UNIT_PATTERN, body)
+    r3 = _unique_matches(OFFER_AMOUNT_FORBIDDEN_PATTERN, body)
+    r2_hits: list[str] = []
+    for context in OFFER_AMOUNT_CONTEXT_PATTERN.finditer(body):
+        start = max(0, context.start() - OFFER_AMOUNT_CONTEXT_WINDOW)
+        end = min(len(body), context.end() + OFFER_AMOUNT_CONTEXT_WINDOW)
+        for match in OFFER_BARE_NUMBER_PATTERN.finditer(body[start:end]):
+            hit = match.group()
+            if hit not in r2_hits:
+                r2_hits.append(hit)
+    bad_fields: list[str] = []
+    for key in OFFER_AMOUNT_FIELDS:
+        if fields is None or key not in fields:
+            continue
+        value = fields[key]
+        normalized = "" if value is None else str(value).strip()
+        if normalized not in OFFER_AMOUNT_ALLOWED_VALUES:
+            bad_fields.append(key)
+    return AmountScan(
+        r1=tuple(r1),
+        r2=tuple(r2_hits),
+        r3=tuple(r3),
+        fields=tuple(bad_fields),
+    )
+
+
+def _unique_matches(pattern: re.Pattern[str], text: str) -> list[str]:
+    """取正则命中的去重片段（保持出现顺序，便于日志与断言）。
+
+    Args:
+        pattern: 已编译的正则。
+        text: 待扫文本。
+
+    Returns:
+        list[str]: 去重后的命中片段。
+    """
+    hits: list[str] = []
+    for match in pattern.finditer(text or ""):
+        value = match.group().strip()
+        if value and value not in hits:
+            hits.append(value)
+    return hits
+
+
+def parse_schedule_rows(content: bytes) -> list[dict[str, str]]:
+    """把排期表 CSV 解析回行（护栏要读的是**已渲染出来**的那份表）。
+
+    为什么不从 `params` 里取原始行：排期表的用户可见内容就是导出的 CSV，
+    校验对象必须与实际交付物一致；只校验"打算写什么"会放过渲染期的偏差。
+
+    Args:
+        content: CSV 字节（带 BOM 与否都可）。
+
+    Returns:
+        list[dict[str, str]]: 行列表（解析不出表头时返回空列表）。
+    """
+    if not content:
+        return []
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:  # pragma: no cover - 渲染器只产出 UTF-8
+        return []
+    reader = csv.DictReader(io.StringIO(text))
+    rows: list[dict[str, str]] = []
+    for row in reader:
+        rows.append({str(key or ""): str(value or "") for key, value in row.items()})
+    return rows
+
+
+def scan_schedule(rows: list[dict[str, str]], *, now: datetime | None = None) -> ScheduleScan:
+    """校验排期表：计划时间不得早于当前，同平台同刻不得重复。
+
+    识别不了的时间写法**不判失败**——排期表的时间列允许用户自由填写，
+    把"没认出来"当成违规会让守规矩的用户反复被拦（比漏判更伤）。
+
+    Args:
+        rows: 排期表行。
+        now: 参照时间（缺省取当前时刻；测试注入固定值以保证可复现）。
+
+    Returns:
+        ScheduleScan: 校验结果。
+    """
+    reference = now or datetime.now()
+    problems: list[str] = []
+    seen: dict[tuple[str, datetime], int] = {}
+    checked = 0
+    for index, row in enumerate(rows, start=1):
+        raw_time = _pick(row, SCHEDULE_TIME_KEYS)
+        platform = _pick(row, SCHEDULE_PLATFORM_KEYS)
+        parsed = _parse_schedule_time(raw_time)
+        if parsed is None:
+            continue
+        checked += 1
+        if parsed < reference:
+            problems.append(f"第 {index} 行计划时间（{raw_time}）已经过去了")
+            continue
+        key = (platform.strip(), parsed)
+        if key in seen:
+            problems.append(f"第 {seen[key]} 行与第 {index} 行是同一个平台同一个时间，发布会重复")
+            continue
+        seen[key] = index
+    return ScheduleScan(problems=tuple(problems), checked_rows=checked)
+
+
+def _pick(row: dict[str, str], keys: tuple[str, ...]) -> str:
+    """按候选键名取列值（命中即返回，去空白）。
+
+    Args:
+        row: 行数据。
+        keys: 候选键名。
+
+    Returns:
+        str: 列值；未命中返回空串。
+    """
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _parse_schedule_time(value: str) -> datetime | None:
+    """按声明支持的几种写法解析时间（都不匹配返回 None）。
+
+    Args:
+        value: 原始时间文本。
+
+    Returns:
+        datetime | None: 解析结果；无法识别返回 None。
+    """
+    text = (value or "").strip()
+    if not text:
+        return None
+    for fmt in SCHEDULE_TIME_FORMATS:
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 __all__: list[str] = [
     "DEFAULT_OPERATOR_ACTION",
+    "OFFER_AMOUNT_ALLOWED_VALUES",
+    "OFFER_AMOUNT_FIELDS",
+    "OFFER_AMOUNT_OPERATOR_ACTION",
+    "OFFER_OUTPUT_KEY",
+    "PATH_OPERATOR_ACTION",
     "RETRYABLE_ERROR_CODES",
+    "SCHEDULE_OPERATOR_ACTION",
+    "SCHEDULE_OUTPUT_KEY",
     "STEP_COMPLETED",
     "STEP_FAILED",
     "STEP_PENDING",
@@ -678,8 +1189,13 @@ __all__: list[str] = [
     "TASK_QUEUED",
     "TASK_RUNNING",
     "TASK_WAITING_CONFIRM",
+    "AmountScan",
     "PluginEngine",
+    "ScheduleScan",
     "StepOutcome",
     "StepPlan",
     "TaskOutcome",
+    "parse_schedule_rows",
+    "scan_offer_amount",
+    "scan_schedule",
 ]

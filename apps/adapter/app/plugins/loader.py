@@ -35,6 +35,7 @@ from app.plugins.actions import (
     ACTION_WHITELIST,
     CAPABILITY_KEYS,
     is_outbound_operation,
+    render_file_violations,
 )
 from app.plugins.schema import (
     PluginManifest,
@@ -59,6 +60,7 @@ STAGE_CAPABILITY: Final[str] = "capability"
 STAGE_ACTION: Final[str] = "action"
 STAGE_TOOL: Final[str] = "tool"
 STAGE_CONFIRM: Final[str] = "confirm"
+STAGE_RENDER: Final[str] = "render"
 STAGE_RETRY: Final[str] = "retry"
 STAGE_DUPLICATE: Final[str] = "duplicate"
 STAGE_IO: Final[str] = "io"
@@ -282,6 +284,18 @@ class PluginRegistry:
         confirm_failure = self._check_confirm(manifest, source)
         if confirm_failure is not None:
             return self._record_failure(confirm_failure)
+
+        # ---- 6b. 导出文件：格式必填 + 与"读个人文件"解耦（§2.2 / §11 冲突 12）----
+        render_problems = render_file_violations(manifest)
+        if render_problems:
+            return self._record_failure(
+                LoadFailure(
+                    source,
+                    STAGE_RENDER,
+                    "导出文件的声明不完整",
+                    "；".join(render_problems),
+                )
+            )
 
         # ---- 7. 重试策略：不可重试的原语不得用 retry ----
         for step in manifest.steps:

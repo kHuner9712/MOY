@@ -357,6 +357,7 @@ class StepSpec(_StrictModel):
         tool_type: `action="tool"` 时必填。
         operation: `action="tool"` 时必填。
         tool_alternatives: `tool` 步骤的等价替代。
+        render_format: `action="render_file"` 时**必填**（`docx` / `md` / `csv`）。
         timeout_seconds: 单步超时（缺省 120，上限 600）。
     """
 
@@ -374,6 +375,9 @@ class StepSpec(_StrictModel):
     operation: str | None = Field(default=None, max_length=64, description="操作标识")
     tool_alternatives: list[ToolAlternative] = Field(
         default_factory=list, max_length=3, description="等价替代"
+    )
+    render_format: Literal["docx", "md", "csv"] | None = Field(
+        default=None, description="导出格式（render_file 必填）"
     )
     timeout_seconds: int = Field(default=120, ge=10, le=600, description="单步超时秒数")
 
@@ -396,6 +400,27 @@ class StepSpec(_StrictModel):
         titles.extend(item.tool_type for item in self.tool_alternatives)
         if len(set(titles)) != len(titles):
             raise ValueError(f"步骤 {self.seq} 的工具类型重复")
+        return self
+
+    @model_validator(mode="after")
+    def _render_format_consistent(self) -> StepSpec:
+        """`render_file` 必须声明导出格式，其它原语不得声明。
+
+        与 `_tool_fields_consistent` 同一体例：**字段存在即必须正确**。
+        缺声明的导出步骤会在运行期退化成"随便挑一个格式"，而产物格式是
+        用户能感知的交付物（公文必须是 docx），不能靠兜底猜。
+
+        Returns:
+            StepSpec: 自身。
+
+        Raises:
+            ValueError: 导出步骤缺格式，或非导出步骤带了格式。
+        """
+        if self.action == "render_file":
+            if self.render_format is None:
+                raise ValueError(f"步骤 {self.seq} 导出文件但未声明导出格式")
+        elif self.render_format is not None:
+            raise ValueError(f"步骤 {self.seq} 不是导出文件却声明了导出格式")
         return self
 
 

@@ -36,6 +36,11 @@ dependencies = [
     "slowapi>=0.1.9",
     "python-multipart>=0.0.9",
     "pyyaml>=6.0",
+    # 公文/Offer 导出（D-20）：`render_file` 必须交付**真 docx**（可解压出
+    # `word/document.xml`），不能退成 md/csv。只认 `python-docx`（MIT），
+    # 禁 `docxtpl`/`python-docx-template`（会拖入 Jinja2）。
+    # docx 一律由平台渲染器生成，插件声明不支持也无法 import（G-28 拦截）。
+    "python-docx>=1.1,<2.0",
 ]
 
 [project.optional-dependencies]

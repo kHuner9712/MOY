@@ -1379,6 +1379,7 @@ graph LR
 | slowapi | ^0.1.9 | MIT | 限流（基于 limits，MIT） |
 | python-multipart | ^0.0.9 | Apache-2.0 | multipart 文件上传 |
 | pyyaml | ^6.0 | MIT | 注册表/路由表 YAML 解析 |
+| python-docx | ^1.1 | MIT | 公文/Offer docx 导出（D-20，平台 render_file 专用） |
 | pytest / pytest-asyncio / pytest-cov | ^8.0 / ^0.23 / ^4.1 | MIT | 测试框架 |
 | ruff / mypy | ^0.5 / ^1.10 | MIT | Lint 与类型检查 |
 

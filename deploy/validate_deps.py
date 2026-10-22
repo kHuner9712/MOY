@@ -59,6 +59,7 @@ DOCUMENTED_PACKAGES = {
     "slowapi",
     "python-multipart",
     "pyyaml",
+    "python-docx",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
