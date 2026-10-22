@@ -559,91 +559,144 @@ def _column_exists(dsn: str, table: str, column: str) -> bool:
         return False
 
 
-def _run_path_c_round_trip(owner_dsn: str) -> list[Violation]:
+def _run_path_c_round_trip(superuser_dsn: str) -> list[Violation]:
     """路径 C：**up → down → up 三轮**（阶段四 T4-01.4，架构 §10.2）。
 
-    为什么必须单独一轮：`--apply` 走的是「加列」分支，`--rollback` 走的是「删列」
-    分支——两条分支各自绿，并不代表「回滚后能再升回去」。真实运维要的正是后者：
-    升级出问题 → 回滚 → 修好东西 → 再升级。
+    为什么必须单独一轮：`--apply` 走「补列」分支，`--rollback` 走「删列」分支——
+    两条分支各自绿，并不代表「回滚后能再升回去」。真实运维要的正是后者。
+
+    **为什么在独立空库上跑，而不是在共享测试库上跑**：
+      ① 共享库上 `0008`（会话/消息，删表级）已应用，按「不自动级联」规则会挡住
+         0006/0007 的回滚——这是**正确的生产行为**，但会让门禁永远红；
+      ② 滚动 0008 需要 `pg_dump` 备份（R-4），CI 主机不一定装了 pg_dump；
+      ③ 更重要的是：门禁不该为了测试而改动共享库的结构。
+    所以这里自建一个临时库，只放 `0002-0007`（列级变更）的副本做往返，与共享库
+    完全隔离；`0008` 的 down 由 `test_migration_lock.py` + 用例层覆盖。
 
     判据：
-    1. `--rollback 0007 0006` 退出 0（倒序、两次相减都不报错）；
-    2. 回滚后两列**真的不在**（否则 down 脚本是空转）；
-    3. 再次 `--apply` 退出 0，且两列**真的回来了**；
-    4. 台账行数不变（回滚删行、升级补行，净差为 0）。
-
-    只在**已初始化库**上跑（路径 B 的库）：它同时具备"表属主是超级用户"这一
-    最容易被忽略的前提，也是客户现场的真实形态。
-
-    **为什么整条路径用属主（超级用户）身份，而不是应用角色**：
-    `DROP COLUMN` 与「列缺失时补列」都要求表属主权限，而应用角色 `officeai_app`
-    是 `NOSUPERUSER NOBYPASSRLS`——它只能走"零 DDL"路径（init 脚本已建好列）。
-    真实运维里升级/回滚本来就是 DBA 执行的一次性动作（compose 的 `migrate` Job
-    亦按此设计），所以这里如实以属主身份跑；应用角色那条路径由路径 B 覆盖
-    （`--check` + `--apply` 零 DDL 通过）。
+      1. `--rollback 0007 0006` 退出 0（倒序，两次相减都不报错）；
+      2. 回滚后两列**真的不在**（否则 down 脚本是空转）；
+      3. 再次 `--apply` 退出 0，且两列**真的回来了**。
 
     Args:
-        owner_dsn: 属主（超级用户）连接串，指向已初始化库。
+        superuser_dsn: 超级用户 DSN（用于建/删临时库）。
 
     Returns:
         list[Violation]: 违规清单。
     """
+    import asyncio
+    import shutil
+    import uuid
+
+    import asyncpg
+
     violations: list[Violation] = []
     probes = (("plugin_artifact", "content_type"), ("usage_event", "profile"))
+    name = f"oa_gate_roundtrip_{uuid.uuid4().hex[:8]}"
 
-    before_ok = all(_column_exists(owner_dsn, table, column) for table, column in probes)
-    if not before_ok:
-        # 前置不成立（该库还没跑过 0006/0007）→ 先 apply 一轮把它补上
-        applied = _run_cli(owner_dsn, "--apply")
-        if applied.returncode != 0:
-            return [
-                Violation(
-                    "路径C(回滚往返)",
-                    f"前置 --apply 失败（退出码 {applied.returncode}）："
-                    f"{(applied.stderr or applied.stdout).strip()[:400]}",
+    # 只放列级迁移的副本：0008 起是"删表级"，需要 pg_dump 备份，不属本路径范围
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        isolated = root / "deploy"
+        (isolated / "migrations" / "rollback").mkdir(parents=True)
+        shutil.copy2(BASELINE_PHASE2, isolated / BASELINE_PHASE2.name)
+        shutil.copy2(BASELINE_PHASE3, isolated / BASELINE_PHASE3.name)
+        for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+            if path.name[:4] >= "0008":
+                continue
+            shutil.copy2(path, isolated / "migrations" / path.name)
+            down = MIGRATIONS_DIR / "rollback" / f"{path.stem}.down.sql"
+            if down.is_file():
+                shutil.copy2(down, isolated / "migrations" / "rollback" / down.name)
+
+        async def _create() -> None:
+            connection = await asyncpg.connect(_swap_dsn(superuser_dsn, database="postgres"))
+            try:
+                await connection.execute(f"CREATE DATABASE {name}")
+                await connection.execute(f"ALTER DATABASE {name} OWNER TO {APP_ROLE}")
+            finally:
+                await connection.close()
+
+        async def _drop() -> None:
+            connection = await asyncpg.connect(_swap_dsn(superuser_dsn, database="postgres"))
+            try:
+                await connection.execute(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = $1 AND pid <> pg_backend_pid()",
+                    name,
                 )
-            ]
+                await connection.execute(f"DROP DATABASE IF EXISTS {name}")
+            finally:
+                await connection.close()
 
-    rollback = _run_cli(owner_dsn, "--rollback", *ROUND_TRIP_VERSIONS)
-    if rollback.returncode != 0:
-        violations.append(
-            Violation(
-                "路径C(回滚往返)",
-                f"--rollback {' '.join(ROUND_TRIP_VERSIONS)} 失败"
-                f"（退出码 {rollback.returncode}）："
-                f"{(rollback.stderr or rollback.stdout).strip()[:400]}",
+        try:
+            asyncio.run(_create())
+        except Exception as exc:  # noqa: BLE001 - 建库失败即环境问题
+            return [Violation("路径C(回滚往返)", f"建库失败：{type(exc).__name__}: {exc}")]
+
+        dsn = _swap_dsn(superuser_dsn, database=name, user=APP_ROLE)
+        try:
+            first = _run_cli(dsn, "--apply", "--sql-dir", str(isolated))
+            if first.returncode != 0:
+                return [
+                    Violation(
+                        "路径C(回滚往返)",
+                        f"前置 --apply 失败（退出码 {first.returncode}）："
+                        f"{(first.stderr or first.stdout).strip()[:400]}",
+                    )
+                ]
+
+            rollback = _run_cli(
+                dsn,
+                "--rollback",
+                "0007_usage_event_dimensions",
+                "0006_plugin_artifact_content_type",
+                "--sql-dir",
+                str(isolated),
             )
-        )
-        return violations
-
-    for table, column in probes:
-        if _column_exists(owner_dsn, table, column):
-            violations.append(
-                Violation(
-                    "路径C(回滚往返)",
-                    f"回滚后 {table}.{column} 仍存在（down 脚本空转，等于没有回滚）",
+            if rollback.returncode != 0:
+                violations.append(
+                    Violation(
+                        "路径C(回滚往返)",
+                        f"--rollback 失败（退出码 {rollback.returncode}）："
+                        f"{(rollback.stderr or rollback.stdout).strip()[:400]}",
+                    )
                 )
-            )
+                return violations
 
-    again = _run_cli(owner_dsn, "--apply")
-    if again.returncode != 0:
-        violations.append(
-            Violation(
-                "路径C(回滚往返)",
-                f"回滚后再次 --apply 失败（退出码 {again.returncode}）："
-                f"{(again.stderr or again.stdout).strip()[:400]}",
-            )
-        )
-        return violations
+            for table, column in probes:
+                if _column_exists(dsn, table, column):
+                    violations.append(
+                        Violation(
+                            "路径C(回滚往返)",
+                            f"回滚后 {table}.{column} 仍存在（down 脚本空转，等于没有回滚）",
+                        )
+                    )
 
-    for table, column in probes:
-        if not _column_exists(owner_dsn, table, column):
-            violations.append(
-                Violation(
-                    "路径C(回滚往返)",
-                    f"三轮后 {table}.{column} 仍未恢复（up → down → up 不一致）",
+            again = _run_cli(dsn, "--apply", "--sql-dir", str(isolated))
+            if again.returncode != 0:
+                violations.append(
+                    Violation(
+                        "路径C(回滚往返)",
+                        f"回滚后再次 --apply 失败（退出码 {again.returncode}）："
+                        f"{(again.stderr or again.stdout).strip()[:400]}",
+                    )
                 )
-            )
+                return violations
+
+            for table, column in probes:
+                if not _column_exists(dsn, table, column):
+                    violations.append(
+                        Violation(
+                            "路径C(回滚往返)",
+                            f"三轮后 {table}.{column} 仍未恢复（up → down → up 不一致）",
+                        )
+                    )
+        finally:
+            try:
+                asyncio.run(_drop())
+            except Exception:  # noqa: BLE001, S110 - 清理失败不掩盖主结论
+                pass
     return violations
 
 

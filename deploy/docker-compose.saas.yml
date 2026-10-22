@@ -42,6 +42,10 @@ services:
       # **必须排在 20-init-schema-phase2.sql 之后**：它依赖阶段二建好的 tenant 表
       # 与 p_tenant_isolation 体例，并把 plugin_catalog/plugin_version 并入共享分组。
       - ./init-schema-phase3.sql:/docker-entrypoint-initdb.d/22-init-schema-phase3.sql:ro
+      # 阶段四：会话/消息表（迁移 0008 的入网落点）。必须在阶段三之后：
+      # initdb 以超级用户执行，应用角色对 public 无 CREATE 权限，
+      # 若只靠迁移建表，新装环境的第一次 --apply 会 permission denied。
+      - ./init-schema-phase4.sql:/docker-entrypoint-initdb.d/30-init-schema-phase4.sql:ro
       # 应用连接角色（非超级用户）：排在 20- 之后（先有表才能授权）
       - ./init-app-role.sql:/docker-entrypoint-initdb.d/30-init-app-role.sql:ro
     networks: [officeai]

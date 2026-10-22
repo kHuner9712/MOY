@@ -100,6 +100,10 @@ apps/adapter/qa_probe/_fail_recorder.py
 # 不是迁移也不是种子，无任何 CI/脚本引用——留在本地，不入库
 .seed.sql
 
+# 回滚前强制备份产物（`migrate.py --rollback` 的 pg_dump 落点）：
+# 里面是整库业务数据，绝不能进版本库
+deploy/migrations/rollback/*/
+
 # ---------------------------------------------------------------------------
 # 构建产物：OpenAPI 规范（CI 每次生成并归档为 artifact，不入库以避免噪声 diff）
 # 基线（baseline-*.json）与冻结快照（openapi.snapshot.json）**必须入库**
