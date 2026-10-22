@@ -110,10 +110,43 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {
         "id": "P3-B20-02",
         "level": "P1",
-        "status": "fixed",  # 6f81495：guardrails **44 个用例** passed / **34 个样本**在库（42 应有 − 8 缺：⑦3 ⑧1 ②2 ⑥2）；单位不可混用
+        # 6f81495：guardrails **44 个用例** passed / **34 个样本**在库
+        # （42 应有 − 8 缺：⑦3 ⑧1 ②2 ⑥2）；**用例数与样本数单位不可混用**
+        "status": "fixed",
         "pinned_by": "TC-P3-HR23-02 / 追溯表 §3.4 ⑨ 组",
         "due_batch": "B21",
         "due_action": "补 R3 样本 5 条（3 面议类必判失败 + 2 合法值通过）并实测",
+    },
+    # 阶段三收口新增（2026-10-23）：错误码收口时翻出的两个真缺陷。
+    # 与 B17-B20 那批不同——这两条不是"测试没写"，是**功能缺口本身**。
+    {
+        "id": "P3-B22-01",
+        "level": "P1",
+        # PRD 5.3「额度用尽（软限制，不停服）」要求四项行为：
+        # ① 对话限长 ② 文档处理暂停 ③ 自动化任务排队不启动 ④ 通知管理员。
+        # 实测 `over_quota_warning` 只被计费域（BL/U4）消费，
+        # M1/M2/R3/A1 四条路径**零接入**——超额租户可无限跑文档与自动化。
+        # 处置：15006 已接线为响应 `data` 的非阻断提示字段（见 errors.py 注册项），
+        # 四项行为本身按 PRD 属阶段四范围，本批只记录不实现。
+        "status": "open",
+        "pinned_by": "PRD 5.3 额度用尽软限制 / 15006 接线缺口",
+        "due_batch": "阶段四",
+        "due_action": "补 PRD 5.3 四项行为（对话限长/文档暂停/自动化排队/管理员通知），"
+        "15006 提示字段已随错误码收口落地",
+    },
+    {
+        "id": "P3-B22-02",
+        "level": "P2",
+        # PRD P0-P3-02 ③ 要求「单步执行超时自动失败」。
+        # 实测：`config.py:211 plugin_task_timeout_seconds`（默认 900）**全文零读取**；
+        # `engine.py:960` 写入 `params["timeout_seconds"]` 后**无任何消费方**；
+        # 步骤超时只走底座动作超时（`schema.py:382 timeout_seconds`，另有一套默认值）。
+        # 即：配置项存在、文档承诺存在、实现不存在——TC-P3-02③ 无实现可测。
+        "status": "open",
+        "pinned_by": "PRD P0-P3-02 ③ / config.py:211 死配置",
+        "due_batch": "阶段四",
+        "due_action": "接上任务级超时（读 plugin_task_timeout_seconds 并让引擎消费），"
+        "或明确注销该配置项并在 PRD 标注不做",
     },
 )
 
