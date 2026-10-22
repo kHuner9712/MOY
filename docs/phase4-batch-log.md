@@ -23,8 +23,8 @@
 | --- | --- |
 | SHA | `main @ 2699897` |
 | 命令 | `OA_TEST_DATABASE_URL='postgresql://officeai_app:***@127.0.0.1:55433/officeai' OA_BATCH=B21 pytest tests --run-pg -q --cov=app --cov-branch` |
-| 结果 | **1679 passed / 0 failed / 0 skipped** |
-| 耗时 | **651.91s（10m51s）** |
+| 结果 | **1749 passed / 0 failed / 0 skipped** |
+| 耗时 | **683.86s（11m23s）** |
 | 含 PG | **是**（`moy-qa-pg`，`--run-pg`） |
 | `OA_BATCH` | **B21** |
 | 解释器 | `apps/adapter/.venv/Scripts/python.exe`（3.13.14） |
@@ -36,9 +36,9 @@
 
 | 维度 | 本轮实测 | 门槛 | 判定 | 口径 |
 | --- | --- | --- | --- | --- |
-| 合并 | **90.85%** | ≥90.78%（`max(90, 阶段三实测 90.78%)`） | **通过（+0.07pp）** | `totals.percent_covered`＝(13232 行 + 2433 分支)/(14248 语句 + 2994 分支) |
-| `business+db` | **92.09%** | ≥90.26% | 通过（+1.83pp） | `app/business/*` + `app/db/*` 共 45 文件：行覆盖 |
-| 分支 | **86.01%** | ≥80.89% | 通过（+5.12pp） | 2433 / 2994 个分支 |
+| 合并 | **90.94%** | ≥90.78% | **通过（+0.16pp）** | `totals.percent_covered`（14806 语句 / 1048 未覆盖 / 3078 分支） |
+| `business+db` | **92.27%** | ≥90.26% | 通过（+2.01pp） | `app/business/*` + `app/db/*` 共 48 文件：行覆盖 |
+| 分支 | **86.13%** | ≥80.89% | 通过（+5.24pp） | 2505 / 3078 个分支 |
 
 #### 2.1 首轮到最终值：补了什么（`32cf676` + 本次提交）
 

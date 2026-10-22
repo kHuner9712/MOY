@@ -281,7 +281,15 @@ def test_exactly_30_business_endpoints(client: TestClient) -> None:
             "endpoints"
         ]
     }
-    assert len(operations - phase2 - phase3) == 30
+    # 阶段四（MC/MM/TD 共 10 条登记）同样必须排除，否则挂上 MC1-MC4 后
+    # 核心 30 的冻结断言会误报——它断言的是「核心基线没被改动」，不是「总数没变」。
+    phase4 = {
+        (str(item["method"]).upper(), str(item["path"]))
+        for item in json.loads((docs_dir / "baseline-phase4-10.json").read_text(encoding="utf-8"))[
+            "endpoints"
+        ]
+    }
+    assert len(operations - phase2 - phase3 - phase4) == 30
 
 
 @pytest.mark.integration
