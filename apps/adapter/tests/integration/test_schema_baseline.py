@@ -50,6 +50,17 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
         "audit_log",
         "ops_settings",
         "integration_outbox",
+        # 阶段三（deploy/init-schema-phase3.sql 9 张）：B17/B18/B19 陆续建出，
+        # 漏登记会让"多出未登记的表"每批都红一次——新增表时必须同批改这里。
+        "plugin_catalog",
+        "plugin_version",
+        "plugin_installation",
+        "plugin_grant",
+        "plugin_capability_policy",
+        "plugin_review",
+        "plugin_task",
+        "plugin_task_step",
+        "plugin_artifact",
     }
 )
 
