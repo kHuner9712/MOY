@@ -8,6 +8,8 @@
  * - 只收录声明白名单内的 6 项（架构 §2.2），新增能力不在此表时按「按需授权」兜底。
  */
 
+import type { PluginCapabilityKey } from '@/lib/types';
+
 /** 能力 key 的业务名称兜底表（键与架构 §2.2 逐字一致） */
 export const CAPABILITY_FALLBACK_LABELS: Readonly<Record<string, string>> = Object.freeze({
   'personal.knowledge.read': '读取你本人的知识库内容',
@@ -17,6 +19,20 @@ export const CAPABILITY_FALLBACK_LABELS: Readonly<Record<string, string>> = Obje
   'org.repo.write': '写入代码仓库',
   'org.external.publish': '向外部平台发布内容',
 });
+
+/** 个人能力三项（恒开启，不可被企业关闭） */
+export const PERSONAL_CAPABILITY_KEYS: readonly PluginCapabilityKey[] = Object.freeze([
+  'personal.knowledge.read',
+  'personal.tool.use',
+  'personal.file.read',
+]);
+
+/** 企业能力三项（受企业总开关控制） */
+export const ORG_CAPABILITY_KEYS: readonly PluginCapabilityKey[] = Object.freeze([
+  'org.directory.read',
+  'org.repo.write',
+  'org.external.publish',
+]);
 
 /** 未登记能力时的兜底文案（不暴露 key） */
 export const UNKNOWN_CAPABILITY_LABEL = '按插件说明授权';

@@ -180,6 +180,25 @@ jobs:
           fi
           echo "[PASS] 契约检查抓到全部负样本（缺键/多键/可选性翻转/接口缺失），退出码 1 符合约定"
 
+      # ------------------------------------------------------------------
+      # G-27：工作台单宿主三项红线（单宿主 / 零按插件分支 / 零自有样式与三方 UI）
+      # ------------------------------------------------------------------
+      - name: G-27 工作台宿主门禁
+        run: npm run scan:workbench --workspace apps/web
+
+      - name: G-27 宿主门禁自检（期望退出码 1）
+        run: |
+          set +e
+          npm run scan:workbench-self-test --workspace apps/web > scan-workbench-self-test.log 2>&1
+          status=$?
+          set -e
+          cat scan-workbench-self-test.log
+          if [ "$status" -ne 1 ]; then
+            echo "[FAIL] 宿主门禁自检退出码 $status，期望 1"
+            exit 1
+          fi
+          echo "[PASS] 宿主门禁抓到全部负样本（多宿主/非动态段/按插件分支/写死标识/自有样式/三方 UI/跨域引用）"
+
   built-artifact-gate:
     name: 产物扫描（G-16）
     runs-on: ubuntu-latest

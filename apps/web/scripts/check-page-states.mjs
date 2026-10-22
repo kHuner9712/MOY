@@ -47,6 +47,7 @@ export const PAGES = [
   { route: '/knowledge/[baseId]', file: '(main)/knowledge/[baseId]/page.tsx' },
   { route: '/plugins', file: '(main)/plugins/page.tsx' },
   { route: '/plugins/[pluginId]', file: '(main)/plugins/[pluginId]/page.tsx' },
+  { route: '/workbench/[pluginId]', file: '(main)/workbench/[pluginId]/page.tsx' },
   { route: '/workflows', file: '(main)/workflows/page.tsx' },
   { route: '/team', file: '(main)/team/page.tsx' },
   { route: '/team/organization', file: '(main)/team/organization/page.tsx' },

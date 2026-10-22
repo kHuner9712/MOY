@@ -1132,6 +1132,34 @@ export interface PluginMarketData {
   items: PluginMarketItem[];
   meta: PageMeta;
   categories: PluginCategoryItem[];
+  /**
+   * 企业能力开关快照（**只含 3 个 org.* 能力**）。
+   *
+   * 市场页据此渲染「企业能力设置」，因此**没有安装任何插件时也能读**；
+   * 抽屉里仍以 PL4 返回的逐能力 `org_switch_enabled` 为准（每插件 6 项）。
+   */
+  org_capabilities: OrgCapabilitySwitch[];
+}
+
+/** 企业能力开关（仅 org.* 三项：通讯录 / 代码仓库 / 对外发布） */
+export interface OrgCapabilitySwitch {
+  capability_key: PluginCapabilityKey | string;
+  org_switch_enabled: boolean;
+}
+
+/** 输入控件类型（架构 §2.1，6 类，宿主据此渲染表单） */
+export type PluginInputType = 'text' | 'textarea' | 'select' | 'multi_select' | 'email' | 'file';
+
+/** 输入声明项（PL2 `inputs[]`） */
+export interface PluginInputSpec {
+  key: string;
+  label: string;
+  type: PluginInputType;
+  required: boolean;
+  /** 文本类最大长度（text/textarea/email 有效） */
+  max_length?: number;
+  /** select / multi_select 的候选值 */
+  options?: string[];
 }
 
 /** 插件产物声明（PL2 `outputs[]`，驱动结果区渲染） */
@@ -1171,6 +1199,13 @@ export interface PluginDetail {
   rating_count: number;
   latest_version: string;
   capabilities: PluginCapabilityItem[];
+  /**
+   * 输入声明（驱动宿主表单：text/textarea/select/multi_select/email/file）。
+   *
+   * 注：架构 §5.2 的 PL2 响应表未列 `inputs[]`，但 §2.1 声明必有且宿主必需，
+   * 已纳入契约快照待后端确认（见 B24 回传的契约缺口）。
+   */
+  inputs: PluginInputSpec[];
   /** 步骤标题（用户只看到标题；执行原语不进界面） */
   step_titles: string[];
   outputs: PluginOutputSpec[];
@@ -1267,6 +1302,8 @@ export interface PluginGrantsUpdateResult {
   plugin_id: string;
   granted_capabilities: string[];
   denied_capabilities: string[];
+  /** 该插件声明的必需能力（UI 置灰依据，**不靠自己猜声明**） */
+  required_capabilities: string[];
 }
 
 /** 配置保存结果（PL10） */
@@ -1471,15 +1508,10 @@ export interface TaskRetryResult {
 
 /** A1 创建插件任务时的排队信息（并发上限 3，超出排队） */
 export interface TaskQueueInfo {
-  /** 是否进入排队（仅排队时下发） */
-  queued?: boolean;
-  /** 前面还有几个任务在跑（仅排队时下发） */
-  ahead_count?: number;
   /**
-   * 排队位次（可选）。
+   * 排队位次（**唯一字段**，仅在 `status=queued` 时下发）。
    *
-   * 契约以 `queued + ahead_count` 为准；本字段为后端可能附带的冗余位次，
-   * 前端展示优先用 `ahead_count`（见 B22 回传的歧义点 #4）。
+   * 语义：前面还有 `queue_position - 1` 个任务在跑，`1` 表示下一个就轮到你。
    */
   queue_position?: number;
 }

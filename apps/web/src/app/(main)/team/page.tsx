@@ -35,7 +35,11 @@ import { toast } from '@/components/ui/toast';
 import { Tooltip } from '@/components/ui/tooltip';
 import { QUERY_KEYS, useApiMutation, useApiQuery } from '@/hooks/use-api';
 import { identityApi, identityExtApi, pluginsApi } from '@/lib/api-client';
-import { capabilityLabel, isPersonalCapability } from '@/lib/capability-labels';
+import {
+  PERSONAL_CAPABILITY_KEYS,
+  capabilityLabel,
+  isPersonalCapability,
+} from '@/lib/capability-labels';
 import { CapabilityList } from '@/components/plugin/capability-list';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { formatDateTime, orPlaceholder } from '@/lib/format';
@@ -558,50 +562,55 @@ export default function TeamPage(): React.JSX.Element {
 }
 
 /**
- * 企业能力开关面板（PL13）。
+ * 企业能力开关面板（PL13 写 / PL1 顶层读）。
  *
- * 读侧说明：PL13 只有写端点，开关现值的唯一读源是能力清单里的
- * `org_switch_enabled`（按插件返回）。因此这里用「第一个已添加插件」做探针读取现值；
- * 保存后以 PL13 返回的全量清单为准（含 personal.* 恒开启项）。
+ * 读回路：PL1 市场响应顶层新增 `org_capabilities`（只含 3 个 org.*），
+ * 因此**没有安装任何插件时也能读**——这是本面板与「探针式读取」的关键差别。
+ * 保存后以 PL13 返回的全量 6 项为准（含 personal.* 恒开启项与修改人/时间）。
  *
  * @param props - 组件属性
  * @returns 面板元素
  */
 function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.Element {
-  const installedQuery = useApiQuery(QUERY_KEYS.installedPlugins(), () => pluginsApi.installed());
-  const probePluginId = installedQuery.data?.items[0]?.plugin_id ?? '';
-  const capabilitiesQuery = useApiQuery(
-    QUERY_KEYS.pluginCapabilities(probePluginId),
-    () => pluginsApi.capabilities(probePluginId),
-    { enabled: Boolean(probePluginId) },
+  const marketQuery = useApiQuery(QUERY_KEYS.plugins({ page: 1, page_size: 1 }), () =>
+    pluginsApi.market({ page: 1, page_size: 1 }),
   );
 
   const [draft, setDraft] = React.useState<Record<string, boolean>>({});
   const [saved, setSaved] = React.useState<CapabilityPolicyItem[]>([]);
 
-  const readRows: CapabilityPolicyItem[] = React.useMemo(() => {
+  /** 待渲染的 6 项：保存前用「个人 3 项恒开 + PL1 的企业 3 项」，保存后用 PL13 全量 */
+  const rows: CapabilityPolicyItem[] = React.useMemo(() => {
     if (saved.length > 0) return saved;
-    return (capabilitiesQuery.data?.items ?? []).map((item) => ({
+    const personalRows: CapabilityPolicyItem[] = PERSONAL_CAPABILITY_KEYS.map((key) => ({
+      capability_key: key,
+      display_name: '',
+      org_switch_enabled: true,
+      updated_by_name: '',
+      updated_at: '',
+    }));
+    const orgRows: CapabilityPolicyItem[] = (marketQuery.data?.org_capabilities ?? []).map((item) => ({
       capability_key: item.capability_key,
-      display_name: item.display_name,
+      display_name: '',
       org_switch_enabled: item.org_switch_enabled,
       updated_by_name: '',
       updated_at: '',
     }));
-  }, [saved, capabilitiesQuery.data]);
+    return [...personalRows, ...orgRows];
+  }, [saved, marketQuery.data]);
 
   React.useEffect(() => {
-    if (readRows.length === 0) return;
+    if (rows.length === 0) return;
     setDraft((prev) => {
       const next: Record<string, boolean> = { ...prev };
-      for (const row of readRows) {
+      for (const row of rows) {
         if (next[row.capability_key] === undefined) {
           next[row.capability_key] = row.org_switch_enabled;
         }
       }
       return next;
     });
-  }, [readRows]);
+  }, [rows]);
 
   const saveMutation = useApiMutation(
     (policies: Array<{ capability_key: string; org_switch_enabled: boolean }>) =>
@@ -616,9 +625,9 @@ function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.El
     },
   );
 
-  /** 只提交企业能力（个人能力恒开，后端传 personal.* 会报参数错） */
+  /** 只提交企业能力：个人能力恒开，传 personal.* 会被后端判参数错 */
   const handleSave = (): void => {
-    const policies = readRows
+    const policies = rows
       .filter((row) => !isPersonalCapability(row.capability_key))
       .map((row) => ({
         capability_key: row.capability_key,
@@ -640,23 +649,19 @@ function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.El
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {installedQuery.isLoading || capabilitiesQuery.isLoading ? (
+        {marketQuery.isLoading ? (
           <LoadingState label="正在加载能力开关…" />
-        ) : capabilitiesQuery.error ? (
+        ) : marketQuery.error ? (
           <ErrorState
-            message={toBusinessMessage(capabilitiesQuery.error)}
-            onRetry={() => void capabilitiesQuery.refetch()}
-          />
-        ) : readRows.length === 0 ? (
-          <EmptyState
-            title="还不能读取能力开关"
-            description="先添加任意插件，即可在这里看到企业能力的当前开关并按需调整"
+            message={toBusinessMessage(marketQuery.error)}
+            onRetry={() => void marketQuery.refetch()}
           />
         ) : (
           <>
             <ul className="space-y-2">
-              {readRows.map((row) => {
+              {rows.map((row) => {
                 const personal = isPersonalCapability(row.capability_key);
+                const checked = personal ? true : Boolean(draft[row.capability_key]);
                 return (
                   <li
                     key={row.capability_key}
@@ -680,19 +685,19 @@ function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.El
                         type="checkbox"
                         className="h-4 w-4 cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-60"
                         aria-label={`${capabilityLabel(row.capability_key, row.display_name)}开关`}
-                        checked={personal ? true : Boolean(draft[row.capability_key])}
+                        checked={checked}
                         disabled={personal || !canManage || saveMutation.isPending}
                         onChange={(event) =>
                           setDraft((prev) => ({ ...prev, [row.capability_key]: event.target.checked }))
                         }
                       />
-                      {personal ? '恒开启' : draft[row.capability_key] ? '已开启' : '已关闭'}
+                      {personal ? '恒开启' : checked ? '已开启' : '已关闭'}
                     </label>
                   </li>
                 );
               })}
             </ul>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Tooltip content="只有所有者与企业管理员可以调整企业能力" disabled={canManage}>
                 <span>
                   <Button
@@ -706,7 +711,7 @@ function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.El
                 </span>
               </Tooltip>
               <span className="text-xs text-muted-foreground">
-                关闭后，插件在申请该能力时会提示「该能力尚未对企业开放」
+                关闭后，插件申请该能力时会提示「该能力尚未对企业开放」
               </span>
             </div>
           </>

@@ -593,6 +593,7 @@ const BUILT_ROUTES = [
   'knowledge/[baseId]',
   'plugins',
   'plugins/[pluginId]',
+  'workbench/[pluginId]',
   'workflows',
   'team',
   'team/organization',

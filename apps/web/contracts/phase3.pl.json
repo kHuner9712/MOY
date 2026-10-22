@@ -31,7 +31,8 @@
       "required": [
         "items",
         "meta",
-        "categories"
+        "categories",
+        "org_capabilities"
       ],
       "optional": []
     },
@@ -93,6 +94,7 @@
         "rating_count",
         "latest_version",
         "capabilities",
+        "inputs",
         "step_titles",
         "outputs",
         "settings_schema",
@@ -217,7 +219,8 @@
       "required": [
         "plugin_id",
         "granted_capabilities",
-        "denied_capabilities"
+        "denied_capabilities",
+        "required_capabilities"
       ],
       "optional": []
     },
@@ -314,6 +317,25 @@
         "download_url"
       ],
       "optional": []
+    },
+    "OrgCapabilitySwitch": {
+      "required": [
+        "capability_key",
+        "org_switch_enabled"
+      ],
+      "optional": []
+    },
+    "PluginInputSpec": {
+      "required": [
+        "key",
+        "label",
+        "type",
+        "required"
+      ],
+      "optional": [
+        "max_length",
+        "options"
+      ]
     }
   }
 }
