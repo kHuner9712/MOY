@@ -583,3 +583,54 @@ async def require_ops_access(
             internal_detail=f"permission={permission} roles={context.auth.roles}",
         )
     return OPS_TENANT_ID
+
+
+#: 允许使用桩鉴权（不验签）的环境白名单。
+#: 只要环境不在其中，`auth_mode=stub` 一律视为配置错误——这是 S1 的收口点。
+_INSECURE_AUTH_ENVS: Final[frozenset[str]] = frozenset({"development", "test"})
+
+
+def validate_auth_startup(settings: Settings | None = None) -> None:
+    """启动期鉴权防呆（OA-REVIEW-002 / S1）。
+
+    **为什么必须在启动时拦**：`auth_mode` 的默认值是 `stub`，而 `stub` 下
+    `verify_signature=False`——任何人都能自造 JWT 声明任意租户与角色。
+    这不是「有人配错了」，而是「不配就是关闭鉴权」，属于默认态风险。
+
+    判据：
+    1. `env in {staging, production}` 且 `auth_mode == "stub"` → 30004 启动失败；
+    2. 同一环境下 `jwt_secret` 为空 → 30004（OIDC 校验与产物下载令牌都依赖它，
+       空密钥会让签名退化为可预测常量）。
+
+    development/test 不拦：离线单测与本地演示需要桩模式，且这两个环境不对外。
+
+    Args:
+        settings: 可选配置实例（注入优先）。
+
+    Raises:
+        ApiError: 生产/预发环境使用桩鉴权或缺少签名密钥（30004）。
+    """
+    conf = settings or get_settings()
+    if conf.env in _INSECURE_AUTH_ENVS:
+        logger.debug("auth_startup_check_skipped", env=conf.env, auth_mode=conf.auth_mode)
+        return
+    if conf.auth_mode == "stub":
+        logger.error("auth_mode_stub_in_production", env=conf.env)
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=(
+                f"当前环境为 {conf.env}，但 OA_AUTH_MODE=stub（不校验令牌签名）。"
+                "生产/预发环境必须设置 OA_AUTH_MODE=oidc 并配置 OA_JWT_SECRET；"
+                "如确需以桩模式做本地演示，请显式设置 OA_ENV=development。"
+            ),
+        )
+    if not conf.jwt_secret.strip():
+        logger.error("jwt_secret_missing_in_production", env=conf.env)
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=(
+                f"当前环境为 {conf.env}，OA_JWT_SECRET 为空：令牌校验与产物下载签名都无法进行。"
+                "请在 .env 中配置强随机密钥（不少于 32 字符）后重启。"
+            ),
+        )
+    logger.info("auth_startup_validated", env=conf.env, auth_mode=conf.auth_mode)

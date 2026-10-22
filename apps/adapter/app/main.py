@@ -29,6 +29,7 @@ from app.core.crypto import validate_startup as validate_credential_startup
 from app.core.errors import ApiError
 from app.core.logging import configure_logging, get_logger
 from app.core.ratelimit import RateLimiter
+from app.core.security import validate_auth_startup
 from app.db.engine import dispose_engine, get_engine
 from app.db.migrate import run_startup_migrations
 from app.middleware.error_handler import register_exception_handlers
@@ -110,6 +111,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except ApiError:
             await dispose_engine()
             raise
+
+    # S1（OA-REVIEW-002）：生产/预发环境禁止桩鉴权。`auth_mode` 默认值就是 stub，
+    # 不拦等于「不配就关掉鉴权」；此处让配置漏填在启动时暴露，而不是等被伪造令牌打穿。
+    # 同时要求 jwt_secret 非空：OIDC 校验与产物下载签名都依赖它。
+    try:
+        validate_auth_startup(settings)
+    except ApiError:
+        await dispose_engine()
+        raise
 
     # D-10：真实部署形态下凭据加密密钥缺失即启动失败（30004，含可操作文案）。
     # development/test 允许缺失，首次真正需要解密时才报错（绝不静默降级）。

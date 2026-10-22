@@ -484,7 +484,17 @@ def test_healthz_reflects_injected_settings() -> None:
     """`/healthz` 读取注入配置而非全局单例。"""
     from app.main import create_app
 
-    app = create_app(Settings(env="staging", deploy_mode="saas", ratelimit_enabled=False))
+    app = create_app(
+        Settings(
+            env="staging",
+            deploy_mode="saas",
+            ratelimit_enabled=False,
+            # S1：staging/production 必须 oidc + 非空签名密钥，否则启动即 30004。
+            # 这条用例只验证「配置注入生效」，不再顺带验证桩模式。
+            auth_mode="oidc",
+            jwt_secret="staging-secret-for-healthz-injection-test",
+        )
+    )
     with TestClient(app) as client:
         body = client.get("/healthz").json()
     assert body["data"]["env"] == "staging"
