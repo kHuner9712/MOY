@@ -152,8 +152,9 @@ class AgentService:
             self._dify = dify
         elif self._settings.dify_agent_app_key:
             # Agent 任务走独立工作流应用（密钥与对话应用分离，T02 实联调修复 INT-04b）
-            self._dify = DifyClient(
-                base_url=self._settings.dify_base_url,
+            # 底座地址由 `DifyClient.for_app_key` 内部读取（审计 P1-1：
+            # 上层不再直接触碰底座地址配置项，保持唯一出口约束）。
+            self._dify = DifyClient.for_app_key(
                 api_key=self._settings.dify_agent_app_key,
                 settings=self._settings,
             )

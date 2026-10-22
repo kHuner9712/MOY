@@ -85,6 +85,39 @@ class DifyClient:
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
         )
 
+    @classmethod
+    def for_app_key(
+        cls,
+        api_key: str,
+        settings: Settings | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> DifyClient:
+        """按应用密钥构造客户端（底座地址由**本类**内部读取配置）。
+
+        审计 OA-AUDIT-001 / P1-1：Agent 服务此前为了用独立的 `dify_agent_app_key`，
+        直接在 `services/agent_service.py` 里读 `settings.dify_base_url` 自行拼装客户端，
+        违反「底座地址只允许出现在 `core/config.py` 与 `clients/dify_client.py`」的
+        唯一出口约束（该门禁一旦运行即红）。
+
+        根因是 clients 层缺一个「按 app_key 建实例」的入口。补上之后，
+        上层只需要传密钥，底座地址仍由本文件唯一持有。
+
+        Args:
+            api_key: 底座应用密钥（如 `dify_agent_app_key`）。
+            settings: 可选配置实例。
+            client: 可选的外部 httpx 客户端（测试注入用）。
+
+        Returns:
+            DifyClient: 使用给定密钥、配置中的底座地址的新实例。
+        """
+        resolved = settings or get_settings()
+        return cls(
+            base_url=resolved.dify_base_url,
+            api_key=api_key,
+            settings=resolved,
+            client=client,
+        )
+
     def _build_timeout(self) -> httpx.Timeout:
         """构造 httpx 超时配置。
 
