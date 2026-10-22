@@ -10,7 +10,9 @@
 平台以成熟开源底座（Dify，Apache-2.0）提供 AI 原子能力，通过**自研统一适配层**屏蔽底座差异，
 向上层（前端交互层、场景插件层、业务能力层）输出自研标准接口，实现「替换底座仅改适配层，上层零改动」。
 
-第一阶段（第 1-8 周）目标：搭稳底层架构、固化标准接口。本期（T01）交付**项目脚手架与代码规范**。
+**当前进度**：已完成第一至第三阶段（第 1-20 周，共 24 周计划中的前 20 周）。
+第三阶段交付插件体系与 3 个标杆场景插件，**84 个端点全部就绪**（core 30 + phase2 38 + phase3 16），
+全量测试 **1435 passed / 0 failed / 0 skipped**。第四阶段（商用打磨与交付准备）待启动。
 
 ## 二、目录结构
 
@@ -22,30 +24,43 @@ officeai/                              # Monorepo 根目录
 │   │   │   ├── main.py                # FastAPI 入口：中间件、异常处理器、路由挂载
 │   │   │   ├── core/                  # 配置、错误码、日志、鉴权、幂等、限流
 │   │   │   ├── middleware/            # trace_id 注入、统一异常兜底
-│   │   │   ├── api/v1/                # 五大标准接口端点（M/R/A/T/U 共 30 个）
+│   │   │   ├── api/v1/                # 标准接口端点（M/R/A/T/U + 插件域 PL/WF，共 84 个）
 │   │   │   ├── schemas/               # 请求响应模型（契约同步）
 │   │   │   ├── services/              # 协议转换服务（唯一允许写下游调用的位置）
 │   │   │   ├── clients/               # 底座 HTTP 客户端（唯一调用出口）
+│   │   │   ├── business/              # 业务服务层（用户/知识库/任务/插件/计费等）
+│   │   │   ├── db/                    # 数据层：session、migrate、repositories（双后端）
+│   │   │   ├── plugins/               # 场景插件层：声明模型、加载器、引擎、渲染、脱敏
+│   │   │   │   ├── manifests/         # 6 份插件声明（3 工作台 + 3 轻量）
+│   │   │   │   └── ...
 │   │   │   ├── registry/              # 档位路由表、工具类型注册表（数据驱动）
 │   │   │   └── tools/                 # 工具连接器实现（新增工具只加这里）
-│   │   ├── tests/{unit,integration}/  # 单元测试与契约测试
+│   │   ├── tests/{unit,integration,e2e}/  # 单元测试 / 集成测试 / 端到端测试
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   └── README.md
 │   └── web/                           # 前端交互层（Next.js 14 App Router）
-│       ├── src/app/                   # 页面（App Router）
+│       ├── src/app/                   # 页面（App Router）：含 /plugins、/workbench/{id}、/workflows/{taskId}
 │       ├── src/components/ui/         # 统一组件库（shadcn/ui 风格封装）
 │       ├── src/lib/api-client.ts      # 前端唯一适配层调用出口
 │       ├── src/hooks/                 # 自定义 Hook
+│       ├── scripts/                   # 前端门禁脚本（禁词/占位词/三态/契约/能力一致性）
 │       └── src/styles/globals.css     # 设计令牌
 ├── deploy/                            # 部署编排（双模式切换）
 │   ├── docker-compose.yml             # 私有化一键部署
 │   ├── docker-compose.saas.yml        # SaaS 本地联调
-│   └── .env.example                   # OA_* 全量环境变量样例
+│   ├── .env.example                   # OA_* 全量环境变量样例
+│   ├── init-schema-phase3.sql         # 阶段三 Schema 初值（9 张插件/任务表）
+│   ├── migrations/                    # 0001-0004 迁移（幂等 + 自足 + 双路径门禁）
+│   └── validate_*.py                  # 门禁脚本：端点/迁移/依赖/镜像/插件声明/Schema 保留
 ├── docs/
 │   ├── plan-v1.0.md                   # 开发执行总方案
 │   ├── prd-v1.0.md                    # 产品需求文档
-│   ├── architecture-v1.0.md           # 系统架构设计文档
+│   ├── prd-phase{2,3}-increment.md    # 阶段二/三增量 PRD
+│   ├── architecture-v1.0.md           # 系统架构设计文档（30 端点冻结基线）
+│   ├── architecture-phase{2,3}.md     # 阶段二/三架构（38 / 16 端点基线 + 批次分解）
+│   ├── phase{1,2,3}-acceptance-report.md  # 各阶段验收报告
+│   ├── plugin-dev-guide.md            # 插件开发规范与样例（P0-P3-05）
 │   ├── api/                           # 接口规范（OpenAPI，从适配层生成）
 │   └── adr/                           # 架构决策记录
 ├── .github/workflows/                 # CI 门禁
@@ -79,7 +94,8 @@ pip install -e ".[dev]"
 # 3) 准备环境变量
 cp ../../deploy/.env.example .env
 
-# 4) 本地启动（默认桩模式，无需底座即可运行）
+# 4) 本地启动（默认桩模式：OA_DOWNSTREAM_ENABLED=false、OA_AUTH_MODE=stub，
+#    无需底座即可运行；接入真实底座需同时切这两个开关并配置连接串）
 uvicorn app.main:app --reload --port 8000
 
 # 5) 健康检查
@@ -165,31 +181,45 @@ pytest tests -q --cov=app --cov-report=term-missing
 
 ## 六、当前进度与已知限制
 
-### 6.1 当前进度
+### 6.1 当前进度（按 24 周四阶段口径）
 
-| 任务 | 状态 | 说明 |
-| --- | --- | --- |
-| T01 项目脚手架与代码规范 | ✅ 已完成 | Monorepo 骨架、30 个端点契约、CI 门禁、双模式部署编排 |
-| T02 适配层核心框架与五大接口开发 | ⏳ 待启动 | 在本期骨架上填充真实协议转换逻辑 |
-| T03 前端基础框架与统一组件库 | ⏳ 待启动 | 在本期骨架上填充页面与组件实现 |
-| T04 适配层与底座全量联调 | ⏳ 待启动 | 依赖底座环境就绪 |
-| T05 全链路 Demo 与阶段验收 | ⏳ 待启动 | — |
+| 阶段 | 周期 | 状态 | 验收报告 |
+| --- | --- | --- | --- |
+| 一：底座与适配层攻坚 | 第 1-8 周 | ✅ 已验收 | `docs/phase1-acceptance-report.md` |
+| 二：基础功能全量对齐 | 第 9-16 周 | ✅ 已验收 | `docs/phase2-acceptance-report.md` |
+| 三：插件体系与标杆场景 | 第 17-20 周 | ✅ 已验收 | `docs/phase3-acceptance-report.md` |
+| 四：商用打磨与交付准备 | 第 21-24 周 | ⬜ 未启动 | — |
 
-### 6.2 已知限制（本期明确不做）
+第三阶段交付内容：插件声明模型与运行时（6 段声明 + 8 层加载校验 + 6 能力封闭集合）、
+插件市场与全生命周期（PL1-PL14）、任务引擎与工作流可视化（WF1/WF2）、
+3 个标杆场景插件（前端研发 / 内容运营 / 行政人事，均端到端可用）。
 
-1. **仅骨架与契约，不含真实业务逻辑**：适配层所有下游调用均为桩实现（mock），
-   `DifyClient` / `KeycloakClient` 已按最终形态实现调用代码，但由 `OA_DOWNSTREAM_ENABLED=false` 短路，
-   不产生任何真实底座请求。真实协议转换在 T02 落地。
-2. **状态全部内存化**：幂等键（`IdempotencyManager`）与限流（`RateLimiter`）本期为进程内实现，
-   Redis 后端已实现但默认关闭（`OA_IDEMPOTENCY_BACKEND=memory`），T02/T04 切换。
-3. **令牌校验为开发态**：默认 `OA_AUTH_MODE=stub`，仅解析 JWT 载荷不做签名校验，
-   生产必须切换为 `oidc` 并配置 `OA_JWT_*` / `OA_KEYCLOAK_*`。
-4. **底座形态仅在适配层内出现**：底座地址、事件名、字段名只允许出现在 `apps/adapter`，
-   `apps/web` 由 CI 扫描门禁强制隔离。
-5. **待决事项**：架构文档 D-06（Redis/MinIO 许可证方案）尚未决策，
-   `deploy/docker-compose.yml` 暂用 Valkey（BSD-3）+ MinIO 锁定 AGPL 之前版本线并独立容器运行。
-6. **前端未执行依赖安装**：本期环境无 npm 网络安装条件，`apps/web` 为完整可安装骨架，
-   需在有网环境执行 `npm install` 后方可构建运行。
+### 6.2 当前门禁与质量基线（`develop` 实测）
+
+| 项 | 值 |
+| --- | --- |
+| 端点契约 | `core=30 / phase2=38/38 / phase3=16/16`，合计 **84**，严格模式 EXIT 0 |
+| 全量测试 | **1435 passed / 0 failed / 0 skipped**（含 PostgreSQL 实跑） |
+| P0 用例 | `pytest -m p0` → **184/184** |
+| 覆盖率 | 总 `app/*` 合并 **88.41%**；`business+db` 合并 **88.59%**；分支 **2176/2840 = 76.62%** |
+| 静态门禁 | `ruff check` / `ruff format` / `mypy`（117 文件）全绿 |
+| 部署门禁 | 端点基线 / 迁移双路径 / 依赖白名单 / 镜像锁定 / 插件声明 / 错误码三处一致 均 EXIT 0 |
+| 前端门禁 | 禁词 / 占位词 / 页面三态 / 契约快照 / 能力一致性 / 工作台宿主唯一 均 0 命中 |
+
+### 6.3 已知限制与未验证项
+
+1. **微信支付真实商户联调未做**：需客户提供商户号与密钥，当前为沙箱 + 契约桩验证。
+2. **模型提供方密钥未提供**：`marketplace` 不可达，M1/M2 的 happy path 依赖真实密钥才能跑通。
+3. **真实环境回执未验证**：GitHub 仓库写操作、公众号/邮件发布回执均为沙箱或契约桩；
+   插件在"工具未连接"时按步骤级失败处理，不会谎称已发布。
+4. **多副本调度未验证**：V1.0 按单副本交付，任务队列语义在单实例下验证；换 Valkey 时从
+   `task_service._advance_record()` 单入口替换。
+5. **分支覆盖率余量为 0**：`2176/2840` 刚好达到 76.6% 门槛，删除或跳过任一用例即回落，
+   已挂阶段四首周补齐（目标余量 ≥50 条）。
+6. **CI 未实际运行**：GitHub Actions 额度已用尽，上述门禁均为本机实跑（QA 独立复核 + 主理人抽验）；
+   CI 配置已就绪，额度恢复后需复跑一次。
+7. **历史遗留错误码**：5 个阶段一/二注册但从未被端点引用的码（`11005/12002/12004/12005/15006`）
+   在错误码目录检查里只打 `[WARN]`，处置方案见架构侧评审记录。
 
 ## 七、许可证与开源声明
 

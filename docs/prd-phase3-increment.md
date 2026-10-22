@@ -4,6 +4,7 @@
 > 上游输入：`docs/plan-v1.0.md` 第 293-302 行（第三阶段排期）；`docs/prd-v1.0.md`（P0-07/P0-08/P1-01、AC-02/AC-04/AC-06、FLOW-03/FLOW-04）；`docs/prd-phase2-increment.md` v1.1（体例与既有口径）；`docs/phase2-acceptance-report.md` 第六章（L-1/L-2/L-3 处置）
 > 端点基线：适配层 30 端点（M1-M4 / R1-R7 / A1-A6 / T1-T7 / U1-U6，**冻结不变**）+ 阶段二业务域 38 端点（KB/TL/ID/BL/OPS）+ 本阶段插件域新增（见附录 A）
 > 作者：许清楚（产品经理） 日期：2026-10-23 版本：**v1.2** 状态：**已冻结（阶段三定稿）· 冻结日期 2026-10-23**
+> **v1.2.1（2026-10-23，B29 追加）**：仅在文末追加「附录 D：P0 实现对照表」，**未改动正文任何需求表述、门槛与验收判据**；追加原因见附录 D 首段。
 
 ---
 
@@ -604,3 +605,44 @@
 ---
 
 *作者：许清楚（产品经理）· 2026-10-23 · 评审人：齐活林（交付总监）、高见远（架构师）· 下游消费：`docs/architecture-phase3.md`、`docs/qa-phase3-test-plan.md`*
+
+## 附录 D：P0 实现对照表（B29 追加，2026-10-23）
+
+> **本节为追加节，未改动 PRD 正文任何需求表述。** 用途：把 §3.1 的 25 条 P0 逐条对到"哪个批次实现、哪些端点承载、哪些用例验证"，
+> 使"需求 → 实现 → 验证"可逐条追溯，而不是只停在需求层。
+> 追溯编号与 `docs/prd-phase3-traceability.md` 的 `TC-P3-xx` **一一对应**（`P0-P3-NN` ↔ `TC-P3-NN`）。
+
+| P0 | 模块 | 实现批次 | 承载端点 / 承载物 | 验证用例（追溯表） |
+| --- | --- | --- | --- | --- |
+| P0-P3-01 声明标准与机械校验 | PL | B16 | `app/plugins/schema.py` + `loader.py`（8 层校验）+ 6 份 manifest | TC-P3-01 |
+| P0-P3-02 运行时与生命周期 | PL | B17 B18 | `PATCH .../state`、`DELETE .../{id}`、`app/plugins/engine.py` | TC-P3-02 |
+| P0-P3-03 能力声明与安装授权 | PL | B17 | `GET .../capabilities`、`POST .../install`、`PUT /plugins/capability-policy` | TC-P3-03 |
+| P0-P3-04 版本管理与回退 | PL | B18 | `POST .../upgrade`、`POST .../rollback` | TC-P3-04 |
+| P0-P3-05 开发文档与样例 | PL | B29 | `docs/plugin-dev-guide.md`（6 节 + walkthrough + V1.0 边界） | TC-P3-05 |
+| P0-P3-06 市场浏览/分类/搜索 | MK | B17 B23 | `GET /plugins/market`、`GET /plugins/market/{plugin_id}` | TC-P3-06 |
+| P0-P3-07 插件详情页 | MK | B23 | `GET /plugins/market/{plugin_id}`、`GET .../reviews` | TC-P3-07 |
+| P0-P3-08 安装/启用/禁用/卸载 | MK | B17 B18 | `POST .../install`、`PATCH .../state`、`DELETE .../{id}`、`GET /plugins/installed` | TC-P3-08 |
+| P0-P3-09 评价与使用说明 | MK | B18 | `GET/POST .../reviews` | TC-P3-09 |
+| P0-P3-10 已安装管理与更新提示 | MK | B23 | `GET /plugins/installed` + `POST .../upgrade` | TC-P3-10 |
+| P0-P3-11 步骤级进度与时间线 | WF | B19 B25 | `GET /agent/tasks/{id}`（A3 扩展：`steps[].status/artifacts`） | TC-P3-11 |
+| P0-P3-12 每步产物展示与下载 | WF | B19 B25 | `PUT /agent/tasks/{id}/artifacts/{artifact_id}` + `download_url` | TC-P3-12 |
+| P0-P3-13 失败原因与重试/接管 | WF | B19 B25 | `POST /agent/tasks/{task_id}/retry` + `steps[].failure{retryable}` | TC-P3-13 |
+| P0-P3-14 任务历史与核查清单 | WF | B19 B25 | `GET /agent/tasks`（四维筛选）+ 核查清单字段 | TC-P3-14 |
+| P0-P3-15 研发：需求与方案 | DEV | B20 | `plg_dev_workbench` 步骤 1-2 | TC-P3-15 |
+| P0-P3-16 研发：代码与用例 | DEV | B20 | `plg_dev_workbench` 步骤 3-4 | TC-P3-16 |
+| P0-P3-17 研发：提交仓库与 MR | DEV | B20 | `plg_dev_workbench` 步骤 5（沙箱 bare 仓库真 git 对象） | TC-P3-17 |
+| P0-P3-18 内容：素材与策划 | CNT | B20 | `plg_content_ops` 步骤 1-2 | TC-P3-18 |
+| P0-P3-19 内容：稿件与配图 | CNT | B20 | `plg_content_ops` 步骤 3 | TC-P3-19 |
+| P0-P3-20 内容：排期与发布 | CNT | B20 | `plg_content_ops` 步骤 4-5（排期表 4 列） | TC-P3-20 |
+| P0-P3-21 人事：JD 与简历筛选 | HR | B20 | `plg_hr_admin` 步骤 1-2 | TC-P3-21 |
+| P0-P3-22 人事：提纲与邀约 | HR | B20 | `plg_hr_admin` 步骤 3-4 | TC-P3-22 |
+| P0-P3-23 人事：Offer 与公文 | HR | B20 | `plg_hr_admin` 步骤 5-6（金额三规则 + docx 渲染） | TC-P3-23 |
+| P0-P3-24 工作台宿主与入口 | UI | B24 | `apps/web/src/app/(main)/workbench/[pluginId]/page.tsx`（唯一宿主） | TC-P3-24 |
+| P0-P3-25 文案与合规门禁 | UI | B27 | `apps/web/scripts/check-*.mjs`（6 道前端门禁） | TC-P3-25 |
+
+**25/25 条 P0 均有实现落点。** 其中：
+
+- **P0-P3-05**（插件开发文档）在阶段三收口阶段才补交付 `docs/plugin-dev-guide.md`——它是 25 条 P0 里唯一一条"文档即交付物"的需求，
+  曾因只盯代码端点而被漏掉，修订记录见 `docs/phase3-acceptance-report.md` §10；
+- **P0-P3-17 / P0-P3-20 / P0-P3-23** 是 PRD AC-02「结果物可核查」的三个核心承载，分别对应提交记录、排期表、Offer 与公文；
+- **B26（端到端装配与 e2e）** 不单独对应某条 P0，它是把上述 25 条的落点串成"可一键演示的用户旅程"。

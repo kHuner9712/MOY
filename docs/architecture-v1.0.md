@@ -12,6 +12,7 @@
 
 | 版本 | 日期 | 修订人 | 修订说明 |
 | --- | --- | --- | --- |
+| V1.0.7 | 2026-10-23 | 齐活林（阶段三收口） | 第三阶段文档同步（B29 第 5 项，**不改动任何接口路径、字段名、错误码取值**）：§9.6 CI 门禁追加 G-26 ~ G-31 六道阶段三门禁（插件声明 schema / 插件界面唯一宿主 / 能力原语白名单 / phase3 端点基线 / 前端契约快照 / Schema 保留策略）与 G-13 扩展（内部码禁区）。判据与命令以 `docs/architecture-phase3.md` §10 为唯一真源，本文档仅登记存在性与入口，避免两处演化出不同判据。 |
 | V1.0.6 | 2026-10-21 | 齐活林（实联调） | 第一阶段实跑联调修订（T02 真实协议转换层，**不改动任何接口路径、字段名、错误码取值**）：① 登记三项底座载荷口径修正 —— M1/M2/A1 调用必须携带终端用户标识 `user`（Dify ≥ 0.6 强制，缺失即 400）、工作流运行详情端点为 `/v1/workflows/run/{id}`（单数，非 `/runs/`）、blocking 模式须映射 `data.status` 终态 ② §9.5 环境变量表 `OA_MINIO_*` → `OA_OBJECT_STORE_*`（P2-4）③ §10.3 D-06/D-08 转「已拍板生效」（docs/decisions/0004）④ 登记第一阶段验收结论（docs/phase1-acceptance-report.md） |
 | V1.0 | 2026-10-21 | 高见远 | 首次发布：五层架构落地设计、技术选型、适配层五大标准接口规范 v1.0、时序图、monorepo 结构、第一阶段任务、依赖清单、共享约定、待明确事项 |
 | V1.0.1 | 2026-10-21 | 高见远 | Sprint 0 QA 反馈修订：① 第 3 章补「端点总数 30 + 2 探针」显式声明（消除 29/30 歧义）② 8.2 补登记 postcss / autoprefixer / tailwindcss-animate 三个构建期依赖 ③ 新增 3.0.5「幂等指纹与冲突判定口径」，明确指纹含请求体 SHA-256、同键异体判 20005 冲突且禁止回放（BUG-05 规范根因堵死）④ 3.0.3 的 20005 内部含义补注幂等键请求体不一致。**本次修订不改动任何接口路径、字段名、错误码取值。** |
@@ -1523,6 +1524,20 @@ graph LR
     传递依赖的版本随上游漂移，声明层不可见。门禁同时校验**声明层下限**与**实际解析版本**两层；
   - **依赖清单同步门禁**：`pyproject.toml` 的每个依赖必须已在本文档第 8.1 节登记（包名 + 版本约束双校验），
     新增依赖须「先补文档、再进代码」，防止文档与实现漂移。
+- **阶段三新增门禁（G-26 ~ G-31，随插件体系落地，详见 `docs/architecture-phase3.md` §10）**：
+
+  | 门禁 | 判据 | 命令 | 归属批 |
+  | --- | --- | --- | --- |
+  | **G-26 插件声明 schema** | 6 段声明通过 `extra="forbid"` 校验；`--self-test` 用负样本证明"能拦" | `python apps/adapter/scripts/validate_plugins.py --self-test` | B16 |
+  | **G-27 插件界面唯一宿主** | 插件目录 0 个自带 `.css`/`.jsx`；宿主页无 `pluginId ===`/`switch`/查表/集合分支 | `node apps/web/scripts/check-workbench-host.mjs` | B24 / B27 |
+  | **G-28 能力/原语白名单** | 静态枚举校验 + 运行时守卫；`plg_hr_admin` 多余能力已收敛 | `python apps/adapter/scripts/validate_plugins.py` | B18 / B27 |
+  | **G-29 phase3 端点基线** | `core=30 / phase2=38/38 / phase3=16/16`，严格模式；删一项须先改基线 | `python deploy/validate_openapi.py` | B21 |
+  | **G-30 前端契约快照** | 32 接口 / 169 字段 / 5 枚举与 `docs/api/baseline-phase3-16.json` 零差异 | `node apps/web/scripts/check-plugin-contract.mjs` | B27 |
+  | **G-31 Schema 保留策略** | `plugin_task.expires_at` 列存在、默认 180 天、类型 timestamptz；改默认值即红 | `python deploy/validate_schema_retention.py` | B28 |
+  | **G-13 扩展（错误码三处一致 + 内部码禁区）** | 注册表 / 架构文档 / `business-errors.ts` 三处码集合一致；`17002` 不得进前端兜底表、`message`、A3/A4 响应体 | `python apps/adapter/scripts/check_error_catalog.py --strict --forbid-internal 17002` | B18 / B28 |
+
+  > **门禁编号归属说明**：G-26 ~ G-31 的判据与命令以 `docs/architecture-phase3.md` §10 为唯一真源；
+  > 本文档只登记"存在哪些门禁、命令是什么"，避免两处各自演化出不同判据。
 
 ---
 
