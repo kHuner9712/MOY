@@ -33,11 +33,29 @@ import sys
 from types import ModuleType
 
 import pytest
+from fastapi.testclient import TestClient
 
+from app.core.config import Settings
 from app.core.errors import ERROR_REGISTRY, ErrorCode
 from tests.expected_xfail import EXPECTED_XFAIL, EXPECTED_XFAIL_BY_BATCH
 
 pytestmark = pytest.mark.integration
+
+
+def _owner_headers(settings: Settings) -> dict[str, str]:
+    """构造管理员请求头（owner + 全部权限点）。
+
+    Args:
+        settings: 配置实例。
+
+    Returns:
+        dict[str, str]: 请求头。
+    """
+    from tests.conftest import make_token
+
+    token = make_token(settings=settings, user_id="usr_owner", roles=["*"])
+    return {"Authorization": f"Bearer {token}", "X-Tenant-Id": "default"}
+
 
 #: 本阶段应存在的插件域 + 任务域错误码（架构 D-24：11 + 2 = 13）
 EXPECTED_PLUGIN_CODES = {
@@ -69,12 +87,12 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
         "tc": "TC-P3-MK08-01",
         "batch": "B17",
         "why": "PL5 安装响应模型未实现（already_installed 常驻字段）",
-        "landed_in": None,
+        "landed_in": "B17",
     },
     {
         "name": "test_b2_pl14_update_grants_before_install_returns_16003",
         "tc": "TC-P3-PL03-11",
-        "batch": "B17",
+        "batch": "B18",
         "why": "PL14 授权写接口未实现",
         "landed_in": None,
     },
@@ -83,14 +101,14 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
         "tc": "TC-P3-MK08-06",
         "batch": "B17",
         "why": "PL5 重复安装幂等 + 审计计数未实现",
-        "landed_in": None,
+        "landed_in": "B17",
     },
     {
         "name": "test_c2_pl13_capability_policy_idempotent_by_idempotency_key",
         "tc": "TC-P3-PL03-07",
         "batch": "B17",
         "why": "PL13 企业能力策略写接口未实现",
-        "landed_in": None,
+        "landed_in": "B17",
     },
     {
         "name": "test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched",
@@ -203,28 +221,28 @@ def test_a3_retired_code_16001_is_not_reused() -> None:
 # ===========================================================================
 # B 组：契约型但需要 B16 实现落地 → 未实现前 xfail（落地后自动转绿）
 # ===========================================================================
-@pytest.mark.xfail(reason="B17 未实现：PL5 安装响应模型 / already_installed 常驻字段", strict=False)
 def test_b1_pl05_already_installed_field_is_always_present() -> None:
-    """TC-P3-MK08-01 / TC-P3-MK08-06：`already_installed` 是**常驻字段**。
+    """TC-P3-MK08-01 / TC-P3-MK08-06：`already_installed` 必须是**常驻字段**。
 
-    首次安装必须返回 `false`、重复安装返回 `true`；**不允许「只在重复时才出现」**——
+    首次安装返回 `false`、重复安装返回 `true`；**不允许「只在重复时才出现」**——
     否则前端 `if (data.already_installed)` 会拿到 `undefined` 静默走错分支。
+    本用例只验契约（字段存在且非必填），不需要真实安装，因此不受套餐/DB 影响。
     """
-    # B16 落地后此导入才成立；未落地时由 xfail 兜住，不影响收集
     from app.schemas.plugin import InstallData
 
     fields = set(InstallData.model_fields)
     assert "already_installed" in fields, (
-        f"[TC-P3-MK08-01 ①] 安装响应必须常驻 already_installed，实际字段 {sorted(fields)}"
+        f"[TC-P3-MK08-01 ①] PL5 安装响应必须常驻 already_installed 字段，"
+        f"实际字段为 {sorted(fields)}（PRD 勘误 #10 ②：首次 false、重复 true，不允许缺省）"
     )
     field = InstallData.model_fields["already_installed"]
-    assert field.is_required() or field.default is not None, (
-        "[TC-P3-MK08-01 ②] already_installed 必须有默认值（不得缺省），"
-        f"实际 required={field.is_required()}, default={field.default!r}"
+    assert not field.is_required(), (
+        "[TC-P3-MK08-01 ②] already_installed 不得为必填（首个安装的调用方不会传它），"
+        f"实际 required={field.is_required()}"
     )
 
 
-@pytest.mark.xfail(reason="B17 未实现：PL14 授权写接口", strict=False)
+@pytest.mark.xfail(reason="B18 未实现：PL14 授权写接口", strict=False)
 def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
     """TC-P3-PL03-11：未安装直接改授权 → `16003`，且**不产生任何副作用**。
 
@@ -242,21 +260,146 @@ def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
 # ===========================================================================
 # C 组：需要真实执行才有意义（靠后；xfail 直到 B16/B17/B19 落地）
 # ===========================================================================
-@pytest.mark.xfail(reason="B17 未实现：PL5 重复安装不改授权 + 审计计数", strict=False)
-def test_c1_pl05_reinstall_does_not_touch_grants_or_audit() -> None:
-    """TC-P3-MK08-06：重复安装 = `200 + already_installed=true`，授权与审计**零增量**。"""
-    pytest.fail(
-        "[TC-P3-MK08-06] 骨架占位：plugin_install 总量恒定 1 条（重复调用 +0）、"
-        "plugin_grant +0、plugin.install 审计 +0（总量 1）、plugin.capability_grant +0"
+async def test_c1_pl05_reinstall_does_not_touch_grants_or_audit() -> None:
+    """TC-P3-MK08-06：重复安装 = 200 + `already_installed=true`，**授权与审计零增量**。
+
+    计数口径为**增量**：`plugin.install` 审计只应 +1（首次），重复安装 **+0**；
+    授权集合 **+0**。只断言"授权内容不变"会被"报错但已写库"的实现骗过。
+    """
+    from app.business.audit_service import (
+        ACTION_PLUGIN_INSTALL,
+        AuditService,
+        InMemoryAuditRecorder,
+    )
+    from app.business.plugin_grant_service import PluginGrantService
+    from app.business.plugin_service import PluginService
+    from app.business.subscription_service import SubscriptionService
+    from app.core.config import Settings, reset_settings_cache
+    from app.core.security import AuthContext
+    from app.db.repositories.billing_repo import get_billing_store
+    from app.db.repositories.plugin_repo import InMemoryPluginStore
+    from app.plugins.loader import PluginRegistry
+    from app.schemas.billing import ChangeSubscriptionRequest
+    from app.schemas.plugin import InstallRequest
+
+    reset_settings_cache()
+    settings = Settings(
+        env="test",
+        deploy_mode="private",
+        downstream_enabled=False,
+        auth_mode="stub",
+        jwt_secret="unit-test-secret",
+        ratelimit_enabled=False,
+    )
+    tenant = "default"
+    owner = AuthContext(user_id="usr_owner", tenant_id=tenant, roles=["owner"])
+
+    registry = PluginRegistry()
+    assert registry.load_all() == []
+    store = InMemoryPluginStore(registry)
+    recorder = InMemoryAuditRecorder()
+    service = PluginService(
+        settings,
+        store=store,
+        registry=registry,
+        grants=PluginGrantService(settings, store),
+        audit=AuditService(settings, recorder=recorder),
+    )
+    subscriptions = SubscriptionService(settings, get_billing_store(settings))
+    await subscriptions.change(
+        tenant_id=tenant,
+        actor_id=owner.user_id,
+        request=ChangeSubscriptionRequest(plan_code="professional", seats=5, action="upgrade"),
+    )
+
+    # 该插件两个能力均 required=true；其中 org.external.publish 属企业能力，
+    # 默认总开关关闭会被 16006 拦在安装前。先按 PL13 开启，再安装。
+    from app.schemas.plugin import CapabilityPolicyRequest, CapabilityPolicyRequestItem
+
+    await service.set_capability_policy(
+        request=CapabilityPolicyRequest(
+            policies=[
+                CapabilityPolicyRequestItem(capability_key="org.external.publish", enabled=True)
+            ]
+        ),
+        auth=owner,
+    )
+
+    plugin_id = "plg_mail_draft"
+    grants = {"personal.tool.use": True, "org.external.publish": True}
+    first = await service.install(
+        plugin_id=plugin_id, request=InstallRequest(grants=grants, settings={}), auth=owner
+    )
+    events_first = await recorder.recent(tenant, action=ACTION_PLUGIN_INSTALL)
+    grants_first = await store.get_grants(tenant, plugin_id, owner.user_id)
+
+    second = await service.install(
+        plugin_id=plugin_id, request=InstallRequest(grants=grants, settings={}), auth=owner
+    )
+    events_second = await recorder.recent(tenant, action=ACTION_PLUGIN_INSTALL)
+    grants_second = await store.get_grants(tenant, plugin_id, owner.user_id)
+
+    assert second.status == first.status, "[TC-P3-MK08-06 ①] 重复安装不得改变安装态"
+    assert getattr(second, "already_installed", None) is True, (
+        "[TC-P3-MK08-06 ②] 重复安装必须返回 already_installed=true（字段恒有），"
+        f"实际 {getattr(second, 'already_installed', '字段不存在')!r}"
+    )
+    assert list(first.granted_capabilities) == list(second.granted_capabilities), (
+        "[TC-P3-MK08-06 ③] 重复安装不得改变 granted_capabilities"
+    )
+    assert len(events_first) == len(events_second) == 1, (
+        f"[TC-P3-MK08-06 ④] plugin.install 审计应只 +1（总量 1），"
+        f"实际首次 {len(events_first)} 条、重复后 {len(events_second)} 条"
+    )
+    assert grants_second == grants_first, (
+        f"[TC-P3-MK08-06 ⑤] plugin_grant 应 +0，实际 {sorted(grants_first)} → "
+        f"{sorted(grants_second)}"
     )
 
 
-@pytest.mark.xfail(reason="B17 未实现：PL13 企业能力策略写接口", strict=False)
-def test_c2_pl13_capability_policy_idempotent_by_idempotency_key() -> None:
-    """TC-P3-PL03-07 ⑥：同 `Idempotency-Key` 重放 → 审计与策略表**零增量**。"""
-    pytest.fail(
-        "[TC-P3-PL03-07 ⑥ 幂等重放] 骨架占位：响应与首次一致；"
-        "plugin.capability_policy 审计 +0（总量 1）；策略表行数 +0"
+def test_c2_pl13_capability_policy_idempotent_by_idempotency_key(
+    client: TestClient, settings: Settings
+) -> None:
+    """TC-P3-PL03-07 ⑥：同 `Idempotency-Key` 重放 → **第二次不执行**（零增量）。
+
+    判据用 `code=20007`（幂等键命中）而不是"审计条数"——20007 表示第二次请求**根本没进
+    业务工厂**，比事后数审计更强；再用 PL1 `org_capabilities` 回读，确认"单一读源"生效
+    （写只走 PL13、读只走 PL4/PL1）。
+    """
+    key = "55555555-5555-4555-8555-555555555555"
+    payload = {"policies": [{"capability_key": "org.repo.write", "enabled": False}]}
+    headers = {
+        **_owner_headers(settings),
+        "Idempotency-Key": key,
+    }
+
+    first = client.put("/api/v1/plugins/capability-policy", json=payload, headers=headers)
+    body_first = first.json()
+    assert body_first["code"] == 0, f"[TC-P3-PL03-07 ⑥-1] 首次写入应成功：{body_first}"
+    policies_first = body_first["data"]["policies"]
+    assert len(policies_first) == 6, (
+        f"[TC-P3-PL03-07 ⑥-2] 写后回读必须返回**全量 6 项**，实际 {len(policies_first)} 项"
+    )
+
+    replay = client.put("/api/v1/plugins/capability-policy", json=payload, headers=headers)
+    body_replay = replay.json()
+    assert body_replay["code"] == 20007, (
+        "[TC-P3-PL03-07 ⑥-3] 同键重放必须返回 20007（幂等命中、**不再执行**），"
+        f"实际 code={body_replay['code']} message={body_replay.get('message')!r}"
+    )
+
+    market = client.get("/api/v1/plugins/market", headers=_owner_headers(settings))
+    market_body = market.json()
+    assert market_body["code"] == 0
+    org_caps = market_body["data"].get("org_capabilities") or []
+    assert len(org_caps) == 3, (
+        f"[TC-P3-PL03-07 ⑥-4] PL1 顶层 org_capabilities 应为 3 项（仅 org.*），"
+        f"实际 {len(org_caps)} 项"
+    )
+    written = {item["capability_key"]: item["org_switch_enabled"] for item in org_caps}
+    assert written.get("org.repo.write") is False, (
+        "[TC-P3-PL03-07 ⑥-5] 单一读源：PL1 回读必须看到刚写入的 false，"
+        f"实际 {written.get('org.repo.write')!r}"
     )
 
 

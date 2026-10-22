@@ -13,7 +13,8 @@
   同时把 `EXPECTED_XFAIL` 减 1、`EXPECTED_XFAIL_BY_BATCH["BN"]` 减 1；
 - 阶段终态：`EXPECTED_XFAIL == 0`。
 
-里程碑口径（2026-10-23 定稿）：**B16 = 6 → B17 = 2 → B19 = 0**。
+里程碑口径（2026-10-23 定稿；PL14 挪 B18 后校正）：
+**B16 = 6 → B17 结束 3 → B18 结束 2 → B19 结束 0**。
 """
 
 from __future__ import annotations
@@ -21,9 +22,9 @@ from __future__ import annotations
 from typing import Final
 
 #: 当前仍应处于 `xfail` 的条数（正常模式门禁：`xfailed` 必须等于它）
-EXPECTED_XFAIL: Final[int] = 6
+EXPECTED_XFAIL: Final[int] = 3
 
 #: 各批次剩余的 `xfail` 条数：本批结束时，本批归属项必须归 0
-EXPECTED_XFAIL_BY_BATCH: Final[dict[str, int]] = {"B17": 4, "B19": 2}
+EXPECTED_XFAIL_BY_BATCH: Final[dict[str, int]] = {"B18": 1, "B19": 2}
 
 __all__: list[str] = ["EXPECTED_XFAIL", "EXPECTED_XFAIL_BY_BATCH"]
