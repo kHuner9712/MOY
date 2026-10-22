@@ -159,7 +159,11 @@ class AgentService:
             CreateTaskData: 任务 ID 与初始状态。
 
         Raises:
-            ApiError: 所需工具未连接（12005）、任务创建失败（12002）。
+            ApiError: 下游工作流调用失败（30001 连接失败 / 30002 超时，由
+                `DifyClient` 统一映射）。**任务执行失败与超时不抛码**：失败落地为
+                状态机终态（`status=failed` + `error_message` + `_summary_text`），
+                前端就地展示、不弹错。域内码 `12001` 由 A3 查询路径抛、
+                `12003` 由 A4/A5 取消与重试路径抛，本方法均不产生。
         """
         if request.tool_grants:
             logger.info(

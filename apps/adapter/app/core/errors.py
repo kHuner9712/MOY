@@ -57,14 +57,19 @@ class ErrorCode(IntEnum):
     KB_CREDENTIAL_UNAVAILABLE = 11007
 
     # ---------------- Agent 服务域 12001-12099 ----------------
+    #: 注：`12002`（任务执行失败）与 `12005`（所需工具未连接）是阶段一/二的
+    #: 历史遗留码，B27 已**注销**（架构 v1.0 已带注销记录）。按「注销值不复用」
+    #: 原则跳过这两个值，任何人不得把它们填回来：
+    #: - `12002`：任务失败全走状态机（`task_service._finish()` 落 `error_message`
+    #:   + `_summary_text`），且与内部码 `17002` 语义重复；
+    #: - `12005`：「工具未连接」已被 `13002`（执行期）、「未授权」已被 `16005`
+    #:   （授予期）覆盖，无第三语义可留。
     TASK_NOT_FOUND = 12001
-    TASK_EXECUTION_FAILED = 12002
     TASK_CANCELLED = 12003
     #: 预留（B27）：任务超时在阶段三设计里走状态机（`failed` + `_summary_text`），
     #: 不走错误码；配置项与设计意图仍在，故保留槽位并显式标注（架构 v1.0 登记行
     #: 已带预留说明，G-13 按 `[RESERVED]` 具名放行）。任何人不得删除本行。
     TASK_TIMEOUT = 12004
-    TASK_TOOL_NOT_GRANTED = 12005
 
     # ---------------- 工具服务域 13001-13099 ----------------
     TOOL_TYPE_UNSUPPORTED = 13001
@@ -255,9 +260,6 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
     ErrorCode.TASK_NOT_FOUND: ErrorSpec(
         ErrorCode.TASK_NOT_FOUND, 404, "任务不存在或已过期", "任务不存在"
     ),
-    ErrorCode.TASK_EXECUTION_FAILED: ErrorSpec(
-        ErrorCode.TASK_EXECUTION_FAILED, 200, "任务执行未能完成，可查看详情后重试", "执行失败"
-    ),
     ErrorCode.TASK_CANCELLED: ErrorSpec(ErrorCode.TASK_CANCELLED, 200, "任务已取消", "终态冲突"),
     ErrorCode.TASK_TIMEOUT: ErrorSpec(
         ErrorCode.TASK_TIMEOUT,
@@ -265,9 +267,6 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
         "任务执行超时，请重试",
         "单步/整体超时（预留：任务超时走状态机，见 architecture-phase3.md §3.5）",
         visibility="预留",
-    ),
-    ErrorCode.TASK_TOOL_NOT_GRANTED: ErrorSpec(
-        ErrorCode.TASK_TOOL_NOT_GRANTED, 200, "该步骤需要的工具尚未连接", "依赖工具未授权"
     ),
     # 工具服务域
     ErrorCode.TOOL_TYPE_UNSUPPORTED: ErrorSpec(

@@ -10,7 +10,13 @@
 
 import { BusinessError } from './api-client';
 
-/** 错误码 → 业务语言文案（与架构文档 3.0.3 逐条一致，共 52 个码） */
+/**
+ * 错误码 → 业务语言文案（与架构文档 3.0.3 逐条一致）。
+ *
+ * 覆盖口径：后端 `errors.py` 注册表的**全部对外码**（含 `12004` 预留码——
+ * 它随时可能上线，前端要继续能翻译它）；另有历史说明性键保留。
+ * Agent 域的两个历史遗留码已按「注销值不复用」原则移除，**不得**再填回本表。
+ */
 export const BUSINESS_ERROR_MESSAGES: Readonly<Record<number, string>> = Object.freeze({
   // 通用业务错误 20001-20008
   20001: '请求内容不完整，请检查后重试',
@@ -39,12 +45,10 @@ export const BUSINESS_ERROR_MESSAGES: Readonly<Record<number, string>> = Object.
   // 11007：库级凭据失效。重试无意义，必须给用户可执行的出路（联系管理员）
   11007: '该知识库暂时无法访问，请联系管理员',
 
-  // Agent 服务域 12001-12005
+  // Agent 服务域 12001-12004（12002/12005 已注销、禁止复用）
   12001: '任务不存在或已过期',
-  12002: '任务执行未能完成，可查看详情后重试',
   12003: '任务已取消',
   12004: '任务执行超时，请重试',
-  12005: '该步骤需要的工具尚未连接',
 
   // 工具服务域 13001-13006
   13001: '该工具尚未连接，请先在设置中完成连接',
@@ -157,7 +161,7 @@ export const BUSINESS_ERROR_SEGMENTS: Readonly<Record<string, readonly [number, 
     common: [20001, 20008],
     model: [10001, 10005],
     knowledge: [11001, 11007],
-    task: [12001, 12005],
+    task: [12001, 12004],
     tool: [13001, 13006],
     identity: [14001, 14008],
     billing: [15001, 15009],
