@@ -160,6 +160,11 @@ ACTION_PLUGIN_VERSION_CHANGE: Final[str] = "plugin.version_change"
 #: 操作：变更插件能力授权（阶段三 B18）
 ACTION_PLUGIN_CAPABILITY_GRANT: Final[str] = "plugin.capability_grant"
 
+#: 任务域动作（阶段三 B19，架构文档 §8.2）
+ACTION_TASK_START: Final[str] = "task.start"
+ACTION_TASK_FINISH: Final[str] = "task.finish"
+ACTION_TASK_RETRY: Final[str] = "task.retry"
+
 #: 操作：支付回调被拒绝（签名/金额/订单状态校验未通过，B09 安全加固）
 #:
 #: 拒绝事件**必须**进审计：`payment_callback_log` 只记「已接受并处理」的回调，
@@ -198,6 +203,9 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_PLUGIN_UNINSTALL: "移除插件",
     ACTION_PLUGIN_VERSION_CHANGE: "更新或恢复插件版本",
     ACTION_PLUGIN_CAPABILITY_GRANT: "变更插件能力授权",
+    ACTION_TASK_START: "发起自动化任务",
+    ACTION_TASK_FINISH: "自动化任务结束",
+    ACTION_TASK_RETRY: "重试自动化任务",
 }
 
 
@@ -582,6 +590,18 @@ class AuditService:
 _memory_recorder: InMemoryAuditRecorder | None = None
 
 
+def get_audit_service(settings: Settings | None = None) -> AuditService:
+    """获取操作记录服务（业务层唯一入口）。
+
+    Args:
+        settings: 可选配置实例。
+
+    Returns:
+        AuditService: 服务实例（每次新建，内部复用进程级 recorder）。
+    """
+    return AuditService(settings)
+
+
 def get_audit_recorder(settings: Settings | None = None) -> AuditRecorder:
     """获取操作记录存储。
 
@@ -638,6 +658,9 @@ __all__: list[str] = [
     "ACTION_ROLE_DELETE",
     "ACTION_SETTINGS_UPDATE",
     "ACTION_SUBSCRIPTION_UPDATE",
+    "ACTION_TASK_FINISH",
+    "ACTION_TASK_RETRY",
+    "ACTION_TASK_START",
     "ACTION_TENANT_STATUS",
     "AUDIT_TABLE",
     "RESOURCE_DEPARTMENT",
@@ -658,5 +681,6 @@ __all__: list[str] = [
     "InMemoryAuditRecorder",
     "PostgresAuditRecorder",
     "get_audit_recorder",
+    "get_audit_service",
     "reset_audit_recorder",
 ]

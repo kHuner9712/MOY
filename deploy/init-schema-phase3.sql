@@ -255,6 +255,8 @@ CREATE TABLE IF NOT EXISTS plugin_artifact (
     storage_key    TEXT,
     size_bytes     BIGINT      NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
     content_sha256 CHAR(64),
+    version        SMALLINT    NOT NULL DEFAULT 1 CHECK (version >= 1),  -- WF2 版本（B19）
+    version_history JSONB      NOT NULL DEFAULT '[]'::jsonb,             -- 旧版本可回看/下载
     expires_at     TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '180 days',
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, artifact_id),

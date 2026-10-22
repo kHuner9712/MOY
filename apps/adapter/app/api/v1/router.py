@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends, Request
 
 from app.api.v1 import (
     agent,
+    artifact_files,
     billing,
     identity,
     identity_ext,
@@ -270,6 +271,8 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     api_router.include_router(plugins.router, prefix=prefix, dependencies=business_dependencies)
     # 健康检查不挂 API 版本前缀，路径固定为 /healthz 与 /readyz
     api_router.include_router(health_router)
+    # 产物内容代理：**不挂 /api/v1**（阶段三端点表冻结 16 条，见 artifact_files 文档串）
+    api_router.include_router(artifact_files.router)
     return api_router
 
 

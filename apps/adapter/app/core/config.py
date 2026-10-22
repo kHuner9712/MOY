@@ -196,6 +196,25 @@ class Settings(BaseSettings):
     order_expire_minutes: int = Field(default=30, ge=1, le=1440)
 
     # ------------------------------------------------------------------
+    # 插件任务引擎（阶段三 B19，架构文档 §3.3 / §3.5）
+    #
+    # `plugin_task_concurrency`：**同租户同插件**的在跑任务上限（PRD E-12）。
+    # 第 N+1 个任务不报错、不排队到 4xx，而是 `200 + status=queued +
+    # queue_position`——4xx 会被前端 `unwrap()` 渲染成整屏报错，用户会以为
+    # 任务没创建成功而反复重试，反而制造更多排队任务。
+    # `plugin_task_timeout_seconds`：任务级超时（PRD P0-P3-02 默认 900s）。
+    # `plugin_artifact_retention_days`：产物留存期（Q3-5，默认 180 天），
+    # 过期后 `download_url=null` 且前端提示「产物已过期，可重新发起任务」。
+    # `plugin_retry_backoff_ms`：`on_failure: retry` 的退避（最多 1 次，§3.5）。
+    # ------------------------------------------------------------------
+    plugin_task_concurrency: int = Field(default=3, ge=1, le=20)
+    plugin_task_timeout_seconds: int = Field(default=900, ge=30, le=86_400)
+    plugin_artifact_retention_days: int = Field(default=180, ge=1, le=3_650)
+    plugin_retry_backoff_ms: int = Field(default=800, ge=0, le=5_000)
+    #: 产物下载地址前缀（平台代理，**不暴露对象存储地址**，§3.5）
+    plugin_artifact_download_prefix: str = "/api/v1/agent/artifacts"
+
+    # ------------------------------------------------------------------
     # 幂等与限流（架构文档 3.0.4）
     # ------------------------------------------------------------------
     idempotency_backend: IdempotencyBackend = "memory"

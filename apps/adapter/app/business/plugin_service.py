@@ -1097,6 +1097,62 @@ class PluginService:
         return installation
 
     # ------------------------------------------------------------------
+    # 任务前置校验（A1 / WF1 共用）
+    # ------------------------------------------------------------------
+    async def prepare_task(
+        self, *, plugin_id: str, auth: AuthContext
+    ) -> tuple[InstallationRecord, PluginManifest, dict[str, bool]]:
+        """建任务 / 重试前的插件侧准入检查（顺序即用户看到的出路顺序）。
+
+        顺序固定为 **套餐（15001）→ 插件（16002）→ 未添加（16003）→
+        已停用（16004）→ 前置插件（16009）**：
+
+        - `15001` 最先：免费版用户看到的是"升级套餐"，不是"你不认识这个插件"；
+        - `16003` 与 `16004` **不能倒置**（16003=还没添加、16004=添加了但停用），
+          两者 CTA 完全不同（去市场 vs 找管理员启用）；
+        - `16009` 最后：前置插件缺失是"还差一步"的提示，前面几条更接近根因。
+
+        能力（`16005`）与企业开关（`16006`）**不在这里**：它们依赖"本人授权快照"，
+        由 `TaskService` 在拿到快照后判，保持"插件域只管安装态"的边界。
+
+        Args:
+            plugin_id: 插件标识。
+            auth: 鉴权上下文。
+
+        Returns:
+            tuple[InstallationRecord, PluginManifest, dict[str, bool]]:
+            `(安装行, 声明, 企业能力开关)`。
+
+        Raises:
+            ApiError: 15001 / 16002 / 16003 / 16004 / 16009。
+        """
+        context = await self._load_market_context(plugin_id, auth)
+        manifest = context.manifest
+        if manifest is None:  # pragma: no cover - 目录有行必有快照
+            raise ApiError(ErrorCode.PLUGIN_NOT_FOUND, internal_detail=f"{plugin_id} no manifest")
+        if not context.plan_enabled:
+            raise ApiError(
+                ErrorCode.PLAN_FEATURE_UNAVAILABLE,
+                message=MESSAGE_PLAN_BLOCKED,
+                internal_detail=f"plugin_market disabled for tenant {auth.tenant_id}",
+            )
+        installation = context.installation
+        if installation is None or not installation.is_live:
+            raise ApiError(
+                ErrorCode.PLUGIN_NOT_INSTALLED, internal_detail=f"{plugin_id} not installed"
+            )
+        if installation.status == STATUS_DISABLED:
+            raise ApiError(ErrorCode.PLUGIN_DISABLED, internal_detail=f"{plugin_id} disabled")
+        missing_plugins = await self._missing_requires(manifest, auth.tenant_id)
+        if missing_plugins:
+            raise ApiError(
+                ErrorCode.PLUGIN_DEPENDENCY_MISSING,
+                data={"missing_plugins": missing_plugins},
+                internal_detail=f"missing plugins: {', '.join(missing_plugins)}",
+            )
+        return installation, manifest, context.policies
+
+    # ------------------------------------------------------------------
     # 内部工具
     # ------------------------------------------------------------------
     async def _plan_allows_market(self, tenant_id: str) -> bool:

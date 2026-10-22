@@ -58,6 +58,14 @@
     {
       "method": "PUT",
       "path": "/api/v1/plugins/{plugin_id}/grants"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/tasks/{task_id}/retry"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/agent/tasks/{task_id}/artifacts/{artifact_id}"
     }
   ],
   "registered_at": "2026-10-22"

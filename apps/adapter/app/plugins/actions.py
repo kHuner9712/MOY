@@ -189,6 +189,8 @@ class RunContext:
         settings: 插件配置（键 ⊆ 声明 `settings_schema`）。
         inputs: 任务输入（键 ⊆ 声明 `inputs`）。
         outputs: 已完成步骤的产物（`key → 内容`），供 `needs` 装配。
+        auth: 发起人身份（`AuthContext`，**只有用户/租户/角色，不含任何凭据**）。
+            任务以发起人身份调用适配层（§2.5），插件永远拿不到工具连接串。
     """
 
     tenant_id: str = ""
@@ -202,6 +204,7 @@ class RunContext:
     settings: dict[str, Any] = field(default_factory=dict)
     inputs: dict[str, Any] = field(default_factory=dict)
     outputs: dict[str, Any] = field(default_factory=dict)
+    auth: Any = None
 
     def has(self, capability: str) -> bool:
         """判断本次执行是否已获授某能力。

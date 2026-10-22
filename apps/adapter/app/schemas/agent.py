@@ -11,20 +11,29 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.common import PageQuery
 from app.schemas.model import ModelProfile, Usage
 
 
 class TaskStatus(StrEnum):
-    """任务状态枚举（底座原生状态已映射为自研三态）。"""
+    """任务状态枚举（底座原生状态已映射为自研状态）。
+
+    阶段三 B19 **加性新增**两个值（不改既有五值的语义）：
+
+    - `queued`：同租户同插件并发超限时的排队态（返回 200 + `queue_position`，
+      **不是** 429/20006——4xx 会被前端渲染成报错页，用户以为没创建成功）；
+    - `waiting_confirm`：人工接管点（`confirm` 步骤未确认），**永不自动推进**。
+    """
 
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    QUEUED = "queued"
+    WAITING_CONFIRM = "waiting_confirm"
 
 
 class StepStatus(StrEnum):
@@ -38,11 +47,18 @@ class StepStatus(StrEnum):
 
 
 class ArtifactType(StrEnum):
-    """产物类型枚举。"""
+    """产物类型枚举（阶段三加性新增 `table` 与 `draft` / `doc`）。
+
+    - `table`：表格（评分表 / 排期表），存 CSV + 前 5 行预览；
+    - `draft` / `doc`：可编辑稿件与文档（WF2 三类可编辑产物之二）。
+    """
 
     FILE = "file"
     LINK = "link"
     TEXT = "text"
+    TABLE = "table"
+    DRAFT = "draft"
+    DOC = "doc"
 
 
 class CreateTaskRequest(BaseModel):
@@ -58,13 +74,40 @@ class CreateTaskRequest(BaseModel):
     """
 
     conversation_id: str = Field(
-        min_length=1, max_length=128, description="会话 ID，形如 conv_01HF8..."
+        default="", max_length=128, description="会话 ID，形如 conv_01HF8..."
     )
-    goal: str = Field(min_length=1, max_length=4000, description="任务目标")
+    goal: str = Field(default="", max_length=4000, description="任务目标")
     profile: ModelProfile = Field(default=ModelProfile.GENERAL, description="能力档位")
     tool_grants: list[str] = Field(default_factory=list, description="允许使用的工具类型列表")
     inputs: dict[str, Any] = Field(default_factory=dict, description="任务输入")
     options: TaskOptions = Field(default_factory=lambda: TaskOptions(), description="执行选项")
+    plugin_id: str = Field(
+        default="",
+        max_length=44,
+        description="插件标识（有值时按插件声明执行并校验 inputs）",
+    )
+
+    @model_validator(mode="after")
+    def _require_phase1_fields(self) -> CreateTaskRequest:
+        """无 `plugin_id` 时，`conversation_id` 与 `goal` 仍为必填（阶段一等价）。
+
+        阶段一的两个必填字段**不能因为插件流程而放松**：`plugin_id` 为空却允许
+        空 `goal`，等于让阶段一的入参契约悄悄变宽（G4 加性 diff 会红）。
+        插件流程则相反——工作台只提交声明驱动的 `inputs`，没有「任务目标」这一栏。
+
+        Returns:
+            CreateTaskRequest: 自身。
+
+        Raises:
+            ValueError: 缺少阶段一必填字段。
+        """
+        if self.plugin_id:
+            return self
+        if not self.conversation_id:
+            raise ValueError("会话 ID 不能为空")
+        if not self.goal.strip():
+            raise ValueError("任务目标不能为空")
+        return self
 
 
 class TaskOptions(BaseModel):
@@ -96,6 +139,12 @@ class CreateTaskData(BaseModel):
     status: TaskStatus = Field(default=TaskStatus.RUNNING, description="任务状态")
     created_at: str = Field(default="", description="创建时间，ISO 8601 格式")
     estimated_seconds: int = Field(default=0, ge=0, description="预计耗时，单位秒")
+    plugin_id: str = Field(default="", description="插件标识（阶段三加性字段）")
+    steps_total: int = Field(default=0, ge=0, description="步骤总数（阶段三加性字段）")
+    retry_of: str | None = Field(default=None, description="重试来源任务 ID（加性字段）")
+    queue_position: int | None = Field(
+        default=None, description="排队位次（并发超限时有值，加性字段）"
+    )
 
 
 class TaskItem(BaseModel):
@@ -118,6 +167,10 @@ class TaskItem(BaseModel):
     progress: int = Field(default=0, ge=0, le=100, description="进度百分比")
     created_at: str = Field(default="", description="创建时间，ISO 8601 格式")
     updated_at: str = Field(default="", description="更新时间，ISO 8601 格式")
+    plugin_id: str = Field(default="", description="插件标识（阶段三加性字段）")
+    warning_count: int = Field(default=0, ge=0, description="未完成步骤数（阶段三加性字段）")
+    initiator_id: str = Field(default="", description="发起人 ID（阶段三加性字段）")
+    initiator_name: str = Field(default="", description="发起人显示名（阶段三加性字段）")
 
 
 class ListTasksQuery(PageQuery):
@@ -130,6 +183,10 @@ class ListTasksQuery(PageQuery):
 
     conversation_id: str = Field(default="", max_length=128, description="按会话过滤")
     status: TaskStatus | None = Field(default=None, description="按状态过滤")
+    plugin_id: str = Field(default="", max_length=44, description="按插件过滤（加性字段）")
+    initiator_id: str = Field(default="", max_length=64, description="按发起人过滤（加性字段）")
+    created_from: str = Field(default="", max_length=40, description="起始时间（加性字段）")
+    created_to: str = Field(default="", max_length=40, description="结束时间（加性字段）")
 
 
 class Artifact(BaseModel):
@@ -158,6 +215,12 @@ class TaskResult(BaseModel):
 
     summary: str = Field(default="", description="结果摘要")
     artifacts: list[Artifact] = Field(default_factory=list, description="产物列表")
+    checklist: list[Any] = Field(
+        default_factory=list, description="结果物核查清单（阶段三加性字段）"
+    )
+    warnings: list[str] = Field(
+        default_factory=list, description="未完成但不中断的提示（阶段三加性字段）"
+    )
 
 
 class TaskDetailData(BaseModel):
@@ -180,6 +243,13 @@ class TaskDetailData(BaseModel):
     result: TaskResult | None = Field(default=None, description="任务结果")
     usage: Usage = Field(default_factory=Usage, description="业务化用量")
     updated_at: str = Field(default="", description="更新时间，ISO 8601 格式")
+    plugin_id: str = Field(default="", description="插件标识（阶段三加性字段）")
+    plugin_version: str = Field(default="", description="声明版本快照（加性字段）")
+    initiator_name: str = Field(default="", description="发起人显示名（加性字段）")
+    queue_position: int | None = Field(default=None, description="排队位次（加性字段）")
+    steps_total: int = Field(default=0, ge=0, description="步骤总数（加性字段）")
+    retry_of: str | None = Field(default=None, description="重试来源任务 ID（加性字段）")
+    confirm: dict[str, Any] | None = Field(default=None, description="人工接管信息（加性字段）")
 
 
 class StepItem(BaseModel):
