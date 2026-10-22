@@ -47,6 +47,9 @@ CORE_BASELINE_COUNT: Final[int] = 30
 #: 阶段二新域端点基线数量
 PHASE2_BASELINE_COUNT: Final[int] = 38
 
+#: 阶段三插件域端点基线数量（PL1-PL13 + WF1）
+PHASE3_BASELINE_COUNT: Final[int] = 14
+
 #: 对外文档禁词（G5）：任何底座/中间件/内部实现的术语都不得外泄
 FORBIDDEN_TERMS: Final[tuple[str, ...]] = (
     "dify",
@@ -244,15 +247,19 @@ def gate_phase2_baseline(
 def gate_counts(
     core_count: int,
     phase2_count: int,
+    phase3_count: int = 0,
     *,
     allow_missing: bool,
+    allow_missing_phase3: bool = True,
 ) -> list[GateFailure]:
-    """G3：端点数门禁。
+    """G3：端点数门禁（三套基线：core=30 / phase2=38 / phase3=14）。
 
     Args:
         core_count: 核心端点实际数量。
-        phase2_count: 新域端点实际数量。
-        allow_missing: 是否允许新域端点未实现。
+        phase2_count: 阶段二新域端点实际数量。
+        phase3_count: 阶段三插件域端点实际数量。
+        allow_missing: 是否允许阶段二端点未实现。
+        allow_missing_phase3: 是否允许阶段三端点未实现（B17-B20 开发期）。
 
     Returns:
         list[GateFailure]: 失败明细。
@@ -274,6 +281,20 @@ def gate_counts(
             GateFailure(
                 "G3",
                 f"新域端点数量超出冻结上限 {PHASE2_BASELINE_COUNT}，实际 {phase2_count}",
+            )
+        )
+    if not allow_missing_phase3 and phase3_count != PHASE3_BASELINE_COUNT:
+        failures.append(
+            GateFailure(
+                "G3",
+                f"插件域端点数量必须为 {PHASE3_BASELINE_COUNT}，实际 {phase3_count}",
+            )
+        )
+    if allow_missing_phase3 and phase3_count > PHASE3_BASELINE_COUNT:
+        failures.append(
+            GateFailure(
+                "G3",
+                f"插件域端点数量超出冻结上限 {PHASE3_BASELINE_COUNT}，实际 {phase3_count}",
             )
         )
     return failures
@@ -502,26 +523,32 @@ def collect_failures(
     *,
     core_baseline: set[tuple[str, str]],
     phase2_baseline: set[tuple[str, str]],
-    snapshot: dict[str, Any] | None,
-    allow_missing_phase2: bool,
-    skip_diff: bool,
+    phase3_baseline: set[tuple[str, str]] | None = None,
+    snapshot: dict[str, Any] | None = None,
+    allow_missing_phase2: bool = False,
+    allow_missing_phase3: bool = True,
+    skip_diff: bool = False,
 ) -> tuple[list[GateFailure], dict[str, Any]]:
     """执行五道门禁并汇总结果。
 
     Args:
         schema: 当前 OpenAPI 文档。
         core_baseline: 核心基线端点。
-        phase2_baseline: 新域基线端点。
+        phase2_baseline: 阶段二基线端点。
+        phase3_baseline: 阶段三插件域基线端点（None 视为空集）。
         snapshot: 冻结快照（None 表示跳过 G4）。
-        allow_missing_phase2: 是否允许新域端点未实现。
+        allow_missing_phase2: 是否允许阶段二端点未实现。
+        allow_missing_phase3: 是否允许阶段三端点未实现。
         skip_diff: 是否跳过 G4（仅 hotfix 分支允许）。
 
     Returns:
         tuple[list[GateFailure], dict[str, Any]]: 失败清单与统计信息。
     """
+    declared_phase3 = phase3_baseline or set()
     operations = collect_operations(schema)
     phase2_actual = operations & phase2_baseline
-    core_actual = operations - phase2_baseline
+    phase3_actual = operations & declared_phase3
+    core_actual = operations - phase2_baseline - declared_phase3
 
     failures: list[GateFailure] = []
     failures.extend(gate_core_baseline(core_actual, core_baseline))
@@ -529,7 +556,16 @@ def collect_failures(
         gate_phase2_baseline(phase2_actual, phase2_baseline, allow_missing=allow_missing_phase2)
     )
     failures.extend(
-        gate_counts(len(core_actual), len(phase2_actual), allow_missing=allow_missing_phase2)
+        gate_phase2_baseline(phase3_actual, declared_phase3, allow_missing=allow_missing_phase3)
+    )
+    failures.extend(
+        gate_counts(
+            len(core_actual),
+            len(phase2_actual),
+            len(phase3_actual),
+            allow_missing=allow_missing_phase2,
+            allow_missing_phase3=allow_missing_phase3,
+        )
     )
     if snapshot is not None and not skip_diff:
         failures.extend(gate_additive_diff(snapshot, schema))
@@ -539,6 +575,8 @@ def collect_failures(
         "core": len(core_actual),
         "phase2": len(phase2_actual),
         "phase2_missing": len(phase2_baseline - phase2_actual),
+        "phase3": len(phase3_actual),
+        "phase3_missing": len(declared_phase3 - phase3_actual),
         "operations": len(operations),
     }
     return failures, stats
@@ -558,6 +596,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--allow-missing-phase2",
         action="store_true",
         help="允许 baseline-phase2-38.json 中尚未实现的端点（B02-B10 期间 CI 使用）",
+    )
+    parser.add_argument(
+        "--allow-missing-phase3",
+        action="store_true",
+        help=(
+            "允许 baseline-phase3-14.json 中尚未实现的端点（B17-B20 期间 CI 使用）；"
+            "B21 收口后必须去掉，届时插件域 14 条全部落地"
+        ),
     )
     parser.add_argument(
         "--update-snapshot",
@@ -596,6 +642,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     docs_dir = REPO_ROOT / "docs" / "api"
     core_path = docs_dir / "baseline-core-30.json"
     phase2_path = docs_dir / "baseline-phase2-38.json"
+    # 阶段三插件域基线（B17 起逐步补齐至 14 条，B21 收口）
+    phase3_path = docs_dir / "baseline-phase3-14.json"
     snapshot_path = docs_dir / "openapi.snapshot.json"
     openapi_path = docs_dir / "openapi.json"
 
@@ -620,6 +668,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     core_baseline = load_baseline(core_path)
     phase2_baseline = load_baseline(phase2_path)
+    phase3_baseline = load_baseline(phase3_path)
     if not core_baseline:
         print(f"[FAIL] 核心基线文件缺失或为空: {core_path.relative_to(REPO_ROOT)}")
         return 2
@@ -634,8 +683,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         schema,
         core_baseline=core_baseline,
         phase2_baseline=phase2_baseline,
+        phase3_baseline=phase3_baseline,
         snapshot=snapshot,
         allow_missing_phase2=args.allow_missing_phase2,
+        allow_missing_phase3=args.allow_missing_phase3,
         skip_diff=args.skip_diff,
     )
 
@@ -654,7 +705,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"[INFO] 端点统计: core={stats['core']} "
             f"phase2={stats['phase2']}/{PHASE2_BASELINE_COUNT} "
-            f"（未实现 {stats['phase2_missing']}）"
+            f"（未实现 {stats['phase2_missing']}） "
+            f"phase3={stats['phase3']}/{PHASE3_BASELINE_COUNT} "
+            f"（未实现 {stats['phase3_missing']}）"
         )
         for failure in failures:
             print(failure.render())

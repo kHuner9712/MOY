@@ -52,6 +52,10 @@ services:
       # 其 DROP POLICY IF EXISTS + CREATE POLICY p_tenant_isolation 会统一旧策略名
       # （用 01- 会先于 10-init-rls.sql 执行，导致新旧策略共存，见主理人裁决 1）
       - ./init-schema-phase2.sql:/docker-entrypoint-initdb.d/20-init-schema-phase2.sql:ro
+      # 阶段三业务库表结构（B17）：插件域 9 张表 + RLS 重声明 + 目录种子。
+      # **必须排在 20-init-schema-phase2.sql 之后**：它依赖阶段二建好的 tenant 表
+      # 与 p_tenant_isolation 体例，并把 plugin_catalog/plugin_version 并入共享分组。
+      - ./init-schema-phase3.sql:/docker-entrypoint-initdb.d/22-init-schema-phase3.sql:ro
       # 应用连接角色（非超级用户）：必须排在 20- 之后（先有表才能授权）。
       # 用 officeai（超级用户）连库会绕过行级安全，多租户隔离失效；
       # /readyz 的 db_privilege 自检会因此判 not_ready。

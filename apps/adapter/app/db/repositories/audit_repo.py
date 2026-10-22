@@ -44,6 +44,8 @@ from app.business.audit_service import (
     ACTION_ORDER_CREATED,
     ACTION_ORDER_PAID,
     ACTION_PAYMENT_CALLBACK_REJECTED,
+    ACTION_PLUGIN_CAPABILITY_POLICY,
+    ACTION_PLUGIN_INSTALL,
     ACTION_RECONCILE_MISMATCH,
     ACTION_ROLE_DELETE,
     ACTION_SETTINGS_UPDATE,
@@ -72,6 +74,7 @@ ACTION_GROUP_NAMES: Final[dict[str, str]] = {
     "role": "角色",
     "billing": "计量与账单",
     "ops": "运营管理",
+    "plugin": "插件与工作台",
 }
 
 #: ID11 动作目录（分组 → 动作清单），顺序即前端下拉顺序
@@ -90,9 +93,12 @@ ACTION_CATALOG: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             ACTION_ORDER_CREATED,
             ACTION_ORDER_PAID,
             ACTION_PAYMENT_CALLBACK_REJECTED,
+            ACTION_PLUGIN_CAPABILITY_POLICY,
+            ACTION_PLUGIN_INSTALL,
         ),
     ),
     ("ops", (ACTION_TENANT_STATUS, ACTION_ORDER_CONFIRMED, ACTION_SETTINGS_UPDATE)),
+    ("plugin", (ACTION_PLUGIN_INSTALL, ACTION_PLUGIN_CAPABILITY_POLICY)),
 )
 
 #: 动作全集（去重保序）

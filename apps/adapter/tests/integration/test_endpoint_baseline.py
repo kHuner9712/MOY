@@ -30,6 +30,7 @@ VALIDATOR_PATH = REPO_ROOT / "deploy" / "validate_openapi.py"
 
 #: 基线文件路径
 CORE_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-core-30.json"
+PHASE3_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase3-14.json"
 PHASE2_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase2-38.json"
 SNAPSHOT_PATH = REPO_ROOT / "docs" / "api" / "openapi.snapshot.json"
 
@@ -102,7 +103,8 @@ def test_actual_core_endpoints_equal_frozen_baseline() -> None:
     schema = validator.build_schema()
     operations = validator.collect_operations(schema)
     phase2 = validator.load_baseline(PHASE2_BASELINE_PATH)
-    core_actual = operations - phase2
+    phase3 = validator.load_baseline(PHASE3_BASELINE_PATH)
+    core_actual = operations - phase2 - phase3
     baseline = validator.load_baseline(CORE_BASELINE_PATH)
     assert core_actual == baseline
 
@@ -132,12 +134,16 @@ def test_repository_passes_gates_with_allow_missing_phase2() -> None:
         validator.build_schema(),
         core_baseline=validator.load_baseline(CORE_BASELINE_PATH),
         phase2_baseline=validator.load_baseline(PHASE2_BASELINE_PATH),
+        phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
         snapshot=_load_snapshot(),
         allow_missing_phase2=True,
+        allow_missing_phase3=True,
         skip_diff=False,
     )
     assert failures == [], [item.render() for item in failures]
     assert stats["core"] == 30
+    assert stats["phase2"] == 38
+    assert stats["phase3"] <= 14, "插件域端点不得超过冻结上限"
 
 
 def _load_snapshot() -> dict[str, Any]:
@@ -153,7 +159,10 @@ def _load_snapshot() -> dict[str, Any]:
 
 def test_cli_returns_zero_with_allow_missing_phase2() -> None:
     """CLI 在 `--allow-missing-phase2` 下退出码为 0（CI 现阶段口径）。"""
-    assert validator.main(["--allow-missing-phase2", "--no-write-openapi"]) == 0
+    assert (
+        validator.main(["--allow-missing-phase2", "--allow-missing-phase3", "--no-write-openapi"])
+        == 0
+    )
 
 
 def test_cli_returns_zero_in_strict_mode_after_b10() -> None:
@@ -164,7 +173,9 @@ def test_cli_returns_zero_in_strict_mode_after_b10() -> None:
     这正是该门禁的设计意图：放宽期结束，端点基线进入冻结状态。
     缺失检测能力由 `test_cli_returns_nonzero_when_endpoint_missing` 用合成 schema 兜住。
     """
-    assert validator.main(["--no-write-openapi"]) == 0
+    # 阶段三 14 条尚未全部落地（B17 起分批登记）→ 严格模式需显式放行 phase3；
+    # B21 收口后本行改回 `["--no-write-openapi"]` 且必须仍为 0。
+    assert validator.main(["--no-write-openapi", "--allow-missing-phase3"]) == 0
 
 
 def test_cli_returns_nonzero_when_endpoint_missing(
@@ -180,7 +191,7 @@ def test_cli_returns_nonzero_when_endpoint_missing(
     else:  # pragma: no cover - 端点被整体移除时才走到这里
         paths.pop(victim)
     monkeypatch.setattr(validator, "build_schema", lambda: {**schema, "paths": paths})
-    assert validator.main(["--no-write-openapi"]) == 1
+    assert validator.main(["--no-write-openapi", "--allow-missing-phase3"]) == 1
 
 
 # ===========================================================================

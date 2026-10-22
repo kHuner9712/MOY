@@ -36,6 +36,7 @@ from app.api.v1 import (
     knowledge_ext,
     model,
     ops,
+    plugins,
     rag,
     tool,
     tools_ext,
@@ -60,6 +61,11 @@ ADAPTER_CORE_ENDPOINTS: int = 30
 #: 阶段二新域端点基线（38 条；KB1-8 / TL1 / ID1-11 / BL1-10 / OPS1-8）
 #: 现阶段（B02）为 0 条已实现，基线文件 `docs/api/baseline-phase2-38.json` 由 B03 起逐步补齐
 PHASE2_DOMAIN_ENDPOINTS: int = 38
+
+#: 阶段三插件域端点基线（14 条：PL1-PL13 + WF1），**阶段二 38 条一个字节不改**。
+#: 计数由 `tests/integration/test_endpoint_baseline.py` 与
+#: `deploy/validate_openapi.py` 双向断言。
+PHASE3_DOMAIN_ENDPOINTS: int = 14
 
 #: 健康检查路由（免鉴权，不挂 API 版本前缀）
 health_router = APIRouter(tags=["健康检查"])
@@ -260,6 +266,8 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     api_router.include_router(billing.public_router, prefix=prefix)
     # 阶段二运营后台（B10，OPS1-OPS8）：平台模式守卫在端点内做，不依赖路由级依赖
     api_router.include_router(ops.router, prefix=prefix, dependencies=business_dependencies)
+    # 阶段三插件域（B17 起 PL1-PL5/PL13；B18 追加 PL6-PL12；B19 追加 WF1）
+    api_router.include_router(plugins.router, prefix=prefix, dependencies=business_dependencies)
     # 健康检查不挂 API 版本前缀，路径固定为 /healthz 与 /readyz
     api_router.include_router(health_router)
     return api_router
@@ -268,6 +276,7 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
 __all__ = [
     "ADAPTER_CORE_ENDPOINTS",
     "PHASE2_DOMAIN_ENDPOINTS",
+    "PHASE3_DOMAIN_ENDPOINTS",
     "TOTAL_BUSINESS_ENDPOINTS",
     "health_router",
     "healthz",

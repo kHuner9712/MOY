@@ -295,12 +295,14 @@ jobs:
           pip install -e .
 
       - name: 端点基线门禁（G1-G5）
-        # D-09：核心基线冻结 30 + 阶段二新域 38 = 68；B02-B10 期间用
-        # --allow-missing-phase2 放宽「已登记但尚未实现」的新域端点。
-        # 不允许为了过门禁而删除该参数或改写基线文件（baseline-core-30.json 受保护）。
+        # D-09 / D-21：三套基线 —— 核心 30（冻结）+ 阶段二新域 38（冻结）
+        # + 阶段三插件域 14（B17 起分批登记，B21 收口）。
+        # `--allow-missing-phase2` 覆盖「已登记但尚未实现」的阶段二端点；
+        # `--allow-missing-phase3` 同理覆盖阶段三，**B21 收口后必须去掉**。
+        # 不允许为了过门禁而删除参数或改写基线文件（baseline-core-30.json 受保护）。
         working-directory: .
         run: |
-          python deploy/validate_openapi.py --allow-missing-phase2
+          python deploy/validate_openapi.py --allow-missing-phase2 --allow-missing-phase3
 
       - name: 对外文档禁止泄露底座术语
         # 保留阶段一既有扫描（G5 已在 validate_openapi.py 内覆盖，

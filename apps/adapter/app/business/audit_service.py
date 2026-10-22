@@ -139,6 +139,15 @@ ACTION_SETTINGS_UPDATE: Final[str] = "ops.settings_update"
 #: 资源类型：支付回调（B09 安全加固）
 RESOURCE_PAYMENT_CALLBACK: Final[str] = "payment_callback"
 
+#: 资源类型：插件（阶段三 B17）
+RESOURCE_PLUGIN: Final[str] = "plugin"
+
+#: 操作：添加插件（PL5，阶段三 B17）
+ACTION_PLUGIN_INSTALL: Final[str] = "plugin.install"
+
+#: 操作：变更企业能力开关（PL13，阶段三 B17）
+ACTION_PLUGIN_CAPABILITY_POLICY: Final[str] = "plugin.capability_policy"
+
 #: 操作：支付回调被拒绝（签名/金额/订单状态校验未通过，B09 安全加固）
 #:
 #: 拒绝事件**必须**进审计：`payment_callback_log` 只记「已接受并处理」的回调，
@@ -171,6 +180,8 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_ORDER_CONFIRMED: "订单核销",
     ACTION_SETTINGS_UPDATE: "修改系统配置",
     ACTION_PAYMENT_CALLBACK_REJECTED: "支付回调被拒绝",
+    ACTION_PLUGIN_INSTALL: "添加插件",
+    ACTION_PLUGIN_CAPABILITY_POLICY: "变更企业能力开关",
 }
 
 
@@ -601,6 +612,8 @@ __all__: list[str] = [
     "ACTION_ORDER_CREATED",
     "ACTION_ORDER_PAID",
     "ACTION_PAYMENT_CALLBACK_REJECTED",
+    "ACTION_PLUGIN_CAPABILITY_POLICY",
+    "ACTION_PLUGIN_INSTALL",
     "ACTION_RECONCILE_MISMATCH",
     "ACTION_ROLE_DELETE",
     "ACTION_SETTINGS_UPDATE",
@@ -614,6 +627,7 @@ __all__: list[str] = [
     "RESOURCE_MEMBER",
     "RESOURCE_ORDER",
     "RESOURCE_PAYMENT_CALLBACK",
+    "RESOURCE_PLUGIN",
     "RESOURCE_ROLE",
     "RESOURCE_SETTINGS",
     "RESOURCE_SUBSCRIPTION",
