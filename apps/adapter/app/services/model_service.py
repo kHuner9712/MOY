@@ -20,6 +20,16 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+from app.business.context_assembler import (
+    AssembledContext,
+    ContextAssembler,
+    get_context_assembler,
+)
+from app.business.conversation_service import (
+    ConversationService,
+    StartedGeneration,
+    get_conversation_service,
+)
 from app.business.policy_service import PolicyService, get_policy_service, normalize_base_id
 from app.business.segment_service import SegmentHit, SegmentService, build_key
 from app.business.usage_service import UsageService, get_usage_service
@@ -38,6 +48,7 @@ from app.registry.loader import ProfileRoute, ProfileRouteTable, get_profile_rou
 from app.schemas.common import sse_frame
 from app.schemas.model import (
     CatalogData,
+    ChatMessage,
     Citation,
     FinishReason,
     GenerateData,
@@ -107,6 +118,31 @@ def _position_of_native(raw: Any) -> SegmentPosition | None:
     )
 
 
+def _delta_text(frame: str) -> str:
+    """取一帧 `delta` 事件的正文。
+
+    与 `_delta_text_of` 的区别：那个只给**长度**（中断折算用），这个给**内容**
+    （落库用）。中断时要把已下发的内容写进 assistant 行，否则刷新后"话说到一半"
+    会变成空白——用户看到的与历史里存的必须一致。
+
+    Args:
+        frame: 自研 SSE 文本帧。
+
+    Returns:
+        str: 正文；非 `delta` 帧返回空串。
+    """
+    if not frame.startswith("event: delta"):
+        return ""
+    _, _, raw = frame.partition("data: ")
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("text", ""))
+
+
 def _delta_text_of(frame: str) -> int:
     """取一帧 `delta` 事件的正文长度（流式中断折算用）。
 
@@ -145,6 +181,43 @@ def _total_units_of(event: dict[str, Any]) -> int:
     if total:
         return total
     return int(usage.get("prompt_tokens", 0) or 0) + int(usage.get("completion_tokens", 0) or 0)
+
+
+def _last_user_text(messages: list[ChatMessage]) -> str:
+    """取最后一条用户消息的正文。
+
+    Args:
+        messages: 请求里的消息列表。
+
+    Returns:
+        str: 最后一条 `role=user` 的正文；没有则返回空串。
+    """
+    for message in reversed(messages):
+        if message.role.value == "user":
+            return message.content
+    return ""
+
+
+def _with_conversation(
+    data: GenerateData, started: StartedGeneration, assembled: AssembledContext
+) -> GenerateData:
+    """给生成结果补上会话与来源字段（阶段四加性字段）。
+
+    Args:
+        data: 生成结果。
+        started: 本轮两条消息句柄。
+        assembled: 组装结果。
+
+    Returns:
+        GenerateData: 补全后的结果（`model_copy`，不改原对象）。
+    """
+    return data.model_copy(
+        update={
+            "conversation_id": started.conversation.conversation_id,
+            "history_source": assembled.history_source,
+            "ignored_client_history": assembled.ignored_client_history,
+        }
+    )
 
 
 def _with_notice(data: GenerateData, notice: tuple[int, str]) -> GenerateData:
@@ -221,6 +294,8 @@ class ModelService:
         segments: SegmentService | None = None,
         bases: KnowledgeBaseStore | None = None,
         usage: UsageService | None = None,
+        conversations: ConversationService | None = None,
+        assembler: ContextAssembler | None = None,
     ) -> None:
         """初始化服务。
 
@@ -232,6 +307,8 @@ class ModelService:
             segments: 可选片段映射服务（测试注入）。
             bases: 可选知识库元数据存储（引用回链的名称回填）。
             usage: 可选计量服务（测试注入；D-12 唯一写入口）。
+            conversations: 可选会话服务（阶段四落库；测试注入）。
+            assembler: 可选上下文组装器（阶段四自研组装；测试注入）。
         """
         self._settings = settings or get_settings()
         self._routes = routes or get_profile_routes()
@@ -240,6 +317,11 @@ class ModelService:
         self._segments: SegmentService = segments or SegmentService(self._settings)
         self._bases: KnowledgeBaseStore = bases or get_knowledge_base_store(self._settings)
         self._usage: UsageService = usage or get_usage_service(self._settings)
+        # 阶段四：会话落库与自研上下文组装（历史真源从客户端改为 message 表）
+        self._conversations: ConversationService = conversations or get_conversation_service(
+            self._settings
+        )
+        self._assembler: ContextAssembler = assembler or get_context_assembler(self._settings)
 
     # ------------------------------------------------------------------
     # 租户与授权库解析（B05）
@@ -437,6 +519,27 @@ class ModelService:
         # 只挂在 `data.notice_*` 上，外层 `code` 恒为 0——超额**不拦停**（PRD 5.3）。
         notice = await self._quota_notice(auth)
 
+        # ---- 阶段四落库与自研组装（架构 §5.1，顺序不可调换）---------------
+        # 校验 → **落库 user 消息** → 组装 → 调底座 → 回写助手消息。
+        # 用户消息必须先落库：反过来（先调上游）一旦上游超时或进程被杀，
+        # 用户那句话就永久丢了，而他看到的是"消息发出去了"。
+        tenant_id = self._tenant_of(auth)
+        current_text = _last_user_text(request.messages)
+        started = await self._conversations.start_generation(
+            tenant_id, user_id, request.conversation_id, user_text=current_text
+        )
+        assembled = await self._assembler.build(
+            tenant_id,
+            user_id,
+            started.conversation.conversation_id,
+            current_user_text=current_text,
+            client_messages=request.messages,
+            current_message_id=started.user_message.message_id,
+            history_window=request.context.history_window,
+            profile=request.profile.value,
+            assemble_from=request.context.assemble_from,
+        )
+
         if self._settings.mock_mode:
             stub = self._stub_generate(request)
             await self._settle_generation(
@@ -446,11 +549,24 @@ class ModelService:
                 auth=auth,
                 source="settled",
             )
-            return _with_notice(stub, notice)
+            await self._finalize_assistant(
+                tenant_id, started, content=stub.content, status="settled"
+            )
+            return _with_notice(_with_conversation(stub, started, assembled), notice)
 
-        response = await self._dify.post(
-            _DIFY_CHAT_PATH, self._build_downstream_payload(request, user_id)
-        )
+        try:
+            response = await self._dify.post(
+                _DIFY_CHAT_PATH,
+                self._build_downstream_payload(
+                    request, user_id, query_override=assembled.query_text
+                ),
+            )
+        except Exception:
+            # 上游失败：把助手行收口为 failed（**不给用户看码与堆栈**），再原样抛出
+            await self._finalize_assistant(
+                tenant_id, started, content="", status="failed", error_reason="回答生成失败，请重试"
+            )
+            raise
         # 非流式同样剥离推理标记（INT-06）
         payload = response.payload
         if isinstance(payload.get("answer"), str):
@@ -469,7 +585,50 @@ class ModelService:
             auth=auth,
             source="settled",
         )
-        return _with_notice(settled, notice)
+        await self._finalize_assistant(
+            tenant_id, started, content=settled.content, status="settled"
+        )
+        return _with_notice(_with_conversation(settled, started, assembled), notice)
+
+    async def _finalize_assistant(
+        self,
+        tenant_id: str,
+        started: StartedGeneration,
+        *,
+        content: str,
+        status: str,
+        error_reason: str = "",
+        truncated: bool = False,
+    ) -> None:
+        """写助手消息终态（**失败不影响已返回给用户的回答**）。
+
+        落库失败只记 WARN：用户已经拿到答案，此时抛错等于把"能用的回答"变成
+        "500 错误页"。偏差由对账脚本与 `message` 表的孤儿扫描兜住。
+
+        Args:
+            tenant_id: 企业 ID。
+            started: 本轮两条消息句柄。
+            content: 终态正文。
+            status: `settled|aborted|failed`。
+            error_reason: 业务化失败原因。
+            truncated: 是否截断。
+        """
+        try:
+            await self._conversations.finalize_assistant_message(
+                tenant_id,
+                started.assistant_message.message_id,
+                content=content,
+                status=status,
+                error_reason=error_reason,
+                truncated=truncated,
+            )
+        except Exception as exc:
+            logger.warning(
+                "assistant_message_finalize_failed",
+                conversation_id=started.conversation.conversation_id,
+                message_id=started.assistant_message.message_id,
+                detail=type(exc).__name__,
+            )
 
     async def _settle_generation(
         self,
@@ -534,7 +693,7 @@ class ModelService:
         return await self._usage.quota_notice(tenant_id=self._tenant_of(auth), user_id=user_id)
 
     def _build_downstream_payload(
-        self, request: GenerateRequest, user_id: str = ""
+        self, request: GenerateRequest, user_id: str = "", *, query_override: str = ""
     ) -> dict[str, Any]:
         """构造底座原生请求体。
 
@@ -543,6 +702,12 @@ class ModelService:
 
         Args:
             request: 自研生成请求。
+            user_id: 终端用户标识。
+            query_override: 已组装好的 query（阶段四 server 模式）。
+
+                给了它就用它：历史来自自研库（`ContextAssembler`），本方法退化为
+                "只做字段搬运"，不再自己拼 transcript。**两条路径不许同时在跑**——
+                否则同一句话既在组装段里、又被本方法拼一遍，模型会看到重复历史。
 
         Returns:
             dict[str, Any]: 底座原生请求体。
@@ -568,6 +733,8 @@ class ModelService:
                 + "\n\n请基于以上对话回答最后这个问题："
                 + last_user_message
             )
+        if query_override:
+            query = query_override
 
         return {
             "inputs": {},
@@ -747,37 +914,80 @@ class ModelService:
         # 为什么不中途插帧：流式期间插入非 delta 帧会打断前端渲染与自动滚动；
         # 为什么不改 `error` 帧：超额不是错误，PRD 5.3 要求"提醒而非拦停"。
         notice = await self._quota_notice(auth)
+        # 阶段四：与 M1 同序——先落库，再组装，再开流。
+        current_text = _last_user_text(request.messages)
+        started = await self._conversations.start_generation(
+            tenant_id, user_id, request.conversation_id, user_text=current_text
+        )
+        assembled = await self._assembler.build(
+            tenant_id,
+            user_id,
+            started.conversation.conversation_id,
+            current_user_text=current_text,
+            client_messages=request.messages,
+            current_message_id=started.user_message.message_id,
+            history_window=request.context.history_window,
+            profile=request.profile.value,
+            assemble_from=request.context.assemble_from,
+        )
         logger.info(
             "model_stream_started",
-            conversation_id=request.conversation_id,
+            conversation_id=started.conversation.conversation_id,
             profile=request.profile.value,
             knowledge_base_count=len(authorized),
+            history_source=assembled.history_source,
         )
-        yield sse_frame("start", StreamStartData(generation_id=generation_id).model_dump())
+        yield sse_frame(
+            "start",
+            StreamStartData(
+                generation_id=generation_id,
+                conversation_id=started.conversation.conversation_id,
+            ).model_dump(),
+        )
 
         # 结算状态：`produced_chars` 累计已下发正文（中断折算依据），
         # `settled` 标记是否已按下游 usage 精确结算（D-12 第 3 条）
         produced_chars = 0
+        #: 已下发的可见正文（中断时写进 assistant 行的 `content`——用户看到的
+        #: 与历史里存的必须一致，否则刷新后"话说到一半"变成空白）
+        produced_parts: list[str] = []
         settled = False
         downstream_total: int | None = None
 
         if self._settings.mock_mode:
-            async for frame in self._stub_stream(generation_id, request, notice=notice):
-                produced_chars += _delta_text_of(frame)
-                yield frame
-            await self._settle_generation(
-                generation_id=generation_id,
-                units=self._stub_units(request),
-                has_authorized_bases=bool(authorized),
-                auth=auth,
-                source="settled",
-            )
+            completed = False
+            try:
+                async for frame in self._stub_stream(generation_id, request, notice=notice):
+                    text = _delta_text(frame)
+                    produced_chars += len(text)
+                    if text:
+                        produced_parts.append(text)
+                    yield frame
+                await self._settle_generation(
+                    generation_id=generation_id,
+                    units=self._stub_units(request),
+                    has_authorized_bases=bool(authorized),
+                    auth=auth,
+                    source="settled",
+                )
+                completed = True
+            finally:
+                # 客户端中途断开时 `async for` 不会跑完，这里必须自己收口，
+                # 否则那一行永远停在 streaming（下次打开会看到"正在输入"）
+                await self._finalize_assistant(
+                    tenant_id,
+                    started,
+                    content="".join(produced_parts),
+                    status="settled" if completed else "aborted",
+                    error_reason="" if completed else "回答中断，可重新发送",
+                    truncated=not completed,
+                )
             return
 
         try:
-            streaming_payload = self._build_downstream_payload(request, user_id) | {
-                "response_mode": "streaming"
-            }
+            streaming_payload = self._build_downstream_payload(
+                request, user_id, query_override=assembled.query_text
+            ) | {"response_mode": "streaming"}
             reasoning_filter = _ReasoningFilter()
             async for event in self._dify.post_stream(_DIFY_CHAT_PATH, streaming_payload):
                 native = str(event.get("event", ""))
@@ -788,12 +998,14 @@ class ModelService:
                     if not visible:
                         continue
                     produced_chars += len(visible)
+                    produced_parts.append(visible)
                     event = {**event, "answer": visible}
                 elif native == "message_end":
                     # 流结束前冲洗过滤器缓冲（短回答可能整体滞留在缓冲中）
                     rest = reasoning_filter.flush()
                     if rest:
                         produced_chars += len(rest)
+                        produced_parts.append(rest)
                         yield sse_frame("delta", StreamDeltaData(text=rest).model_dump())
                     downstream_total = _total_units_of(event)
                 mapped_frame = self._transform_stream_event(event, citation_ctx, notice=notice)
@@ -825,6 +1037,21 @@ class ModelService:
                         auth=auth,
                         source="estimated",
                     )
+            # 落库终态：完整走完 → settled；中断/断开 → aborted + truncated=true，
+            # **已收到的部分内容保留**（用户看到的与历史里存的必须一致）
+            if settled:
+                await self._finalize_assistant(
+                    tenant_id, started, content="".join(produced_parts), status="settled"
+                )
+            else:
+                await self._finalize_assistant(
+                    tenant_id,
+                    started,
+                    content="".join(produced_parts),
+                    status="aborted",
+                    error_reason="回答中断，可重新发送",
+                    truncated=True,
+                )
 
     def _transform_stream_event(
         self,

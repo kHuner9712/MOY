@@ -45,6 +45,10 @@ services:
       # 阶段四：会话/消息表（迁移 0008 的入网落点）。必须在阶段三之后：
       # initdb 以超级用户执行，应用角色对 public 无 CREATE 权限，
       # 若只靠迁移建表，新装环境的第一次 --apply 会 permission denied。
+      # ⚠ 还必须排在 `30-init-app-role.sql` **之后**（字典序依赖：
+      #   `30-init-app-role` < `30-init-schema-phase4` 才恰好成立）。
+      #   改文件名会让授权在角色创建前执行、静默跳过 GRANT——表现为
+      #   「表建好了、应用角色却无权读写」，initdb 日志里只有一行 NOTICE。
       - ./init-schema-phase4.sql:/docker-entrypoint-initdb.d/30-init-schema-phase4.sql:ro
       # 应用连接角色（非超级用户）：排在 20- 之后（先有表才能授权）
       - ./init-app-role.sql:/docker-entrypoint-initdb.d/30-init-app-role.sql:ro

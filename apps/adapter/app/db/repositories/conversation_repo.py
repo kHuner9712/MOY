@@ -217,6 +217,14 @@ class ConversationStore(Protocol):
         """按（租户 + 本人 + 会话）读取；**不返回已软删的行**。"""
         ...
 
+    async def get_any(self, tenant_id: str, conversation_id: str) -> ConversationRecord | None:
+        """按 ID 读取**任意状态**的行（含已软删、含他人）。
+
+        只用于「这个 ID 到底存不存在」的判定：给了一个已存在但不属于本会话的 ID 时，
+        必须报 18001 而不是悄悄覆盖（覆盖 = 把别人的会话内容清空）。
+        """
+        ...
+
     async def list_page(
         self,
         tenant_id: str,
@@ -429,6 +437,18 @@ class InMemoryConversationStore:
         if record is None or record.user_id != user_id or record.deleted:
             return None
         return record
+
+    async def get_any(self, tenant_id: str, conversation_id: str) -> ConversationRecord | None:
+        """按 ID 读取任意状态的行（内存实现）。
+
+        Args:
+            tenant_id: 企业 ID。
+            conversation_id: 会话 ID。
+
+        Returns:
+            ConversationRecord | None: 会话。
+        """
+        return self._items.get((tenant_id, conversation_id))
 
     async def list_page(
         self,
@@ -761,6 +781,25 @@ class PostgresConversationStore:
                    AND deleted_at IS NULL
                 """,
                 repo.params(conversation_id=conversation_id, user_id=user_id),
+            )
+        return _to_conversation(row) if row is not None else None
+
+    async def get_any(self, tenant_id: str, conversation_id: str) -> ConversationRecord | None:
+        """按 ID 读取任意状态的行（忽略 `user_id` 与软删）。
+
+        Args:
+            tenant_id: 企业 ID。
+            conversation_id: 会话 ID。
+
+        Returns:
+            ConversationRecord | None: 会话。
+        """
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _ConversationTableRepository(uow)
+            row = await repo.fetch_one(
+                f"SELECT * FROM {CONVERSATION_TABLE} "
+                f"WHERE {repo.tenant_clause()} AND conversation_id = :conversation_id",
+                repo.params(conversation_id=conversation_id),
             )
         return _to_conversation(row) if row is not None else None
 

@@ -27,6 +27,9 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
     {
         "schema_migration",
         "tenant",
+        # 阶段四 0008：会话与消息（个人数据，strict RLS）
+        "conversation",
+        "message",
         "knowledge_base_meta",
         "knowledge_base_grant",
         "document_meta",
@@ -68,6 +71,9 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
 STRICT_TENANT_TABLES: frozenset[str] = frozenset(
     {
         "tenant",
+        # 阶段四 0008：会话与消息同样是 strict（租户边界 + 仓储层个人边界）
+        "conversation",
+        "message",
         "knowledge_base_meta",
         "knowledge_base_grant",
         "document_meta",

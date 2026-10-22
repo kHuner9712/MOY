@@ -97,17 +97,36 @@ class ConversationService:
             tuple[ConversationRecord, bool]: `(会话, 是否新建)`。
 
         Raises:
-            ApiError: 会话已存在但不属于本人（18001；不区分"不存在"以免探测）。
+            ApiError: 会话 ID 已存在但已软删或不属于本人（18001；不区分以免探测）。
         """
         if conversation_id:
             existing = await self._conversations.get(tenant_id, user_id, conversation_id)
             if existing is not None:
                 return existing, False
-            # 已被软删或不属于本人：**同一个码**，避免"这个 ID 存在但不是你的"泄漏
-            raise ApiError(
-                ErrorCode.CONVERSATION_NOT_FOUND,
-                internal_detail=f"conversation_id={conversation_id} user_id={user_id}",
+            # ID 存在但已软删 / 不属于本人 → 18001，**绝不覆盖**
+            # （覆盖等于把别人的会话内容清空，比"查不到"严重得多）
+            other = await self._conversations.get_any(tenant_id, conversation_id)
+            if other is not None:
+                raise ApiError(
+                    ErrorCode.CONVERSATION_NOT_FOUND,
+                    internal_detail=(
+                        f"conversation_id={conversation_id} user_id={user_id} "
+                        f"deleted={other.deleted}"
+                    ),
+                )
+            # **采纳老客户端的会话 ID**：阶段四之前 `conversation_id` 是必填的标签，
+            # 老调用方会传自己生成的 ID（如 `conv_base`、前端本地 UUID）。
+            # 若这里报 18001，等于把「必填→可选」这个"向后兼容变更"（架构 §4.3 B-1）
+            # 做成破坏性变更。所以首次见到就按该 ID 建会话，之后照常复用。
+            adopted = await self._conversations.create(
+                ConversationRecord(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    title=(title_hint or "").strip()[:TITLE_PREFIX_LENGTH],
+                )
             )
+            return adopted, True
         created = await self._conversations.create(
             ConversationRecord(
                 tenant_id=tenant_id,

@@ -322,10 +322,31 @@ async def test_finalize_rejects_non_terminal_status(service: ConversationService
     assert excinfo.value.code == ErrorCode.INTERNAL_ERROR
 
 
-async def test_unknown_conversation_id_is_18001(service: ConversationService) -> None:
-    """给一个库里不存在的 `conv_` → 18001（不区分"不属于你"，避免探测）。"""
+async def test_client_supplied_conversation_id_is_adopted(
+    service: ConversationService,
+) -> None:
+    """老客户端传的 ID 首次出现时**被采纳**（架构 §4.3 B-1 的向后兼容前提）。
+
+    阶段四之前 `conversation_id` 是必填标签，老调用方会传自己生成的 ID。
+    若这里报 18001，"必填→可选"就变成了破坏性变更。
+    """
+    started = await service.start_generation(TENANT, USER, "conv_legacy_label", user_text="你好")
+
+    assert started.conversation.conversation_id == "conv_legacy_label"
+    assert started.is_new_conversation is True
+
+
+async def test_conversation_id_of_another_user_is_18001(
+    service: ConversationService,
+) -> None:
+    """ID 存在但属于别人（或已软删）→ 18001，**绝不覆盖**别人的会话。"""
+    owner = await service.start_generation(TENANT, USER, "", user_text="我的会话")
+    conversation_id = owner.conversation.conversation_id
+
     with pytest.raises(ApiError) as excinfo:
-        await service.start_generation(TENANT, USER, "conv_does_not_exist", user_text="你好")
+        await service.start_generation(
+            TENANT, "usr_someone_else", conversation_id, user_text="插话"
+        )
 
     assert excinfo.value.code == ErrorCode.CONVERSATION_NOT_FOUND
     assert excinfo.value.to_response().message == "该对话已不存在"

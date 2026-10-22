@@ -182,6 +182,14 @@ class GenerateData(BaseModel):
     #: 提示走 `code` 就会变成弹错误框，等于把"提醒"做成"停服"。
     notice_code: int = Field(default=0, ge=0, description="非阻断提示码（额度用尽为 15006）")
     notice_message: str = Field(default="", description="非阻断提示文案（无提示时为空串）")
+    #: 本次生成所属会话（阶段四加性字段）。请求没带 `conversation_id` 时由服务端生成，
+    #: 客户端必须回存这个值，否则下一轮会开新会话（历史断裂）。
+    conversation_id: str = Field(default="", description="会话 ID（服务端生成时回填）")
+    #: 历史来源：`server`（自研库）/ `server_empty`（首轮）/ `client`（逃生门）。
+    #: 对外只作诊断用，前端不需要它做分支。
+    history_source: str = Field(default="", description="历史来源")
+    #: 被忽略的客户端历史条数（灰度观察用：>0 说明客户端仍在传历史）。
+    ignored_client_history: int = Field(default=0, ge=0, description="被忽略的客户端历史条数")
 
 
 class ProfileItem(BaseModel):
@@ -258,9 +266,13 @@ class StreamStartData(BaseModel):
 
     Attributes:
         generation_id: 生成记录 ID。
+        conversation_id: 会话 ID（阶段四加性字段；服务端生成时回填，客户端须回存）。
     """
 
     generation_id: str = Field(description="生成记录 ID")
+    #: 会话 ID（阶段四）。请求没带 `conversation_id` 时由服务端生成，
+    #: 客户端不回存这个值，下一轮就会开新会话、历史断裂。
+    conversation_id: str = Field(default="", description="会话 ID（服务端生成时回填）")
 
 
 class StreamDeltaData(BaseModel):
