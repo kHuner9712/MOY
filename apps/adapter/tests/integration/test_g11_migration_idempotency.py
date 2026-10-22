@@ -59,9 +59,10 @@ PROBE_TABLE = f"probe_default_priv_{uuid.uuid4().hex[:8]}"
 
 #: 判据阈值（qa-phase2-test-plan.md §2.1 G-11）
 #: 阶段三 B17 起 0003 迁移自足建表（9 张插件域表），故总数 25 → 34；
-#: 阶段四 0008 再建 2 张（`conversation` / `message`），34 → 36。
+#: 阶段四 0008 再建 2 张（`conversation` / `message`），34 → 36；
+#: 0009/0010 再建 4 张（记忆三表 + `background_job`），36 → 40。
 #: 该常量随 schema 演进是预期行为；**不要**为了让数量对上而删表或跳过迁移。
-EXPECTED_TABLES = 36
+EXPECTED_TABLES = 40
 EXPECTED_PLANS = 3
 EXPECTED_PERMISSIONS = 20
 

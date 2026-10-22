@@ -30,6 +30,11 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
         # 阶段四 0008：会话与消息（个人数据，strict RLS）
         "conversation",
         "message",
+        # 阶段四 0009/0010：记忆三表 + 后台任务（全部 strict RLS）
+        "user_memory",
+        "memory_embedding",
+        "user_memory_setting",
+        "background_job",
         "knowledge_base_meta",
         "knowledge_base_grant",
         "document_meta",
@@ -74,6 +79,11 @@ STRICT_TENANT_TABLES: frozenset[str] = frozenset(
         # 阶段四 0008：会话与消息同样是 strict（租户边界 + 仓储层个人边界）
         "conversation",
         "message",
+        # 阶段四 0009/0010：记忆与任务表同样 strict
+        "user_memory",
+        "memory_embedding",
+        "user_memory_setting",
+        "background_job",
         "knowledge_base_meta",
         "knowledge_base_grant",
         "document_meta",

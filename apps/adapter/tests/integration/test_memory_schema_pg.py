@@ -80,6 +80,13 @@ async def test_vector_extension_is_installed(pg_dsn: str) -> None:
         await connection.close()
 
     assert version, "未安装 pgvector 扩展——0009 与记忆内核整体不可用"
+    # 版本下限：`vector(n)` 与 HNSW 索引在 0.5 之前不可用，0.8 起才有稳定的
+    # `vector_cosine_ops` + HNSW。这条断言存在的意义是**防"镜像换了但扩展没装"**：
+    # 本机实测过一次——镜像里有扩展文件（pg_available_extensions 有 0.8.7），
+    # 但库里未安装（pg_extension 只有 plpgsql），直到 init 脚本补了
+    # `CREATE EXTENSION` 才真正可用。
+    major, minor = (int(part) for part in version.split(".")[:2])
+    assert (major, minor) >= (0, 8), f"pgvector 版本过低：{version}（需 ≥ 0.8）"
 
 
 async def test_memory_tables_exist_with_force_rls(pg_dsn: str) -> None:

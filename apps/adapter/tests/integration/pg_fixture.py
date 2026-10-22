@@ -432,6 +432,17 @@ async def create_empty_database(superuser_dsn_value: str, name: str) -> str:
         await connection.execute(f"ALTER DATABASE {name} OWNER TO {APP_ROLE}")
     finally:
         await connection.close()
+
+    # **扩展必须由超级用户预建**：`vector` 的 trusted=false，应用角色**即使是
+    # 库属主**也建不出 `CREATE EXTENSION vector`（实测 pgvector 0.8.7）。
+    # 真实部署里这一步由 `init-schema-phase4.sql`（initdb 超级用户）或 DBA 完成；
+    # 临时空库必须等价模拟一次，否则 0009 在每个 `--run-pg` 用例里第一步就死。
+    installer = await asyncpg.connect(_swap_database(superuser_dsn_value, name))
+    try:
+        await installer.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    finally:
+        await installer.close()
+
     return _swap_database(superuser_dsn_value, name).replace(
         f"://{SUPERUSER_ROLE}:", f"://{APP_ROLE}:", 1
     )
