@@ -88,7 +88,7 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         "status": "open",
         "pinned_by": "SQL↔DDL 静态门禁 + PG create_task 用例",
         "due_batch": "B21",
-        "due_action": "修复提交落库 + PG create_task 用例走通（工作区改动不算）",
+        "due_action": "①修复已提交②PG create_task 走通③改坏即红（工作区不算）",
     },
     # B20 两条挂账（到期 B21，到期即红）
     # 升级 P1→P0：缺口落在核心路径（task 47.81% / artifact 60.67% / plugin 67.80%），
