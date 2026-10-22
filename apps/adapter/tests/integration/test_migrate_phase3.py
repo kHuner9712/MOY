@@ -219,18 +219,20 @@ async def test_shared_catalog_rows_are_readable_across_tenants(scratch_dsn: str)
 
 
 @pytest.mark.asyncio
-async def test_0003_migration_is_read_only_reconcile(scratch_dsn: str) -> None:
-    """`0003` 只做对账：9 表齐备时通过；缺表时失败并给出可执行指引。"""
+async def test_0003_migration_is_self_sufficient(scratch_dsn: str) -> None:
+    """`0003` 必须**自足**：空库只跑它就能建出 9 张表并通过对账（G-11 判据）。"""
     directory = resolve_sql_dir()
     migration = directory / "migrations" / "0003_phase3_plugin_tables.sql"
-    assert migration.is_file(), "缺少 0003 对账迁移"
+    assert migration.is_file(), "缺少 0003 迁移"
 
-    # 缺表 → 必须失败（fail-fast，而不是静默通过）
-    with pytest.raises(Exception) as excinfo:
-        await _execute_script(scratch_dsn, migration)
-    assert "缺少阶段三数据表" in str(excinfo.value)
-
-    # 补齐基线后 → 通过
+    # 迁移链是 0001（phase2 基线）→ 0002 → 0003；0003 依赖 phase2 的共享目录表
+    # （`permission_catalog` 等，用于重声明共享策略分组），因此这里先跑 phase2 基线，
+    # 再**只跑 0003** —— 这正是 G-11 的「空库 + 只跑 migrations」路径。
     await _execute_script(scratch_dsn, directory / "init-schema-phase2.sql")
-    await _execute_script(scratch_dsn, directory / "init-schema-phase3.sql")
     await _execute_script(scratch_dsn, migration)
+    tables = await _scalar(scratch_dsn, TABLES_COUNT_SQL)
+    assert tables == len(PHASE3_TABLES), f"0003 未建出全部表：{tables}/{len(PHASE3_TABLES)}"
+
+    # 再跑一遍 → 幂等（表已存在则整段跳过，不重复建、不报错）
+    await _execute_script(scratch_dsn, migration)
+    assert await _scalar(scratch_dsn, TABLES_COUNT_SQL) == len(PHASE3_TABLES)

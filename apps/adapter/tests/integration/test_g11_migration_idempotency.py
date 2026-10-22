@@ -54,7 +54,9 @@ ADAPTER_ROOT = Path(__file__).resolve().parents[2]
 PROBE_TABLE = "probe_default_priv"
 
 #: 判据阈值（qa-phase2-test-plan.md §2.1 G-11）
-EXPECTED_TABLES = 25
+#: 阶段三 B17 起 0003 迁移自足建表（9 张插件域表），故总数 25 → 34。
+#: 该常量随 schema 演进是预期行为；**不要**为了让数量对上而删表或跳过迁移。
+EXPECTED_TABLES = 34
 EXPECTED_PLANS = 3
 EXPECTED_PERMISSIONS = 20
 
