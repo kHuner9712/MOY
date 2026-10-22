@@ -20,12 +20,12 @@
 | B23 | 市场/详情/授权抽屉/评价 | `96cb8fd` `66b98f3` | ✅ | 16 端点契约补充 |
 | B24 | 工作台单宿主 | `075b529` | ✅ | G-27 宿主唯一 |
 | B25 | 任务列表与详情、WF2 产物编辑 | `68e8e19` | ✅ | — |
-| **B26** | **端到端装配、演示数据与 e2e** | — | **⚠ 补交付中** | 收口阶段才启动，见 §3 |
+| **B26** | **端到端装配、演示数据与 e2e** | `a6a2a7b` `56aca70` `273ee9a` `47b5b6c` | ✅ **收口期补交付** | 22 条 e2e 全绿 + demo 脚本 + 演示文档 + G-31 |
 | B27 | G-27/G-28/G-30 门禁与「可红」证明 | `53d0292` `e5e6b97` `24decb5` | ✅ | — |
-| B28 | 覆盖率、门禁扩写与全量回归 | 分散在 QA 提交 | ⚠ 部分 | 覆盖率达成，但**10 个文件中 4 个未按名单交付**，见 §3 |
-| B29 | 验收材料与文档同步 | 本批 | ⚠ 部分 | 验收报告已有；**6 个文件中 1 个（P0-P3-05 插件开发文档）收口期才补** |
+| B28 | 覆盖率、门禁扩写与全量回归 | 分散在 QA 提交 + `cd394eb`(G-31) | ✅ | 覆盖率达成；G-31 收口期补齐；其余按域合并，见 §3.2 |
+| B29 | 验收材料与文档同步 | `2eca02c` + 本轮 | ✅ | 6 个文件中插件开发文档（P0-P3-05）收口期补齐，其余本轮同步 |
 
-**结论**：14 批中 **11 批完整交付、3 批（B26/B28/B29）存在缺项**。缺项都不是"写了但没写好"，而是**整份文件/整批产物没出现**。
+**结论（收口后）**：**14/14 批全部交付**。收口前曾有 3 批（B26/B28/B29）缺项，缺项都不是"写了但没写好"，而是**整份文件/整批产物没出现**——B26 整批、P0-P3-05 插件开发文档、G-31 门禁脚本，均已在收口期补齐。
 
 ---
 
@@ -40,7 +40,7 @@
 | G-13 | `python apps/adapter/scripts/check_error_catalog.py --strict` | EXIT 0；`[RESERVED] 12004` 恰 1 条；WARN 清单见 §4 | ✅ |
 | G-26/28 | `python deploy/validate_plugins.py` / `--self-test` | 主检 0 / 自检 1（负样本全拦） | ✅ |
 | G-29 | 端点基线严格模式 | 同上，无 `--allow-missing-phase3` 也能过 | ✅ |
-| G-31 | `python deploy/validate_schema_retention.py` | **收口期新增**，见 §3 | ⏳ |
+| G-31 | `python deploy/validate_schema_retention.py` | EXIT 0；`--self-test` 三条负样本全拦（90 天/缺列/timestamp）；改坏即红已自证 | ✅ |
 | 台账 ⑯ | `OA_BATCH=B21 pytest tests/integration/test_plugin_contract_skeleton.py` | 12 passed（open 缺陷均在期内） | ✅ |
 | 前端 6 道 | `node apps/web/scripts/check-*.mjs` | 禁词/占位词/三态/契约/能力一致性/宿主唯一 全 0 命中 | ✅ |
 
@@ -94,6 +94,8 @@
 | 编号 | 级别 | 内容 | 证据 |
 | --- | --- | --- | --- |
 | `P3-B22-01` | P1 | **PRD 5.3「额度用尽软限制」四项行为完全未实现**（对话限长 / 文档暂停 / 自动化排队不启动 / 管理员通知） | `over_quota_warning` 仅被计费域 `billing.py:412`、`subscription_service.py:484/628` 消费；M1/M2/R3/A1 四条路径**零接入**。超额租户可无限跑文档与自动化 |
+| `P3-B22-03` | P1 | **产物二进制内容未持久化**（PG 后端 `content` 恒为空，下载回落文本预览） | `ArtifactRecord.content` 注释「仅内存后端保留」；PG 模式导出 docx 得到非 zip |
+| `P3-B22-04` | P2 | 下载响应 MIME 恒 `text/plain` | `plugin_artifact` 无 `content_type` 列，两后端一致 |
 | `P3-B22-02` | P2 | **任务级超时无强制，且有一个死配置** | `config.py:211 plugin_task_timeout_seconds`（默认 900）全文**零读取**；`engine.py:960` 写入的 `params["timeout_seconds"]` **无消费方**；PRD P0-P3-02③ 无实现可测 |
 
 > 两条都在 `tests/expected_xfail.py` 台账登记，`due_batch=B30`，由门禁 ⑯ 在到达该批次时强制变红。
@@ -131,4 +133,5 @@
 
 ## 6. 最终基线
 
-本文件随收口更新。最终收口基线以 `docs/phase3-acceptance-report.md` 的"代码基线"字段为准。
+**最终收口基线：`develop` @ `d363909`**（全量 1573 passed / 0 failed / 0 skipped；覆盖率合并 90.78%、分支 2315/2862 = 80.89%、余量 +122）。
+随后合并入 `main`，仓库只保留 `main` 一个分支。
