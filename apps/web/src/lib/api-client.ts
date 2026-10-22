@@ -297,6 +297,13 @@ async function unwrap<T>(response: Response): Promise<T> {
   if (payload.code === 0) {
     return payload.data as T;
   }
+  // 阶段四：`15006`（额度用尽）的传输层状态由 200 改为 **402**。
+  // 这里**不按 status 分流**，一律走 `code`——这正是要保住的行为：
+  //   402 仍然是「业务响应」，必须落进 BusinessError 展示后端 message，
+  //   绝不能因为 `!response.ok` 被当成网络/系统错误（那会退化成"系统繁忙，
+  //   请稍后再试"，用户永远不知道是额度用完了）。
+  // 现状成立的前提是 `fetchWithTimeout` 不对 4xx/5xx 抛错（fetch 语义），
+  // 且后端 402 响应体始终是统一信封 `{code,message,data}`。
   throw new BusinessError(payload.code, payload.message);
 }
 

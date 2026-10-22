@@ -107,7 +107,9 @@ def test_actual_core_endpoints_equal_frozen_baseline() -> None:
     operations = validator.collect_operations(schema)
     phase2 = validator.load_baseline(PHASE2_BASELINE_PATH)
     phase3 = validator.load_baseline(PHASE3_BASELINE_PATH)
-    core_actual = operations - phase2 - phase3
+    # 阶段四登记过的端点必须先扣掉，否则会被算进 core（与 validator 的扣除口径一致）
+    phase4 = validator.load_baseline(PHASE4_BASELINE_PATH)
+    core_actual = operations - phase2 - phase3 - phase4
     baseline = validator.load_baseline(CORE_BASELINE_PATH)
     assert core_actual == baseline
 
@@ -309,6 +311,37 @@ def test_unregistered_endpoint_is_red_without_strict_flag(
     paths["/api/v1/model/rogue"] = {"get": {"responses": {"200": {"description": "ok"}}}}
     monkeypatch.setattr(validator, "build_schema", lambda: {**schema, "paths": paths})
     assert validator.main(["--no-write-openapi"]) == 1
+
+
+#: 当前批次应已实现的阶段四端点数（**防遗忘轻门禁**）。
+#:
+#: T4-02 收口 → 4（MC1-MC4）；W3 记忆端点落地 → 8（+MM1-MM4）；
+#: TD1/TD2 落地 → 10。改这个数字必须同时改本注释，否则下一个人不知道该不该改。
+PHASE4_PRESENT_EXPECTED = 4
+
+
+def test_phase4_present_matches_current_batch() -> None:
+    """`phase4_present` 必须等于**当前批次**的预期值（少做两个端点当批就红）。
+
+    为什么需要这条：`--strict` 要到终验才开，若无本断言，"少实现两个端点"
+    会一路绿到最后一次评审——那时再补，排期已经来不及。
+    """
+    _failures, stats = validator.collect_failures(
+        validator.build_schema(),
+        core_baseline=validator.load_baseline(CORE_BASELINE_PATH),
+        phase2_baseline=validator.load_baseline(PHASE2_BASELINE_PATH),
+        phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
+        phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
+        snapshot=_load_snapshot(),
+        allow_missing_phase2=False,
+        skip_diff=False,
+        strict_phase4=False,
+    )
+    assert stats["phase4_declared"] == 10
+    assert stats["phase4_present"] == PHASE4_PRESENT_EXPECTED, (
+        f"本批应已实现 {PHASE4_PRESENT_EXPECTED} 个阶段四端点，"
+        f"实际 {stats['phase4_present']}（未实现：{stats['phase4_missing']}）"
+    )
 
 
 def test_strict_flag_only_changes_verdict_when_phase4_missing() -> None:

@@ -32,6 +32,7 @@ from app.api.v1 import (
     agent,
     artifact_files,
     billing,
+    conversation,
     identity,
     identity_ext,
     knowledge_ext,
@@ -246,6 +247,10 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
 
     api_router = APIRouter()
     api_router.include_router(model.router, prefix=prefix, dependencies=business_dependencies)
+    # 阶段四 MC1-MC4：会话列表 / 历史消息 / 软删 / 更新（与 /model 同域，同一鉴权）
+    api_router.include_router(
+        conversation.router, prefix=prefix, dependencies=business_dependencies
+    )
     api_router.include_router(rag.router, prefix=prefix, dependencies=business_dependencies)
     # 阶段二新域模块：与既有资源域共用前缀（架构文档 2.2 第 2 条），不新增版本
     api_router.include_router(

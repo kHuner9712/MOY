@@ -7,6 +7,7 @@
  */
 
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 import type { ChatMessage, Conversation, ModelProfile } from '@/lib/types';
 
@@ -75,6 +76,11 @@ const INITIAL_STATE: ConversationState = {
  * @returns 会话状态与操作方法
  */
 export const useConversationStore = create<ConversationState & ConversationActions>()(
+  // `persist`：只持久化"身份型"状态（会话 ID / 档位 / 关联库），
+  // **不持久化 messages**——消息的真源在服务端（阶段四 P4-07），
+  // 本地缓存一份会让"刷新后逐字恢复"这件事变成"恢复的是缓存"，
+  // 而且多设备下必然不一致。
+  persist(
   (set, get) => ({
     ...INITIAL_STATE,
 
@@ -84,11 +90,13 @@ export const useConversationStore = create<ConversationState & ConversationActio
     },
 
     selectConversation: (conversationId) => {
-      const target = get().conversations.find((item) => item.conversation_id === conversationId);
-      set({
-        conversationId,
-        messages: target ? [] : get().messages,
-      });
+      // **不清空 messages**（阶段四 T4-02.6）：历史现在由服务端提供，页面在
+      // select 之后异步拉 `MC2` 再写入 store。这里清空会出现两种可见缺陷：
+      //   ① 切到同一会话（例如从列表点回来）时，正在拉的请求还没回来，
+      //      画面先闪成空，用户以为消息丢了；
+      //   ② 刷新/换设备时首帧必然是空的。
+      // 换会话时的"旧消息残留"由页面在拉取成功后整体覆盖解决，而不是靠先清空。
+      set({ conversationId });
     },
 
     appendMessage: (message) => {
@@ -122,6 +130,16 @@ export const useConversationStore = create<ConversationState & ConversationActio
 
     clearMessages: () => set({ messages: [] }),
   }),
+  {
+    name: 'moy-conversation',
+    // 只持久化身份型状态：`messages` 的真源在服务端，缓存一份会在多设备下不一致
+    partialize: (state) => ({
+      conversationId: state.conversationId,
+      profile: state.profile,
+      knowledgeBaseIds: state.knowledgeBaseIds,
+    }),
+  },
+  ),
 );
 
 /** 导出会话 ID 生成器，供其他模块复用 */
