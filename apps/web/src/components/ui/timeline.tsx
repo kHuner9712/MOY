@@ -1,27 +1,22 @@
 'use client';
 
-import { AlertTriangle, Check, ChevronDown, Circle, Loader2, PauseCircle, SkipForward } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Circle, Loader2, SkipForward } from 'lucide-react';
 import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 /**
- * 时间线步骤状态（六态）。
+ * 时间线步骤状态（与 DDL `plugin_task_step.status` 逐字一致，五态）。
  *
- * 说明：后端 `plugin_task_step.status` 只有
- * `pending / running / completed / failed / skipped` 五态，
- * `waiting_confirm` 属于**任务级**状态（该步此时仍是 pending）。
- * 组件为展示统一另接受 `succeeded` 作为 `completed` 的同义值，
- * 因此这里对外是「五态 + 两个别名」，渲染时归一。
+ * 说明：`waiting_confirm` 属于**任务级**状态（该步此时仍是 pending），
+ * 不在此枚举内；任务级的「等待确认」由页面顶部确认条表达（B24）。
  */
-export type TimelineStatus =
+export type TimelineStatus = 
   | 'pending'
   | 'running'
   | 'completed'
-  | 'succeeded'
   | 'failed'
-  | 'waiting_confirm'
   | 'skipped';
 
 /** 步骤失败信息（业务语言，禁止出现错误码） */
@@ -68,9 +63,7 @@ const STATUS_LABELS: Record<TimelineStatus, string> = {
   pending: '等待开始',
   running: '进行中',
   completed: '已完成',
-  succeeded: '已完成',
   failed: '未完成',
-  waiting_confirm: '等待确认',
   skipped: '已跳过',
 };
 
@@ -82,9 +75,7 @@ const STATUS_VARIANTS: Record<
   pending: 'outline',
   running: 'secondary',
   completed: 'success',
-  succeeded: 'success',
   failed: 'destructive',
-  waiting_confirm: 'warning',
   skipped: 'outline',
 };
 
@@ -93,9 +84,7 @@ const STATUS_ICONS: Record<TimelineStatus, typeof Circle> = {
   pending: Circle,
   running: Loader2,
   completed: Check,
-  succeeded: Check,
   failed: AlertTriangle,
-  waiting_confirm: PauseCircle,
   skipped: SkipForward,
 };
 
@@ -104,9 +93,7 @@ const STATUS_DOT_CLASS: Record<TimelineStatus, string> = {
   pending: 'border-muted-foreground/30 bg-background text-muted-foreground',
   running: 'border-primary/40 bg-primary/10 text-primary',
   completed: 'border-emerald-300 bg-emerald-50 text-emerald-700',
-  succeeded: 'border-emerald-300 bg-emerald-50 text-emerald-700',
   failed: 'border-destructive/40 bg-destructive/10 text-destructive',
-  waiting_confirm: 'border-amber-300 bg-amber-50 text-amber-700',
   skipped: 'border-muted-foreground/30 bg-muted text-muted-foreground',
 };
 

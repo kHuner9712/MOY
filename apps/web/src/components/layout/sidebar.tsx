@@ -15,6 +15,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import * as React from 'react';
 
+import { QUERY_KEYS, useApiQuery } from '@/hooks/use-api';
+import { pluginsApi } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
 /** 导航项 */
@@ -37,12 +39,25 @@ export interface NavItem {
 export const NAV_ITEMS: readonly NavItem[] = [
   { href: '/chat', label: '对话', icon: MessageSquare },
   { href: '/knowledge', label: '知识库', icon: BookOpen },
-  { href: '/plugins', label: '插件市场', icon: Plug },
+  { href: '/plugins', label: '插件与工作台', icon: Plug },
   { href: '/workflows', label: '工作流', icon: Workflow },
   { href: '/team', label: '团队管理', icon: Users },
   { href: '/team/organization', label: '组织架构', icon: Network },
   { href: '/billing', label: '套餐与账单', icon: CreditCard },
   { href: '/profile', label: '个人中心', icon: User },
+];
+
+/** 插件分组的锚点路由（工作台子项挂在它下面） */
+const PLUGIN_NAV_HREF = '/plugins';
+
+/**
+ * 不在侧栏出现、但需要独立标题的路由前缀。
+ *
+ * 说明：插件详情与工作台不进一级菜单（它们从市场 / 已添加到进入），
+ * 但页面顶部标题必须稳定，否则用户从卡片跳进来会看到上一个页面的标题。
+ */
+const EXTRA_TITLES: ReadonlyArray<{ prefix: string; label: string }> = [
+  { prefix: '/workbench', label: '工作台' },
 ];
 
 /**
@@ -57,6 +72,14 @@ export const NAV_ITEMS: readonly NavItem[] = [
 export function resolveNavItem(pathname: string | null | undefined): NavItem | undefined {
   if (!pathname) return undefined;
   let matched: NavItem | undefined;
+
+  // 先看「有独立标题但不进菜单」的路由
+  for (const extra of EXTRA_TITLES) {
+    if (pathname === extra.prefix || pathname.startsWith(`${extra.prefix}/`)) {
+      matched = { href: extra.prefix, label: extra.label, icon: MessageSquare };
+    }
+  }
+
   for (const item of NAV_ITEMS) {
     if (pathname === item.href || pathname.startsWith(`${item.href}/`)) {
       if (!matched || item.href.length > matched.href.length) {
@@ -65,6 +88,48 @@ export function resolveNavItem(pathname: string | null | undefined): NavItem | u
     }
   }
   return matched;
+}
+
+/**
+ * 插件与工作台分组：主导航给市场入口，这里补「已添加」与各个可用工作台。
+ *
+ * 口径：只列出 `status=enabled` 的插件——停用的插件点进去只会被拦下来，
+ * 不如不出现在入口里；启停/卸载后分组自动刷新（与市场共用 `['plugins']` 前缀键）。
+ *
+ * @returns 分组元素
+ */
+function PluginWorkbenchGroup(): React.JSX.Element {
+  const installedQuery = useApiQuery(QUERY_KEYS.installedPlugins(), () => pluginsApi.installed());
+  const enabledPlugins = (installedQuery.data?.items ?? []).filter(
+    (item) => item.status === 'enabled',
+  );
+
+  return (
+    <div className="ml-7 mt-1 space-y-0.5 border-l pl-3">
+      <Link
+        href="/plugins?tab=installed"
+        className="block rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        已添加的插件
+      </Link>
+      {installedQuery.isLoading ? (
+        <span className="block px-2 py-1 text-xs text-muted-foreground">正在加载工作台…</span>
+      ) : enabledPlugins.length === 0 ? (
+        <span className="block px-2 py-1 text-xs text-muted-foreground">还没有可用的工作台</span>
+      ) : (
+        enabledPlugins.map((plugin) => (
+          <Link
+            key={plugin.plugin_id}
+            href={`/workbench/${plugin.plugin_id}`}
+            title={plugin.name}
+            className="block truncate rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            {plugin.name}
+          </Link>
+        ))
+      )}
+    </div>
+  );
 }
 
 /**
@@ -82,25 +147,27 @@ export function AppSidebar(): React.JSX.Element {
         <LayoutGrid className="h-5 w-5 text-primary" />
         <span className="text-sm font-semibold">办公 AI 平台</span>
       </div>
-      <nav aria-label="主导航" className="flex-1 space-y-1 p-3">
+      <nav aria-label="主导航" className="flex-1 space-y-1 overflow-y-auto p-3">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const isActive = item.href === active?.href;
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={isActive ? 'page' : undefined}
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
-                isActive
-                  ? 'bg-primary/10 font-medium text-primary'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {item.label}
-            </Link>
+            <div key={item.href}>
+              <Link
+                href={item.href}
+                aria-current={isActive ? 'page' : undefined}
+                className={cn(
+                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+                  isActive
+                    ? 'bg-primary/10 font-medium text-primary'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {item.label}
+              </Link>
+              {item.href === PLUGIN_NAV_HREF ? <PluginWorkbenchGroup /> : null}
+            </div>
           );
         })}
       </nav>

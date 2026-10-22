@@ -34,10 +34,12 @@ import { TabPanel, Tabs, useUrlTab } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { Tooltip } from '@/components/ui/tooltip';
 import { QUERY_KEYS, useApiMutation, useApiQuery } from '@/hooks/use-api';
-import { identityApi, identityExtApi } from '@/lib/api-client';
+import { identityApi, identityExtApi, pluginsApi } from '@/lib/api-client';
+import { capabilityLabel, isPersonalCapability } from '@/lib/capability-labels';
+import { CapabilityList } from '@/components/plugin/capability-list';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { formatDateTime, orPlaceholder } from '@/lib/format';
-import type { OrganizationMember } from '@/lib/types';
+import type { CapabilityPolicyItem, OrganizationMember } from '@/lib/types';
 
 /** 角色展示映射（业务语言） */
 const ROLE_LABELS: Readonly<Record<string, string>> = {
@@ -223,6 +225,7 @@ export default function TeamPage(): React.JSX.Element {
         items={[
           { value: 'members', label: '成员', count: memberTotal },
           { value: 'structure', label: '组织架构' },
+          { value: 'capabilities', label: '插件能力' },
           { value: 'logs', label: '操作记录' },
         ]}
         value={tab}
@@ -368,6 +371,10 @@ export default function TeamPage(): React.JSX.Element {
             </Button>
           </CardContent>
         </Card>
+      </TabPanel>
+
+      <TabPanel value="capabilities" activeValue={tab}>
+        <OrgCapabilityPanel canManage={canManage} />
       </TabPanel>
 
       <TabPanel value="logs" activeValue={tab}>
@@ -547,5 +554,164 @@ export default function TeamPage(): React.JSX.Element {
         ) : null}
       </ConfirmDialog>
     </div>
+  );
+}
+
+/**
+ * 企业能力开关面板（PL13）。
+ *
+ * 读侧说明：PL13 只有写端点，开关现值的唯一读源是能力清单里的
+ * `org_switch_enabled`（按插件返回）。因此这里用「第一个已添加插件」做探针读取现值；
+ * 保存后以 PL13 返回的全量清单为准（含 personal.* 恒开启项）。
+ *
+ * @param props - 组件属性
+ * @returns 面板元素
+ */
+function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.Element {
+  const installedQuery = useApiQuery(QUERY_KEYS.installedPlugins(), () => pluginsApi.installed());
+  const probePluginId = installedQuery.data?.items[0]?.plugin_id ?? '';
+  const capabilitiesQuery = useApiQuery(
+    QUERY_KEYS.pluginCapabilities(probePluginId),
+    () => pluginsApi.capabilities(probePluginId),
+    { enabled: Boolean(probePluginId) },
+  );
+
+  const [draft, setDraft] = React.useState<Record<string, boolean>>({});
+  const [saved, setSaved] = React.useState<CapabilityPolicyItem[]>([]);
+
+  const readRows: CapabilityPolicyItem[] = React.useMemo(() => {
+    if (saved.length > 0) return saved;
+    return (capabilitiesQuery.data?.items ?? []).map((item) => ({
+      capability_key: item.capability_key,
+      display_name: item.display_name,
+      org_switch_enabled: item.org_switch_enabled,
+      updated_by_name: '',
+      updated_at: '',
+    }));
+  }, [saved, capabilitiesQuery.data]);
+
+  React.useEffect(() => {
+    if (readRows.length === 0) return;
+    setDraft((prev) => {
+      const next: Record<string, boolean> = { ...prev };
+      for (const row of readRows) {
+        if (next[row.capability_key] === undefined) {
+          next[row.capability_key] = row.org_switch_enabled;
+        }
+      }
+      return next;
+    });
+  }, [readRows]);
+
+  const saveMutation = useApiMutation(
+    (policies: Array<{ capability_key: string; org_switch_enabled: boolean }>) =>
+      pluginsApi.setCapabilityPolicy({ policies }),
+    {
+      invalidateKeys: [['plugins']],
+      onSuccess: (data) => {
+        setSaved(data.policies);
+        toast.success('企业能力开关已保存');
+      },
+      onError: (error) => toast.error(toBusinessMessage(error)),
+    },
+  );
+
+  /** 只提交企业能力（个人能力恒开，后端传 personal.* 会报参数错） */
+  const handleSave = (): void => {
+    const policies = readRows
+      .filter((row) => !isPersonalCapability(row.capability_key))
+      .map((row) => ({
+        capability_key: row.capability_key,
+        org_switch_enabled: Boolean(draft[row.capability_key]),
+      }));
+    if (policies.length === 0) {
+      toast.error('还没有可配置的企业能力');
+      return;
+    }
+    saveMutation.mutate(policies);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>企业能力开关</CardTitle>
+        <CardDescription>
+          个人能力（读取你本人的资料）恒开启；企业能力由管理员统一决定是否对全员开放。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {installedQuery.isLoading || capabilitiesQuery.isLoading ? (
+          <LoadingState label="正在加载能力开关…" />
+        ) : capabilitiesQuery.error ? (
+          <ErrorState
+            message={toBusinessMessage(capabilitiesQuery.error)}
+            onRetry={() => void capabilitiesQuery.refetch()}
+          />
+        ) : readRows.length === 0 ? (
+          <EmptyState
+            title="还不能读取能力开关"
+            description="先添加任意插件，即可在这里看到企业能力的当前开关并按需调整"
+          />
+        ) : (
+          <>
+            <ul className="space-y-2">
+              {readRows.map((row) => {
+                const personal = isPersonalCapability(row.capability_key);
+                return (
+                  <li
+                    key={row.capability_key}
+                    className="flex items-start justify-between gap-3 rounded-md border p-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">
+                        {capabilityLabel(row.capability_key, row.display_name)}
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {personal ? '个人能力，始终开启' : '企业能力，关闭后全员都无法授权使用'}
+                      </p>
+                      {row.updated_by_name ? (
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          最近修改：{row.updated_by_name} · {formatDateTime(row.updated_at)}
+                        </p>
+                      ) : null}
+                    </div>
+                    <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-60"
+                        aria-label={`${capabilityLabel(row.capability_key, row.display_name)}开关`}
+                        checked={personal ? true : Boolean(draft[row.capability_key])}
+                        disabled={personal || !canManage || saveMutation.isPending}
+                        onChange={(event) =>
+                          setDraft((prev) => ({ ...prev, [row.capability_key]: event.target.checked }))
+                        }
+                      />
+                      {personal ? '恒开启' : draft[row.capability_key] ? '已开启' : '已关闭'}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex items-center gap-2">
+              <Tooltip content="只有所有者与企业管理员可以调整企业能力" disabled={canManage}>
+                <span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!canManage || saveMutation.isPending}
+                    onClick={handleSave}
+                  >
+                    {saveMutation.isPending ? '保存中…' : '保存开关'}
+                  </Button>
+                </span>
+              </Tooltip>
+              <span className="text-xs text-muted-foreground">
+                关闭后，插件在申请该能力时会提示「该能力尚未对企业开放」
+              </span>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

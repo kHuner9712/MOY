@@ -195,6 +195,7 @@ export interface SearchSegment {
 
 /** 任务状态（自研五态 + 阶段三加性新增 `waiting_confirm` = 等人工接管） */
 export type TaskStatus =
+  | 'queued'
   | 'pending'
   | 'running'
   | 'waiting_confirm'
@@ -253,7 +254,7 @@ export interface TaskItem {
   /** 插件任务所属插件（阶段三加性；无插件为空） */
   plugin_id?: string | null;
   /** 降级告警条数（阶段三加性，列表页展示「N 条提醒」） */
-  warning_count?: number;
+  warning_count: number;
 }
 
 /** 任务步骤 */
@@ -1154,13 +1155,8 @@ export interface PluginVersionBrief {
   published_at: string;
 }
 
-/**
- * 版本说明。
- *
- * 契约里 PL2 记作 `changelog[]`，而声明文件里 `changelog` 是单个字符串（≤300 字），
- * 因此两种形态都要能接：渲染前统一用 `toStringArray()` 归一。
- */
-export type PluginChangelog = string[] | string;
+/** 版本说明（PL2 `changelog`，架构裁定为字符串数组，每条为一条版本说明） */
+export type PluginChangelog = string[];
 
 /** 插件详情（PL2） */
 export interface PluginDetail {
@@ -1179,7 +1175,7 @@ export interface PluginDetail {
   step_titles: string[];
   outputs: PluginOutputSpec[];
   settings_schema: PluginSettingSpec[];
-  changelog?: PluginChangelog;
+  changelog: PluginChangelog;
   versions: PluginVersionBrief[];
   installed_status: PluginInstalledStatus;
   /** 已安装版本；未安装时为空串 */
@@ -1197,13 +1193,6 @@ export interface PluginCapabilitiesData {
   org_switch_updated_at: string;
   /** 当前套餐是否可安装 */
   installable: boolean;
-  /**
-   * 企业能力开关快照（可选）。
-   *
-   * 设计以 `items[].org_switch_enabled` 为准；本字段仅为兼容后端可能下发的扁平视图，
-   * 前端不得据此覆盖逐能力字段（见 B22 回传的歧义点 #3）。
-   */
-  org_capabilities?: string[];
 }
 
 /** 已安装条目（PL3） */
@@ -1220,10 +1209,13 @@ export interface InstalledPluginItem {
   running_task_count: number;
 }
 
+/** 插件配置值（扁平标量：text/number/boolean，嵌套结构不接受） */
+export type PluginSettingValue = string | number | boolean;
+
 /** 安装请求（PL5）：grants 必须覆盖声明的全部必需能力 */
 export interface PluginInstallRequest {
   grants: Record<string, boolean>;
-  settings?: Record<string, unknown>;
+  settings?: Record<string, PluginSettingValue>;
 }
 
 /** 安装结果（PL5） */
@@ -1265,10 +1257,22 @@ export interface PluginRollbackResult {
   previous_version: string;
 }
 
+/** 已安装后改授权请求（PL14）：required=true 的能力不允许撤回 */
+export interface PluginGrantsUpdateRequest {
+  grants: Record<string, boolean>;
+}
+
+/** 改授权结果（PL14） */
+export interface PluginGrantsUpdateResult {
+  plugin_id: string;
+  granted_capabilities: string[];
+  denied_capabilities: string[];
+}
+
 /** 配置保存结果（PL10） */
 export interface PluginSettingsResult {
   plugin_id: string;
-  settings: Record<string, unknown>;
+  settings: Record<string, PluginSettingValue>;
   updated_at: string;
 }
 
@@ -1307,18 +1311,19 @@ export interface PluginReviewResult {
   rating_count: number;
 }
 
-/** 企业能力开关条目（PL13） */
+/** 企业能力开关条目（PL13，响应回全量 6 项） */
 export interface CapabilityPolicyItem {
-  capability: PluginCapabilityKey | string;
+  capability_key: PluginCapabilityKey | string;
   display_name: string;
-  enabled: boolean;
+  /** 企业是否已开启（个人能力 personal.* 恒为 true） */
+  org_switch_enabled: boolean;
   updated_by_name: string;
   updated_at: string;
 }
 
 /** 企业能力开关写请求（PL13）：只允许 org.* 三项 */
 export interface CapabilityPolicyRequest {
-  policies: Array<{ capability: string; enabled: boolean }>;
+  policies: Array<{ capability_key: string; org_switch_enabled: boolean }>;
 }
 
 // ---------------------------------------------------------------------------

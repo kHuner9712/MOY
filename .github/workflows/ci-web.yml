@@ -161,6 +161,25 @@ jobs:
           fi
           echo "[PASS] 页面三态自检抓到了全部负样本，退出码 1 符合约定"
 
+      # ------------------------------------------------------------------
+      # G-31：插件契约对齐（types.ts ↔ contracts/phase3.pl.json，逐键比对）
+      # ------------------------------------------------------------------
+      - name: G-31 插件契约对齐
+        run: npm run scan:contract --workspace apps/web
+
+      - name: G-31 契约检查自检（期望退出码 1）
+        run: |
+          set +e
+          npm run scan:contract-self-test --workspace apps/web > scan-contract-self-test.log 2>&1
+          status=$?
+          set -e
+          cat scan-contract-self-test.log
+          if [ "$status" -ne 1 ]; then
+            echo "[FAIL] 契约检查自检退出码 $status，期望 1"
+            exit 1
+          fi
+          echo "[PASS] 契约检查抓到全部负样本（缺键/多键/可选性翻转/接口缺失），退出码 1 符合约定"
+
   built-artifact-gate:
     name: 产物扫描（G-16）
     runs-on: ubuntu-latest

@@ -22,6 +22,8 @@ import type {
   InstalledPluginItem,
   PluginCapabilitiesData,
   PluginDetail,
+  PluginGrantsUpdateRequest,
+  PluginGrantsUpdateResult,
   PluginInstallRequest,
   PluginInstallResult,
   PluginMarketData,
@@ -653,8 +655,8 @@ export const agentApi = {
     status: TaskStatus;
     created_at: string;
     estimated_seconds: number;
-    /** 重试产生的新任务会带上来源任务 id */
-    retry_of?: string;
+    /** 重试产生的新任务会带上来源任务 id；首次为 null */
+    retry_of?: string | null;
     /** 总步数（插件任务为声明步骤数） */
     steps_total?: number;
   } & TaskQueueInfo> {
@@ -1172,8 +1174,8 @@ export const pluginsApi = {
     return request('GET', `/plugins/market/${pluginId}`);
   },
 
-  /** PL3 我已安装的插件（可按状态筛选） */
-  installed(params: { status?: PluginState } = {}): Promise<PageResult<InstalledPluginItem>> {
+  /** PL3 我已安装的插件（不分页，无 meta；可按状态筛选） */
+  installed(params: { status?: PluginState } = {}): Promise<{ items: InstalledPluginItem[] }> {
     return request('GET', '/plugins/installed', { query: params });
   },
 
@@ -1230,9 +1232,17 @@ export const pluginsApi = {
     return request('POST', `/plugins/${pluginId}/reviews`, { body });
   },
 
-  /** PL13 企业能力总开关（仅 org.* 三项；个人能力恒开） */
+  /** PL13 企业能力总开关（仅 org.* 三项；个人能力恒开；响应回全量 6 项） */
   setCapabilityPolicy(body: CapabilityPolicyRequest): Promise<{ policies: CapabilityPolicyItem[] }> {
     return request('PUT', '/plugins/capability-policy', { body });
+  },
+
+  /** PL14 已安装后改授权（required=true 的能力不允许撤回） */
+  updateGrants(
+    pluginId: string,
+    body: PluginGrantsUpdateRequest,
+  ): Promise<PluginGrantsUpdateResult> {
+    return request('PUT', `/plugins/${pluginId}/grants`, { body });
   },
 };
 

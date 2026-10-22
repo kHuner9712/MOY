@@ -24,6 +24,8 @@ export interface RatingProps {
   showValue?: boolean;
   /** 无障碍名称（读屏用，如「插件评分」） */
   label?: string;
+  /** 无评分时的空态文案，默认「暂无评分」 */
+  emptyLabel?: string;
   className?: string;
 }
 
@@ -61,6 +63,7 @@ export function Rating({
   size = 'md',
   showValue = true,
   label = '评分',
+  emptyLabel = '暂无评分',
   className,
 }: RatingProps): React.JSX.Element {
   const safeValue = clampRating(value);
@@ -86,7 +89,20 @@ export function Rating({
     );
   };
 
+  const isEmpty = safeValue <= 0 && (count ?? 0) === 0;
+
   if (!interactive) {
+    if (isEmpty) {
+      return (
+        <span
+          className={cn('inline-flex items-center gap-1 text-xs text-muted-foreground', className)}
+          aria-label={`${label}：${emptyLabel}`}
+        >
+          <Star aria-hidden="true" className={cn(starClass, 'text-muted-foreground/30')} />
+          {emptyLabel}
+        </span>
+      );
+    }
     return (
       <span
         className={cn('inline-flex items-center gap-1', className)}

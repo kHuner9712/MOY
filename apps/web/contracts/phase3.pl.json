@@ -1,0 +1,188 @@
+{
+  "version": "phase3-pl-v1",
+  "source": "docs/architecture-phase3.md §5.2 / §5.3（PL1-PL14 + A3/A4 加性字段）",
+  "note": "required 与 optional 均须与 src/lib/types.ts 逐键一致；可选性翻转即视为契约漂移。",
+  "interfaces": {
+    "PluginMarketItem": {
+      "required": [
+        "plugin_id",
+        "name",
+        "summary",
+        "category",
+        "icon_key",
+        "rating_avg",
+        "rating_count",
+        "latest_version",
+        "installed_status",
+        "has_update",
+        "installable"
+      ],
+      "optional": []
+    },
+    "PluginCategoryItem": {
+      "required": ["key", "name", "count"],
+      "optional": []
+    },
+    "PluginMarketData": {
+      "required": ["items", "meta", "categories"],
+      "optional": []
+    },
+    "PluginCapabilityItem": {
+      "required": [
+        "capability_key",
+        "display_name",
+        "reason",
+        "denial_effect",
+        "category",
+        "required",
+        "org_switch_enabled"
+      ],
+      "optional": []
+    },
+    "PluginCapabilitiesData": {
+      "required": ["items", "granted_capabilities", "org_switch_updated_at", "installable"],
+      "optional": []
+    },
+    "PluginOutputSpec": {
+      "required": ["key", "label", "type"],
+      "optional": []
+    },
+    "PluginSettingSpec": {
+      "required": ["key", "label", "type"],
+      "optional": ["options"]
+    },
+    "PluginVersionBrief": {
+      "required": ["version", "published_at"],
+      "optional": []
+    },
+    "PluginDetail": {
+      "required": [
+        "plugin_id",
+        "name",
+        "summary",
+        "description",
+        "category",
+        "icon_key",
+        "rating_avg",
+        "rating_count",
+        "latest_version",
+        "capabilities",
+        "step_titles",
+        "outputs",
+        "settings_schema",
+        "changelog",
+        "versions",
+        "installed_status",
+        "installed_version",
+        "has_update",
+        "installable"
+      ],
+      "optional": ["vendor"]
+    },
+    "InstalledPluginItem": {
+      "required": [
+        "plugin_id",
+        "name",
+        "category",
+        "version",
+        "latest_version",
+        "has_update",
+        "status",
+        "last_used_at",
+        "running_task_count"
+      ],
+      "optional": []
+    },
+    "PluginInstallResult": {
+      "required": [
+        "plugin_id",
+        "status",
+        "version",
+        "granted_capabilities",
+        "denied_capabilities"
+      ],
+      "optional": []
+    },
+    "PluginStateResult": {
+      "required": ["plugin_id", "status", "running_task_count"],
+      "optional": []
+    },
+    "PluginUninstallResult": {
+      "required": ["plugin_id", "uninstalled", "running_task_count", "kept_task_count"],
+      "optional": []
+    },
+    "PluginUpgradeResult": {
+      "required": ["plugin_id", "version", "previous_version", "has_update"],
+      "optional": []
+    },
+    "PluginRollbackResult": {
+      "required": ["plugin_id", "version", "previous_version"],
+      "optional": []
+    },
+    "PluginSettingsResult": {
+      "required": ["plugin_id", "settings", "updated_at"],
+      "optional": []
+    },
+    "PluginReviewItem": {
+      "required": ["review_id", "rating", "content", "author_name", "department_name", "created_at"],
+      "optional": []
+    },
+    "PluginReviewsData": {
+      "required": ["items", "meta", "rating_avg", "rating_count"],
+      "optional": []
+    },
+    "PluginReviewResult": {
+      "required": ["review_id", "rating", "created_at", "rating_avg", "rating_count"],
+      "optional": []
+    },
+    "CapabilityPolicyItem": {
+      "required": [
+        "capability_key",
+        "display_name",
+        "org_switch_enabled",
+        "updated_by_name",
+        "updated_at"
+      ],
+      "optional": []
+    },
+    "PluginGrantsUpdateResult": {
+      "required": ["plugin_id", "granted_capabilities", "denied_capabilities"],
+      "optional": []
+    },
+    "TaskChecklistItem": {
+      "required": ["key", "name", "source_step", "status"],
+      "optional": []
+    },
+    "TaskStepFailure": {
+      "required": ["reason_text", "retryable", "operator_action"],
+      "optional": []
+    },
+    "TaskArtifact": {
+      "required": ["artifact_id", "type", "name"],
+      "optional": [
+        "task_id",
+        "step_id",
+        "output_key",
+        "inline_text",
+        "preview_text",
+        "external_url",
+        "storage_key",
+        "size_bytes",
+        "expires_at",
+        "created_at"
+      ]
+    },
+    "TaskDetail": {
+      "required": ["task_id", "goal", "status", "progress", "current_step", "result", "updated_at"],
+      "optional": [
+        "conversation_id",
+        "plugin_id",
+        "retry_of",
+        "steps_total",
+        "confirm",
+        "usage",
+        "created_at"
+      ]
+    }
+  }
+}
