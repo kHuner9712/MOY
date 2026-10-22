@@ -219,6 +219,71 @@ def load_manifest(plugin_id: str) -> PluginManifest:
     return manifest
 
 
+def fixture_manifest(**overrides: object) -> PluginManifest:
+    """构造**最小夹具声明**（失败分支专用，与产品声明解耦）。
+
+    为什么需要：产品声明（`app/plugins/manifests/*.json`）属于 **B20 的交付面**，
+    会随装配调整（补 `needs`、改 `on_failure`、调步骤数）。把失败分支的用例钉在
+    产品声明上，等于**把"契约判定"降级成"声明文案判定"**——声明一改测试就红，
+    而契约其实没变。夹具声明只为这三类判定服务：非最终步失败、`needs` 缺失、产物缺失。
+
+    **成功路径仍必须用真实声明跑**（"三插件能按声明装配"这条不能没人验）。
+
+    Args:
+        **overrides: 覆盖字段（如 `steps` / `checklist`）。
+
+    Returns:
+        PluginManifest: 夹具声明。
+    """
+    payload: dict[str, object] = {
+        "plugin_id": "plg_fixture_case",
+        "name": "夹具插件",
+        "summary": "仅用于单测的最小声明",
+        "description": "这是一份只用于单元测试的夹具声明。" * 8,
+        "category": "dev",
+        "icon_key": "code",
+        "version": "1.0.0",
+        "min_platform_version": "1.0.0",
+        "capabilities": [{"key": "personal.tool.use", "required": True}],
+        "inputs": [{"key": "topic", "label": "主题", "type": "text", "required": True}],
+        "outputs": [
+            {"key": "draft", "label": "稿件", "type": "text"},
+            {"key": "summary", "label": "小结", "type": "text"},
+        ],
+        "ui_extension": {
+            "layout": "task_workspace",
+            "nav_label": "夹具",
+            "icon_key": "code",
+            "order": 9,
+        },
+        "steps": [
+            {
+                "seq": 1,
+                "title": "生成稿件",
+                "action": "compose",
+                "produces": ["draft"],
+                "on_failure": "continue",
+            },
+            {
+                "seq": 2,
+                "title": "提交发布",
+                "action": "tool",
+                "tool_type": "github",
+                "operation": "create_pull_request",
+                "produces": [],
+                "needs": ["draft"],
+                "on_failure": "abort",
+            },
+        ],
+        "checklist": [
+            {"key": "draft", "name": "稿件", "source_step": 1},
+            {"key": "summary", "name": "小结", "source_step": 1},
+        ],
+    }
+    payload.update(overrides)
+    return PluginManifest.model_validate(payload)
+
+
 def build_service(
     manifest: PluginManifest,
     *,
@@ -248,6 +313,9 @@ def build_service(
     usage = FakeUsageService()
     registry = PluginRegistry()
     registry.load_all(default_manifests_dir())
+    # 夹具声明不在磁盘上：显式注册进注册表（`_manifest_of` 按 (id, version) 取声明）
+    if registry.get(manifest.plugin_id, manifest.version) is None:
+        registry.load_manifest(manifest.model_dump(mode="json", by_alias=True), source="fixture")
     service = TaskService(
         settings,
         tasks=tasks,
@@ -284,5 +352,6 @@ __all__: list[str] = [
     "FakeUsageService",
     "auth",
     "build_service",
+    "fixture_manifest",
     "load_manifest",
 ]

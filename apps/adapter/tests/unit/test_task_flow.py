@@ -75,22 +75,41 @@ def _run(coro: object) -> object:
     return asyncio.run(coro)  # type: ignore[arg-type]
 
 
+def _first_confirm_seq(manifest: object) -> int:
+    """取声明里第一个接管点步骤序号（不硬编码 seq，随装配调整而变）。
+
+    Args:
+        manifest: 声明。
+
+    Returns:
+        int: 步骤序号；无接管点时返回 0。
+    """
+    for spec in manifest.steps:  # type: ignore[attr-defined]
+        if spec.confirm is not None:
+            return int(spec.seq)
+    return 0
+
+
 def test_confirm_step_pauses_task_and_does_not_auto_advance() -> None:
-    """第 2 步是接管点 → 任务停在 `waiting_confirm`，且该步**未执行**。"""
+    """首个接管点 → 任务停在 `waiting_confirm`，且该步**未执行**。"""
+    manifest = load_manifest(PLUGIN_ID)
+    confirm_seq = _first_confirm_seq(manifest)
+    assert confirm_seq > 0, "研发工作台声明里应至少有一个接管点"
     gateway = EchoGateway()
     service, tasks, _, _ = build_service(load_manifest(PLUGIN_ID), gateway=gateway)
     created = _run(service.create_plugin_task(_request(), auth()))
     record = _run(tasks.get_task(TENANT, created.task_id))
     assert record is not None
     assert record.status == TASK_WAITING_CONFIRM, f"应停在接管点，实际 {record.status}"
-    assert record.confirm_step_seq == 2
-    # 只跑了第 1 步：接管点前的步骤执行、接管步本身不执行
-    assert [seq for _, seq in gateway.calls] == [1]
+    assert record.confirm_step_seq == confirm_seq
+    # 接管点之前的步骤执行、接管步本身不执行
+    assert [seq for _, seq in gateway.calls] == list(range(1, confirm_seq))
 
 
 def test_continue_resumes_same_task_without_creating_another() -> None:
     """`decision=continue` → 同一 task、`resumed=true`、`retry_of=null`。"""
-    service, tasks, _, _ = build_service(load_manifest(PLUGIN_ID))
+    manifest = load_manifest(PLUGIN_ID)
+    service, tasks, _, _ = build_service(manifest)
     created = _run(service.create_plugin_task(_request(), auth()))
     result = _run(service.retry(created.task_id, RetryTaskRequest(decision="continue"), auth()))
     assert result.task_id == created.task_id, "continue 必须续跑同一任务（新建会让核查清单分裂）"
@@ -100,7 +119,7 @@ def test_continue_resumes_same_task_without_creating_another() -> None:
     record = _run(tasks.get_task(TENANT, created.task_id))
     assert record is not None
     assert record.status == TASK_WAITING_CONFIRM
-    assert record.confirm_step_seq == 5
+    assert record.confirm_step_seq > _first_confirm_seq(manifest), "应推进到下一处接管点"
     # 任务总数仍是 1（没偷偷建第二个）
     _, total = _run(tasks.list_tasks(TENANT))
     assert total == 1
@@ -108,7 +127,8 @@ def test_continue_resumes_same_task_without_creating_another() -> None:
 
 def test_continue_twice_reaches_completed_with_checklist() -> None:
     """两次确认后任务完成，核查清单挂**同一个**任务（AC-02 核心断言）。"""
-    service, _tasks, _artifacts, usage = build_service(load_manifest(PLUGIN_ID))
+    manifest = load_manifest(PLUGIN_ID)
+    service, _tasks, _artifacts, usage = build_service(manifest)
     created = _run(service.create_plugin_task(_request(), auth()))
     _run(service.retry(created.task_id, RetryTaskRequest(decision="continue"), auth()))
     _run(service.retry(created.task_id, RetryTaskRequest(decision="continue"), auth()))
@@ -116,28 +136,42 @@ def test_continue_twice_reaches_completed_with_checklist() -> None:
     assert str(detail.status) == TASK_COMPLETED
     assert detail.result is not None
     checklist = detail.result.checklist
-    assert len(checklist) == 4, "研发工作台核查清单固定 4 项"
+    assert len(checklist) == len(manifest.checklist), "核查清单项数必须与声明一致"
     assert {item["status"] for item in checklist} <= {"checked", "pending", "missing"}
     assert detail.progress == 100
     assert usage.calls, "任务完成后应写一条 automation 计量"
 
 
 def test_retry_step_creates_new_task_and_keeps_original_untouched() -> None:
-    """`retry_step` → 新任务 + `retry_of` 指向原任务，原任务状态不变。"""
+    """`retry_step` → 新任务 + `retry_of` 指向原任务，原任务**状态永不改变**。
+
+    失败点与起点都**从声明推导**（找第一个 `on_failure=abort` 的步骤），不硬编码
+    seq —— 声明由 B20 装配，硬编码会让这条契约钉子随装配漂移。
+    """
     manifest = load_manifest(PLUGIN_ID)
-    # 让第 5 步（`on_failure=abort`）失败，任务进入 failed 才能重试
-    service, tasks, _, _ = build_service(manifest, gateway=EchoGateway(fail_at=5))
+    abort_seq = next(
+        spec.seq for spec in manifest.steps if spec.on_failure == "abort" and spec.seq > 1
+    )
+    service, tasks, _, _ = build_service(manifest, gateway=EchoGateway(fail_at=abort_seq))
     created = _run(service.create_plugin_task(_request(), auth()))
-    # 先过两处接管点才会走到会失败的第 3 步
-    _run(service.retry(created.task_id, RetryTaskRequest(decision="continue"), auth()))
-    _run(service.retry(created.task_id, RetryTaskRequest(decision="continue"), auth()))
+
+    # 逐个人工接管点确认，直到走到会 abort 的那一步（最多 5 次，防死循环）
+    for _ in range(5):
+        record = _run(tasks.get_task(TENANT, created.task_id))
+        if record is None or record.status != TASK_WAITING_CONFIRM:
+            break
+        _run(service.retry(created.task_id, RetryTaskRequest(decision="continue"), auth()))
     original = _run(tasks.get_task(TENANT, created.task_id))
     assert original is not None
-    assert original.status == "failed", f"第 5 步失败应 abort，实际 {original.status}"
+    assert original.status == "failed", f"第 {abort_seq} 步失败应 abort，实际 {original.status}"
     before_status = original.status
 
     result = _run(
-        service.retry(created.task_id, RetryTaskRequest(decision="retry_step", from_step=3), auth())
+        service.retry(
+            created.task_id,
+            RetryTaskRequest(decision="retry_step", from_step=abort_seq),
+            auth(),
+        )
     )
     assert result.resumed is False, "retry_step 是新任务，不能谎报 resumed"
     assert result.retry_of == created.task_id
