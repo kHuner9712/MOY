@@ -13,8 +13,10 @@ B16 源码尚未提交冻结，本文件先落地「可执行断言骨架」，�
    「预期失败 N 条」，B16 落地后自动转绿，本身就是 B16 的验收信号；
 3. **顺序：契约型优先**。不依赖业务实现完成的断言（错误码口径、`16001` 不复活）
    现在就有效；依赖真实执行的（PL5 授权不变、PL13 幂等、WF2 重渲染、WF2 只读）靠后；
-4. **骨架自身要能自检**：`OA_P3_SKELETON_SELFTEST=1` 时启用一条**故意必红**的断言，
-   用于确认「骨架报红」而不是「断言没生效」；平时不设该变量，不参与运行。
+4. **骨架自身要能自检**：自检用例放在**独立文件** `selftest_plugin_contract.py`
+   （文件名不带 `test_`，默认不收集 → 正常全量跑 **0 skipped**，与阶段二验收口径一致）。
+   显式运行：`OA_P3_SKELETON_SELFTEST=1 pytest tests/integration/selftest_plugin_contract.py -q`，
+   期望 `1 passed + 1 failed`、exit 1。
 
 QA 自加铁律：**派生数字一律从源数据重算**（数函数、数 marker），不引用文档里的声明值——
 文档数字是二手真相，源数据才是一手真相。
@@ -27,7 +29,6 @@ QA 自加铁律：**派生数字一律从源数据重算**（数函数、数 mar
 
 from __future__ import annotations
 
-import os
 import sys
 from types import ModuleType
 
@@ -36,9 +37,6 @@ import pytest
 from app.core.errors import ERROR_REGISTRY, ErrorCode
 
 pytestmark = pytest.mark.integration
-
-#: 骨架自检开关（CI/QA 首次接入时置 `1`，确认骨架能红；平时不设）
-SELFTEST_ENV = "OA_P3_SKELETON_SELFTEST"
 
 #: 本阶段应存在的插件域 + 任务域错误码（架构 D-24：11 + 2 = 13）
 EXPECTED_PLUGIN_CODES = {
@@ -63,6 +61,19 @@ EXPECTED_PLUGIN_CODES = {
 #: 两个数会一起降、汇总断言仍绿，漂移就被掩盖了。写成常量后，任何增删都必须改这里，
 #: 改不动就会红——**这条断言的价值就在"逼人手动确认"**。
 EXPECTED_XFAIL = 6
+
+#: 延后用例 → 应由哪个批次转绿（**批次归属必须显式**）
+#:
+#: 为什么记批次：`EXPECTED_XFAIL` 只在批次完成后才该下降。没有归属表时，
+#: "这批该转几条"要靠人回忆；有归属表后每批验收只需看「本批剩余 xfail 数是否归 0」。
+DEFERRED_BATCH = {
+    "test_b1_pl05_already_installed_field_is_always_present": "B17",
+    "test_b2_pl14_update_grants_before_install_returns_16003": "B17",
+    "test_c1_pl05_reinstall_does_not_touch_grants_or_audit": "B17",
+    "test_c2_pl13_capability_policy_idempotent_by_idempotency_key": "B17",
+    "test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched": "B19",
+    "test_c4_wf2_non_editable_types_rejected_without_version_bump": "B19",
+}
 
 #: 延后用例登记表（名字必须与函数名逐一对应，由 `test_d1` 校验）
 DEFERRED_CASES = (
@@ -267,42 +278,17 @@ def test_d1_deferred_registry_matches_markers() -> None:
             for mark in getattr(getattr(module, name), "pytestmark", [])
             if getattr(mark, "name", "") == "xfail"
         ]
-        assert marks[0].kwargs.get("reason"), f"[骨架汇总] {name} 的 xfail 缺 reason"
+        assert marks[0].kwargs.get("reason"), f"[骨架汇总 ③] {name} 的 xfail 缺 reason"
 
-
-@pytest.mark.skipif(
-    os.environ.get(SELFTEST_ENV) != "1",
-    reason=f"骨架自检开关未开启（{SELFTEST_ENV}=1 时启用；只在 --self-test 下收集）",
-)
-def test_d2_negative_sample_is_caught_by_invariant() -> None:
-    """骨架自检 ①：**负样本必须被不变量抓住**（纯内存，不碰任何真实常量）。
-
-    做法：把 `16003`/`16004` 互换后喂给 `_assert_codes_not_inverted`，必须抛
-    `AssertionError`。这条证明「断言真的会红」，且**不修改 `errors.py` /
-    `ERROR_REGISTRY`**——避免「临时改回」被中断后污染进程、引发连锁失败。
-    """
-    with pytest.raises(AssertionError) as caught:
-        _assert_codes_not_inverted(
-            not_installed=16004,
-            disabled=16003,
-            message_not_installed="该插件已停用，请联系管理员启用",
-            message_disabled="该插件还没有添加，请先在插件市场添加",
-        )
-    assert "[TC-P3-PL02-01 ①]" in str(caught.value), (
-        f"[骨架自检 ①] 负样本被抓住了，但报错没有带用例编号：{caught.value}"
+    assert set(DEFERRED_BATCH) == set(DEFERRED_CASES), (
+        f"[骨架汇总 ④] 批次归属表与登记表不一致：多出 "
+        f"{sorted(set(DEFERRED_BATCH) - set(DEFERRED_CASES))}、缺少 "
+        f"{sorted(set(DEFERRED_CASES) - set(DEFERRED_BATCH))}"
     )
-
-
-@pytest.mark.skipif(
-    os.environ.get(SELFTEST_ENV) != "1",
-    reason=f"骨架自检开关未开启（{SELFTEST_ENV}=1 时启用；只在 --self-test 下收集）",
-)
-def test_d3_skeleton_reports_failure_on_purpose() -> None:
-    """骨架自检 ②：**故意必红**，用来确认 pytest 会把失败报出来（exit 非 0）。
-
-    用途：`OA_P3_SKELETON_SELFTEST=1 pytest -q <本文件>` 必须 **exit 非 0**。
-    若这种情况下仍然全绿，说明断言没生效（被 `xfail` 吞掉 / 文件没被收集 / 被 CI
-    当成「已知失败」长期挂着），此时骨架的所有「绿」都不作数。
-    平时不设该变量，本用例以 `skipif` 排除——与「未实现项用 `xfail`」是两件不同的事。
-    """
-    raise AssertionError("[骨架自检 ②] 这条断言故意失败：它失败才说明骨架的断言真的会报红")
+    per_batch: dict[str, int] = {}
+    for batch in DEFERRED_BATCH.values():
+        per_batch[batch] = per_batch.get(batch, 0) + 1
+    assert sum(per_batch.values()) == EXPECTED_XFAIL, (
+        f"[骨架汇总 ⑤] 归属表合计 {sum(per_batch.values())} != EXPECTED_XFAIL {EXPECTED_XFAIL}："
+        f"分批剩余 {per_batch}"
+    )
