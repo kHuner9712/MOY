@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,9 @@ SCRATCH_DB_PREFIX = "oa_qa_g11"
 ADAPTER_ROOT = Path(__file__).resolve().parents[2]
 
 #: 默认权限探针用的临时表名（模块常量，非外部输入）
-PROBE_TABLE = "probe_default_priv"
+#: 探针表名必须**进程+实例唯一**：固定名会被两个并发 pytest 进程共用，
+#: 表现为 `count=2`（各插一行）或一方 `DROP` 删掉另一方的表（与临时库名同类问题）。
+PROBE_TABLE = f"probe_default_priv_{uuid.uuid4().hex[:8]}"
 
 #: 判据阈值（qa-phase2-test-plan.md §2.1 G-11）
 #: 阶段三 B17 起 0003 迁移自足建表（9 张插件域表），故总数 25 → 34。
