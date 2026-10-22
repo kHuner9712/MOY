@@ -1,0 +1,176 @@
+%% 阶段四新增/变动组件的类图（配套 docs/architecture-phase4.md §4.5）
+%% 只画本阶段涉及的类；既有 34 表/117 文件不重复。
+classDiagram
+    direction LR
+
+    class ConversationService {
+        -conversations: ConversationRepo
+        -messages: MessageRepo
+        -jobs: JobRepo
+        +ensure_conversation(tenant_id, user_id, conversation_id?) ConversationRecord
+        +append_user_message(tenant_id, conversation_id, user_id, content) MessageRecord
+        +append_assistant_shell(tenant_id, conversation_id, user_id, generation_id, profile) MessageRecord
+        +checkpoint_partial(message_id, partial_content) None
+        +finalize_assistant(message_id, content, status, units) None
+        +reconcile_orphans(older_than_seconds) int
+        +list_conversations(tenant_id, user_id, page, page_size, archived) PageResult
+        +list_messages(tenant_id, user_id, conversation_id, before, limit) MessagePage
+        +soft_delete(tenant_id, user_id, conversation_id) DeleteResult
+        +patch(tenant_id, user_id, conversation_id, title?, archived?) ConversationRecord
+    }
+
+    class ContextAssembler {
+        -messages: MessageRepo
+        -memory: MemoryService
+        -settings: Settings
+        +build(tenant_id, user_id, conversation_id, current_user_text, history_window, profile) AssembledContext
+        -_transcript(rows) str
+        -_memory_block(memories) str
+    }
+
+    class MemoryService {
+        -repo: MemoryRepo
+        -embedding: EmbeddingPort
+        -settings: Settings
+        +recall(tenant_id, user_id, query, top_k, timeout_s) list~MemoryRecord~
+        +extract_and_merge(tenant_id, user_id, conversation_id) ExtractResult
+        +list(tenant_id, user_id, category?, page, page_size) PageResult
+        +delete_one(tenant_id, user_id, memory_id) None
+        +delete_by_category(tenant_id, user_id, category?) int
+        +get_settings(tenant_id, user_id) MemorySetting
+        +put_settings(tenant_id, user_id, enabled, category_switches) MemorySetting
+        +maybe_enqueue_extract(tenant_id, user_id, conversation_id, turns) bool
+    }
+
+    class MemoryExtractor {
+        -dify: DifyClient
+        -settings: Settings
+        +extract(tenant_id, user_id, conversation_id, messages) list~ExtractedFact~
+        -_drop_sensitive(facts) tuple
+    }
+
+    class EmbeddingPort {
+        <<interface>>
+        +embed(texts: list~str~) list~list~float~~
+        +dim: int
+        +available: bool
+    }
+    class OpenAICompatibleEmbedding {
+        +embed(texts) list~list~float~~
+    }
+    class NullEmbedding {
+        +embed(texts) list~list~float~~
+        +available: bool
+    }
+
+    class JobRunner {
+        -repo: JobRepo
+        -handlers: dict
+        -concurrency: int
+        +start() None
+        +stop() None
+        +tick() int
+        -_claim(limit) list~JobRecord~
+        -_run_one(job) None
+    }
+
+    class JobRepo {
+        +enqueue(tenant_id, kind, dedupe_key, payload, max_attempts, run_after) JobRecord
+        +claim(limit, lease_seconds, worker_id) list~JobRecord~
+        +succeed(tenant_id, job_id) None
+        +fail(tenant_id, job_id, error, backoff) None
+        +reclaim_expired() int
+    }
+
+    class UsageService {
+        +check_generation_allowed(tenant_id, user_id) None
+        +record_generation(tenant_id, user_id, generation_id, units, source, has_authorized_bases, profile, provider, prompt_tokens, completion_tokens) bool
+        +quota_notice(tenant_id, user_id) tuple
+        +snapshot(tenant_id, user_id) UsageSnapshot
+    }
+
+    class TenantDataService {
+        -jobs: JobRepo
+        +submit_export(tenant_id, scope, operator_id) ExportTicket
+        +submit_deletion(tenant_id, confirm_text, scope, operator_id) DeletionTicket
+    }
+
+    class ModelService {
+        -dify: DifyClient
+        -routes: ProfileRouteTable
+        -context: ContextAssembler
+        -conversations: ConversationService
+        -usage: UsageService
+        +resolve_app_key(profile) str
+        +resolve_chain(profile) list~str~
+        +generate(request, user_id, auth) GenerateData
+        +generate_stream(request, user_id, auth) AsyncIterator~str~
+        -_build_downstream_payload(assembled, user_id) dict
+    }
+
+    class DifyClient {
+        +api_key: str
+        +for_app_key(api_key, base_url?, timeout?) DifyClient
+        +post(path, payload, api_key?) DifyResponse
+        +post_stream(path, payload, api_key?) AsyncIterator~dict~
+    }
+
+    class ConversationRepo {
+        -store: AsyncpgStore
+        +insert(db, record) None
+        +get(tenant_id, conversation_id) ConversationRecord?
+        +touch(tenant_id, conversation_id, message_count, last_message_at) None
+        +soft_delete(tenant_id, conversation_id, deleted_at) None
+        +list_page(...) list~ConversationRecord~
+    }
+
+    class MessageRepo {
+        +insert(record) MessageRecord
+        +update_partial(message_id, content) None
+        +finalize(message_id, content, status, units, truncated) None
+        +list_before(tenant_id, conversation_id, before_seq, limit) list~MessageRecord~
+        +settled_recent(tenant_id, conversation_id, limit) list~MessageRecord~
+        +reconcile_orphans(cutoff) int
+    }
+
+    class MemoryRepo {
+        +insert(db, record) None
+        +find_similar(tenant_id, user_id, category, hash) MemoryRecord?
+        +supersede(tenant_id, memory_id, new_id) None
+        +recall(tenant_id, user_id, categories, limit) list~MemoryRecord~
+        +delete(tenant_id, user_id, memory_id) None
+        +count(tenant_id, user_id) int
+        +evict_lowest(tenant_id, user_id, keep) int
+    }
+
+    class MetricsRegistry {
+        +http_requests_total: Counter
+        +http_request_duration_seconds: Histogram
+        +model_upstream_calls_total: Counter
+        +model_first_token_seconds: Histogram
+        +task_queue_depth: Gauge
+        +usage_units_total: Counter
+        +background_jobs_total: Counter
+        +memory_recall_duration_seconds: Histogram
+        +quota_exhausted_events_total: Counter
+        +render() str
+    }
+
+    ModelService --> ContextAssembler : 组装上下文
+    ModelService --> ConversationService : 落库/回写
+    ModelService --> UsageService : 硬止损 + 结算
+    ModelService --> DifyClient : api_key=resolve_app_key()
+    ContextAssembler --> MessageRepo
+    ContextAssembler --> MemoryService
+    ConversationService --> ConversationRepo
+    ConversationService --> MessageRepo
+    ConversationService --> JobRepo : 每10轮入队
+    MemoryService --> MemoryRepo
+    MemoryService --> EmbeddingPort
+    MemoryService --> MemoryExtractor
+    EmbeddingPort <|.. OpenAICompatibleEmbedding
+    EmbeddingPort <|.. NullEmbedding
+    JobRunner --> JobRepo
+    JobRunner --> MemoryService : memory_extract
+    JobRunner --> TenantDataService : tenant_export
+    TenantDataService --> JobRepo

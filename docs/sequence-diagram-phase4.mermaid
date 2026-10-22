@@ -1,0 +1,92 @@
+%% 阶段四关键时序（配套 docs/architecture-phase4.md §5）
+%% 四个场景：M1/M2 全链路 / 流式中断 / 事实抽取 / 历史回拉分页
+
+sequenceDiagram
+  autonumber
+  participant FE as 前端
+  participant API as api/v1/model
+  participant CS as ConversationService
+  participant CA as ContextAssembler
+  participant MS as MemoryService
+  participant US as UsageService
+  participant DF as DifyClient
+  participant DY as Dify(chat-messages)
+  participant DB as PG
+
+  Note over FE,DB: ① M1/M2：落库 → 组装 → 召回 → 调底座 → 回写
+  FE->>API: POST /model/generate (conversation_id?, messages, Idempotency-Key)
+  API->>US: check_generation_allowed(tenant, user)
+  US->>DB: usage_monthly(tenant) + tenant_budget
+  alt remaining<=0 或 usage>=budget
+    US-->>API: ApiError(15006, 402)
+    API-->>FE: {code:15006, message:"本月可用量已用完，请联系管理员调整"}
+    Note over DF,DY: 上游调用 0 次（mock 计数断言）
+  end
+  API->>CS: ensure_conversation(conversation_id?)
+  CS->>DB: INSERT conversation (conv_ + ULID) [首次]
+  API->>CS: append_user_message(status=pending)
+  CS->>DB: INSERT message(user) → seq
+  API->>CA: build(tenant,user,conv,text,history_window)
+  CA->>DB: SELECT message ... status='settled' ORDER BY seq DESC LIMIT window
+  CA->>MS: recall(query, top_k=8, timeout=300ms)
+  MS->>DB: SELECT user_memory WHERE superseded_by IS NULL
+  alt 召回异常/超时
+    MS-->>CA: []（D-2/D-3 降级，日志 memory_recall_degraded）
+  end
+  CA-->>API: query_text = [记忆块] + [历史转录] + 本轮问题
+  API->>DF: post(/v1/chat-messages, {conversation_id:null, query, user}, api_key=resolve_app_key(profile))
+  DF->>DY: HTTP
+  DY-->>DF: {answer, metadata.usage, retriever_resources}
+  DF-->>API: DifyResponse
+  API->>CS: finalize_assistant_message(status=settled, content, units)
+  CS->>DB: INSERT message(assistant, settled) + UPDATE conversation
+  API->>US: record_generation(units, profile, provider, prompt_tokens, completion_tokens)
+  US->>DB: INSERT usage_event + usage_monthly
+  API-->>FE: {code:0, data:{conversation_id, generation_id, content, usage, notice_*}}
+  API->>MS: enqueue(memory_extract, dedupe=conv, every 10 turns)
+  MS->>DB: INSERT background_job (ON CONFLICT DO NOTHING)
+
+  Note over FE,DB: ② 流式中断状态机（streaming → settled / aborted / failed）
+  FE->>API: POST /model/generate/stream
+  API->>CS: append_assistant_shell(status=streaming, content='')
+  API-->>FE: event:start
+  loop 每个 delta
+    DF-->>API: message(delta)
+    API-->>FE: event:delta
+    API->>DB: 每 ≥2s / ≥512 字 UPDATE content（仅 status=streaming）
+  end
+  alt 正常 message_end
+    DF-->>API: message_end(usage)
+    API->>CS: finalize(settled, full, truncated=false, units)
+    API-->>FE: event:done
+  else 客户端断开
+    API->>CS: finalize(aborted, partial, truncated=true)
+  else 上游错误
+    API-->>FE: event:error
+    API->>CS: finalize(failed, partial, error_reason=业务化文案)
+  end
+  Note over DB: 进程被杀 → 启动 reconciler 把 updated_at 早于 5min 的 streaming 行置 aborted
+
+  Note over DB,DY: ③ 事实抽取（后台，不阻塞对话）
+  API->>MS: maybe_enqueue_extract(conv)
+  MS->>DB: INSERT background_job(kind=memory_extract, max_attempts=1)
+  loop JobRunner.tick（默认 1s）
+    DB-->>MS: claim(SET LOCAL app.tenant_id='__platform__' + SKIP LOCKED + locked_until)
+    MS->>DB: SET LOCAL app.tenant_id = job.tenant_id
+    MS->>DB: SELECT message(role=user) 最近 N 条
+    MS->>DY: chat(JSON 6 类事实) ← OA_DIFY_MEMORY_APP_KEY
+    MS->>MS: 敏感信息正则命中 → 丢弃 + dropped_sensitive++
+    MS->>DB: 合并/覆盖（superseded_by）+ INSERT user_memory(+memory_embedding)
+    alt 失败/超时
+      MS->>DB: status=failed（不重试）+ 日志 memory_extract_degraded
+    end
+  end
+
+  Note over FE,DB: ④ 历史回拉分页（刷新/换设备恢复）
+  FE->>API: GET /model/conversations?page=1&page_size=20
+  API-->>FE: items + meta(total)
+  FE->>API: GET /model/conversations/{id}/messages?limit=30
+  API-->>FE: items(30) + next_cursor
+  FE->>API: GET .../messages?before=<cursor>&limit=30
+  API-->>FE: 更早 30 条 + next_cursor（无更多=null）
+  Note over FE: 按 message_id 集合比对，无重无漏；selectConversation 不得清空 messages
