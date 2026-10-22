@@ -29,8 +29,10 @@ QA 自加铁律：**派生数字一律从源数据重算**（数函数、数 mar
 
 from __future__ import annotations
 
+import re
 import sys
 from types import ModuleType
+from typing import Final
 
 import pytest
 from fastapi.testclient import TestClient
@@ -687,6 +689,30 @@ def test_c5_wf2_edit_resanitizes_pii_on_business_path(monkeypatch) -> None:
 # ===========================================================================
 # D 组：汇总断言（防"占位永久化"与"登记漂移"）
 # ===========================================================================
+#: 批次号格式：`B` + 纯数字。**这是判据的一部分，不是风格约定**——
+#: 台账的"是否过期"依赖它可比较；一旦允许非数字（如"阶段四"），
+#: 字符串比较会让所有此类条目永久逃检（`"B21" < "阶段四"` 恒真）。
+_BATCH_RE: Final = re.compile(r"^B(\d+)$")
+
+
+def _batch_num(raw: str) -> int:
+    """把 `B21` 解析成 21，用于**数值**比较（不做字符串比较）。
+
+    Args:
+        raw: 批次号，形如 `B21`。
+
+    Returns:
+        int: 批次序号。
+
+    Raises:
+        ValueError: 格式不合法（调用方须先用 `_BATCH_RE` 校验）。
+    """
+    match = _BATCH_RE.match(raw.strip())
+    if match is None:
+        raise ValueError(f"非法批次号：{raw!r}（须形如 B21）")
+    return int(match.group(1))
+
+
 def test_d1_deferred_registry_matches_markers() -> None:
     """汇总断言：登记表（append-only，三态）与实际 `xfail` 标记必须自洽。
 
@@ -766,13 +792,23 @@ def test_d1_deferred_registry_matches_markers() -> None:
     for item in DEFECT_LEDGER:
         if item["status"] != "open":
             continue
-        if not item.get("due_batch"):
+        raw_due = str(item.get("due_batch") or "").strip()
+        if not raw_due:
             problems.append(f"{item['id']} 缺 due_batch（无到期=永久挂账）")
         elif not item.get("due_action"):
             problems.append(f"{item['id']} 缺 due_action（无动作=下批重新调研）")
-        elif not now_batch < str(item["due_batch"]):
+        elif not _BATCH_RE.match(raw_due):
+            # **格式即判据**：曾经用 `now_batch < str(due_batch)` 做字符串比较，
+            # 而 `"B21" < "阶段四"` 恒为真（"B" U+0042 < "阶" U+9636）——
+            # 任何写"阶段四""下批""尽快"的缺陷都会**永久逃过期检查**。
+            # 这正是台账要防的"永久挂账"，且它藏在一个看起来正常的比较运算里。
             problems.append(
-                f"{item['id']}[{item['level']}] 已过期（due {item['due_batch']}，当前 {now_batch}）"
+                f"{item['id']} 的 due_batch={raw_due!r} 不是批次号（须形如 B30）；"
+                "非批次号无法判过期=永久挂账"
+            )
+        elif _batch_num(raw_due) <= _batch_num(now_batch):
+            problems.append(
+                f"{item['id']}[{item['level']}] 已过期（due {raw_due}，当前 {now_batch}）"
             )
     assert not problems, f"[台账 ⑯] 到期未闭 共 {len(problems)} 条：" + "；".join(problems)
 
