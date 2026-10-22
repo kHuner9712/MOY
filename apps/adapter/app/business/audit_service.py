@@ -165,6 +165,12 @@ ACTION_TASK_START: Final[str] = "task.start"
 ACTION_TASK_FINISH: Final[str] = "task.finish"
 ACTION_TASK_RETRY: Final[str] = "task.retry"
 
+# 记忆域（阶段四 T4-03.5，PRD §4.8）：只记**动作与条数**，绝不记正文
+ACTION_MEMORY_DELETE: Final[str] = "memory.delete"
+ACTION_MEMORY_DELETE_CATEGORY: Final[str] = "memory.delete_category"
+ACTION_MEMORY_DELETE_ALL: Final[str] = "memory.delete_all"
+ACTION_MEMORY_SETTINGS: Final[str] = "memory.settings_update"
+
 #: 操作：支付回调被拒绝（签名/金额/订单状态校验未通过，B09 安全加固）
 #:
 #: 拒绝事件**必须**进审计：`payment_callback_log` 只记「已接受并处理」的回调，
@@ -206,6 +212,10 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_TASK_START: "发起自动化任务",
     ACTION_TASK_FINISH: "自动化任务结束",
     ACTION_TASK_RETRY: "重试自动化任务",
+    ACTION_MEMORY_DELETE: "删除一条记忆",
+    ACTION_MEMORY_DELETE_CATEGORY: "按类别删除记忆",
+    ACTION_MEMORY_DELETE_ALL: "清空记忆",
+    ACTION_MEMORY_SETTINGS: "修改记忆设置",
 }
 
 
@@ -644,6 +654,10 @@ __all__: list[str] = [
     "ACTION_MEMBER_BATCH",
     "ACTION_MEMBER_REMOVE",
     "ACTION_MEMBER_UPDATE",
+    "ACTION_MEMORY_DELETE",
+    "ACTION_MEMORY_DELETE_ALL",
+    "ACTION_MEMORY_DELETE_CATEGORY",
+    "ACTION_MEMORY_SETTINGS",
     "ACTION_ORDER_CONFIRMED",
     "ACTION_ORDER_CREATED",
     "ACTION_ORDER_PAID",

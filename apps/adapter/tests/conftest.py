@@ -21,9 +21,10 @@ from fastapi.testclient import TestClient
 from jose import jwt
 
 from app.business.audit_service import reset_audit_recorder
+from app.business.context_assembler import reset_context_assembler
 from app.business.conversation_service import reset_conversation_service
 from app.business.credential_service import reset_credential_resolver
-from app.business.memory_service import reset_memory_service
+from app.business.memory_service import reset_memory_service, reset_recall_warning
 from app.business.order_service import reset_order_service
 from app.business.payment_gateway import reset_payment_gateway
 from app.business.plan_service import reset_plan_service
@@ -45,6 +46,7 @@ from app.core.idempotency import (
     reset_idempotency_manager,
 )
 from app.core.logging import configure_logging, reset_logging_for_test
+from app.core.metrics import reset_counters
 from app.core.ratelimit import RateLimiter, reset_rate_limiter
 from app.db.repositories.billing_repo import reset_billing_store
 from app.db.repositories.conversation_repo import reset_conversation_stores
@@ -66,6 +68,7 @@ from app.plugins.loader import reset_registry
 from app.registry.loader import reset_registry_cache
 from app.services.agent_service import reset_agent_service
 from app.services.identity_service import reset_identity_service
+from app.services.memory_extractor import reset_missing_app_key_warning
 from app.services.model_service import reset_model_service
 from app.services.rag_service import reset_rag_service
 from app.services.tool_service import reset_tool_service
@@ -80,6 +83,9 @@ TEST_USER_ID = "usr_test_user"
 
 #: 测试用 IDP 密钥
 TEST_JWT_SECRET = "unit-test-secret"
+
+#: 测试用「事实抽取专用应用」密钥（假值：桩模式不会真调底座）
+TEST_MEMORY_APP_KEY = "app-memory-extract-test"
 
 
 def make_token(
@@ -209,6 +215,12 @@ def _reset_all() -> None:
     reset_job_store()
     reset_memory_service()
     reset_job_runner()
+    # 阶段四 T4-03.4/5：指标计数与「未配置抽取应用」的一次性告警标记
+    # （都是进程级状态，不重置会让"日志只 1 条"这类判据在第二个用例里假绿）
+    reset_counters()
+    reset_missing_app_key_warning()
+    reset_recall_warning()
+    reset_context_assembler()
     reset_segment_store()
     reset_segment_service()
     reset_policy_service()
@@ -251,6 +263,11 @@ def settings() -> Settings:
         # 阶段四 T4-03.2：测试环境**一律不启动**后台轮询（`should_start_runner` 另有
         # `env != "test"` 兜底）。需要驱动任务的用例显式打开并手动 `runner.tick()`。
         background_jobs_enabled=False,
+        # 阶段四 T4-03.5：抽取链路默认**需要**配置抽取专用应用（缺 key 时整条链路
+        # 不启动，见 `warn_missing_memory_app_key_once`）。这里给一个假 key，
+        # 否则"每 10 轮入队"这类用例会因为链路未启用而变成空断言（桩模式不会真调底座）。
+        # 真实的"无 key → 不入队"行为由 `test_memory_extract.py` 用独立 Settings 覆盖。
+        dify_memory_app_key=TEST_MEMORY_APP_KEY,
     )
 
 

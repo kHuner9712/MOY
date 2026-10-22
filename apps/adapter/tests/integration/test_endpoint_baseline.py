@@ -317,7 +317,7 @@ def test_unregistered_endpoint_is_red_without_strict_flag(
 #:
 #: T4-02 收口 → 4（MC1-MC4）；W3 记忆端点落地 → 8（+MM1-MM4）；
 #: TD1/TD2 落地 → 10。改这个数字必须同时改本注释，否则下一个人不知道该不该改。
-PHASE4_PRESENT_EXPECTED = 4
+PHASE4_PRESENT_EXPECTED = 8
 
 
 def test_phase4_present_matches_current_batch() -> None:

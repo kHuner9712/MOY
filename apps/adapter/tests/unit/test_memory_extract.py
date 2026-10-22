@@ -44,7 +44,7 @@ from app.services.memory_extractor import (
 from app.workers.job_runner import JobRunner
 from app.workers.tasks import build_default_runner
 from app.workers.tasks.memory_extract import handle_memory_extract
-from tests.conftest import TEST_TENANT_ID, TEST_USER_ID
+from tests.conftest import TEST_MEMORY_APP_KEY, TEST_TENANT_ID, TEST_USER_ID
 
 pytestmark = [pytest.mark.unit, pytest.mark.memory]
 
@@ -219,6 +219,24 @@ class _Harness:
             await self.seed(
                 [("user", f"{prefix}{index}轮：我在整理供应链的报表"), ("assistant", "好的")]
             )
+
+
+def _enable_extract_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    """让请求链路里的抽取应用"已配置"。
+
+    **为什么用环境变量而不是 `app.state.settings`**：`ModelService` 由
+    `get_model_service()`（无参）构造，其 `_settings` 取**进程级** `get_settings()`；
+    这是阶段二就存在的既有形态（`conftest` 的注入配置只到 `app.state`）。
+    生产环境里"进程级配置 = 部署环境变量"，所以生产语义正确；测试要模拟"已配置"，
+    就得在进程级配置上注入。注：该形态已记入本提交的报告，供后续批次统一收口。
+
+    Args:
+        monkeypatch: pytest 的 monkeypatch 夹具。
+    """
+    from app.core.config import reset_settings_cache
+
+    monkeypatch.setenv("OA_DIFY_MEMORY_APP_KEY", TEST_MEMORY_APP_KEY)
+    reset_settings_cache()
 
 
 def _facts(*items: tuple[str, str]) -> list[dict[str, str]]:
@@ -621,6 +639,7 @@ class TestApiPath:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """入队抛错 → 每一轮对话仍是 `code=0`（D-1 的对话侧判据）。"""
+        _enable_extract_app(monkeypatch)
 
         async def broken_enqueue(self: Any, record: Any) -> Any:
             raise RuntimeError("queue is down")
@@ -644,7 +663,10 @@ class TestApiPath:
         async_client: Any,
         auth_headers: dict[str, str],
         make_idempotency_headers: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _enable_extract_app(monkeypatch)
+
         """累计第 10 轮用户消息时入队一个 `memory_extract` 任务（去重键=会话 ID）。
 
         会话与任务都落在 `PRIVATE_TENANT`：`settings` 夹具是 `deploy_mode=private`
@@ -702,6 +724,64 @@ class TestWiring:
         assert len(succeeded) == 1
         stored = await harness.memories.list_active(TENANT, USER)
         assert [item.content for item in stored] == ["我叫赵工"]
+
+
+class TestAppKeyRequired:
+    """抽取专用应用未配置时：不抽取、不入队，只打一次 WARNING。
+
+    刻意**不回落 `dify_default_app_key`**：默认对话应用带自己的系统提示与 RAG 上下文，
+    拿它做 JSON 抽取大概率产出非结构化文本，然后静默走 D-1——现象是"配了但没记忆"。
+    """
+
+    async def test_missing_app_key_disables_extraction(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """无 key → `maybe_enqueue_extract` 返回 False、无任务、日志恰好 1 条。"""
+        settings = Settings(env="test", business_store="memory", memory_extract_every_turns=10)
+        memories = InMemoryMemoryStore()
+        messages = InMemoryMessageStore()
+        jobs = InMemoryJobStore()
+        service = MemoryService(
+            settings,
+            memories=memories,
+            messages=messages,
+            jobs=jobs,
+            embedding=NullEmbeddingProvider(),
+        )  # extractor 缺省 = 生产实现（DifyChatCompletion，无 key → unavailable）
+        await messages.append(
+            MessageRecord(
+                tenant_id=TENANT,
+                conversation_id=CONVERSATION,
+                user_id=USER,
+                role="user",
+                content="我叫赵工",
+                status="settled",
+            )
+        )
+
+        first = await service.maybe_enqueue_extract(TENANT, USER, CONVERSATION, user_turns=10)
+        # 第二次调用不得再刷同一条 WARNING
+        second = await service.maybe_enqueue_extract(TENANT, USER, CONVERSATION, user_turns=20)
+        assert first is False
+        assert second is False
+        assert await jobs.list_by_status(TENANT, "queued") == []
+
+        result = await service.extract_and_merge(TENANT, USER, CONVERSATION)
+        assert result.skipped is True
+        assert await memories.count_active(TENANT, USER) == 0
+
+        output = capsys.readouterr().out
+        assert output.count("memory_extract_disabled_no_app_key") == 1
+
+    async def test_configured_app_key_keeps_pipeline_enabled(self) -> None:
+        """配了专用 key → `available=True`（对照组，防"一刀切关掉"）。"""
+        from app.services.memory_extractor import DifyChatCompletion
+
+        disabled = DifyChatCompletion(Settings(env="test", dify_default_app_key="app-default"))
+        enabled = DifyChatCompletion(Settings(env="test", dify_memory_app_key=TEST_MEMORY_APP_KEY))
+
+        assert disabled.available is False  # 有默认对话 key 也不算配了抽取
+        assert enabled.available is True
 
 
 class TestExtractorUnit:

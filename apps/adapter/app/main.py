@@ -38,6 +38,7 @@ from app.db.engine import dispose_engine, get_engine
 from app.db.migrate import run_startup_migrations
 from app.middleware.error_handler import register_exception_handlers
 from app.middleware.trace import AccessLogMiddleware, TraceMiddleware
+from app.services.memory_extractor import warn_missing_memory_app_key_once
 from app.workers.job_runner import JobRunner, get_job_runner, should_start_runner
 
 logger = get_logger(__name__)
@@ -142,6 +143,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if should_start_runner(settings, has_engine=engine is not None):
         runner = get_job_runner(settings)
         runner.start()
+        # 抽取专用应用没配 → 整条抽取链路不启动（刻意不回落默认对话应用）。
+        # 只在启动时告警一次，避免每 10 轮刷一条同名 WARNING。
+        warn_missing_memory_app_key_once(settings)
     app.state.job_runner = runner
 
     try:

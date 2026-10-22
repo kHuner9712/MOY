@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
@@ -47,13 +47,26 @@ TRANSCRIPT_HEADER: Final[str] = "以下是此前的对话记录："
 #: 单条历史消息在 transcript 里的角色前缀
 ROLE_LABELS: Final[dict[str, str]] = {"user": "用户", "assistant": "助手", "system": "系统"}
 
+#: L3 记忆块的头（**只进上游 prompt，绝不进 `data`**）
+MEMORY_HEADER: Final[str] = "以下是此前了解到的关于这位用户的背景信息（如与本次问题无关可忽略）："
+
+#: 类别 → 块内的中文标签（用户可见名，见 PRD §4.2 的"用户可见名"列）
+CATEGORY_LABELS: Final[dict[str, str]] = {
+    "identity": "称呼",
+    "org": "所在团队",
+    "preference": "工作习惯",
+    "convention": "常用说法",
+    "constraint": "注意事项",
+    "project": "正在做的事",
+}
+
 
 @dataclass(slots=True)
 class AssembledContext:
     """组装结果。
 
     Attributes:
-        query_text: 最终发给底座的单条 query（历史 + 本轮用户输入）。
+        query_text: 最终发给底座的单条 query（记忆 + 历史 + 本轮用户输入）。
         current_user_text: 本轮用户输入原文（单独保留，便于审计与幂等判断）。
         transcript_turns: 参与拼接的历史条数（0 表示首轮）。
         ignored_client_history: 被忽略的客户端历史条数（server 模式下 >0 说明客户端
@@ -61,6 +74,8 @@ class AssembledContext:
         history_source: `server|server_empty|client`——`server_empty` 表示服务端无历史
             （新会话首轮），三者都要能在日志里区分。
         conversation_id: 本次使用的会话 ID（服务端生成时是新的）。
+        injected_memory_count: 本次注入的 L3 记忆条数（**排障字段**：只进日志与用例断言，
+            不进面向用户的 `data`；记忆正文同样只在上游 prompt 里出现）。
     """
 
     query_text: str = ""
@@ -69,6 +84,7 @@ class AssembledContext:
     ignored_client_history: int = 0
     history_source: str = "server_empty"
     conversation_id: str = ""
+    injected_memory_count: int = 0
 
 
 class ContextAssembler:
@@ -80,6 +96,7 @@ class ContextAssembler:
         *,
         messages: MessageStore | None = None,
         conversations: ConversationStore | None = None,
+        memory: Any | None = None,
     ) -> None:
         """初始化。
 
@@ -87,10 +104,58 @@ class ContextAssembler:
             settings: 可选配置实例。
             messages: 消息存储（缺省按配置选实现）。
             conversations: 会话存储（缺省按配置选实现）。
+            memory: 可选记忆服务（阶段四 T4-03.4 的 L3 注入；测试注入）。
+
+                **类型留作 `Any` 是刻意的**：`app/business/memory_service.py` 会反向
+                import `app/services/*`，在本模块顶层 import 它会在包初始化期间命中
+                "部分初始化的模块"。真正取用处（`_memory_service()`）才惰性 import。
         """
         self._settings = settings or get_settings()
         self._messages = messages or get_message_store(self._settings)
         self._conversations = conversations or get_conversation_store(self._settings)
+        self._memory_cached: Any | None = memory
+
+    def _memory_service(self) -> Any | None:
+        """取记忆服务（惰性 import；失败返回 None —— 记忆是增强不是依赖）。
+
+        Returns:
+            Any | None: 记忆服务。
+        """
+        if self._memory_cached is not None:
+            return self._memory_cached
+        try:
+            from app.business.memory_service import get_memory_service
+
+            self._memory_cached = get_memory_service(self._settings)
+        except Exception as exc:
+            logger.warning("memory_service_unavailable", detail=type(exc).__name__)
+            return None
+        return self._memory_cached
+
+    async def _recall_memories(
+        self, tenant_id: str, user_id: str, query: str
+    ) -> list[tuple[str, str]]:
+        """召回 L3 记忆并转成 `(标签, 正文)`（**任何异常都退化为空**）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            query: 本轮用户输入。
+
+        Returns:
+            list[tuple[str, str]]: 记忆条目；不可用时为空列表。
+        """
+        memory = self._memory_service()
+        if memory is None:
+            return []
+        try:
+            records = await memory.recall(tenant_id, user_id, query)
+        except Exception as exc:  # `recall` 自身不抛，这里是最后一道保险
+            logger.warning("memory_recall_failed", detail=type(exc).__name__)
+            return []
+        return [
+            (CATEGORY_LABELS.get(item.category, item.category), item.content) for item in records
+        ]
 
     async def build(
         self,
@@ -151,7 +216,10 @@ class ContextAssembler:
             current_message_id=current_message_id,
             history_window=history_window,
         )
-        query = self._compose(history, text)
+        # 阶段四 T4-03.4：L3 记忆只注入 `server` 模式（client 是逃生门，走它就不再读库，
+        # 也就不该再注入库里的记忆——否则"逃生门"会悄悄变成第二条主路径）。
+        memories = await self._recall_memories(tenant_id, user_id, text)
+        query = self._compose(history, text, memories)
         source = "server" if history else "server_empty"
         logger.info(
             "context_assembled",
@@ -160,6 +228,7 @@ class ContextAssembler:
             profile=profile,
             turns=len(history),
             ignored_client_history=ignored,
+            injected_memory_count=len(memories),
         )
         return AssembledContext(
             query_text=query,
@@ -168,6 +237,7 @@ class ContextAssembler:
             ignored_client_history=ignored,
             history_source=source,
             conversation_id=conversation_id,
+            injected_memory_count=len(memories),
         )
 
     async def _load_history(
@@ -203,19 +273,34 @@ class ContextAssembler:
         settled = [row for row in rows if row.status == "settled"]
         return [(row.role, row.content) for row in reversed(settled)]
 
-    def _compose(self, history: list[tuple[str, str]], current_text: str) -> str:
-        """拼接最终 query（历史在前，本轮输入在最后且**只出现一次**）。
+    def _compose(
+        self,
+        history: list[tuple[str, str]],
+        current_text: str,
+        memories: list[tuple[str, str]] | None = None,
+    ) -> str:
+        """拼接最终 query（记忆块在最前，历史居中，本轮输入在最后且**只出现一次**）。
+
+        顺序理由：记忆是"跨会话的稳定背景"，放在历史之前读起来像设定；历史是本次
+        会话的上下文；本轮问题永远压轴（模型对末尾输入的注意力最高）。
 
         Args:
             history: 历史 `(role, content)`（时间正序）。
             current_text: 本轮用户输入。
+            memories: L3 记忆 `(标签, 正文)`；为空则不插入记忆块。
 
         Returns:
             str: 单条 query。
         """
+        lines: list[str] = []
+        if memories:
+            lines.append(MEMORY_HEADER)
+            lines.extend(f"- {label}：{content}" for label, content in memories)
+            lines.append("")
         if not history:
-            return current_text
-        lines = [TRANSCRIPT_HEADER]
+            lines.append(current_text)
+            return "\n".join(lines)
+        lines.append(TRANSCRIPT_HEADER)
         for role, content in history:
             label = ROLE_LABELS.get(role, ROLE_LABELS["user"])
             lines.append(f"{label}：{content}")
@@ -270,6 +355,8 @@ def reset_context_assembler() -> None:
 
 
 __all__: list[str] = [
+    "CATEGORY_LABELS",
+    "MEMORY_HEADER",
     "TRANSCRIPT_HEADER",
     "AssembleSource",
     "AssembledContext",

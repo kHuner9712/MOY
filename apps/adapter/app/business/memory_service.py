@@ -22,10 +22,22 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 
+from app.business.audit_service import (
+    ACTION_MEMORY_DELETE,
+    ACTION_MEMORY_DELETE_ALL,
+    ACTION_MEMORY_DELETE_CATEGORY,
+    ACTION_MEMORY_SETTINGS,
+    AuditService,
+    get_audit_service,
+)
 from app.core.config import Settings, get_settings
+from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
+from app.core.metrics import MEMORY_INJECTED_TOTAL, MEMORY_RECALL_DEGRADED_TOTAL
 from app.db.repositories.conversation_repo import (
     MessageStore,
     get_message_store,
@@ -52,6 +64,7 @@ from app.services.memory_extractor import (
     content_similarity,
     normalize_content,
     normalized_hash,
+    warn_missing_memory_app_key_once,
 )
 
 logger = get_logger(__name__)
@@ -71,6 +84,19 @@ WRITE_FAILURE_ALERT_THRESHOLD: int = 3
 
 #: 相似度比较时只看最相近的候选，避免把整个类别都算一遍余弦
 SIMILARITY_CANDIDATE_LIMIT: int = 50
+
+#: 「向量能力未配置」是否已告警（进程级，只打一次）。
+#:
+#: 默认部署就没有 embedding 提供方（架构 A-1），而召回**每一轮对话**都会跑一次——
+#: 逐轮打 WARNING 会把真正的降级日志淹掉，也让"日志 1 条"这条判据无法断言。
+#: 意外异常（`vector_error`）与超时仍逐次打：那些才是需要被看见的事件。
+_vector_unavailable_warned: bool = False
+
+
+def reset_recall_warning() -> None:
+    """重置"已告警"标记（测试隔离用）。"""
+    global _vector_unavailable_warned
+    _vector_unavailable_warned = False
 
 
 @dataclass(slots=True)
@@ -115,6 +141,7 @@ class MemoryService:
         jobs: JobStore | None = None,
         extractor: MemoryExtractor | None = None,
         embedding: EmbeddingProvider | None = None,
+        audit: AuditService | None = None,
     ) -> None:
         """初始化。
 
@@ -125,6 +152,7 @@ class MemoryService:
             jobs: 后台任务存储（入队 `memory_extract`）。
             extractor: 抽取器（缺省用底座专用应用，**绝不复用 `ModelService`**）。
             embedding: 向量端口（缺省按配置取，通常不可用）。
+            audit: 操作记录服务（**只记动作与条数，不记正文**，PRD §4.8）。
         """
         self._settings = settings or get_settings()
         self._memories: MemoryStore = memories or get_memory_store(self._settings)
@@ -132,6 +160,7 @@ class MemoryService:
         self._jobs: JobStore = jobs or get_job_store(self._settings)
         self._extractor = extractor or MemoryExtractor(DifyChatCompletion(self._settings))
         self._embedding: EmbeddingProvider = embedding or get_embedding_provider(self._settings)
+        self._audit: AuditService = audit or get_audit_service(self._settings)
         self._write_failures = 0
 
     # ------------------------------------------------------------------
@@ -148,6 +177,348 @@ class MemoryService:
             MemorySettingRecord: 开关记录。
         """
         return await self._memories.get_setting(tenant_id, user_id)
+
+    async def update_setting(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        enabled: bool | None = None,
+        category_switches: dict[str, bool] | None = None,
+    ) -> MemorySettingRecord:
+        """更新开关（MM4 的唯一写入口）。
+
+        语义：`None` 表示"不改这一项"；`category_switches` 只覆盖**传进来的键**，
+        不传就等于保留原值（否则前端只关一类会把其它类一起重置成开启）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            enabled: 全局开关（None 不改）。
+            category_switches: 分类开关增量（None 不改）。
+
+        Returns:
+            MemorySettingRecord: 落库后的开关。
+
+        Raises:
+            ApiError: 分类键非法（20001）——静默忽略非法键会让用户以为关掉了。
+        """
+        current = await self._memories.get_setting(tenant_id, user_id)
+        merged = dict(current.category_switches)
+        if category_switches is not None:
+            unknown = sorted(set(category_switches) - MEMORY_CATEGORIES)
+            if unknown:
+                raise ApiError(
+                    ErrorCode.PARAM_INVALID,
+                    internal_detail=f"unknown memory category: {','.join(unknown)}",
+                )
+            merged.update({key: bool(value) for key, value in category_switches.items()})
+        target = MemorySettingRecord(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            enabled=current.enabled if enabled is None else bool(enabled),
+            category_switches=merged,
+        )
+        saved = await self._memories.upsert_setting(target)
+        await self._record_audit(
+            ACTION_MEMORY_SETTINGS,
+            tenant_id,
+            user_id,
+            "settings",
+            {
+                "enabled": saved.enabled,
+                "closed_categories": sorted(key for key, value in merged.items() if not value),
+            },
+        )
+        logger.info(
+            "memory_setting_updated",
+            user_id=user_id,
+            enabled=saved.enabled,
+            closed_categories=sorted(key for key, value in merged.items() if not value),
+        )
+        return saved
+
+    async def _record_audit(
+        self,
+        action: str,
+        tenant_id: str,
+        user_id: str,
+        resource_id: str,
+        summary: dict[str, Any],
+    ) -> None:
+        """写一条操作记录（**只记动作与条数/开关，不记正文**）。
+
+        审计失败不得让用户的操作失败：隐私要求的是"用户能删掉"，
+        而不是"删除必须连带审计成功"——所以这里吞异常只记 WARN。
+
+        Args:
+            action: 操作编码。
+            tenant_id: 企业 ID。
+            user_id: 操作人。
+            resource_id: 资源标识（记忆 ID / 类别 / `settings`）。
+            summary: 变更摘要（**不得含记忆正文**）。
+        """
+        try:
+            await self._audit.record(
+                tenant_id=tenant_id,
+                actor_id=user_id,
+                action=action,
+                resource_type="memory",
+                resource_id=resource_id,
+                change_summary=summary,
+            )
+        except Exception as exc:
+            logger.warning(
+                "memory_audit_failed",
+                action=action,
+                detail=type(exc).__name__,
+            )
+
+    async def list_memories(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        category: str = "",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[MemoryRecord], int, MemorySettingRecord]:
+        """分页列出生效的记忆（MM1）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            category: 可选类别过滤。
+            page: 页码。
+            page_size: 每页条数。
+
+        Returns:
+            tuple[list[MemoryRecord], int, MemorySettingRecord]:
+                `(本页行, 总数, 开关状态)`——`enabled` 与列表同包下发，前端才能一次渲染
+                "空列表 + 已关闭"与"空列表 + 还没记到东西"两种不同空态。
+
+        Raises:
+            ApiError: 类别非法（20001）。
+        """
+        if category and category not in MEMORY_CATEGORIES:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                internal_detail=f"unknown memory category: {category}",
+            )
+        rows, total = await self._memories.list_page(
+            tenant_id, user_id, category=category, page=page, page_size=page_size
+        )
+        setting = await self._memories.get_setting(tenant_id, user_id)
+        return rows, total, setting
+
+    async def delete_memory(self, tenant_id: str, user_id: str, memory_id: str) -> bool:
+        """硬删单条记忆（含向量行）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人（防越权：只能删自己的）。
+            memory_id: 记忆 ID。
+
+        Returns:
+            bool: 确实删掉了返回 True；不存在或不属于本人返回 False（接口层据此报 18002）。
+        """
+        record = await self._memories.get(tenant_id, memory_id)
+        if record is None or record.user_id != user_id:
+            return False
+        removed = await self._memories.delete(tenant_id, user_id, [memory_id])
+        if removed:
+            await self._record_audit(
+                ACTION_MEMORY_DELETE, tenant_id, user_id, memory_id, {"deleted_count": removed}
+            )
+            logger.info("memory_deleted", user_id=user_id, memory_id=memory_id, count=removed)
+        return removed > 0
+
+    async def delete_memories(self, tenant_id: str, user_id: str, *, category: str = "") -> int:
+        """按类别硬删（`category` 为空 = 全删），含历史值与向量行。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            category: 类别（空表示全部）。
+
+        Returns:
+            int: 删除的事实条数。
+
+        Raises:
+            ApiError: 类别非法（20001）。
+        """
+        if category and category not in MEMORY_CATEGORIES:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                internal_detail=f"unknown memory category: {category}",
+            )
+        removed = await self._memories.delete_by_category(tenant_id, user_id, category=category)
+        if removed:
+            await self._record_audit(
+                ACTION_MEMORY_DELETE_CATEGORY if category else ACTION_MEMORY_DELETE_ALL,
+                tenant_id,
+                user_id,
+                category or "all",
+                {"deleted_count": removed, "category": category},
+            )
+        logger.info(
+            "memory_deleted_by_category",
+            user_id=user_id,
+            category=category or "all",
+            count=removed,
+        )
+        return removed
+
+    async def recall(
+        self,
+        tenant_id: str,
+        user_id: str,
+        query: str,
+        *,
+        top_k: int | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109 - 预算由架构 §4.5 固定为入参名
+    ) -> list[MemoryRecord]:
+        """召回可注入的记忆（L3），**绝不抛异常**。
+
+        两条降级路径的差别是刻意的（PRD §4.7）：
+
+        - **D-2 超时**：超过预算就**不注入**——用户已经等在那儿了，多等 200ms 换
+          一条"可能有用"的记忆不划算；
+        - **D-3 向量不可用**：换成"按类别 + `updated_at` 取前 N"**照常注入**——
+          没有向量不等于没有记忆，这条路径是本地查询，不会拖慢对话。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            query: 本轮用户输入（用于向量检索）。
+            top_k: 条数上限（缺省取配置 `memory_recall_top_k`）。
+            timeout: 硬超时秒数（缺省取配置 `memory_recall_timeout_seconds`）。
+
+        Returns:
+            list[MemoryRecord]: 可注入的当前值（**低置信度已被剔除**）；不可注入时为空。
+        """
+        limit = int(top_k if top_k is not None else self._settings.memory_recall_top_k)
+        budget = float(
+            timeout if timeout is not None else self._settings.memory_recall_timeout_seconds
+        )
+        setting = await self._memories.get_setting(tenant_id, user_id)
+        allowed = [item for item in MEMORY_CATEGORIES if setting.category_enabled(item)]
+        if not setting.enabled or not allowed:
+            # 关了就不注入（PRD §4.4"不允许关了就偷偷还用"）
+            MEMORY_INJECTED_TOTAL.inc(result="empty")
+            return []
+
+        degraded_reason = ""
+        records: list[MemoryRecord] = []
+        if self._embedding.available:
+            try:
+                records = await asyncio.wait_for(
+                    self._recall_vector(tenant_id, user_id, query, limit, allowed),
+                    timeout=budget,
+                )
+            except TimeoutError:
+                degraded_reason = "timeout"
+            except Exception as exc:  # 向量表/扩展不可用 → D-3
+                degraded_reason = "vector_unavailable"
+                logger.warning(
+                    "memory_recall_vector_failed",
+                    user_id=user_id,
+                    detail=type(exc).__name__,
+                )
+        else:
+            degraded_reason = "vector_unavailable"
+
+        if degraded_reason == "vector_unavailable":
+            try:
+                records = await asyncio.wait_for(
+                    self._recall_by_category(tenant_id, user_id, limit, allowed),
+                    timeout=budget,
+                )
+            except TimeoutError:
+                degraded_reason = "timeout"
+                records = []
+            except Exception as exc:
+                logger.warning(
+                    "memory_recall_fallback_failed",
+                    user_id=user_id,
+                    detail=type(exc).__name__,
+                )
+                records = []
+
+        if degraded_reason:
+            MEMORY_RECALL_DEGRADED_TOTAL.inc(reason=degraded_reason)
+            _log_recall_degraded(
+                reason=degraded_reason,
+                user_id=user_id,
+                timeout_seconds=budget,
+                injected=0 if degraded_reason == "timeout" else len(records),
+            )
+
+        # 低置信度不注入（PRD §4.3：仅在管理页显示为"待确认"）
+        injectable = [
+            item
+            for item in records
+            if item.confidence != "low" and setting.category_enabled(item.category)
+        ][:limit]
+        if degraded_reason:
+            MEMORY_INJECTED_TOTAL.inc(result="degraded")
+        elif injectable:
+            MEMORY_INJECTED_TOTAL.inc(result="ok")
+        else:
+            MEMORY_INJECTED_TOTAL.inc(result="empty")
+        return injectable
+
+    async def _recall_vector(
+        self,
+        tenant_id: str,
+        user_id: str,
+        query: str,
+        limit: int,
+        categories: list[str],
+    ) -> list[MemoryRecord]:
+        """向量路径（可能抛异常，由 `recall` 降级）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            query: 查询文本。
+            limit: 条数上限。
+            categories: 允许的类别。
+
+        Returns:
+            list[MemoryRecord]: 最相近的当前值。
+        """
+        text = (query or "").strip()
+        if not text:
+            return []
+        vectors = await self._embedding.embed([text])
+        if not vectors:
+            return []
+        return await self._memories.search_similar(
+            tenant_id, user_id, vectors[0], limit=limit, categories=categories
+        )
+
+    async def _recall_by_category(
+        self,
+        tenant_id: str,
+        user_id: str,
+        limit: int,
+        categories: list[str],
+    ) -> list[MemoryRecord]:
+        """降级路径：按类别 + `updated_at` 取前 N（本地查询，无向量依赖）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            limit: 条数上限。
+            categories: 允许的类别。
+
+        Returns:
+            list[MemoryRecord]: 最近更新的当前值。
+        """
+        rows = await self._memories.list_active(tenant_id, user_id)
+        allowed = set(categories)
+        return [item for item in rows if item.category in allowed][:limit]
 
     # ------------------------------------------------------------------
     # 触发：每 N 轮用户消息 → 入队（**绝不阻塞对话**）
@@ -180,6 +551,10 @@ class MemoryService:
         try:
             every = int(self._settings.memory_extract_every_turns)
             if every <= 0:  # 0 = 关闭抽取（只保留手动与历史数据）
+                return False
+            if not self._extractor.available:
+                # 未配置抽取专用应用：**不抽取、不入队**，只打一次告警
+                warn_missing_memory_app_key_once(self._settings)
                 return False
             setting = await self._memories.get_setting(tenant_id, user_id)
             if not setting.enabled:
@@ -246,6 +621,10 @@ class MemoryService:
             ApiError: 存储不可用等配置错误（同样由任务层收口）。
         """
         result = ExtractResult()
+        if not self._extractor.available:
+            warn_missing_memory_app_key_once(self._settings)
+            result.skipped = True
+            return result
         setting = await self._memories.get_setting(tenant_id, user_id)
         if not setting.enabled:
             logger.info("memory_extract_skipped_disabled", user_id=user_id)
@@ -569,6 +948,41 @@ class MemoryService:
         return self._write_failures
 
 
+def _log_recall_degraded(
+    *, reason: str, user_id: str, timeout_seconds: float, injected: int
+) -> None:
+    """记录一次召回降级（**配置性不可用只打一次**，见 `_vector_unavailable_warned`）。
+
+    Args:
+        reason: 降级原因（`timeout` / `vector_unavailable`）。
+        user_id: 归属个人（排障用）。
+        timeout_seconds: 本次预算（秒）。
+        injected: 本次实际注入条数（超时路径恒为 0）。
+    """
+    global _vector_unavailable_warned
+    if reason == "timeout":
+        logger.warning(
+            "memory_recall_degraded",
+            user_id=user_id,
+            reason=reason,
+            timeout_seconds=timeout_seconds,
+            injected=injected,
+        )
+        return
+    if _vector_unavailable_warned:
+        logger.debug("memory_recall_degraded", user_id=user_id, reason=reason, injected=injected)
+        return
+    _vector_unavailable_warned = True
+    logger.warning(
+        "memory_recall_degraded",
+        user_id=user_id,
+        reason=reason,
+        timeout_seconds=timeout_seconds,
+        injected=injected,
+        note="向量能力不可用：已降级为按类别 + 更新时间召回（本次只告警一次）",
+    )
+
+
 def _stronger_confidence(left: str, right: str) -> str:
     """取更强的置信度（明确陈述可以抬高推测，反之不行）。
 
@@ -616,4 +1030,5 @@ __all__: list[str] = [
     "MemoryService",
     "get_memory_service",
     "reset_memory_service",
+    "reset_recall_warning",
 ]

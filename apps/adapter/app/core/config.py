@@ -259,6 +259,11 @@ class Settings(BaseSettings):
     memory_max_per_user: int = Field(default=200, ge=1, le=10_000)
     #: 每 N 轮对话触发一次事实抽取（0 = 关闭抽取，只保留手动与历史数据）
     memory_extract_every_turns: int = Field(default=10, ge=0, le=100)
+    #: 召回注入条数上限（架构 §4.5：top_k=8）
+    memory_recall_top_k: int = Field(default=8, ge=1, le=50)
+    #: 召回整体硬超时（秒）。默认 0.3s（PRD D-2 / 架构 §4.5）：
+    #: 超时**不注入**（用户感知不到），而不是"等它慢慢查完"——记忆是增强不是依赖。
+    memory_recall_timeout_seconds: float = Field(default=0.3, gt=0, le=5.0)
 
     # ------------------------------------------------------------------
     # 后台任务引擎（阶段四 T4-03.2，架构 §2.3 / §3.4）

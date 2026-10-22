@@ -36,6 +36,7 @@ from app.api.v1 import (
     identity,
     identity_ext,
     knowledge_ext,
+    memory,
     model,
     ops,
     plugins,
@@ -251,6 +252,8 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     api_router.include_router(
         conversation.router, prefix=prefix, dependencies=business_dependencies
     )
+    # 阶段四 MM1-MM4：我的记忆（列表 / 删单条 / 按类删·全删 / 开关），与 /model 同域
+    api_router.include_router(memory.router, prefix=prefix, dependencies=business_dependencies)
     api_router.include_router(rag.router, prefix=prefix, dependencies=business_dependencies)
     # 阶段二新域模块：与既有资源域共用前缀（架构文档 2.2 第 2 条），不新增版本
     api_router.include_router(

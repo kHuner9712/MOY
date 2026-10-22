@@ -200,6 +200,34 @@ class MemoryStore(Protocol):
         """按 ID 读取**任意状态**的行（含已被取代的历史值，`superseded_by` 链用）。"""
         ...
 
+    async def list_page(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        category: str = "",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[MemoryRecord], int]:
+        """分页列出当前值（MM1 用；只返回 `superseded_by IS NULL` 的行）。"""
+        ...
+
+    async def search_similar(
+        self,
+        tenant_id: str,
+        user_id: str,
+        embedding: Sequence[float],
+        *,
+        limit: int,
+        categories: Sequence[str] | None = None,
+    ) -> list[MemoryRecord]:
+        """向量检索（按余弦距离升序返回最相近的当前值）。"""
+        ...
+
+    async def delete_by_category(self, tenant_id: str, user_id: str, *, category: str = "") -> int:
+        """按类别硬删（`category` 为空 = 全删）；返回删除的事实条数。"""
+        ...
+
     async def count_active(self, tenant_id: str, user_id: str) -> int:
         """统计活跃事实条数。"""
         ...
@@ -415,6 +443,88 @@ class InMemoryMemoryStore:
             MemoryRecord | None: 记忆记录。
         """
         return self._facts.get((tenant_id, memory_id))
+
+    async def list_page(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        category: str = "",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[MemoryRecord], int]:
+        """分页列出当前值（更新时间降序）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            category: 可选类别过滤。
+            page: 页码（从 1 开始）。
+            page_size: 每页条数。
+
+        Returns:
+            tuple[list[MemoryRecord], int]: 本页行与总数。
+        """
+        rows = await self.list_active(tenant_id, user_id, category=category)
+        offset = max(0, (page - 1) * page_size)
+        return rows[offset : offset + page_size], len(rows)
+
+    async def search_similar(
+        self,
+        tenant_id: str,
+        user_id: str,
+        embedding: Sequence[float],
+        *,
+        limit: int,
+        categories: Sequence[str] | None = None,
+    ) -> list[MemoryRecord]:
+        """向量检索（内存实现：本地算余弦并排序）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            embedding: 查询向量。
+            limit: 条数上限。
+            categories: 允许的类别（None 表示不限）。
+
+        Returns:
+            list[MemoryRecord]: 最相近的当前值（距离升序）。
+        """
+        from app.services.memory_embedding import cosine_similarity
+
+        allowed = set(categories) if categories else set(MEMORY_CATEGORIES)
+        active = [
+            item for item in await self.list_active(tenant_id, user_id) if item.category in allowed
+        ]
+        vectors = await self.list_embeddings(tenant_id, [item.memory_id for item in active])
+        scored: list[tuple[float, MemoryRecord]] = []
+        for item in active:
+            vector = vectors.get(item.memory_id)
+            if not vector:
+                continue
+            scored.append((cosine_similarity(embedding, vector), item))
+        scored.sort(key=lambda pair: (-pair[0], pair[1].memory_id))
+        return [item for _score, item in scored[: max(0, limit)]]
+
+    async def delete_by_category(self, tenant_id: str, user_id: str, *, category: str = "") -> int:
+        """按类别硬删（`category` 为空 = 全删），含历史值与向量行。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            category: 类别（空表示全部）。
+
+        Returns:
+            int: 删除的事实条数。
+        """
+        victims = [
+            item.memory_id
+            for item in list(self._facts.values())
+            if item.tenant_id == tenant_id
+            and item.user_id == user_id
+            and (not category or item.category == category)
+        ]
+        return await self.delete(tenant_id, user_id, victims)
 
     async def find_by_hash(
         self, tenant_id: str, user_id: str, category: str, normalized_hash: str
@@ -739,6 +849,146 @@ class PostgresMemoryStore:
                 repo.params(memory_id=memory_id),
             )
         return _to_memory(row) if row is not None else None
+
+    async def list_page(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        category: str = "",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[MemoryRecord], int]:
+        """分页列出当前值（MM1）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            category: 可选类别过滤。
+            page: 页码（从 1 开始）。
+            page_size: 每页条数。
+
+        Returns:
+            tuple[list[MemoryRecord], int]: 本页行与总数。
+        """
+        offset = max(0, (page - 1) * page_size)
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _MemoryTableRepository(uow)
+            rows = await repo.fetch_all(
+                f"""
+                SELECT * FROM {MEMORY_TABLE}
+                 WHERE {repo.tenant_clause()}
+                   AND user_id = :user_id
+                   AND superseded_by IS NULL
+                   AND (:category = '' OR category = :category)
+                 ORDER BY updated_at DESC, memory_id DESC
+                 LIMIT :limit OFFSET :offset
+                """,
+                repo.params(user_id=user_id, category=category, limit=page_size, offset=offset),
+            )
+            total = await repo.fetch_scalar(
+                f"""
+                SELECT count(*) FROM {MEMORY_TABLE}
+                 WHERE {repo.tenant_clause()}
+                   AND user_id = :user_id
+                   AND superseded_by IS NULL
+                   AND (:category = '' OR category = :category)
+                """,
+                repo.params(user_id=user_id, category=category),
+            )
+        return [_to_memory(row) for row in rows], int(total or 0)
+
+    async def search_similar(
+        self,
+        tenant_id: str,
+        user_id: str,
+        embedding: Sequence[float],
+        *,
+        limit: int,
+        categories: Sequence[str] | None = None,
+    ) -> list[MemoryRecord]:
+        """向量检索（pgvector 余弦距离 `<=>`，走 HNSW 索引）。
+
+        `<=>` 返回的是**距离**（1 − 余弦相似度），按它升序就是"最相近在前"。
+        只 join 当前值（`superseded_by IS NULL`）——历史值不参与召回（PRD §4.4）。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            embedding: 查询向量。
+            limit: 条数上限。
+            categories: 允许的类别（None 表示不限）。
+
+        Returns:
+            list[MemoryRecord]: 最相近的当前值。
+        """
+        allowed = list(categories) if categories else list(MEMORY_CATEGORIES)
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _MemoryTableRepository(uow)
+            rows = await repo.fetch_all(
+                f"""
+                SELECT memory.*
+                  FROM {MEMORY_TABLE} AS memory
+                  JOIN {EMBEDDING_TABLE} AS embedding
+                    ON embedding.tenant_id = memory.tenant_id
+                   AND embedding.memory_id = memory.memory_id
+                 WHERE {repo.tenant_clause("memory")}
+                   AND memory.user_id = :user_id
+                   AND memory.superseded_by IS NULL
+                   AND memory.category = ANY(:categories)
+                 ORDER BY embedding.embedding <=> CAST(:embedding AS vector)
+                 LIMIT :limit
+                """,
+                repo.params(
+                    user_id=user_id,
+                    categories=allowed,
+                    embedding=vector_literal(embedding),
+                    limit=limit,
+                ),
+            )
+        return [_to_memory(row) for row in rows]
+
+    async def delete_by_category(self, tenant_id: str, user_id: str, *, category: str = "") -> int:
+        """按类别硬删（`category` 为空 = 全删），同一事务内先删向量再删事实。
+
+        Args:
+            tenant_id: 企业 ID。
+            user_id: 归属个人。
+            category: 类别（空表示全部）。
+
+        Returns:
+            int: 删除的事实条数。
+        """
+        async with tenant_scope(tenant_id, settings=self._settings) as uow:
+            embed_repo = _EmbeddingTableRepository(uow)
+            await embed_repo.execute(
+                f"""
+                DELETE FROM {EMBEDDING_TABLE}
+                 WHERE {embed_repo.tenant_clause()}
+                   AND memory_id IN (
+                       SELECT memory_id FROM {MEMORY_TABLE}
+                        WHERE {embed_repo.tenant_clause()}
+                          AND user_id = :user_id
+                          AND (:category = '' OR category = :category)
+                   )
+                """,
+                embed_repo.params(user_id=user_id, category=category),
+            )
+            repo = _MemoryTableRepository(uow)
+            deleted = await repo.fetch_scalar(
+                f"""
+                WITH removed AS (
+                    DELETE FROM {MEMORY_TABLE}
+                     WHERE {repo.tenant_clause()}
+                       AND user_id = :user_id
+                       AND (:category = '' OR category = :category)
+                    RETURNING 1
+                )
+                SELECT count(*) FROM removed
+                """,
+                repo.params(user_id=user_id, category=category),
+            )
+        return int(deleted or 0)
 
     async def find_by_hash(
         self, tenant_id: str, user_id: str, category: str, normalized_hash: str

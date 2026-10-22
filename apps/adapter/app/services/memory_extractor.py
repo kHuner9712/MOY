@@ -126,6 +126,45 @@ class ChatCompletionError(RuntimeError):
     """
 
 
+#: 「未配置抽取应用」告警是否已打过（进程级，保证只打一次，不逐轮刷屏）
+_missing_key_warned: bool = False
+
+
+def warn_missing_memory_app_key_once(settings: Settings | None = None) -> bool:
+    """未配置 `OA_DIFY_MEMORY_APP_KEY` 时打**一次** WARNING。
+
+    为什么只打一次：这个判断每 10 轮就会被调用，逐次打日志会把真正有用的
+    `memory_extract_degraded` 淹掉，也会让"日志 1 条"这条判据无法断言。
+
+    Args:
+        settings: 可选配置实例。
+
+    Returns:
+        bool: 本次是否输出了告警（已打过返回 False，便于用例断言"只一次"）。
+    """
+    global _missing_key_warned
+    conf = settings or get_settings()
+    if (conf.dify_memory_app_key or "").strip():
+        return False
+    if _missing_key_warned:
+        return False
+    _missing_key_warned = True
+    logger.warning(
+        "memory_extract_disabled_no_app_key",
+        note=(
+            "OA_DIFY_MEMORY_APP_KEY 未配置：不抽取、不入队。"
+            "刻意不回落默认对话应用——那会产出非结构化文本并静默走降级。"
+        ),
+    )
+    return True
+
+
+def reset_missing_app_key_warning() -> None:
+    """重置"已告警"标记（测试隔离用）。"""
+    global _missing_key_warned
+    _missing_key_warned = False
+
+
 class ChatCompletion(Protocol):
     """极薄的一次性补全协议（**不落 message、不计量、不注入记忆**）。"""
 
@@ -149,6 +188,11 @@ class DifyChatCompletion:
 
     与 `ModelService` 的区别只有一点、但很关键：**这里不碰 message 表、不写计量**。
     客户端实例懒加载并复用（每次调用新建 httpx 连接池会造成 TIME_WAIT 堆积）。
+
+    **密钥缺失时不回落到默认对话应用**（2026-10-24 主理人拍板）：默认应用带自己的
+    系统提示与 RAG 上下文，拿它做 JSON 抽取大概率产出非结构化文本，然后静默走 D-1——
+    现象是"配置看起来做了、实际一条记忆都没有"。所以缺 `OA_DIFY_MEMORY_APP_KEY` 时
+    `available=False`：**不抽取、不入队**，只在进程内打一次 WARNING。
     """
 
     def __init__(self, settings: Settings | None = None) -> None:
@@ -162,12 +206,21 @@ class DifyChatCompletion:
 
     @property
     def app_key(self) -> str:
-        """抽取专用应用密钥（缺省回退通用应用密钥）。
+        """抽取专用应用密钥（**不回落到 `dify_default_app_key`**）。
 
         Returns:
-            str: 应用密钥；都未配置时为空串（调用时会报 `ChatCompletionError`）。
+            str: 应用密钥；未配置时为空串。
         """
-        return (self._settings.dify_memory_app_key or self._settings.dify_default_app_key).strip()
+        return (self._settings.dify_memory_app_key or "").strip()
+
+    @property
+    def available(self) -> bool:
+        """是否已配置抽取专用应用（未配置则整套抽取链路不启动）。
+
+        Returns:
+            bool: 配了 `OA_DIFY_MEMORY_APP_KEY` 时返回 True。
+        """
+        return bool(self.app_key)
 
     def _get_client(self) -> DifyClient:
         """取（或惰性创建）底座客户端。
@@ -433,6 +486,18 @@ class MemoryExtractor:
         """
         return self._max_facts
 
+    @property
+    def available(self) -> bool:
+        """抽取链路是否可用（生产实现缺密钥时为 False）。
+
+        读 `getattr(..., "available", True)`：`ChatCompletion` 协议刻意保持极薄
+        （只有一个 `complete`），测试替身不必实现该属性，缺省视为可用。
+
+        Returns:
+            bool: 可用返回 True。
+        """
+        return bool(getattr(self._chat, "available", True))
+
     def build_prompt(self, messages: list[str]) -> str:
         """拼抽取提示词。
 
@@ -519,4 +584,6 @@ __all__: list[str] = [
     "content_similarity",
     "normalize_content",
     "normalized_hash",
+    "reset_missing_app_key_warning",
+    "warn_missing_memory_app_key_once",
 ]
