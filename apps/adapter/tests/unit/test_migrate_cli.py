@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from app.core.config import Settings
+from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ApiError, ErrorCode
 from app.db.engine import ASYNC_DRIVER_PREFIX
 from app.db.migrate import (
@@ -337,21 +337,31 @@ def test_discover_migrations_handles_missing_baseline_and_non_file_entries(
 def test_candidate_sql_dirs_orders_explicit_env_and_dedupes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
-    """候选目录优先级：显式 > 环境变量 > 其余；重复候选去重。"""
+    """候选目录优先级：显式 > 环境变量 > 其余；重复候选去重。
+
+    **必须清一次配置缓存**：`get_settings()` 是 `lru_cache(maxsize=1)` 单例，
+    `candidate_sql_dirs()` 读的是 `settings.db_sql_dir`——缓存一旦被先前用例填过，
+    这里 `setenv` 就看不见（整跑红、单跑绿，正是这条曾经的样子）。
+    收尾再清一次，避免把"临时目录"这份配置泄漏给后面的用例。
+    """
     env_dir = tmp_path / "from_env"
     env_dir.mkdir()
     monkeypatch.setenv("OA_DB_SQL_DIR", str(env_dir))
     explicit = tmp_path / "explicit"
     explicit.mkdir()
+    reset_settings_cache()
 
-    candidates = candidate_sql_dirs(explicit)
+    try:
+        candidates = candidate_sql_dirs(explicit)
 
-    assert candidates[0] == explicit
-    assert env_dir in candidates
+        assert candidates[0] == explicit
+        assert env_dir in candidates
 
-    same = candidate_sql_dirs(env_dir)
-    resolved = [item.resolve() if item.exists() else item for item in same]
-    assert resolved.count(env_dir.resolve()) == 1, "同一目录不得候选两遍"
+        same = candidate_sql_dirs(env_dir)
+        resolved = [item.resolve() if item.exists() else item for item in same]
+        assert resolved.count(env_dir.resolve()) == 1, "同一目录不得候选两遍"
+    finally:
+        reset_settings_cache()
 
 
 def test_resolve_sql_dir_uses_migrations_dir_without_baseline(tmp_path: pathlib.Path) -> None:
