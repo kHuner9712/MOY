@@ -4,7 +4,8 @@
 | --- | --- |
 | 报告编号 | QA-P3-B18-R01 |
 | 被测提交 | **`79f868c`**（提交信息为 `docs(qa)`，实际含 B18 全量代码 2383 行 → 记为 **P2 流程问题**） |
-| 复核方式 | `git archive 79f868c` → `/tmp/qa-b18`，QA 骨架文件取仓库 HEAD 版本覆盖后执行 |
+| 复核方式 | 首轮 `git archive 79f868c` → `/tmp/qa-b18`；**复验 `git archive a705d2b` → `/tmp/qa-b18r`**（骨架/常量取当时 HEAD） |
+| 取证 SHA 纪律 | 凡报告写「未修」，必须附**当次取证的 HEAD sha**——本轮三次「已修被判未修」皆因取证点落后于修复点（见 §8.3） |
 | 归档身份 | `79f868c202ee80a40b2db08f9b966eb22311f470` / `/tmp/qa-b18` |
 | 验证日期 | 2026-10-22 |
 | **判定** | **PASS（首轮 FAIL → 复验 PASS）**：`79f868c` 判 FAIL（D3/D4 未修、D5 环境）；**`a705d2b` 复验全绿，转 PASS**（见 §8） |
@@ -26,7 +27,7 @@
 
 ## 2. 阻断项
 
-### P3-B18-01（P1）`0003` 仍是「只对账」，空库 `--apply` 必然失败
+### P3-B18-01（**P0**）`0003` 仍是「只对账」，空库 `--apply` 必然失败
 - **判据**：team-lead 明确「`0003` 空库路径：现在是**幂等建表 + 对账**，不许残留"只对账"分支」。
 - **实际**：`deploy/migrations/0003_phase3_plugin_tables.sql` 文件头自述「**本迁移不建表**，只对已初始化库做一次只读对账」，判据 REAISE 缺表。
 - **后果**：空库（新环境 / CI scratch DB）执行 `--apply` 必失败：
@@ -34,7 +35,7 @@
   → `test_g11_apply_twice_on_empty_database_is_idempotent` 等 **4 条**红。
 - **修复**：0003 改为 `CREATE TABLE IF NOT EXISTS`（幂等建表）+ 保留对账断言；或迁移链显式声明"须先执行基线 `init-schema-phase3.sql`"并让空库路径先应用基线。**二者必须选一，不能停在"只对账"。**
 
-### P3-B18-02（P1）`migration checksum drift detected: 0003_phase3_plugin_tables`
+### P3-B18-02（**P0**）`migration checksum drift detected: 0003_phase3_plugin_tables`
 - **现象**：CLI 用例 `--apply` 退出码 1，日志 `[FAIL] migration checksum drift detected: 0003_phase3_plugin_tables`（`--check` 通过、`--apply` 失败）。
 - **可能根因**（需工程师确认，非我判定）：同一版本号 `0003` 的 checksum 与执行内容来自**两个不同文件**（基线 `init-schema-phase3.sql` vs `migrations/0003_*.sql`），或文件被 CRLF/空白归一化后两侧计算口径不一致。
 - **影响**：即使修好 D4，`--apply` 仍会因漂移失败。
@@ -93,13 +94,13 @@
 
 ## 7. QA 缺陷台账（本批，供 `tests/expected_xfail.py` 的 `defect` 字段引用）
 
-| 编号 | 等级 | 标题 | 归属 | 状态 |
-| --- | --- | --- | --- | --- |
-| P3-B17-01 | P1 | PL5 响应缺 `already_installed` 常驻字段 | Engineer | ✅ B18 已修（实测 false/true 两路径） |
-| P3-B17-02 | P1 | PL13 写后回读只返 3 项 | Engineer | ✅ B18 已修（实测 6 项） |
-| P3-B18-01 | P1 | `0003` 仍是「只对账」，空库 `--apply` 必败 | Engineer | ❌ 未修 |
-| P3-B18-02 | P1 | `migration checksum drift: 0003` | Engineer | ❌ 未修 |
-| P3-B18-03 | P1 | G-13 要求 `17002` 出现在前端（与架构 0 命中相反） | Engineer（门禁） | ❌ 未修（遗留自 B17） |
+| 编号 | 等级 | 标题 | 归属 | 取证 SHA（判"未修"时的 HEAD） | 状态（复验于 `a705d2b`） |
+| --- | --- | --- | --- | --- | --- |
+| P3-B17-01 | P1 | PL5 响应缺 `already_installed` 常驻字段 | Engineer | `79f868c` 已修 | ✅ fixed |
+| P3-B17-02 | P1 | PL13 写后回读只返 3 项 | Engineer | `79f868c` 已修 | ✅ fixed |
+| P3-B18-01 | **P0** | `0003` 仍是「只对账」，空库 `--apply` 必败（**迁移不可重复/空库不可建**，测试方案 §7.1 ⑦ 定级为 P0） | Engineer | `79f868c` | ✅ fixed（`b5dbd69`） |
+| P3-B18-02 | **P0** | `migration checksum drift: 0003`（同属迁移可重复性） | Engineer | `79f868c` | ✅ fixed（`b5dbd69` 同源解决） |
+| P3-B18-03 | P1 | G-13 要求 `17002` 出现在前端（与架构 0 命中相反） | Engineer（门禁） | `79f868c` | ✅ fixed（`c340e70`） |
 
 > **用途**：`red` 条目的 `defect` 字段必须是上表编号之一，且**编号唯一、与 open 状态条目双向相等**——
 > 否则"填个编号"只是填字游戏（编造编号台账里没有；复用编号则数量对不上）。
@@ -133,3 +134,16 @@
 
 ### 8.2 结论
 `a705d2b` 起 **B18 PASS**。首个 FAIL 判定（`79f868c`）保留为历史记录：其价值在于 D3/D4 是**在冻结之后才修**的，若不复核就会把"已修"记成"未修"。
+
+
+### 8.3 取证 SHA 纪律（本轮教训，已落为报告固定列）
+
+本轮我三次把"已修"判成"未修"，根因都是**取证点（`79f868c`）落后于修复点（`b5dbd69` / `c340e70`）**：
+
+| 判断 | 当时取证 SHA | 实际修复 SHA | 结果 |
+| --- | --- | --- | --- |
+| P3-B18-01 未修 | `79f868c` | `b5dbd69` | 误判 |
+| P3-B18-02 未修 | `79f868c` | `b5dbd69`（同源） | 误判 |
+| P3-B18-03 未修 | `79f868c` | `c340e70` | 误判 |
+
+**纪律**：① 每条缺陷状态必须写出**取证 SHA**；② 若"未修"对象在本批修复提交清单里，以**最新**提交为准复验；③ 复验时用**全新数据库**（D5 类环境态不算缺陷）。
