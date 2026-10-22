@@ -193,7 +193,9 @@ def test_release_slot_keeps_queue_when_capacity_still_full() -> None:
     second = _run(service.create_plugin_task(_request("conv_2"), auth()))
     record = _run(tasks.get_task(TENANT, first.task_id))
     assert record is not None
-    _run(service._release_slot(record))  # type: ignore[attr-defined]
+    # 本用例**故意**直调私有分支：`_release_slot` 的"额度仍满时不 promote"没有公开入口，
+    # 只能从内部驱动（被测对象是分支本身，不是 API 契约）
+    _run(service._release_slot(record))  # noqa: SLF001  # type: ignore[attr-defined]
     still = _run(tasks.get_task(TENANT, second.task_id))
     assert still is not None and still.status == "queued", "占满时不得把排队任务拉起来"
 
@@ -245,7 +247,7 @@ def test_initiator_name_prefers_claims() -> None:
 
 def test_retry_requires_from_step_for_retry_step() -> None:
     """`retry_step` 缺 `from_step` → 20001（参数错误，不是 17001）。"""
-    service, tasks, _arts, _usage = build_service(
+    service, _tasks, _arts, _usage = build_service(
         load_manifest(PLUGIN_ID), gateway=EchoGateway(fail_at=5)
     )
     created = _run(service.create_plugin_task(_request(), auth()))
@@ -289,7 +291,8 @@ def _plugin_service() -> tuple[PluginService, InMemoryPluginStore]:
         del tenant_id
         return True
 
-    service._plan_allows_market = _always_enabled  # type: ignore[method-assign]
+    # 替换私有方法：本组用例只验安装态分支，套餐判定走集成用例
+    service._plan_allows_market = _always_enabled  # noqa: SLF001  # type: ignore[method-assign]
     return service, store
 
 
