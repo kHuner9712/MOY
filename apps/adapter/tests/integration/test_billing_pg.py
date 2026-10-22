@@ -294,8 +294,12 @@ async def test_expired_order_closed_in_database(
     record = await billing_store.get_order(TENANT_ID, created.order_id)
     assert record is not None
     assert record.status == ORDER_CLOSED
-    # 跨租户补偿入口（平台作用域）
-    assert await billing_store.expire_orders(now_iso()) == []
+    # 同租户再扫一遍：本企业已无待关闭订单（幂等）
+    # **必须带 TENANT_ID**：不带租户参数是平台侧全库补偿口径，断言 `== []`
+    # 等于要求"整个数据库没有任何过期订单"——那是本用例控制不了的外部状态，
+    # 任何一个其他租户的残留（并发 e2e、手工探针）都会让这条假红。
+    # 共享库里的断言只能断言"自己管得着的那部分"。
+    assert await billing_store.expire_orders(now_iso(), TENANT_ID) == []
 
 
 @pytest.mark.asyncio
