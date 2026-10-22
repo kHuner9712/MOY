@@ -154,6 +154,20 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         "due_action": "接上任务级超时（读 plugin_task_timeout_seconds 并让引擎消费），"
         "或明确注销该配置项并在 PRD 标注不做",
     },
+    {
+        "id": "P3-B22-03",
+        "level": "P1",
+        # 产物二进制内容未持久化：`ArtifactRecord.content` 的注释写明
+        # 「仅内存后端保留，PG 后端为 b""」。下载端点回落 `inline_text`，
+        # 于是 PG（私有化）模式下导出公文得到的是**文本预览字节，不是 Word 文件**。
+        # 验收报告「4 类公文可导出真 docx（可解压 word/document.xml）」只在内存模式成立。
+        # 属典型「内存全绿、生产全废」，与 P3-B19-04 同族。
+        "status": "open",
+        "pinned_by": "PRD P0-P3-23（公文可导出）/ ArtifactRecord.content 仅内存保留",
+        "due_batch": "B30",
+        "due_action": "plugin_artifact 增二进制内容列（BYTEA，迁移 + init-schema 双更新），"
+        "仓储读写与下载端点改用真实字节；或用对象存储并把 content_type/长度登记进库",
+    },
 )
 
 
