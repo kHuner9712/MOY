@@ -22,8 +22,8 @@
 
 ## 汇总
 
-- 合计 **118** 行：**已建 53** / **待建 65** / **不适用 0**
-- 按批次：W1 30 / W2 21 / W3 37 / W4 30
+- 合计 **119** 行：**已建 57** / **待建 62** / **不适用 0**
+- 按批次：W1 30 / W2 21 / W3 37 / W4 31
 
 ## 清单
 
@@ -46,7 +46,7 @@
 | `T4-01.4` | `apps/adapter/app/db/migrate.py` | T4-01.4 | W1 | 代码 | 已建 | b96ba7d |
 | `T4-01.4` | `apps/adapter/tests/integration/test_migration_lock.py` | T4-01.4 | W1 | 测试 | 已建 | 2699897 |
 | `T4-01.4` | `deploy/init-schema-phase3.sql` | T4-01.4 | W1 | 代码 | 已建 | 010db32 |
-| `T4-01.4` | `deploy/migrations/rollback/` | T4-01.4 | W1 | 迁移 | 已建 | d4ba2c0 |
+| `T4-01.4` | `deploy/migrations/rollback/` | T4-01.4 | W1 | 迁移 | 已建 | 4726264 |
 | `T4-01.5` | `apps/adapter/app/db/repositories/artifact_repo.py` | T4-01.5 | W1 | 代码 | 已建 | b6effcf |
 | `T4-01.5` | `apps/adapter/app/db/repositories/usage_repo.py` | T4-01.5 | W1 | 代码 | 已建 | 6eca802 |
 | `T4-01.5` | `deploy/migrations/0006_*.sql` | T4-01.5 | W1 | 迁移 | 已建 | 2699897 |
@@ -73,10 +73,10 @@
 | `T4-02.6` | `apps/web/src/hooks/use-conversation-store.ts` | T4-02.6 | W2 | 代码 | 已建 | f46544f |
 | `T4-02.6` | `apps/web/src/lib/api-client.ts` | T4-02.6 | W2 | 代码 | 已建 | f46544f |
 | `T4-02.6` | `apps/web/src/lib/types.ts` | T4-02.6 | W2 | 代码 | 已建 | f46544f |
-| `T4-03.1` | `deploy/migrations/0009_user_memory.sql` | T4-03.1 | W2 | 迁移 | 待建 | — |
-| `T4-03.1` | `deploy/migrations/0010_background_job.sql` | T4-03.1 | W2 | 迁移 | 待建 | — |
-| `T4-03.1` | `deploy/migrations/rollback/0009_*.down.sql` | T4-03.1 | W2 | 迁移 | 待建 | — |
-| `T4-03.1` | `deploy/migrations/rollback/0010_*.down.sql` | T4-03.1 | W2 | 迁移 | 待建 | — |
+| `T4-03.1` | `deploy/migrations/0009_user_memory.sql` | T4-03.1 | W2 | 迁移 | 已建 | 4726264 |
+| `T4-03.1` | `deploy/migrations/0010_background_job.sql` | T4-03.1 | W2 | 迁移 | 已建 | 4726264 |
+| `T4-03.1` | `deploy/migrations/rollback/0009_*.down.sql` | T4-03.1 | W2 | 迁移 | 已建 | 4726264 |
+| `T4-03.1` | `deploy/migrations/rollback/0010_*.down.sql` | T4-03.1 | W2 | 迁移 | 已建 | 4726264 |
 | `T4-03.2` | `apps/adapter/app/db/repositories/job_repo.py` | T4-03.2 | W2 | 代码 | 待建 | — |
 | `T4-03.2` | `apps/adapter/app/workers/job_runner.py` | T4-03.2 | W2 | 代码 | 待建 | — |
 | `T4-03.2` | `apps/adapter/tests/unit/test_job_runner.py` | T4-03.2 | W2 | 测试 | 待建 | — |
@@ -134,6 +134,7 @@
 | `T4-05.5` | `deploy/rollback.sh` | T4-05.5 | W4 | 代码 | 待建 | — |
 | `T4-05.5` | `deploy/upgrade.sh` | T4-05.5 | W4 | 代码 | 待建 | — |
 | `T4-05.5` | `deploy/validate_packaging.py` | T4-05.5 | W4 | 代码 | 已建 | d55a959 |
+| `T4-05.5` | `sql/enable-vector-extension.sql` | T4-05.5 | W4 | 代码 | 待建 | — |
 | `T4-05.6` | `.github/workflows/sbom.yml` | T4-05.6 | W4 | 代码 | 待建 | — |
 | `T4-05.6` | `apps/web/src/app/(main)/about/page.tsx` | T4-05.6 | W4 | 代码 | 待建 | — |
 | `T4-05.6` | `deploy/sbom/generate.py` | T4-05.6 | W4 | 代码 | 待建 | — |

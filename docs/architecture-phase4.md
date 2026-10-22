@@ -964,7 +964,8 @@ officeai-offline-<version>/
 ├── dify/     apps/*.difypkg（4 个档位 + 记忆抽取应用）, plugins/deepseek-0.0.25.difypkg
 ├── compliance/ privacy-policy.md, dpa-template.md, security-whitepaper.md, sbom.cdx.json, NOTICE
 ├── docs/     deployment-guide.md, user-guide.md, key-rotation-checklist.md, perf-disclosure.md, known-limits.md
-└── sql/      tenant-export-manual.sql, retention-audit.sql（DBA 执行，见 F-9）
+└── sql/      enable-vector-extension.sql（**存量升级唯一必需**，见 §9.3.1）,
+              tenant-export-manual.sql, retention-audit.sql（DBA 执行，见 F-9）
 ```
 
 ### 9.3 升级/回滚状态机（含失败自动回滚）
@@ -973,6 +974,7 @@ officeai-offline-<version>/
 stateDiagram-v2
   [*] --> PreCheck
   PreCheck --> Aborted: 校验和不符/磁盘不足/CHANGE_ME 未替换
+  PreCheck --> Aborted: **缺 vector 扩展**（trusted=false，需超级用户，见下）
   PreCheck --> Backup: 通过
   Backup --> Aborted: 备份失败（**中止，不进入升级**）
   Backup --> Migrate: 备份可被 restore.sh 读取
@@ -986,14 +988,57 @@ stateDiagram-v2
   DoneN --> [*]
   Aborted --> [*]
 ```
+#### 9.3.1 升级预检：`vector` 扩展（**V1.0 唯一需要客户 DBA 动手的地方**）
+
+**为什么必须单列**：`vector` 扩展 **`trusted = false`** —— 实测（`pgvector/pgvector:pg18`）：
+
+```
+$ SELECT name, version, trusted, superuser FROM pg_available_extension_versions WHERE name='vector';
+ vector | 0.8.7 | trusted=false | superuser=true
+
+$ psql -U appowner -d d1 -c "CREATE EXTENSION IF NOT EXISTS vector;"     -- appowner 是库属主、NOSUPERUSER
+ ERROR:  permission denied to create extension "vector"
+ HINT:   Must be superuser to create this extension.
+```
+
+即：**应用角色即使是库属主也建不了**；`init-schema-phase4.sql:153` 的 `CREATE EXTENSION IF NOT EXISTS vector;`
+只有在 **initdb 以超级用户（`POSTGRES_USER`）执行**时才生效。**存量客户升级不走 initdb**（库已存在），
+所以这一条是**唯一无法自动完成的步骤**。
+
+**`upgrade.sh` 必须在 `migrate --apply` 之前执行预检**（顺序不可颠倒：`0009` 迁移要用 `vector` 类型，
+缺扩展时会在 DDL 阶段报 `type "vector" does not exist`，那时已经跑了一半迁移，回滚代价高）：
+
+```bash
+# 预检 SQL（用应用角色即可读，不需要超级用户）
+psql "$OA_DATABASE_URL" -tAc \
+  "SELECT 1 FROM pg_extension WHERE extname='vector' AND extversion >= '0.8'" | grep -q 1 \
+  || { echo "缺少向量扩展，升级中止"; cat sql/enable-vector-extension.sql; exit 4; }
+```
+
+**中止时打印的可照做文案（逐字，不要改写成技术黑话）**：
+
+```
+检测到数据库尚未启用「记忆检索」所需的扩展，升级已中止（数据库未做任何改动）。
+
+请让您的数据库管理员执行下面这一条语句（需要数据库超级用户权限，约 1 分钟）：
+
+    psql -U <超级用户> -d <业务库> -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+执行完成后重新运行 upgrade.sh 即可。此步骤只需做一次。
+```
+
+> **镜像换了 ≠ 扩展装了**：换成 `pgvector/pgvector:pg18` 只代表"扩展的安装文件在镜像里"，
+> 每个**数据库**仍需单独 `CREATE EXTENSION`。新装（`install.sh`）由 initdb 超级用户自动完成；
+> 存量库的升级必须 DBA 手动执行一次。这条写在 **DBA runbook 顶部第一段**，不得埋在附录。
+
 - **N-1 兼容三约束**（PRD §5.4）落地校验：① 迁移只加（`0006-0011` 全部 `ADD COLUMN`/`CREATE TABLE`/`CREATE INDEX`，无 `DROP`/`ALTER TYPE`）；② 新列全部 `NOT NULL DEFAULT`；③ 应用层对"列是否存在"用守卫：读取 `0007` 的 4 列前先 `SELECT to_regclass/attnum` 或用 `try/except UndefinedColumn`（一次性 helper `db/schema_guard.py`）。
 
 ### 9.4 三个脚本的硬要求
 
 | 脚本 | 硬要求 |
 | --- | --- |
-| `install.sh` | ① 前置检查（docker/compose 版本、8G 内存、端口、`CHANGE_ME_*` 归零）**任一不满足提前退出**；② 缺任一分包 → 立刻报"缺 X"，**不装到一半**；③ 加载镜像 → 建库（3 库：officeai/keycloak/dify）→ initdb → `migrate.py --apply` → 起服务 → 轮询 `/readyz`（≤180s）→ 打印**一次性随机管理员口令** → 写 `install.log` |
-| `upgrade.sh` | 备份 → 迁移 → 冒烟 → 失败自动 `rollback.sh`；全程写 `upgrade.log`，末尾打印 `DONE/ROLLED_BACK` 供脚本断言 |
+| `install.sh` | ⓿ `vector` 扩展由 initdb 以**超级用户**执行 `init-schema-phase4.sql:153` 自动建（新装无此手工步骤）；① 前置检查（docker/compose 版本、8G 内存、端口、`CHANGE_ME_*` 归零）**任一不满足提前退出**；② 缺任一分包 → 立刻报"缺 X"，**不装到一半**；③ 加载镜像 → 建库（3 库：officeai/keycloak/dify）→ initdb → `migrate.py --apply` → 起服务 → 轮询 `/readyz`（≤180s）→ 打印**一次性随机管理员口令** → 写 `install.log` |
+| `upgrade.sh` | **预检（`vector` 扩展，§9.3.1，缺失即退出 4 且不碰数据库）** → 备份 → 迁移 → 冒烟 → 失败自动 `rollback.sh`；全程写 `upgrade.log`，末尾打印 `DONE/ROLLED_BACK` 供脚本断言。**预检必须排在迁移之前**——`0009` 用到 `vector` 类型，缺扩展会在 DDL 中途报 `type "vector" does not exist` |
 | `rollback.sh` | 仅执行 `deploy/migrations/rollback/NNNN_*.sql`（倒序）+ 切镜像 + 数据一致性校验；**生产必须停写**（脚本检测 `OA_MAINTENANCE=1`，否则拒绝执行并提示） |
 
 ### 9.5 合规与文档
@@ -1156,9 +1201,9 @@ async def apply_one(self, m: Migration) -> None:
 | **T4-05.2** | exporter + 4 job 抓取 + 5 条告警规则 | `deploy/docker-compose.yml`、`deploy/prometheus.yml`、`deploy/alert.rules.yml`、`deploy/images.lock` | T4-05.1 | `docker compose config -q`；Prometheus `/targets` 4 job `UP`；`/rules` 5 条 `ok` | M |
 | **T4-05.3** | 数据保留 + 清理任务 + 租户导出/删除 + DBA 审计 SQL | `app/workers/tasks/retention_cleanup.py`、`app/workers/tasks/tenant_export.py`、`app/business/tenant_data_service.py`、`app/api/v1/tenant_data.py`、`app/api/v1/router.py`、`sql/retention-audit.sql`、`apps/adapter/tests/integration/test_retention_export_delete.py` | T4-03.2 | `pytest tests/integration/test_retention_export_delete.py -q`；保留期 1 天 → 目标表 `count=0` + 日志有行数；导出包 `manifest.json` 行数一致；删除后逐表 0 | L |
 | **T4-05.4** | 轻量版编排（9 容器）+ nginx + 资源限制 + healthcheck + `validate_lite_up.sh` | `deploy/docker-compose.lite.yml`、`deploy/nginx/nginx.conf`、`deploy/nginx/lite.conf`、`deploy/validate_lite_up.sh`、`deploy/.env.lite.example` | T4-05.2、T4-03.1 | `bash deploy/validate_lite_up.sh` → `ready in <180s` + `status=ok`；`docker stats` 总内存 < 6GB；`grep -c healthcheck deploy/docker-compose.lite.yml` ≥ 有状态服务数 | L |
-| **T4-05.5** | 离线包 + 升级/回滚脚本 + `images.lock` 增 `digest` | `deploy/install.sh`、`upgrade.sh`、`rollback.sh`、`backup.sh`、`restore.sh`、`deploy/images.lock`、`deploy/validate_packaging.py` | T4-05.4、T4-01.4 | 断网全新环境 `bash install.sh` 一次成功；`sha256sum -c checksums.txt` 全通过；`upgrade→rollback→upgrade` 三轮数据一致 | L |
-| **T4-05.6** | SBOM + `.difypkg` 扫描 + 合规三件套 + About 页 | `deploy/sbom/generate.py`、`deploy/validate_offline_pkgs.py`、`.github/workflows/sbom.yml`、`docs/compliance/privacy-policy.md`、`dpa-template.md`、`security-whitepaper.md`、`apps/web/src/app/(main)/about/page.tsx` | T4-05.5 | `jq '.components\|length' sbom.cdx.json` >0 且 4 前缀各 ≥1；`python deploy/validate_offline_pkgs.py --self-test` 正样本 0 / 负样本非 0；CI `license-scan` success | L |
-| **T4-05.7** | 性能基线 + 金标集执行 + 交付文档 | `scripts/bench/*.py`、`docs/perf-disclosure.md`、`qa/goldset/*`、`docs/deployment-guide.md`、`docs/user-guide.md`、`docs/key-rotation-checklist.md` | T4-05.4 | 文档反引号路径全部 `ls` 到（脚本断言）；`docs/perf-disclosure.md` 每个数字可回溯到 `results/` | L |
+| **T4-05.5** | 离线包 + 升级/回滚脚本 + `images.lock` 增 `digest`；**升级预检含 `vector` 扩展**（§9.3.1） | `deploy/install.sh`、`upgrade.sh`、`rollback.sh`、`backup.sh`、`restore.sh`、**`sql/enable-vector-extension.sql`（新建）**、`deploy/images.lock`、`deploy/validate_packaging.py` | T4-05.4、T4-01.4 | 断网全新环境 `bash install.sh` 一次成功；`sha256sum -c checksums.txt` 全通过；`upgrade→rollback→upgrade` 三轮数据一致；**`vector` 预检**：① 全新装库（initdb 超级用户建过扩展）→ `upgrade.sh` 预检通过、不进中止分支；② 手工 `DROP EXTENSION vector` 后跑 `upgrade.sh` → **退出码 4、未执行任何迁移**、打印 §9.3.1 的逐字文案、`sql/enable-vector-extension.sql` 内容随之输出 | L |
+| **T4-05.6** | SBOM + `.difypkg` 扫描 + 合规三件套 + About 页；**DBA runbook 顶部单列 `vector` 扩展步骤**（§9.3.1） | `deploy/sbom/generate.py`、`deploy/validate_offline_pkgs.py`、`.github/workflows/sbom.yml`、`docs/compliance/privacy-policy.md`、`dpa-template.md`、`security-whitepaper.md`、`apps/web/src/app/(main)/about/page.tsx` | T4-05.5 | `jq '.components\|length' sbom.cdx.json` >0 且 4 前缀各 ≥1；`python deploy/validate_offline_pkgs.py --self-test` 正样本 0 / 负样本非 0；CI `license-scan` success | L |
+| **T4-05.7** | 性能基线 + 金标集执行 + 交付文档；**部署手册单列「postgres 需安装 vector 扩展（超级用户执行）」** | `scripts/bench/*.py`、`docs/perf-disclosure.md`、`qa/goldset/*`、`docs/deployment-guide.md`、`docs/user-guide.md`、`docs/key-rotation-checklist.md` | T4-05.4 | 文档反引号路径全部 `ls` 到（脚本断言）；`docs/perf-disclosure.md` 每个数字可回溯到 `results/`；**`grep -c "CREATE EXTENSION IF NOT EXISTS vector" docs/deployment-guide.md` ≥1** 且该段落在**「升级已有环境」章节之内**（不是附录）；runbook 中出现「镜像换了不等于扩展装了」这句原话 | L |
 
 ### 11.1 与四周排期的映射
 
