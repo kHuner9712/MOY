@@ -5,7 +5,9 @@
 1. 当前 30 个核心端点全部通过 G1，且集合与 `docs/api/baseline-core-30.json` **完全一致**；
 2. 故意删一个端点 → 门禁失败且打印缺失路径；
 3. 故意改响应字段类型 → G4 报 type changed；
-4. `--allow-missing-phase2` 期间 CI 绿（新域端点按批次补齐，不允许写假端点）。
+4. `--allow-missing-phase2` 期间 CI 绿（新域端点按批次补齐，不允许写假端点）；
+5. **B21 收口**：阶段三 `phase3 == 16` 精确相等，且**没有** `--allow-missing-phase3`
+   这类放宽参数——删一个插件域端点必须立刻变红。
 """
 
 from __future__ import annotations
@@ -129,7 +131,10 @@ def test_snapshot_exists_and_covers_core_endpoints() -> None:
 
 
 def test_repository_passes_gates_with_allow_missing_phase2() -> None:
-    """当前仓库状态在 `--allow-missing-phase2` 下 G1-G5 全绿。"""
+    """当前仓库状态在 `--allow-missing-phase2` 下 G1-G5 全绿。
+
+    阶段三自 B21 起无放宽参数，故这里断言 `phase3 == 16`（精确值）。
+    """
     failures, stats = validator.collect_failures(
         validator.build_schema(),
         core_baseline=validator.load_baseline(CORE_BASELINE_PATH),
@@ -137,13 +142,12 @@ def test_repository_passes_gates_with_allow_missing_phase2() -> None:
         phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
         snapshot=_load_snapshot(),
         allow_missing_phase2=True,
-        allow_missing_phase3=True,
         skip_diff=False,
     )
     assert failures == [], [item.render() for item in failures]
     assert stats["core"] == 30
     assert stats["phase2"] == 38
-    assert stats["phase3"] <= 16, "阶段三端点不得超过冻结上限（PL1-PL14 + WF1/WF2）"
+    assert stats["phase3"] == 16, "阶段三端点必须精确 16 条（PL1-PL14 + WF1/WF2）"
 
 
 def _load_snapshot() -> dict[str, Any]:
@@ -158,11 +162,8 @@ def _load_snapshot() -> dict[str, Any]:
 
 
 def test_cli_returns_zero_with_allow_missing_phase2() -> None:
-    """CLI 在 `--allow-missing-phase2` 下退出码为 0（CI 现阶段口径）。"""
-    assert (
-        validator.main(["--allow-missing-phase2", "--allow-missing-phase3", "--no-write-openapi"])
-        == 0
-    )
+    """CLI 在 `--allow-missing-phase2` 下退出码为 0（阶段二历史口径）。"""
+    assert validator.main(["--allow-missing-phase2", "--no-write-openapi"]) == 0
 
 
 def test_cli_returns_zero_in_strict_mode_after_b10() -> None:
@@ -171,11 +172,11 @@ def test_cli_returns_zero_in_strict_mode_after_b10() -> None:
     历史：B02 阶段此用例断言「严格模式非 0」（当时 38 条新域端点尚未实现）。
     B10 落地最后 8 条（OPS1-OPS8）后，严格模式从「预期失败」变为「必须通过」——
     这正是该门禁的设计意图：放宽期结束，端点基线进入冻结状态。
+    B21 又把阶段三的放宽参数一并删掉（phase3 16/16 已收口），所以**现在
+    `--no-write-openapi` 就是全量严格模式**，不带任何容差参数。
     缺失检测能力由 `test_cli_returns_nonzero_when_endpoint_missing` 用合成 schema 兜住。
     """
-    # 阶段三 16 条尚未全部落地（B17 起分批登记）→ 严格模式需显式放行 phase3；
-    # B21 收口后本行改回 `["--no-write-openapi"]` 且必须仍为 0。
-    assert validator.main(["--no-write-openapi", "--allow-missing-phase3"]) == 0
+    assert validator.main(["--no-write-openapi"]) == 0
 
 
 def test_cli_returns_nonzero_when_endpoint_missing(
@@ -191,7 +192,7 @@ def test_cli_returns_nonzero_when_endpoint_missing(
     else:  # pragma: no cover - 端点被整体移除时才走到这里
         paths.pop(victim)
     monkeypatch.setattr(validator, "build_schema", lambda: {**schema, "paths": paths})
-    assert validator.main(["--no-write-openapi", "--allow-missing-phase3"]) == 1
+    assert validator.main(["--no-write-openapi"]) == 1
 
 
 # ===========================================================================
@@ -237,13 +238,24 @@ def test_g2_rejects_unregistered_new_endpoint() -> None:
 
 def test_g3_core_count_is_frozen() -> None:
     """核心端点数量漂移即失败。"""
-    assert validator.gate_counts(30, 0, allow_missing=True) == []
-    assert validator.gate_counts(29, 0, allow_missing=True)
+    assert validator.gate_counts(30, 0, 16, allow_missing=True) == []
+    assert validator.gate_counts(29, 0, 16, allow_missing=True)
 
 
 def test_g3_phase2_upper_bound_in_allow_mode() -> None:
     """放宽模式下新域端点不得超过冻结上限 38。"""
-    assert validator.gate_counts(30, 39, allow_missing=True)
+    assert validator.gate_counts(30, 39, 16, allow_missing=True)
+
+
+def test_g3_phase3_count_is_always_strict() -> None:
+    """阶段三**没有放宽模式**：少一条、多一条都必须红（B21 收口判据）。
+
+    这条是"删端点让门禁变绿"的机械钉子：即便阶段二仍在放宽，
+    `phase3_count != 16` 也必须让 G3 失败。
+    """
+    assert validator.gate_counts(30, 38, 15, allow_missing=True)
+    assert validator.gate_counts(30, 38, 17, allow_missing=True)
+    assert validator.gate_counts(30, 38, 16, allow_missing=True) == []
 
 
 # ===========================================================================

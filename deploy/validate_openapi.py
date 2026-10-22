@@ -6,16 +6,22 @@
 | 门禁 | 规则 |
 | --- | --- |
 | G1 核心基线 | `core_actual` 与 `baseline-core-30.json` **精确集合相等**（新增/删除/改路径都红） |
-| G2 新域基线 | 已实现的新域端点必须全部登记在 `baseline-phase2-38.json`；未实现部分由 `--allow-missing-phase2` 放宽 |
-| G3 计数 | `len(core) == 30`；未放宽时 `len(phase2) == 38` |
+| G2 新域基线 | 已实现的新域端点必须全部登记在 `baseline-phase2-38.json` / `baseline-phase3-16.json`；未实现部分由 `--allow-missing-phase2` 放宽（**阶段三自 B21 起无放宽参数**） |
+| G3 计数 | `len(core) == 30`；未放宽时 `len(phase2) == 38`；**`len(phase3) == 16` 恒严格** |
 | G4 加性 diff | 与 `openapi.snapshot.json` 比对：允许新增属性/新增枚举值；禁止删属性、改类型、`required` 变长、enum 收窄、新增必填请求字段、删除既有响应码 |
 | G5 泄漏扫描 | 对外文档出现底座/基础设施术语即红（保留 CI 原有 4 个禁词并扩充） |
+
+**阶段三为什么没有 `--allow-missing-phase3`（B21 收口决定）**：
+B19 起 phase3 已 16/16 全部落地，"已登记但未实现"这个中间态不再存在。
+留一个放宽开关，等于给"删掉端点让 CI 变绿"留了一条合法通道——**门禁的放宽参数
+一旦常态化，红与绿就不再说明任何事**。所以本脚本只保留阶段二（历史批次）的放宽，
+阶段三一律严格；确需临时放宽请在 PR 里显式删除端点并登记缺陷，而不是加参数。
 
 用法：
 
 ```bash
-python deploy/validate_openapi.py                        # 严格模式（阶段二收尾后）
-python deploy/validate_openapi.py --allow-missing-phase2 # 现阶段（B02-B10 逐步补齐）
+python deploy/validate_openapi.py                        # 严格模式（当前唯一模式）
+python deploy/validate_openapi.py --allow-missing-phase2 # 仅阶段二历史批次可用
 python deploy/validate_openapi.py --update-snapshot      # 端点变更后更新快照（PR 需贴 diff）
 ```
 
@@ -219,13 +225,18 @@ def gate_phase2_baseline(
     declared: set[tuple[str, str]],
     *,
     allow_missing: bool,
+    hint: str = "（可用 --allow-missing-phase2）",
 ) -> list[GateFailure]:
-    """G2：新域端点必须全部登记在 `baseline-phase2-38.json`。
+    """G2：新域端点必须全部登记在对应基线文件里。
+
+    阶段三调用时请传 `allow_missing=False`，并换掉 `hint`——阶段三**没有**
+    放宽参数，提示里出现"可用 --allow-missing-phaseX"会把人引向一条不存在的路。
 
     Args:
         actual: 当前实现的新域端点（`全部端点 ∩ 已登记集合`）。
         declared: 基线登记的端点。
         allow_missing: 是否允许基线中存在尚未实现的端点。
+        hint: 缺失时附在文案后的处置提示。
 
     Returns:
         list[GateFailure]: 失败明细。
@@ -239,7 +250,7 @@ def gate_phase2_baseline(
         )
     if missing and not allow_missing:
         failures.append(
-            GateFailure("G2", f"新域端点未实现: {_format_operations(missing)}（可用 --allow-missing-phase2）")
+            GateFailure("G2", f"新域端点未实现: {_format_operations(missing)}{hint}")
         )
     return failures
 
@@ -250,16 +261,17 @@ def gate_counts(
     phase3_count: int = 0,
     *,
     allow_missing: bool,
-    allow_missing_phase3: bool = True,
 ) -> list[GateFailure]:
-    """G3：端点数门禁（三套基线：core=30 / phase2=38 / phase3=14）。
+    """G3：端点数门禁（三套基线：core=30 / phase2=38 / phase3=16）。
+
+    阶段三**恒严格**：`phase3_count` 必须精确等于 16。B21 收口后不再提供
+    放宽参数——"已登记但未实现"的中间态已经不存在，留着开关只会让门禁变哑。
 
     Args:
         core_count: 核心端点实际数量。
         phase2_count: 阶段二新域端点实际数量。
         phase3_count: 阶段三插件域端点实际数量。
-        allow_missing: 是否允许阶段二端点未实现。
-        allow_missing_phase3: 是否允许阶段三端点未实现（B17-B20 开发期）。
+        allow_missing: 是否允许阶段二端点未实现（仅阶段二历史批次可用）。
 
     Returns:
         list[GateFailure]: 失败明细。
@@ -283,18 +295,12 @@ def gate_counts(
                 f"新域端点数量超出冻结上限 {PHASE2_BASELINE_COUNT}，实际 {phase2_count}",
             )
         )
-    if not allow_missing_phase3 and phase3_count != PHASE3_BASELINE_COUNT:
+    if phase3_count != PHASE3_BASELINE_COUNT:
         failures.append(
             GateFailure(
                 "G3",
-                f"插件域端点数量必须为 {PHASE3_BASELINE_COUNT}，实际 {phase3_count}",
-            )
-        )
-    if allow_missing_phase3 and phase3_count > PHASE3_BASELINE_COUNT:
-        failures.append(
-            GateFailure(
-                "G3",
-                f"插件域端点数量超出冻结上限 {PHASE3_BASELINE_COUNT}，实际 {phase3_count}",
+                f"插件域端点数量必须为 {PHASE3_BASELINE_COUNT}，实际 {phase3_count}"
+                f"（阶段三自 B21 起无放宽参数：少一条就是删了端点，多一条就是没登记基线）",
             )
         )
     return failures
@@ -526,10 +532,11 @@ def collect_failures(
     phase3_baseline: set[tuple[str, str]] | None = None,
     snapshot: dict[str, Any] | None = None,
     allow_missing_phase2: bool = False,
-    allow_missing_phase3: bool = True,
     skip_diff: bool = False,
 ) -> tuple[list[GateFailure], dict[str, Any]]:
     """执行五道门禁并汇总结果。
+
+    阶段三**恒严格**（无放宽参数）：少一条即红。
 
     Args:
         schema: 当前 OpenAPI 文档。
@@ -537,8 +544,7 @@ def collect_failures(
         phase2_baseline: 阶段二基线端点。
         phase3_baseline: 阶段三插件域基线端点（None 视为空集）。
         snapshot: 冻结快照（None 表示跳过 G4）。
-        allow_missing_phase2: 是否允许阶段二端点未实现。
-        allow_missing_phase3: 是否允许阶段三端点未实现。
+        allow_missing_phase2: 是否允许阶段二端点未实现（仅历史批次可用）。
         skip_diff: 是否跳过 G4（仅 hotfix 分支允许）。
 
     Returns:
@@ -556,7 +562,12 @@ def collect_failures(
         gate_phase2_baseline(phase2_actual, phase2_baseline, allow_missing=allow_missing_phase2)
     )
     failures.extend(
-        gate_phase2_baseline(phase3_actual, declared_phase3, allow_missing=allow_missing_phase3)
+        gate_phase2_baseline(
+            phase3_actual,
+            declared_phase3,
+            allow_missing=False,
+            hint="（阶段三无放宽参数：要么把端点补回来，要么从基线撤销登记并登记缺陷）",
+        )
     )
     failures.extend(
         gate_counts(
@@ -564,7 +575,6 @@ def collect_failures(
             len(phase2_actual),
             len(phase3_actual),
             allow_missing=allow_missing_phase2,
-            allow_missing_phase3=allow_missing_phase3,
         )
     )
     if snapshot is not None and not skip_diff:
@@ -595,15 +605,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-missing-phase2",
         action="store_true",
-        help="允许 baseline-phase2-38.json 中尚未实现的端点（B02-B10 期间 CI 使用）",
-    )
-    parser.add_argument(
-        "--allow-missing-phase3",
-        action="store_true",
-        help=(
-            "允许 baseline-phase3-16.json 中尚未实现的端点（B17-B19 期间 CI 使用）；"
-            "B19 收口后必须去掉，届时插件域 14 条 + 任务域 WF1/WF2 共 16 条全部落地"
-        ),
+        help="允许 baseline-phase2-38.json 中尚未实现的端点（仅阶段二历史批次可用）",
     )
     parser.add_argument(
         "--update-snapshot",
@@ -686,7 +688,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         phase3_baseline=phase3_baseline,
         snapshot=snapshot,
         allow_missing_phase2=args.allow_missing_phase2,
-        allow_missing_phase3=args.allow_missing_phase3,
         skip_diff=args.skip_diff,
     )
 

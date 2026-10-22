@@ -103,6 +103,30 @@ jobs:
           echo "G-26 自检通过：6 条负样本全部被拦截"
 
       # ------------------------------------------------------------------
+      # 门禁 4c：迁移脚本（静态，B21）
+      # 钉住 0004 那两次事故：① `END $$` 与 `DO $guard$` 标签不配 → 空库语法崩；
+      # ② 无条件 `ALTER TABLE` → 已初始化库属主崩。
+      # **双路径实跑不在 CI 跑**：本 workflow 没有 PG 服务（integration 用例一律
+      # SKIP）。它是本地/准出门禁，交付前由责任人执行并留证据：
+      #   OA_TEST_DATABASE_URL=… python deploy/validate_migrations.py --run-pg
+      # 少跑这一条 = 只验了一条路径，等于没验（空库暴露语法崩、已初始化库暴露属主崩）。
+      # ------------------------------------------------------------------
+      - name: 迁移门禁（静态）
+        run: python ../../deploy/validate_migrations.py
+
+      - name: 迁移门禁自检（可红证明）
+        run: |
+          set +e
+          python ../../deploy/validate_migrations.py --self-test
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "迁移门禁自检未按预期命中负样本（退出码 $code，期望 1）"
+            exit 1
+          fi
+          echo "迁移门禁自检通过：3 类负样本全部被拦截"
+
+      # ------------------------------------------------------------------
       # 门禁 5：测试 + 覆盖率 ≥ 85%（G-05 硬地板）
       # 阶段二测试方案 §2.1 G-05：总覆盖率下限 85%，业务层（app/business）
       # 阶段门目标 90.5%；此前的 80% 是阶段一口径，W-01 豁免单已到期。
@@ -296,13 +320,14 @@ jobs:
 
       - name: 端点基线门禁（G1-G5）
         # D-09 / D-21：三套基线 —— 核心 30（冻结）+ 阶段二新域 38（冻结）
-        # + 阶段三插件域 14（B17 起分批登记，B21 收口）。
-        # `--allow-missing-phase2` 覆盖「已登记但尚未实现」的阶段二端点；
-        # `--allow-missing-phase3` 同理覆盖阶段三，**B21 收口后必须去掉**。
+        # + 阶段三插件域 16（B21 收口：**严格模式，无放宽参数**）。
+        # `--allow-missing-phase2` 只覆盖阶段二历史批次；
+        # 阶段三自 B21 起刻意**不提供**放宽开关——留一个"允许缺项"的参数，
+        # 等于给"删端点让 CI 变绿"留合法通道（见 deploy/validate_openapi.py 文档头）。
         # 不允许为了过门禁而删除参数或改写基线文件（baseline-core-30.json 受保护）。
         working-directory: .
         run: |
-          python deploy/validate_openapi.py --allow-missing-phase2 --allow-missing-phase3
+          python deploy/validate_openapi.py --allow-missing-phase2
 
       - name: 对外文档禁止泄露底座术语
         # 保留阶段一既有扫描（G5 已在 validate_openapi.py 内覆盖，

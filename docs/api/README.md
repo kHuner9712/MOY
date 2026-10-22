@@ -62,7 +62,9 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 > `docs/api/baseline-core-30.json`（受 CODEOWNERS 保护，禁止修改）、
 > `docs/api/baseline-phase2-38.json`（只允许登记真实已实现端点）。
 > 门禁：`python deploy/validate_openapi.py`（G1-G5，失败退出码非 0）；
-> 现阶段（新域未补齐）CI 使用 `--allow-missing-phase2`。
+> 现阶段（阶段二历史批次）CI 仍带 `--allow-missing-phase2`。
+> **阶段三没有对应的放宽参数**（见下节），所以 `--allow-missing-phase2` 是唯一
+> 还活着的容差开关，且只作用于阶段二。
 
 **阶段三新域端点（16 个，按 B17-B19 逐批落地；同挂 `/api/v1`，不新增版本）**
 
@@ -84,6 +86,25 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 > 另 **4 处 A 域加性扩展**（A1/A2/A3/A4）不新增端点数，只加可选字段与枚举加宽，
 > 由 G4 加性 diff 逐项覆盖（`baseline-core-30.json` 与 `baseline-phase2-38.json`
 > **一个字节不改**，CI 另有 hash 断言）。
+
+#### 阶段三严格模式（B21 收口）
+
+`deploy/validate_openapi.py` **不再提供** `--allow-missing-phase3`（B21 已删除该参数，
+传了会被 argparse 直接拒绝，退出码 2）。判据因此只有一种形态：
+
+| 情形 | 结果 |
+| --- | --- |
+| `phase3 = 16/16` | 绿（唯一允许的状态） |
+| 少一条（端点被删 / 路由没注册） | 红：`G2 新域端点未实现: METHOD path` + `G3 插件域端点数量必须为 16` |
+| 多一条（写了端点没登记基线） | 红：`G2 新域端点未登记（禁止先写端点后补基线）` |
+
+> **为什么删掉这个参数**：放宽开关一旦常态化，"绿"就不再说明端点齐了。
+> B19 收口后"已登记但未实现"的中间态已经不存在，留着它等于给"删端点让 CI 变绿"
+> 留一条合法通道。要改基线必须走评审（`baseline-phase3-16.json` 只允许登记
+> **真实已实现**的端点），不允许加参数。
+>
+> 三态证据（B21 实跑，主理人已验收）：补齐态 EXIT 0 → 追加一条假端点 EXIT 1
+> （G2）→ 恢复 EXIT 0 → 删掉一条已实现端点的登记 EXIT 1（G1+G3）→ 恢复 EXIT 0。
 
 ### 2.2 统一约定
 

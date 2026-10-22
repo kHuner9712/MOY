@@ -399,10 +399,10 @@ def main() -> int:
         print(f"[FAIL] {failure}")
 
     if failures:
-        print(f"\\n[FAIL] 依赖门禁不通过（{len(failures)} 项）")
+        print(f"\n[FAIL] 依赖门禁不通过（{len(failures)} 项）")
         return 1
 
-    print("\\n[OK] 依赖门禁通过")
+    print("\n[OK] 依赖门禁通过")
     return 0
 
 
