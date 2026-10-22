@@ -513,6 +513,55 @@ def test_c4_wf2_non_editable_types_rejected_without_version_bump(
     )
 
 
+def test_c5_wf2_edit_resanitizes_pii_on_business_path(monkeypatch) -> None:
+    """TC-P3-WF12-08（一票否决）：编辑路径必须**重跑脱敏**。
+
+    判据不能是「产物里恰好没有手机号」——那能靠上游恰好没生成蒙过；
+    必须断「业务路径**真的调用过** `sanitize`」：本用例用 spy 包住
+    `ArtifactSanitizer.mask_pii`，断言编辑过程中它至少被调用一次。
+    """
+    # 复用既有 WF2 夹具，避免再复制第三套「建任务 + 造产物」的壳；
+    # 代价是访问了两个私有 helper，故就地 noqa（仅测试内使用）。
+    import tests.unit.test_artifact_edit as fx
+    from app.plugins.sanitizer import ArtifactSanitizer
+    from app.schemas.task import ArtifactEditRequest
+    from tests.unit.task_helpers import TENANT, auth
+
+    calls: list[str] = []
+    original = ArtifactSanitizer.mask_pii
+
+    def spy(self: object, text: str) -> str:  # type: ignore[misc]
+        calls.append(str(text))
+        return original(self, text)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ArtifactSanitizer, "mask_pii", spy)
+
+    service, _tasks, artifacts, (task_id, artifact_id) = fx._prepare_task()  # noqa: SLF001
+    before = fx._run(artifacts.get(TENANT, artifact_id))  # noqa: SLF001
+    data = fx._run(  # noqa: SLF001
+        service.edit_artifact(  # type: ignore[attr-defined]
+            task_id,
+            artifact_id,
+            ArtifactEditRequest(content="客户联系方式 13912345678，请尽快回电"),
+            auth(),
+        )
+    )
+    stored = fx._run(artifacts.get(TENANT, artifact_id))  # noqa: SLF001
+    body = str(getattr(stored, "inline_text", "") or "")
+
+    assert calls, (
+        "[TC-P3-WF12-08 ①] 编辑路径没有调用 sanitize（mask_pii 未被调用）——"
+        "「用户改过」不是跳过脱敏的理由"
+    )
+    assert "13912345678" not in body, f"[TC-P3-WF12-08 ②] 落库正文仍含原始手机号：{body[:60]!r}"
+    assert data.version == before.version + 1, (
+        f"[TC-P3-WF12-08 ③] 保存后 version 应只 +1：{before.version} → {data.version}"
+    )
+    assert data.content_sha256 != before.content_sha256, (
+        "[TC-P3-WF12-08 ④] content_sha256 未重算（保存后应等于新正文的摘要）"
+    )
+
+
 # ===========================================================================
 # D 组：汇总断言（防"占位永久化"与"登记漂移"）
 # ===========================================================================
@@ -593,9 +642,7 @@ def test_d1_deferred_registry_matches_markers() -> None:
         if item["status"] != "open":
             continue
         assert item.get("due_batch"), f"[台账 ⑯] {item['id']} 缺 due_batch（无到期=永久挂账）"
-        assert item.get("due_action"), (
-            f"[台账 ⑯] {item['id']} 缺 due_action（无动作=下批重新调研）"
-        )
+        assert item.get("due_action"), f"[台账 ⑯] {item['id']} 缺 due_action（无动作=下批重新调研）"
         assert now_batch < item["due_batch"], (
             f"[台账 ⑯] {item['id']} 已过期：当前 {now_batch} ≥ due {item['due_batch']} 仍 open"
         )
