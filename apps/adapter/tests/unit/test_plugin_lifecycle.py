@@ -31,6 +31,7 @@ from app.core.security import AuthContext
 from app.db.repositories.billing_repo import get_billing_store
 from app.db.repositories.plugin_repo import STATUS_DISABLED, STATUS_ENABLED, InMemoryPluginStore
 from app.db.repositories.plugin_review_repo import InMemoryReviewStore
+from app.db.repositories.task_repo import InMemoryTaskStore, TaskRecord
 from app.plugins.actions import ORG_CAPABILITIES
 from app.plugins.loader import PluginRegistry
 from app.schemas.billing import ChangeSubscriptionRequest
@@ -74,11 +75,12 @@ class _Fixture:
         grants: 授权服务。
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, tasks: InMemoryTaskStore | None = None) -> None:
         """初始化。
 
         Args:
             settings: 配置实例。
+            tasks: 可选任务存储（卸载计数用例注入预置任务）。
         """
         self.settings = settings
         self.registry = PluginRegistry()
@@ -87,28 +89,31 @@ class _Fixture:
         self.reviews = InMemoryReviewStore()
         self.audit = InMemoryAuditRecorder()
         self.grants = PluginGrantService(settings, self.store)
+        self.tasks = tasks if tasks is not None else InMemoryTaskStore()
         self.service = PluginService(
             settings,
             store=self.store,
             registry=self.registry,
             grants=self.grants,
             audit=AuditService(settings, recorder=self.audit),
+            tasks=self.tasks,
         )
         self.review_service = PluginReviewService(settings, store=self.store, reviews=self.reviews)
 
 
-async def _installed(settings: Settings) -> _Fixture:
+async def _installed(settings: Settings, tasks: InMemoryTaskStore | None = None) -> _Fixture:
     """构造"已安装目标插件"的夹具。
 
     Args:
         settings: 配置实例。
+        tasks: 可选任务存储（卸载计数用例注入预置任务）。
 
     Returns:
         _Fixture: 夹具。
     """
     from app.schemas.plugin import InstallRequest
 
-    fixture = _Fixture(settings)
+    fixture = _Fixture(settings, tasks)
     billing = get_billing_store(settings)
     subscriptions = SubscriptionService(settings, billing)
     await subscriptions.change(
@@ -193,6 +198,54 @@ async def test_uninstall_keeps_history_and_revokes_grants() -> None:
     assert excinfo.value.code is ErrorCode.PLUGIN_NOT_INSTALLED
     entries = await fixture.audit.recent(TENANT, action=ACTION_PLUGIN_UNINSTALL)
     assert len(entries) == 1
+
+
+@pytest.mark.asyncio
+async def test_uninstall_reports_real_task_counts_from_task_store() -> None:
+    """卸载返回**真实**的"保留 N 个历史任务 / M 个正在运行"（不许硬编码 0）。
+
+    为什么这条要紧：卸载确认弹窗靠这两个数决定提醒文案——恒为 0 等于告诉用户
+    "卸载不会有任何影响"，而实际上在跑的任务会当场停摆、历史产物还挂在那里。
+    """
+    tasks = InMemoryTaskStore()
+    fixture = await _installed(_settings(), tasks=tasks)
+    seeded = (
+        ("task_lc_running", "running"),
+        ("task_lc_waiting", "waiting_confirm"),
+        ("task_lc_done", "completed"),
+        ("task_lc_failed", "failed"),
+    )
+    for task_id, status in seeded:
+        await tasks.create_task(
+            TaskRecord(
+                tenant_id=TENANT,
+                task_id=task_id,
+                plugin_id=PLUGIN,
+                conversation_id="conv_lc",
+                initiator_id=OWNER.user_id,
+                status=status,
+            )
+        )
+    # 别的插件的任务不得被算进来（"按 plugin_id 统计"不是"按租户统计"）
+    await tasks.create_task(
+        TaskRecord(
+            tenant_id=TENANT,
+            task_id="task_lc_other_plugin",
+            plugin_id="plg_other",
+            initiator_id=OWNER.user_id,
+            status="running",
+        )
+    )
+
+    data = await fixture.service.uninstall(plugin_id=PLUGIN, auth=OWNER)
+
+    assert data.kept_task_count == len(seeded), "历史任务数应为该插件的全部任务"
+    # running + waiting_confirm 都占着并发额度，都算"正在运行"
+    assert data.running_task_count == 2, "在跑任务数应为 running + waiting_confirm"
+    entries = await fixture.audit.recent(TENANT, action=ACTION_PLUGIN_UNINSTALL)
+    assert entries[0].change_summary["kept_task_count"] == len(seeded), (
+        "操作记录与响应必须同源（弹窗说保留 4 个、日志写 0 个就没法对账）"
+    )
 
 
 @pytest.mark.asyncio

@@ -50,6 +50,7 @@ from app.db.repositories.plugin_repo import (
     now_iso,
     version_records_from_registry,
 )
+from app.db.repositories.task_repo import TaskStore, get_task_store
 from app.plugins.actions import (
     CAPABILITY_CATALOG,
     CAPABILITY_KEYS,
@@ -150,6 +151,7 @@ class PluginService:
         grants: PluginGrantService | None = None,
         plans: PlanService | None = None,
         audit: AuditService | None = None,
+        tasks: TaskStore | None = None,
     ) -> None:
         """初始化服务。
 
@@ -160,6 +162,7 @@ class PluginService:
             grants: 可选授权服务（测试注入）。
             plans: 可选套餐服务（测试注入）。
             audit: 可选操作记录服务（测试注入）。
+            tasks: 可选任务存储（测试注入；卸载时统计历史/在跑任务数用）。
         """
         self._settings = settings or get_settings()
         self._store: PluginStore = store or get_plugin_store(self._settings)
@@ -167,6 +170,9 @@ class PluginService:
         self._grants: PluginGrantService = grants or get_plugin_grant_service(self._settings)
         self._plans: PlanService = plans or get_plan_service(self._settings)
         self._audit = audit or AuditService(self._settings)
+        # 卸载确认弹窗要显示"将保留 N 个历史任务 / M 个任务正在运行"，
+        # 这两个数只能从任务仓储来（见 `_task_counts`）。
+        self._tasks: TaskStore = tasks or get_task_store(self._settings)
 
     @property
     def store(self) -> PluginStore:
@@ -854,6 +860,9 @@ class PluginService:
             ApiError: 未添加（16003）。
         """
         installation = await self._require_live(plugin_id, auth)
+        # 先统计再卸载：卸载只改安装态，任务行**一条都不删**（PRD：保留历史任务与产物），
+        # 所以这两个数就是用户在弹窗里看到的"将保留 N 个历史任务 / M 个任务正在运行"。
+        kept_task_count, running_task_count = await self._task_counts(plugin_id, auth)
         stamp = now_iso()
         await self._store.save_installation(
             InstallationRecord(
@@ -886,12 +895,38 @@ class PluginService:
             resource_type=RESOURCE_PLUGIN,
             resource_id=plugin_id,
             actor_role=auth.roles[0] if auth.roles else "",
-            change_summary={"kept_task_count": 0},
+            change_summary={"kept_task_count": kept_task_count},
         )
         logger.info("plugin_uninstalled", tenant_id=auth.tenant_id, plugin_id=plugin_id)
         return UninstallData(
-            plugin_id=plugin_id, uninstalled=True, running_task_count=0, kept_task_count=0
+            plugin_id=plugin_id,
+            uninstalled=True,
+            running_task_count=running_task_count,
+            kept_task_count=kept_task_count,
         )
+
+    async def _task_counts(self, plugin_id: str, auth: AuthContext) -> tuple[int, int]:
+        """统计该插件在本企业的历史任务数与正在运行的任务数（卸载弹窗与操作记录共用）。
+
+        **一处算、两处用**：`UninstallData` 与操作记录里的 `kept_task_count` 必须同源，
+        各算一套迟早在"弹窗说保留 3 个、日志里写 0 个"处对不上账。
+
+        "正在运行"取 `running` + `waiting_confirm`（即占用并发额度的口径）：
+        等着用户点确认的任务**仍然是活的**，漏掉它会让用户在不知情的情况下卸载
+        —— 而那单确认后既没有插件可推进、也没有人告诉他为什么停住。
+
+        Args:
+            plugin_id: 插件标识。
+            auth: 鉴权上下文（取企业维度）。
+
+        Returns:
+            tuple[int, int]: `(历史任务总数, 正在运行的任务数)`。
+        """
+        _, total = await self._tasks.list_tasks(
+            auth.tenant_id, plugin_id=plugin_id, page=1, page_size=1
+        )
+        running = await self._tasks.count_occupying(auth.tenant_id, plugin_id)
+        return int(total), int(running)
 
     # ------------------------------------------------------------------
     # PL8 升级 / PL9 回滚
