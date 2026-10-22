@@ -229,3 +229,21 @@ for migration in available:            # 只迭代磁盘上存在的脚本
 > **缺陷层：`open = 1`**（`P3-B18-04`，**P2**，版本表孤儿行，不影响 `--apply`，到期 `--prune-orphans`）。
 
 两句必须并存：**"交付行为达标"成立**，**"零 open 缺陷"不成立**。把二者合成一句会与台账冲突，而台账是机器引用真源。
+
+
+### 11.4 定级补充原则：**先确认因果链在代码里存在，再定后果面**
+本轮 `P3-B18-04` 差点被判成"迁移失败（P0 级后果）"，因为「版本表残留旧行 → `--apply` 失败」听起来完全合理。
+但代码里**没有这条路径**（`build_plan` 只遍历 `available`）。**"听起来合理但不存在"的因果链，是等级定错的主要来源**——它把 P2 说成了 P0 级后果。
+
+> 规则：定级前先回答"这条后果在代码里由哪一行触发"；答不出来就不能按该后果定级。
+
+### 11.5 待补：`open` 缺陷需要到期机制（`due_batch` / `due_action`）
+`DEFECT_LEDGER` 目前只有 `pinned_by`（谁钉住它），**没有"该在哪批关掉"**。建议扩字段：
+```python
+{"id": "P3-B18-04", "level": "P2", "status": "open",
+ "pinned_by": "test_real_postgres_migration_is_idempotent",
+ "due_batch": "B19", "due_action": "--prune-orphans"}
+```
+断言：`status == "open"` 必须同时有 `due_batch` 与 `due_action`；且 `CURRENT_BATCH >= due_batch` 仍 open → 红。
+
+理由：**P2 最容易"永远挂在下一批"**——它不阻塞签收，没有到期机制就会被无限推迟；而 P2 累积即技术债复利。`due_action` 还回答"怎么关"，避免下一批重新调研。
