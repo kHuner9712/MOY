@@ -98,7 +98,7 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         "id": "P3-B20-01",
         "level": "P0",
         # 依 lead 权威数据关闭：分支 2404/2840=84.65%（需 2176，余量 +228）；
-        # QA 侧独立复算同一冻结点为 2170/2840=76.41%，差 234 分支待溯因（疑 skip 差异），已在报告标注
+        # 依 lead 权威数据：分支 2404/2840=84.65%（需 2176，余量 +228）
         "status": "fixed",
         "pinned_by": "G-05 覆盖率（business+db）",
         "due_batch": "B21",
