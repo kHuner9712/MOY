@@ -408,3 +408,98 @@ def test_upgrade_to_existing_version_switches_pointer() -> None:
     result = _run(service.upgrade(plugin_id="plg_mail_draft", target_version="1.0.0", auth=owner))
     assert result.version == "1.0.0"
     assert result.previous_version == "1.0.0"
+
+
+# ===========================================================================
+# 7. 分支补测（B21 分支门槛：business+db ≥76.6%，差 6 条）
+# ===========================================================================
+# 选择原则：只补**阶段三新增文件**里的"纯函数分支"与"降级兜底分支"。
+# 这些分支不会在业务流程里被走到（比如"声明缺失"、"未知产物类型"），
+# 但它们正是"坏数据进来时会不会崩"的判据——靠集成用例碰不到。
+
+
+def test_step_spec_handles_missing_manifest_and_unknown_seq() -> None:
+    """`_step_spec(None, seq)` 与"序号不存在"都必须返回 None，不抛。
+
+    这两个分支只在**声明缺失或历史快照与声明不一致**时才会走到：
+    取确认信息时若直接 `manifest.steps[seq-1]` 就会越界抛异常，而用户看到的是
+    "任务详情打不开"——一个和真实原因毫无关系的报错。
+    """
+    from app.business.task_service import _step_spec
+
+    manifest = load_manifest(PLUGIN_ID)
+    assert _step_spec(None, 1) is None
+    assert _step_spec(manifest, 99) is None
+    assert _step_spec(manifest, 1) is not None
+
+
+def test_artifact_type_falls_back_to_text_on_unknown_value() -> None:
+    """未知产物类型回落 `text`（脏数据不得让整页渲染失败）。
+
+    `plugin_artifact.type` 有 CHECK 约束，但**历史行与手工修库**都可能出现别的值；
+    这里选择回落而不是抛错：产物列表里多一个按纯文本渲染的条目，
+    比"整份任务详情 500"要好得多。
+    """
+    from app.business.task_service import _artifact_type
+    from app.schemas.agent import ArtifactType
+
+    assert _artifact_type("weird_type") == ArtifactType.TEXT
+    assert _artifact_type("table") == ArtifactType.TABLE
+
+
+def test_summary_text_covers_failed_and_cancelled_wording() -> None:
+    """任务摘要三分支：完成/失败/取消的措辞各不相同。
+
+    失败与取消**不能共用同一句**——"没有全部完成，可以重试"对已取消的任务是错的
+    （重试一个用户主动取消的任务会让人以为系统没听他的）。
+    """
+    from app.business.task_service import _summary_text
+    from app.schemas.task import ChecklistItem
+
+    checklist = [
+        ChecklistItem(key="a", name="A", status="checked"),
+        ChecklistItem(key="b", name="B", status="pending"),
+        ChecklistItem(key="c", name="C", status="missing"),
+    ]
+    labels = {"checked": "已核查", "pending": "待人工确认", "missing": "没有产出"}
+
+    done = _summary_text("completed", checklist, labels)
+    assert "完成 1 项" in done and "待人工确认" in done
+    failed = _summary_text("failed", checklist, labels)
+    assert "没有全部完成" in failed
+    cancelled = _summary_text("cancelled", checklist, labels)
+    assert "已取消" in cancelled, "取消的措辞必须区别于失败（否则用户会去点重试）"
+
+
+def test_market_sorting_and_capability_items_without_manifest() -> None:
+    """市场排序的 `rating`/`newest` 两支 + `_capability_items(None)` 返回空。
+
+    排序两支只在用户点"按评分/最新"时才走到；`manifest is None` 分支只在
+    "目录有行但声明快照缺失"时走到（B17 之前的库）。两者都不会在默认路径上被覆盖。
+    """
+    from app.business.plugin_service import _capability_items, _sorted_items
+    from app.schemas.plugin import MarketItem
+
+    def _item(plugin_id: str, *, rating: float, count: int, version: str) -> MarketItem:
+        return MarketItem(
+            plugin_id=plugin_id,
+            name=plugin_id,
+            summary="测试条目",
+            category="dev",
+            icon_key="code",
+            rating_avg=rating,
+            rating_count=count,
+            latest_version=version,
+            installed_status="none",
+            has_update=False,
+            installable=True,
+        )
+
+    items = [
+        _item("plg_a", rating=4.0, count=10, version="1.0.0"),
+        _item("plg_b", rating=4.8, count=2, version="1.2.0"),
+    ]
+    assert [i.plugin_id for i in _sorted_items(items, "rating")] == ["plg_b", "plg_a"]
+    assert [i.plugin_id for i in _sorted_items(items, "newest")] == ["plg_b", "plg_a"]
+    assert [i.plugin_id for i in _sorted_items(items, "recommended")] == ["plg_a", "plg_b"]
+    assert _capability_items(None, {}) == []
