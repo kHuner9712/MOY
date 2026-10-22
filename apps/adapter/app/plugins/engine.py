@@ -30,6 +30,7 @@ from typing import Any, Final
 
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
+from app.plugins import sanitizer as sanitizer_rules
 from app.plugins.actions import (
     ACTION_DEFAULT_TIMEOUT,
     ACTION_RETRYABLE,
@@ -45,7 +46,13 @@ from app.plugins.actions import (
     declared_tool_paths,
 )
 from app.plugins.renderer import RENDER_FORMATS
-from app.plugins.sanitizer import ArtifactSanitizer
+from app.plugins.sanitizer import (
+    OFFER_AMOUNT_RANGE_PATTERN,
+    OFFER_AMOUNT_UNIT_PATTERN,
+    OFFER_BARE_NUMBER_PATTERN,
+    ArtifactSanitizer,
+    strip_amount_exemptions,
+)
 from app.plugins.schema import PluginManifest, StepSpec
 
 logger = get_logger(__name__)
@@ -100,69 +107,18 @@ OFFER_AMOUNT_ALLOWED_VALUES: Final[tuple[str, ...]] = ("", "按公司标准执�
 #: Offer 是可编辑草稿，就地改两个字段再导出即可。
 OFFER_AMOUNT_OPERATOR_ACTION: Final[str] = "清空或改为「按公司标准执行」后重新导出"
 
-#: 压缩单位（可配 1-2 位数字）：`15k` / `1.2万` / `3亿`
+#: 金额规则集（R1 / R2-a / R2-b + 豁免）**住 在 `sanitizer`**，此处只做引用。
 #:
-#: 为什么单列：`15k`、`1.2 万` 是薪资最自然的写法之一，**模型最可能写的就是这两种**。
-#: 只要求"≥3 位数字"等于把规则写成"只防不常见的写法"。
-OFFER_AMOUNT_COMPACT_UNITS: Final[str] = r"(?:[kK]|万元?|亿元?)"
+#: 为什么不再在这里定义一份：同一套正则要同时服务「判定」（命中即判该步失败）与
+#: 「脱敏」（`sanitizer.mask_amounts` 整段遮掉）。两份实现必然漂移，而
+#: **判定严 + 脱敏松** 会留下"判不出来、也没遮掉"的产物——这是合规红线。
+#: 依赖方向仍是 `engine → sanitizer`（sanitizer 不反向依赖引擎），不会成环。
+OFFER_AMOUNT_RANGE_SEPARATORS: Final[str] = sanitizer_rules.OFFER_AMOUNT_RANGE_SEPARATORS
 
-#: 常规单位（要求 ≥3 位数字，避免把「5 元」这类零钱当薪资）
-OFFER_AMOUNT_PLAIN_UNITS: Final[str] = r"(?:元|/月|每月|/年|年薪)"
-
-#: 已经达到三位数（含千分位）的数字串
-OFFER_AMOUNT_BIG_NUMBER: Final[str] = r"(?:[1-9]\d{0,2}(?:,\d{3})+|\d{3,})"
-
-#: R1：带单位的金额（三个并列分支，缺任一都会漏掉一类真实写法）
-#:
-#: ① 大数 + 压缩单位：`1200 亿` / `8000 元`
-#: ② 大数 + 常规单位：`8000/月` / `8000每月`
-#: ③ 小数 + 压缩单位：`15k` / `1.2万` / `3 亿元`（**这一支是补的缺口**）
-OFFER_AMOUNT_UNIT_PATTERN: Final[re.Pattern[str]] = re.compile(
-    rf"(?<!\d){OFFER_AMOUNT_BIG_NUMBER}(?:\.\d{{1,2}})?\s*{OFFER_AMOUNT_COMPACT_UNITS}"
-    rf"|(?<!\d){OFFER_AMOUNT_BIG_NUMBER}(?:\.\d{{1,2}})?\s*{OFFER_AMOUNT_PLAIN_UNITS}"
-    rf"|(?<!\d)\d{{1,2}}(?:\.\d{{1,2}})?\s*{OFFER_AMOUNT_COMPACT_UNITS}"
-)
-
-#: R2：金额上下文关键词（窗口内出现裸数字即违规）
+#: R2：金额上下文关键词（**只在"判定"里用**——脱敏按形状遮，不需要上下文）
 OFFER_AMOUNT_CONTEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"薪|工资|待遇|补贴|奖金|年终|期权|股权|月收入|总包"
 )
-
-#: R2-a：**区间写法**（`8000-10000` / `8000~10000` / `8000至10000`）
-#:
-#: 这是中文 Offer 最高频的薪资写法，而它正好落在「R2-b 排除连字符（怕误伤日期）」
-#: 与「R1 要求带单位」的空隙里 —— 两边都抓不到。因此单列一支，且**必须**保留
-#: 两端的 `(?<![\d-])` / `(?![\d-])`：去掉就能抓到 `2026-11-01` 的 `2026-11`。
-OFFER_AMOUNT_RANGE_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"(?<![\d-])\d{3,7}\s*[-–—~～至]\s*\d{3,7}(?![\d-])"
-)
-
-#: R2-b：裸数字（3-7 位，允许两位小数；排除更长的数字串与负数）
-#:
-#: lookaround 的字符集与 R2-a **对称**（`-` `–` `—` `~` `～` `至` 全部排除）：
-#: 不对称会让 `8000~10000` 既被 R2-a 整段命中、又被 R2-b 拆成 `8000`/`10000`——
-#: 判"是否命中"没事，但**按匹配片段做替换/脱敏时只会遮一半**。
-#: 现在的分工是"区间归 R2-a、单值归 R2-b"，一眼可读，也不依赖分隔符类型。
-OFFER_BARE_NUMBER_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"(?<![\d\-–—~～至])\d{3,7}(?:\.\d{1,2})?(?![\d\-–—~～至])"
-)
-
-#: R2 豁免①：日期（`2026-11-01`）——每位都不是三位数，但先剥掉更稳
-OFFER_EXEMPT_DATE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\d{4}-\d{2}-\d{2}")
-
-#: R2 豁免②：业务编号（**前缀白名单，不按形状匹配**）
-#:
-#: 为什么不能用 `[A-Za-z]{1,5}-?\d{4,}` 这种形状豁免：它会把 `RMB8000`、`K8000`
-#: 一起剥掉——**为修 1 个误报会开出 4 个漏检**。只豁免"已知业务编号前缀"。
-OFFER_EXEMPT_ID_PREFIXES: Final[str] = r"(?:EMP|PO|SKU|ORD|SO|NO)"
-
-#: R2 豁免②的实现（前缀可带连字符，尾部可带一位校验字母）
-OFFER_EXEMPT_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
-    rf"\b{OFFER_EXEMPT_ID_PREFIXES}-?\d{{4,}}[A-Za-z]?\b"
-)
-
-#: R2 豁免③：百分比（`30%`）
-OFFER_EXEMPT_PERCENT_PATTERN: Final[re.Pattern[str]] = re.compile(r"\d+(?:\.\d+)?\s*%")
 
 #: R2 的上下文窗口半径（字符）
 OFFER_AMOUNT_CONTEXT_WINDOW: Final[int] = 20
@@ -1053,23 +1009,18 @@ def _is_blank(value: Any) -> bool:
 
 
 def strip_offer_exemptions(text: str) -> str:
-    """剥掉**不构成金额**的数字串（日期 / 业务编号 / 百分比）。
+    """把不构成金额的数字串挖成空格（日期 / 业务编号 / 百分比）。
 
-    **必须最先做**：`工号 EMP1234` 里的 `1234` 形状完全合法，正则自己躲不开；
-    先剥豁免，后面的 R2-a / R2-b 才只看得到真正的候选人。
-
-    豁免按**前缀白名单**而不是形状匹配——形状匹配会顺手把 `RMB8000`、`K8000`
-    一起剥掉，把"修误报"变成"开漏检"。
+    实现在 `sanitizer.strip_amount_exemptions`（与脱敏共用同一份豁免规则）；
+    这里保留旧名，是因为判定侧的历史调用点与用例都按这个名字读。
 
     Args:
         text: Offer 原文。
 
     Returns:
-        str: 剥掉豁免后的文本（长度会缩短，因此**不能**再拿位置去对原文）。
+        str: 等长的去豁免文本（位置仍对齐原文）。
     """
-    stripped = OFFER_EXEMPT_DATE_PATTERN.sub(" ", text or "")
-    stripped = OFFER_EXEMPT_ID_PATTERN.sub(" ", stripped)
-    return OFFER_EXEMPT_PERCENT_PATTERN.sub(" ", stripped)
+    return strip_amount_exemptions(text)
 
 
 def scan_offer_amount(text: str = "", fields: dict[str, Any] | None = None) -> AmountScan:

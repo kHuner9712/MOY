@@ -62,6 +62,183 @@ MASK_ID_CARD: Final[str] = "110101********1234"
 #: 渲染器单例（无状态，可安全共享；不放进 dataclass 字段以免改变构造签名）
 _RENDERER: Final[FileRenderer] = FileRenderer()
 
+# ===========================================================================
+# 金额规则集（R1 / R2-a / R2-b + 豁免）——**唯一真源**
+# ===========================================================================
+# 为什么规则集住在这里而不是引擎里：同一套正则要服务两个用途——
+# **判定**（`engine.scan_offer_amount`：命中就判该步失败）与
+# **脱敏**（`mask_amounts`：把金额遮掉）。两份实现必然漂移，而"判定严、脱敏松"
+# 正是最危险的分歧（判不出来的会被遮掉，遮不掉的会留在产物里）。
+# 引擎从这里 import，方向是 `engine → sanitizer`，不会成环。
+
+#: 压缩单位（可配 1-2 位数字）：`15k` / `1.2万` / `3亿`
+OFFER_AMOUNT_COMPACT_UNITS: Final[str] = r"(?:[kK]|万元?|亿元?)"
+
+#: 常规单位（要求 ≥3 位数字，避免把「5 元」这类零钱当薪资）
+OFFER_AMOUNT_PLAIN_UNITS: Final[str] = r"(?:元|/月|每月|/年|年薪)"
+
+#: 已经达到三位数（含千分位）的数字串
+OFFER_AMOUNT_BIG_NUMBER: Final[str] = r"(?:[1-9]\d{0,2}(?:,\d{3})+|\d{3,})"
+
+#: 千分位或普通数字（3-7 位；区间与裸数字两支共用）
+OFFER_AMOUNT_NUMBER: Final[str] = r"(?:\d{1,3}(?:,\d{3})+|\d{3,7})"
+
+#: 分隔符集合（连字符 / en dash / em dash / 波浪 / 全角波浪 / 「至」）——**独立使用**
+OFFER_AMOUNT_RANGE_SEPARATORS: Final[str] = r"[-–—~～至]"
+
+#: 同一个集合，**用于字符类内部**（`[\d…]`）。
+#:
+#: 为什么必须分开两个常量：把带方括号的 `[-–—~～至]` 插进 `[\d…]` 会变成
+#: `[\d[-–—~～至]]` —— 内层 `[` 会提前闭合字符类，lookaround **静默失效**，
+#: 表现为 `A-100200` 里的 `100200` 被当成金额（而它前面明明是连字符）。
+#: 这种错不会报错，只会让"排除"这一半悄悄不生效，所以两个形态分开写、各有测试。
+OFFER_AMOUNT_SEPARATOR_CLASS: Final[str] = r"\d\-–—~～至"
+
+#: R1：带单位的金额（三个并列分支，缺任一都会漏掉一类真实写法）
+#:
+#: ① 大数 + 压缩单位：`1200 亿` / `8000 元`
+#: ② 大数 + 常规单位：`8000/月` / `8000每月`
+#: ③ 小数 + 压缩单位：`15k` / `1.2万` / `3 亿元`
+OFFER_AMOUNT_UNIT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    rf"(?<!\d){OFFER_AMOUNT_BIG_NUMBER}(?:\.\d{{1,2}})?\s*{OFFER_AMOUNT_COMPACT_UNITS}"
+    rf"|(?<!\d){OFFER_AMOUNT_BIG_NUMBER}(?:\.\d{{1,2}})?\s*{OFFER_AMOUNT_PLAIN_UNITS}"
+    rf"|(?<!\d)\d{{1,2}}(?:\.\d{{1,2}})?\s*{OFFER_AMOUNT_COMPACT_UNITS}"
+)
+
+#: R2-a：区间写法，**两侧都支持千分位**（`8,000-10,000` 必须整段命中）
+OFFER_AMOUNT_RANGE_PATTERN: Final[re.Pattern[str]] = re.compile(
+    rf"(?<![{OFFER_AMOUNT_SEPARATOR_CLASS}]){OFFER_AMOUNT_NUMBER}"
+    rf"\s*{OFFER_AMOUNT_RANGE_SEPARATORS}\s*{OFFER_AMOUNT_NUMBER}"
+    rf"(?![{OFFER_AMOUNT_SEPARATOR_CLASS}])"
+)
+
+#: R2-b：单值，**千分位长形态优先**（`8,000` 整段命中，而不是命中尾段 `000`）
+OFFER_BARE_NUMBER_PATTERN: Final[re.Pattern[str]] = re.compile(
+    rf"(?<![{OFFER_AMOUNT_SEPARATOR_CLASS}])"
+    rf"(?:\d{{1,3}}(?:,\d{{3}})+(?:\.\d{{1,2}})?|\d{{3,7}}(?:\.\d{{1,2}})?)"
+    rf"(?![{OFFER_AMOUNT_SEPARATOR_CLASS}])"
+)
+
+#: 豁免①：日期（`2026-11-01`）
+OFFER_EXEMPT_DATE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+#: 豁免②：业务编号（**前缀白名单，不按形状匹配**——形状匹配会把 `RMB8000` 一起剥掉）
+OFFER_EXEMPT_ID_PREFIXES: Final[str] = r"(?:EMP|PO|SKU|ORD|SO|NO)"
+
+#: 豁免②的实现（前缀可带连字符，尾部可带一位校验字母）
+OFFER_EXEMPT_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
+    rf"\b{OFFER_EXEMPT_ID_PREFIXES}-?\d{{4,}}[A-Za-z]?\b"
+)
+
+#: 豁免③：百分比（`30%`）
+OFFER_EXEMPT_PERCENT_PATTERN: Final[re.Pattern[str]] = re.compile(r"\d+(?:\.\d+)?\s*%")
+
+#: 脱敏后的金额占位（**整段替换**，不留任何数字字符）
+MASK_AMOUNT: Final[str] = "*"
+
+#: 金额规则三支（判定与脱敏共用同一份）
+AMOUNT_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
+    OFFER_AMOUNT_UNIT_PATTERN,
+    OFFER_AMOUNT_RANGE_PATTERN,
+    OFFER_BARE_NUMBER_PATTERN,
+)
+
+#: 会被"挖掉"的位置（不参与金额识别）
+_AMOUNT_EXEMPT_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
+    OFFER_EXEMPT_DATE_PATTERN,
+    OFFER_EXEMPT_ID_PATTERN,
+    OFFER_EXEMPT_PERCENT_PATTERN,
+)
+
+
+def strip_amount_exemptions(text: str) -> str:
+    """把**不构成金额**的数字串挖成空格（日期 / 业务编号 / 百分比）。
+
+    挖空格而不是删除：长度不变 → **位置仍然对得上原文**，调用方可以拿这里的
+    命中区间去原文上替换。这是脱敏能正确落点的前提。
+
+    Args:
+        text: 原文。
+
+    Returns:
+        str: 等长的"去豁免"文本（豁免片段被替换为等量空格）。
+    """
+    masked = text or ""
+    for pattern in _AMOUNT_EXEMPT_PATTERNS:
+        masked = pattern.sub(lambda match: " " * len(match.group()), masked)
+    return masked
+
+
+def merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """按起点排序并合并重叠/相接区间（**`<=` 判重叠**）。
+
+    为什么必须合并（两处实测）：
+    - `8000 至 10000`：R2-a 命中整段，R2-b 又命中左侧 `8000`；
+    - `8,000-10,000`：R2-a 整段 + R2-b 命中尾段（视规则版本而定）。
+    若不合并而逐条替换，会产出 `8,***-**0,***` 这类碎片——**每个碎片里都留着数字，
+    整体却"看起来遮了"**，比完全不遮更危险。
+
+    用 `<=` 而不是 `<`：两个区间首尾相接（`[0,5)` 与 `[5,9)`）也必须并成一段，
+    否则替换后会出现相邻两段、中间夹着未处理的字符。
+
+    Args:
+        spans: 任意顺序的 `(start, end)` 区间。
+
+    Returns:
+        list[tuple[int, int]]: 合并后的有序区间。
+    """
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def amount_spans(text: str) -> list[tuple[int, int]]:
+    """取文本中全部金额命中区间（已去豁免、已合并）。
+
+    Args:
+        text: 原文。
+
+    Returns:
+        list[tuple[int, int]]: 合并后的 `(start, end)` 区间（位置对齐原文）。
+    """
+    body = strip_amount_exemptions(text)
+    spans = [match.span() for pattern in AMOUNT_PATTERNS for match in pattern.finditer(body)]
+    return merge_spans(spans)
+
+
+def mask_amounts(text: str, *, mask: str = MASK_AMOUNT) -> str:
+    """把金额**整段**遮掉（判据：遮后该位置 0 个数字字符）。
+
+    为什么是"整段"而不是"去掉数字"：`8,000` 若只遮数字会变成 `*,***`，
+    首位还在、逗号还在，读起来仍能猜出数量级；整段替换才是"看不出金额"。
+
+    币种与单位（`¥` / `RMB` / `元` / `/月`）**不在命中区间内**，因此会保留——
+    这是呈现选择，不是判据；判据是「遮后该位置没有任何数字、小数点或千分位逗号」。
+
+    Args:
+        text: 原文。
+        mask: 替换字符（缺省 `*`）。
+
+    Returns:
+        str: 脱敏后的文本。
+    """
+    body = text or ""
+    spans = amount_spans(body)
+    if not spans:
+        return body
+    pieces: list[str] = []
+    cursor = 0
+    for start, end in spans:
+        pieces.append(body[cursor:start])
+        pieces.append(mask * (end - start))
+        cursor = end
+    pieces.append(body[cursor:])
+    return "".join(pieces)
+
 
 @dataclass(frozen=True, slots=True)
 class SanitizeReport:
