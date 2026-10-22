@@ -53,6 +53,18 @@ CLEAN_OFFER = (
 #: 三份「结论=待定」的简历筛选结果（R3 的禁用词含「待定」，这里必须不被误伤）
 SCREENING_WITH_PENDING = "结论,理由\n待定,需要补充项目细节\n待定,工作年限待确认\n"
 
+#: 同一批「结论=待定」的简历，按**评分表的正式列**排布。
+#:
+#: 为什么要单独一份：`screening` 产物除了"不被 R3 误伤"之外，还要过
+#: **「风险」行级质量门**（PRD P0-P3-21：风险为空判该行失败）。上面那份
+#: 只有「结论/理由」两列的表过不了那道门——用它测 R3 作用域，红的是风险门
+#: 而不是 R3，测的东西就偏了。这里把六列补齐、风险非空，才能单独钉住 R3 作用域。
+SCREENING_TABLE_WITH_PENDING = (
+    "姓名,匹配分,亮点,风险,结论,理由\n"
+    "张伟,80,同类项目经验；沟通清晰,缺少大规模团队协作经验,待定,"
+    "项目经历与岗位要求接近，需要补充一处团队规模的细节之后再决定。\n"
+)
+
 
 def _render_spec(**overrides: object) -> StepSpec:
     """构造 `render_file` 步骤声明。
@@ -358,13 +370,17 @@ def test_engine_allows_clean_offer() -> None:
 
 
 def test_engine_does_not_scan_screening_for_r3_words() -> None:
-    """端到端：`screening` 产物里的「待定」**不被** R3 误伤（作用域只在 offer）。"""
+    """端到端：`screening` 产物里的「待定」**不被** R3 误伤（作用域只在 offer）。
+
+    产物用**六列齐全、风险非空**的评分表：`screening` 另有「风险」行级质量门
+    （P0-P3-21），表不齐会先被那道门拦下，这条用例就测不到 R3 的作用域了。
+    """
     drafts = (
         ArtifactDraft(
             output_key="screening",
             type="file",
             name="筛选评分表",
-            inline_text=SCREENING_WITH_PENDING,
+            inline_text=SCREENING_TABLE_WITH_PENDING,
         ),
     )
     outcome = _run(PluginEngine(_ScriptedGateway(drafts)), _render_spec(produces=["screening"]))

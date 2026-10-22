@@ -158,6 +158,21 @@ SCHEDULE_TIME_FORMATS: Final[tuple[str, ...]] = (
 #: 排期违规时给用户的建议动作
 SCHEDULE_OPERATOR_ACTION: Final[str] = "修改排期表里的计划时间后重新导出"
 
+# ----------------------------------------------------------------------
+# 简历评分表的行级质量门（PRD P0-P3-21 / QA TC-P3-HR21-01）
+# ----------------------------------------------------------------------
+#: 评分表产物键（作用域同样写死：只判 `screening` 这一份表）
+SCREENING_OUTPUT_KEY: Final[str] = "screening"
+
+#: 「风险」列的表头候选。**必须容忍别名**：评分表的表头由模型产出、
+#: 不是声明里写死的列名（`_render_rows` 把 `prior` 里的 dict 直接当行），
+#: 只认字面「风险」会在模型写 `Risk` / `风险点` 时漏判——**漏判比误判更危险**，
+#: 因为它让这张表"看起来验过了"。
+SCREENING_RISK_HEADERS: Final[tuple[str, ...]] = ("风险", "risk", "risks")
+
+#: 违规时用来点名「是哪一份简历」的列（取不到就退回"第 N 行"）
+SCREENING_ROW_ID_KEYS: Final[tuple[str, ...]] = ("姓名", "候选人", "name")
+
 #: 执行路径越界时给用户的建议动作
 PATH_OPERATOR_ACTION: Final[str] = "联系管理员确认这个插件可以做什么"
 
@@ -668,17 +683,26 @@ class PluginEngine:
         )
 
     # ------------------------------------------------------------------
-    # 护栏（B20）：执行路径 ⊆ 声明清单 / Offer 金额三规则 / 排期时间
+    # 护栏（B20）：执行路径 ⊆ 声明清单 / Offer 金额三规则 / 排期时间 / 评分表风险
     # ------------------------------------------------------------------
     def guard(self, spec: StepSpec, outcome: StepOutcome) -> StepOutcome:
-        """对成功完成的步骤跑三道护栏（**作用域写死，不接受调用方传参**）。
+        """对成功完成的步骤跑四道护栏（**作用域写死，不接受调用方传参**）。
 
-        三道护栏都只改"这一步算不算完成"，**不改任务状态机**：
-        命中即该步 `failed` + `retryable=false`，后续由 `on_failure` 决定任务走向
-        （Offer 步是 `continue`，排期步是 `abort`）。
+        四道护栏都只改"这一步算不算完成"，**不改任务状态机**：
+        命中即该步 `failed`，后续由 `on_failure` 决定任务走向
+        （Offer 步是 `continue`，排期步是 `abort`，评分表步是 `continue`）。
+
+        可重试性按"用户能不能靠自己补好"分两档：Offer 金额、排期时间、执行路径
+        越界命中时 `retryable=False`（重跑一遍还是同样的产物，白烧一次额度）；
+        **评分表风险为空是 `retryable=True`**——PRD P0-P3-21 的口径是"该行判失败
+        重跑"，模型换一次采样就可能补上风险，重试是有意义的动作。
 
         为什么护栏放在引擎而不是网关：网关只认"下游返回了什么"，护栏要认
         "**声明允许什么**"——声明是插件的契约，判据必须落在契约这一层。
+
+        为什么作用域写死在引擎里、不接受 `output_key` 入参：护栏的"扫哪些产物"
+        一旦变成调用方决定，就必然出现"某个调用点忘了传 / 传错"的漏判，而漏判的
+        表现是**看起来全绿**（§7.3 与 §11 勘误 #3 的同一条理由）。
 
         Args:
             spec: 步骤声明。
@@ -699,6 +723,10 @@ class PluginEngine:
                     return blocked
             elif draft.output_key == SCHEDULE_OUTPUT_KEY:
                 blocked = self._guard_schedule(outcome, draft)
+                if blocked is not None:
+                    return blocked
+            elif draft.output_key == SCREENING_OUTPUT_KEY:
+                blocked = self._guard_screening(outcome, draft)
                 if blocked is not None:
                     return blocked
         return outcome
@@ -794,6 +822,47 @@ class PluginEngine:
             reason_text="；".join(scan.problems),
             operator_action=SCHEDULE_OPERATOR_ACTION,
             retryable=False,
+            usage_units=outcome.usage_units,
+        )
+
+    def _guard_screening(self, outcome: StepOutcome, draft: ArtifactDraft) -> StepOutcome | None:
+        """校验简历评分表：**每行「风险」非空**（PRD P0-P3-21 的一票否决项）。
+
+        PRD 原文：「风险」为空判该行失败。风险这一列是"只夸不批"的唯一刹车——
+        没有它，一张全绿的评分表会把不合格候选人送进面试。
+
+        **零行不判失败**：没有简历就没有可判的行（`resumes` 是 `required=false`，
+        "本次不做筛选"是合法输入），把"没行"当成"风险为空"会让没传简历的用户
+        收到一条无从修改的报错。
+
+        **整张表没有风险列同样判失败**：缺列时逐行检查会一行都不报，
+        于是这张表会以"全部通过"的姿态交到用户手里——漏判比误判更危险。
+
+        Args:
+            outcome: 步骤执行结果。
+            draft: `screening` 产物草稿（CSV，可能是 `content` 字节或 `inline_text`）。
+
+        Returns:
+            StepOutcome | None: 违规返回失败结果；否则返回 None。
+        """
+        rows = _screening_rows(draft)
+        if not rows:
+            logger.info("plugin_screening_skipped", reason="no_rows")
+            return None
+        problems = scan_screening(rows)
+        if not problems:
+            return None
+        logger.warning("plugin_screening_blocked", problems=list(problems))
+        return StepOutcome(
+            status=STEP_FAILED,
+            # 与 Offer/排期一致：违规产物不交出（否则用户要先自己找出哪一行不合格）
+            artifacts=(),
+            data=dict(outcome.data),
+            error_code=int(ErrorCode.INTERNAL_ERROR),
+            # PRD 说"判该行失败重跑"，所以可重试（唯一一道 retryable=True 的产物护栏）
+            retryable=True,
+            reason_text="；".join(problems),
+            operator_action=DEFAULT_OPERATOR_ACTION,
             usage_units=outcome.usage_units,
         )
 
@@ -1200,6 +1269,88 @@ def _parse_schedule_time(value: str) -> datetime | None:
     return None
 
 
+def _screening_rows(draft: ArtifactDraft) -> list[dict[str, str]]:
+    """取评分表的行（优先**已渲染的 CSV 字节**，没有才回落到内联文本）。
+
+    为什么先看 `content`：`content` 就是用户下载得到的那份表，校验对象必须与
+    交付物一致（与排期表同一口径）。`understand` 类步骤历史上只给 `inline_text`，
+    所以保留回落，但**不因为回落就跳过校验**。
+
+    Args:
+        draft: `screening` 产物草稿。
+
+    Returns:
+        list[dict[str, str]]: 行列表（无可判行时返回空列表）。
+    """
+    rows = parse_schedule_rows(draft.content or b"")
+    if rows:
+        return rows
+    text = draft.inline_text or ""
+    if not text.strip():
+        return []
+    return parse_schedule_rows(text.encode("utf-8"))
+
+
+def scan_screening(rows: list[dict[str, str]]) -> list[str]:
+    """按「风险」列逐行判定，返回**业务语言**问题清单（空表示通过）。
+
+    判据两条（PRD P0-P3-21）：
+
+    1. 整张表必须有「风险」列（容忍 `Risk` / `风险点` 这类别名）；
+    2. 每一行的「风险」去空白后必须非空。
+
+    **一次报全**所有违规行，不在第一条就 `return`：用户拿到的应该是一份
+    "要补哪几行"的清单，而不是挤牙膏式的逐次重跑。
+
+    Args:
+        rows: 评分表行。
+
+    Returns:
+        list[str]: 问题清单（每条都带可识别的行标识，用户能照着改）。
+    """
+    if not rows:
+        return []
+    risk_key = _risk_column(rows)
+    if risk_key is None:
+        return ["评分表缺少「风险」列，没法逐份判断候选人的风险"]
+    problems: list[str] = []
+    for index, row in enumerate(rows, start=1):
+        if str(row.get(risk_key) or "").strip():
+            continue
+        who = _pick(row, SCREENING_ROW_ID_KEYS)
+        where = f"第 {index} 行（{who}）" if who else f"第 {index} 行"
+        problems.append(f"{where}的「风险」是空的，请补上这份简历的具体风险后再导出评分表")
+    return problems
+
+
+def _risk_column(rows: list[dict[str, str]]) -> str | None:
+    """找出「风险」列的**表头原文**（找不到返回 None）。
+
+    表头来自模型产出的行字典，不是声明里的固定列名，因此按
+    `SCREENING_RISK_HEADERS` 做「去空白 + 小写 + 子串包含」匹配：
+    `风险` / `风险点` / `Risk` / `Risks` 都能认出来。子串而非全等，
+    是因为模型常写「风险点」「主要风险」这类更自然的表头。
+
+    Args:
+        rows: 评分表行。
+
+    Returns:
+        str | None: 命中的表头原文；整张表没有风险列时返回 None。
+    """
+    headers: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in headers:
+                headers.append(key)
+    for header in headers:
+        normalized = str(header or "").strip().lower()
+        if not normalized:
+            continue
+        if any(candidate in normalized for candidate in SCREENING_RISK_HEADERS):
+            return header
+    return None
+
+
 __all__: list[str] = [
     "DEFAULT_OPERATOR_ACTION",
     "OFFER_AMOUNT_ALLOWED_VALUES",
@@ -1210,6 +1361,9 @@ __all__: list[str] = [
     "RETRYABLE_ERROR_CODES",
     "SCHEDULE_OPERATOR_ACTION",
     "SCHEDULE_OUTPUT_KEY",
+    "SCREENING_OUTPUT_KEY",
+    "SCREENING_RISK_HEADERS",
+    "SCREENING_ROW_ID_KEYS",
     "STEP_COMPLETED",
     "STEP_FAILED",
     "STEP_PENDING",
@@ -1231,4 +1385,5 @@ __all__: list[str] = [
     "parse_schedule_rows",
     "scan_offer_amount",
     "scan_schedule",
+    "scan_screening",
 ]

@@ -5,18 +5,20 @@
 - **`test_scoring_table_fields`**（TC-P3-HR21-01 / E2E-HR-01）：3 行 × 字段齐；匹配分 ∈[0,100]；
 亮点 ≥2；风险非空；结论
   ∈ 枚举；理由 ≥30 字
+- **`test_blank_risk_row_fails_the_screening_step`**（TC-P3-HR21-01 反面）：某行风险为空 →
+  平台**在引擎层就判该步失败并置可重试**，且不把这张表交给用户
 
 **判据为什么必须落在导出文件上**：评分表的用户交付面是那张表（导出 CSV / 页面表格），
 不是任务状态。只断言"任务 completed"会把"表里没有风险一列"这种事故放过去——
 而「风险」这一列正是 PRD 用来防止"只夸不批"的一票否决项。
 
-**本文件未落点的计划用例（无判定面，已在交付报告列明）**：
+**判据为什么还必须落在引擎上**：交付面判据只能证明"这一次的表好看"，
+证明不了"下一次模型偷懒时会被拦住"。第 2 条用例把风险清空后要求**任务里能看到
+失败步骤**，这样"风险为空"就不再是一个靠 QA 事后发现的缺口，而是产品行为。
 
-- `test_resume_limit_twenty`（TC-P3-HR21-02）：声明里 `resumes` 是单个 `file` 输入，
-  平台没有任何"一次最多 20 份"的计数规则，也没有 PDF 读取实现——判据无处可断。
-- `test_encrypted_resume_partial_failure`（TC-P3-HR21-03）：同上，平台不解密/不解析 PDF，
-  "加密行标『无法读取』"这条能力还没实现，写出来只能是假断言。
-  这两条要等"简历解析"能力落地后再补，硬写会让 QA 拿到一条永远不会红的绿用例。
+**本文件未落点的计划用例**：`test_encrypted_resume_partial_failure`
+（TC-P3-HR21-03）——平台不解密/不解析 PDF，"加密行标『无法读取』"这条能力还没实现，
+写出来只能是假断言。硬写会让 QA 拿到一条永远不会红的绿用例。
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ from tests.e2e.conftest import (
     install_plugin,
     parse_csv_bytes,
     set_org_switches,
+    step_records,
     task_detail,
     upgrade_to_paid_plan,
 )
@@ -144,7 +147,7 @@ async def test_scoring_table_fields(
 
 
 @pytest.mark.asyncio
-async def test_blank_risk_row_is_rejected_by_quality_gate(
+async def test_blank_risk_row_fails_the_screening_step(
     client: AsyncClient,
     admin_headers: dict[str, str],
     e2e_settings: Any,
@@ -152,12 +155,20 @@ async def test_blank_risk_row_is_rejected_by_quality_gate(
     use_script: Any,
     hr_ready: None,
 ) -> None:
-    """负样本自检：把某一行的「风险」清空后，**上面那套判据必须变红**。
+    """TC-P3-HR21-01 反面：某行「风险」为空 → **平台判该步失败并允许重跑**。
 
-    这是"判据可红"的自证（PM 2026-10-23 通则：禁止"永远绿"的判据）：
-    用同一份断言函数跑一次被改坏的表，它必须报出「风险为空」。
-    顺带证明"风险为空则该行判失败重跑"这条 PRD 要求**在平台侧还没有实现**
-    （引擎护栏只管 offer 金额与排期时间）——该缺口已登记在交付报告里。
+    PRD 原文：「『风险』为空判该行失败」。这条要求此前只落在 QA 的断言函数里
+    （`screening_problems`），平台侧没有任何实现——那一版用例只能证明"QA 看得见"，
+    证明不了"产品会拦"。现在判据落在引擎的评分表门上，用例改成断言**产品行为**：
+
+    ① 第 2 步 `failed`（不是 completed）；
+    ② `retryable is True`（PRD 说"判该行失败重跑"，所以用户能原地重试）；
+    ③ 原因点名到那一行的候选人，且是业务语言（不出现 `risk` / 错误码）；
+    ④ 这张不合格的表**不交付**（`screening` 不在产物列表里）；
+    ⑤ 任务没被拖垮：`on_failure=continue`，后续步骤与接管点照常。
+
+    失败文案的具体措辞由引擎单测逐字锁定（`tests/unit/test_guard_screening.py`），
+    这里只钉"用户能不能看到、能不能重试"这一层。
 
     Args:
         client: 异步客户端。
@@ -170,17 +181,38 @@ async def test_blank_risk_row_is_rejected_by_quality_gate(
     use_script(build_hr_script(blank_risk=True))
     created = await create_task(client, admin_headers, HR_PLUGIN, HR_INPUTS)
     task_id = created["task_id"]
-    await task_detail(client, admin_headers, task_id)
+    detail = await task_detail(client, admin_headers, task_id)
+
+    records = await step_records(e2e_settings, tenant, task_id)
+    failed = records[2]
+    assert failed.status == "failed", "① 风险为空必须是该步失败，而不是照常完成"
+    assert failed.retryable is True, "② PRD 要求该行重跑，必须标为可重试"
+    assert "李娜" in failed.reason_text, f"③ 原因要点名到那一行：{failed.reason_text}"
+    assert "风险" in failed.reason_text, f"③ 原因要说明是「风险」为空：{failed.reason_text}"
+    for banned in ("risk", "Risk", "30000", "17002", "Traceback"):
+        assert banned not in failed.reason_text, (
+            f"③ 原因必须是业务语言，不得出现 {banned}：{failed.reason_text}"
+        )
+    assert failed.operator_action.strip(), "② 必须给出可照做的建议动作"
 
     artifacts = await artifacts_by_key(e2e_settings, tenant, task_id)
-    response = await client.get(artifact_download_url(e2e_settings, artifacts["screening"]))
-    _header, rows = parse_csv_bytes(response.content)
+    assert "screening" not in artifacts, "④ 风险为空的评分表不得交给用户"
 
-    problems = screening_problems(rows)
+    assert detail["status"] == "waiting_confirm", "⑤ 任务应继续跑到接管点，而不是整体失败"
+    assert detail["confirm"]["step_seq"] == 4
+
+
+def test_screening_problems_can_go_red() -> None:
+    """判据函数自身的"可红"自证：喂一张风险为空的行，必须报出问题。
+
+    平台侧的门拦住之后，坏表已经拿不到了；但 QA 那条**判据本身**仍需证明
+    "不是永远绿"（PM 2026-10-23 通则）。这里直接用手工构造的行自证，
+    不依赖平台产物，因此不会随平台改动变成一条永远绿的装饰用例。
+    """
+    broken = [{**CANDIDATES[0], "风险": ""}]
+    problems = screening_problems(broken)
     assert problems, "负样本自检失败：风险被清空后判据仍全绿，说明判据不可红"
-    assert any("风险" in item for item in problems), f"必须报出风险为空：{problems}"
-    # 正样本（另两行）不应被牵连
-    assert len(problems) == 1, f"只应报出被改坏的那一行，实际：{problems}"
+    assert all("风险" in item for item in problems), f"必须只报出风险为空：{problems}"
 
 
 def screening_problems(rows: list[dict[str, str]]) -> list[str]:
