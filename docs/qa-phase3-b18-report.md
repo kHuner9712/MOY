@@ -66,7 +66,8 @@
    **正确的"双读源不漂"判据是值一致**：对 PL4 中每个 `org.*` 能力，其 `org_switch_enabled` 必须等于 PL13 同键的 `enabled`。本次实测**成立**：
    - `org.repo.write=false` → PL4(dev_workbench) 读出 `False` ✅
    - `org.external.publish=true` → PL4(mail_draft) 读出 `True` ✅
-3. **`switchable` 字段不存在**：team-lead 的 D2 口径提到「personal 项 `switchable=false`」，但 `CapabilityPolicyItem` 实际字段为 `{capability_key, display_name, enabled, updated_by_name, updated_at}`，架构 §5.2 的字段清单亦无 `switchable`。**需确认是"应新增"还是"口径口误"**；若新增，前端契约要同步。
+3. **`switchable` 字段不存在 —— 已确认为口径误记，作废（不新增字段）**：`CapabilityPolicyItem` 保持 `{capability_key, display_name, enabled, updated_by_name, updated_at}` 五字段，前端按 key 前缀（`org.*` 可切换 / `personal.*` 恒开）识别，**不引入 `switchable`**。
+   > 产品回查：该说法源自把「`required` 的能力不可撤销」压缩成 `switchable=false`；若将来确需表达「能否撤销」，应**复用 `required_capabilities[]` 的数组包含关系**，不再加布尔字段——**两个字段表达同一件事，第一次分叉，以后一定对不上**。
 
 ---
 
