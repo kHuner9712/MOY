@@ -608,6 +608,46 @@ const BUILT_ROUTES = [
 ];
 
 /**
+ * 从 `page_client-reference-manifest.js` 里解析该路由引用的客户端 chunk。
+ *
+ * 动态路由（`[id]`）没有预渲染 HTML，页面文案（含条件渲染文案）全在这些 chunk 里；
+ * 只扫服务端 `page.js` 会得到「空壳」，导致禁词漏检。
+ *
+ * @param {string} manifestPath - 客户端引用清单路径
+ * @returns {Array<string>} `static/chunks/xxx.js` 形式的相对路径
+ */
+export function clientChunkRefsOf(manifestPath) {
+  try {
+    const content = readFileSync(manifestPath, 'utf8');
+    return [
+      ...new Set(
+        [...content.matchAll(/static\/chunks\/[A-Za-z0-9_.-]+\.js/g)].map((m) => m[0]),
+      ),
+    ];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 校验每个受检路由都扫到了可见文本（空壳即红）。
+ *
+ * @param {Array<{route: string, textCount: number}>} summaries - 每路由的扫描统计
+ * @returns {Array<string>} 问题列表
+ */
+export function checkBuiltCoverage(summaries) {
+  const problems = [];
+  for (const item of summaries) {
+    if (item.textCount === 0) {
+      problems.push(
+        `路由 ${item.route} 未扫到任何可见文本（可能是空壳产物或客户端 chunk 未解析）`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
  * 收集某个路由的构建产物。
  *
  * 三类产物：
@@ -657,6 +697,19 @@ function builtArtifactsOf(route, seenChunks) {
       } catch {
         // chunk 已被清理则跳过
       }
+    }
+  }
+
+  // 动态路由没有预渲染 HTML：改从客户端引用清单里取 chunk（否则只会扫到空壳）
+  const clientManifest = join(BUILT_APP_ROOT, '(main)', route, 'page_client-reference-manifest.js');
+  for (const relativePath of clientChunkRefsOf(clientManifest)) {
+    if (seenChunks.has(relativePath)) continue;
+    seenChunks.add(relativePath);
+    const chunkPath = join(WEB_ROOT, '.next', relativePath);
+    try {
+      if (statSync(chunkPath).isFile()) found.push({ path: chunkPath, kind: 'js' });
+    } catch {
+      // chunk 已被清理则跳过
     }
   }
 
@@ -865,6 +918,15 @@ function builtSelfTest() {
     failures.push('模板 ${} 里的变量名（tenant）被误判为文案');
   }
 
+  // 动态路由只扫到空壳（0 条可见文本）必须判红
+  const shellProblem = checkBuiltCoverage([{ route: '/workbench/[pluginId]', textCount: 0 }]);
+  if (!shellProblem.some((item) => item.includes('未扫到任何可见文本'))) {
+    failures.push('动态路由空壳未判红（漏扫未被发现）');
+  }
+  if (checkBuiltCoverage([{ route: '/chat', textCount: 12 }]).length > 0) {
+    failures.push('正样本误报：有可见文本的路由被判为空壳');
+  }
+
   // 纯 ASCII 片段不应被当成文案（否则 bundle 里的字段名会淹没真实问题）
   if (extractJsVisibleTexts("const k='segment_count';").length > 0) {
     failures.push('ASCII 标识符被误判为可见文案');
@@ -877,7 +939,7 @@ function builtSelfTest() {
   }
 
   console.info(
-    'BUILT SELF-TEST PASS：HTML 文本/可见属性、JS 字符串（含模板静态段与 `${}` 内字面量）、' +
+    'BUILT SELF-TEST PASS：HTML 文本/可见属性、JS 字符串（含模板静态段与 `${}` 内字面量）、动态路由空壳判红、' +
       '5 位错误码均能抓到；合规文案、ASCII 标识符与模板变量名 0 误报',
   );
   return 1;
@@ -899,6 +961,7 @@ function scanBuilt(json, selfTestMode = false) {
   const hits = [];
   const missingRoutes = [];
   const seenChunks = new Set();
+  const routeSummaries = [];
 
   for (const route of BUILT_ROUTES) {
     const artifacts = builtArtifactsOf(route, seenChunks);
@@ -906,6 +969,7 @@ function scanBuilt(json, selfTestMode = false) {
       missingRoutes.push(route);
       continue;
     }
+    let routeTextCount = 0;
     for (const artifact of artifacts) {
       let content;
       try {
@@ -919,6 +983,7 @@ function scanBuilt(json, selfTestMode = false) {
       const texts =
         artifact.kind === 'html' ? extractHtmlVisibleTexts(content) : extractJsVisibleTexts(content);
       textCount += texts.length;
+      routeTextCount += texts.length;
 
       for (const text of texts) {
         for (const hit of findHits(text, 'string', '')) {
@@ -933,10 +998,15 @@ function scanBuilt(json, selfTestMode = false) {
         }
       }
     }
+    routeSummaries.push({ route, textCount: routeTextCount });
   }
 
+  const coverageProblems = checkBuiltCoverage(routeSummaries);
+
   if (json) {
-    console.info(JSON.stringify({ htmlCount, jsCount, textCount, missingRoutes, hits }, null, 2));
+    console.info(
+      JSON.stringify({ htmlCount, jsCount, textCount, missingRoutes, coverageProblems, hits }, null, 2),
+    );
   } else {
     for (const hit of hits) {
       console.info(`${hit.file}:${hit.term}:${hit.snippet}`);
@@ -948,9 +1018,13 @@ function scanBuilt(json, selfTestMode = false) {
     if (missingRoutes.length > 0) {
       console.info(`[built] 未找到以下路由的产物（请先 npm run build）：${missingRoutes.join(', ')}`);
     }
+    for (const problem of coverageProblems) {
+      console.info(`[built] ${problem}`);
+    }
   }
 
   if (missingRoutes.length > 0) return 2;
+  if (coverageProblems.length > 0) return 1;
   return hits.length > 0 ? 1 : 0;
 }
 

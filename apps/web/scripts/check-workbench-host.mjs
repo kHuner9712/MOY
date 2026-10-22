@@ -63,6 +63,9 @@ const PLUGIN_BRANCH_PATTERNS = [
   { pattern: /switch\s*\(\s*pluginId/, hint: 'switch (pluginId)' },
   // layoutMap[pluginId] 这类「用插件 id 当查表键」的写法同样是按插件分叉
   { pattern: /\[\s*pluginId\s*\]/, hint: 'layoutMap[pluginId]' },
+  // 把比较改写成「按 id 集合分支」同样绕不过去
+  { pattern: /\.includes\(\s*pluginId\s*\)/, hint: 'includes(pluginId)' },
+  { pattern: /\.has\(\s*pluginId\s*\)/, hint: 'has(pluginId)' },
 ];
 
 /** 写死插件标识（`plg_xxx`）的特征 */
@@ -190,6 +193,23 @@ export function checkImports(sample) {
 }
 
 /**
+ * 校验没有「按插件分目录」的实现（一插件一目录 = 变相的多宿主）。
+ *
+ * @param {Array<string>} paths - 相对路径列表
+ * @returns {Array<string>} 问题
+ */
+export function checkNoPluginDirs(paths) {
+  const problems = [];
+  for (const file of paths) {
+    const segments = String(file).split('/');
+    if (segments.some((segment) => /^plg_/.test(segment))) {
+      problems.push(`出现按插件分目录的实现：${file}（宿主必须与插件无关）`);
+    }
+  }
+  return problems;
+}
+
+/**
  * 校验目录里没有自有样式 / jsx。
  *
  * @param {Array<string>} files - 文件绝对路径列表
@@ -245,6 +265,27 @@ const NEGATIVE = [
     }),
   },
   {
+    name: '按 id 集合分支（includes）',
+    expect: 'includes(pluginId)',
+    run: () => checkNoPluginBranch({
+      file: 'page.tsx',
+      content: "if ([\"plg_a\", \"plg_b\"].includes(pluginId)) { return <Special />; }",
+    }),
+  },
+  {
+    name: '按 id 集合分支（has）',
+    expect: 'has(pluginId)',
+    run: () => checkNoPluginBranch({
+      file: 'page.tsx',
+      content: 'if (enabledIds.has(pluginId)) { return null; }',
+    }),
+  },
+  {
+    name: '按插件分目录',
+    expect: '按插件分目录',
+    run: () => checkNoPluginDirs(['src/components/plugin/plg_dev_workbench/layout.tsx']),
+  },
+  {
     name: '写死插件标识',
     expect: '写死的插件标识',
     run: () => checkNoPluginBranch({ file: 'page.tsx', content: "const id = 'plg_hr_admin';" }),
@@ -286,6 +327,14 @@ const POSITIVE = [
         "import * as React from 'react';\nimport { Card } from '@/components/ui/card';\nimport { DeclarationForm } from '@/components/workbench/declaration-form';\nimport { pluginsApi } from '@/lib/api-client';",
     }),
   () => checkNoOwnAssets(['src/components/plugin/plugin-card.tsx']),
+  // 允许：读路由参数、按参数调接口、拼链接——这些不是「按插件分支」
+  () =>
+    checkNoPluginBranch({
+      file: 'page.tsx',
+      content:
+        "const { pluginId } = useParams<{ pluginId: string }>();\nconst detail = await pluginsApi.detail(pluginId);\nrouter.push(`/workbench/${pluginId}`);",
+    }),
+  () => checkNoPluginDirs(['src/components/workbench/declaration-form.tsx']),
   () =>
     checkNoPluginBranch({
       file: 'page.tsx',
@@ -323,7 +372,7 @@ function selfTest() {
 
   console.info(
     `SELF-TEST PASS：正样本 ${POSITIVE.length} 条 0 误报（含注释内提及）；` +
-      `负样本 ${NEGATIVE.length}/${NEGATIVE.length} 全部抓到（多宿主/非动态段/比较/switch/查表/写死标识/自有样式/三方 UI/跨域引用）`,
+      `负样本 ${NEGATIVE.length}/${NEGATIVE.length} 全部抓到（多宿主/非动态段/比较/switch/查表/集合分支/分目录/写死标识/自有样式/三方 UI/跨域引用）`,
   );
   return 1;
 }
@@ -339,6 +388,9 @@ function main(argv) {
   const problems = [...checkSingleHost(pages)];
 
   let branchScanned = 0;
+  const allSrcFiles = walk(SRC_ROOT).map((file) => relative(SRC_ROOT, file).replace(/\\/g, '/'));
+  problems.push(...checkNoPluginDirs(allSrcFiles));
+
   for (const file of walk(SRC_ROOT)) {
     if (!/\.(ts|tsx)$/.test(file) || file.endsWith('.d.ts')) continue;
     branchScanned += 1;

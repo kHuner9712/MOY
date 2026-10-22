@@ -199,6 +199,29 @@ jobs:
           fi
           echo "[PASS] 宿主门禁抓到全部负样本（多宿主/非动态段/按插件分支/写死标识/自有样式/三方 UI/跨域引用）"
 
+      # ------------------------------------------------------------------
+      # G-30：能力使用一致性（跨层静态校验，枚举与后端 actions.py 同源）
+      #
+      # 整改期：先跑 --warn-only（发现的问题打印在日志里但不判失败）。
+      # 后端 B20 把 plg_hr_admin 的「多要权限」修掉后，把下面这行换成
+      # `npm run scan:capability --workspace apps/web` 即转严格模式。
+      # ------------------------------------------------------------------
+      - name: G-30 能力使用一致性（整改期 warn-only）
+        run: npm run scan:capability-warn --workspace apps/web
+
+      - name: G-30 一致性门禁自检（期望退出码 1）
+        run: |
+          set +e
+          npm run scan:capability-self-test --workspace apps/web > scan-capability-self-test.log 2>&1
+          status=$?
+          set -e
+          cat scan-capability-self-test.log
+          if [ "$status" -ne 1 ]; then
+            echo "[FAIL] 一致性门禁自检退出码 $status，期望 1"
+            exit 1
+          fi
+          echo "[PASS] 一致性门禁抓到全部负样本（越权/多要/非法原语/非法能力键）"
+
   built-artifact-gate:
     name: 产物扫描（G-16）
     runs-on: ubuntu-latest

@@ -21,6 +21,9 @@
     "scan:contract-self-test": "node scripts/check-plugin-contract.mjs --self-test",
     "scan:workbench": "node scripts/check-workbench-host.mjs",
     "scan:workbench-self-test": "node scripts/check-workbench-host.mjs --self-test",
+    "scan:capability": "node scripts/check-capability-consistency.mjs",
+    "scan:capability-warn": "node scripts/check-capability-consistency.mjs --warn-only",
+    "scan:capability-self-test": "node scripts/check-capability-consistency.mjs --self-test",
     "scan:pages-self-test": "node scripts/check-page-states.mjs --self-test"
   },
   "dependencies": {
