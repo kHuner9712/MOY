@@ -5,7 +5,7 @@
 | 文档编号 | OA-P3-TRC-001 |
 | 版本 / 日期 | v1.0 / 2026-10-23 |
 | 作者 | 许清楚（产品经理） |
-| 上游依据 | `docs/prd-phase3-increment.md` **v1.2 已冻结**（25 条 P0 / **16 端点** / 9 条勘误，冻结日 2026-10-23）；`docs/prd-v1.0.md`（AC-02 / AC-04 / AC-06、FLOW-03 / FLOW-04、P0-07 / P0-08）；`docs/plan-v1.0.md` 第 17-20 周；`docs/phase2-acceptance-report.md` 第六章 |
+| 上游依据 | `docs/prd-phase3-increment.md` **v1.2 已冻结**（25 条 P0 / **16 端点** / **10 条勘误**，冻结日 2026-10-23）；`docs/prd-v1.0.md`（AC-02 / AC-04 / AC-06、FLOW-03 / FLOW-04、P0-07 / P0-08）；`docs/plan-v1.0.md` 第 17-20 周；`docs/phase2-acceptance-report.md` 第六章 |
 | 裁决依据 | 主理人（齐活林）2026-10-23 对 PRD 七条裁决的逐条拍板（本文件第 1 章登记偏差） |
 | 使用方式 | **QA 直接抄进用例**：表一给用例骨架与断言原文，表二给可执行检查步骤，表三给错误语义，表四给验收环境的模拟与补验清单 |
 
@@ -51,7 +51,7 @@
 | TC-P3-05 | 开发文档与样例 | ① 文档标题扫描 → 6 节齐全（声明字段表 / 能力枚举 / 输入定义 / 输出产物 / 界面描述规范 / 标准接口清单）；② QA 仅按文档操作 → 样例插件装载成功并跑通 1 次任务（`status=completed`），全程无口头指导；③ 文档「允许调用接口」清单与适配层 OpenAPI `paths` 取差集 → **差集为空**；④ 文档正文含「不得自定义 UI」「不得直连底座」「仅官方内置插件」三条原文 | A+M |
 | TC-P3-06 | 市场浏览/分类/搜索 | ① `GET /plugins/market?category=dev` → 所有 `items[].category=dev`；② `keyword=内容` 与 `keyword= 内容 `（前后空格、大小写变体）→ 返回 `plugin_id` 集合**相等**；③ 无匹配关键字 → `items=[]` 且 `code=0`，页面显示空态文案（非错误态）；④ 第 1 页与第 2 页 `plugin_id` **无交集**，`meta.total` 与逐页累计一致；⑤ **免费版账号**访问市场 → `items.length ≥ 1`（插件照常展示、详情可进入），卡片标不可安装；点「安装」返回 `15001` 语义且页面出现「查看套餐」入口 | A |
 | TC-P3-07 | 插件详情页 | ① `GET /plugins/market/{id}` 的 `capabilities[]` 条数 = `GET /plugins/{id}/capabilities` 条数；② 详情页 `step_titles[]` 顺序与执行时 A4 返回的步骤标题序列**逐项相等**；③ 0 条评价时 DOM 含「还没有人评价」且**不存在**空 `<table>`；④ 主按钮文案与 `installed_status` 四态映射全部正确（未安装→安装 / 已安装未启用→启用 / 已启用→打开工作台 / 有更新→更新） | A |
-| TC-P3-08 | 安装/启用/禁用/卸载 | ① `POST .../install` 后 `GET /plugins/installed` 该项 `status=enabled`；② `PATCH .../state {disabled}` → `status=disabled` 且 `/workbench/{id}` 提交按钮 `disabled`；③ 再 `enabled` → 可成功创建任务（`code=0`）；④ `DELETE ...` 后 `GET /plugins/installed` 不含该项，而 `GET /agent/tasks?plugin_id=X` **仍返回**历史任务且详情返回 `code=0`；⑤ 卸载二次确认弹窗 DOM 同时含「历史任务记录会保留」「180 天后清理」两段文案 | A |
+| TC-P3-08 | 安装/启用/禁用/卸载 | ① `POST .../install` 后 `GET /plugins/installed` 该项 `status=enabled`；② `PATCH .../state {disabled}` → `status=disabled` 且 `/workbench/{id}` 提交按钮 `disabled`；③ 再 `enabled` → 可成功创建任务（`code=0`）；④ `DELETE ...` 后 `GET /plugins/installed` 不含该项，而 `GET /agent/tasks?plugin_id=X` **仍返回**历史任务且详情返回 `code=0`；⑤ 卸载二次确认弹窗 DOM 同时含「历史任务记录会保留」「180 天后清理」两段文案；⑥ **重复安装**：对已安装插件再次 `POST .../install` → 返回 `code=0` 且 `already_installed=true`、`status` 仍 `enabled`、`granted_capabilities[]` **与安装前逐项相同**（授权未被顺手改动）；**首次安装响应必须含 `already_installed=false`**（常驻字段，不允许只有重复时出现）；且卸载后调 `PL6`（而非 PL5）才返回「未安装」语义（`16003` 已收回 PL5 之外的场景） | A |
 | TC-P3-09 | 评价与使用说明 | ① 同成员同插件 `POST .../reviews` 两次 → `GET .../reviews` 中该成员**仅 1 条**且 `content` 为第二次内容；② 未安装成员提交 → 返回非 0 `code`，文案含「使用过这个插件才能评价」；③ `rating=6` → 返回参数类错误，文案含「1 到 5 星」；④ `anonymous=true` 提交 → 列表 `author_name` =「某位同事」，响应中**不含**真实姓名与邮箱 | A |
 | TC-P3-10 | 已安装管理与更新提示 | ① 后台发布新版本 → 已安装行出现目标版本号；升级后该列变「已是最新」；② `last_used_at` 与 `GET /agent/tasks?plugin_id=X` 首条 `created_at` 差值 ≤1s；无任务时 `last_used_at=null` 且 UI 显示「尚未使用」；③ `GET /plugins/installed?status=enabled` → 所有项 `status=enabled` | A |
 | TC-P3-11 | 步骤级进度与时间线 | ① 6 步任务的 A4 `steps.length` = 插件声明的步骤数；② 事件回放后状态序号序列**非递减**（等待<进行中<已完成）；③ 执行中断网 30s 再恢复 → UI 步骤 `step_id` 集合与 A4 返回**相等**且无重复；④ 6 步完成 3 步时进度显示 **50%**（精确匹配，非区间）；⑤ **可见文本**对 `node|step_id|workflow|prompt` 正则 **0 命中**（`href`/`data-*`/`id`/`class` 属性值与路由路径 `/workflows` 不计） | A+M |
@@ -70,7 +70,7 @@
 | TC-P3-24 | 宿主页与入口 | ① 3 个插件工作台页由**同一**宿主组件渲染（前端路由→组件映射为 1:1，静态扫描得出）；② 宿主组件源码对 `if\s*\(\s*pluginId\s*===` 正则 **0 命中**；③ 3 条新路由（`/plugins/[pluginId]`、`/workbench/[pluginId]`、`/workflows/[taskId]`）出现在构建产物路由清单；④ 每个新页面具备空/加载/错误三态且 `ErrorState` 带 `onRetry`；⑤ 未安装访问 `/workbench/{id}` → 空态文案 +「去市场看看」，**非**错误态 | A |
 | TC-P3-25 | 文案与合规门禁 | ① 阶段二 5 道前端门禁 + 禁词/占位/错误码正则 → 新增页面与插件声明文案全部 **0 命中**；② 插件资产目录对 `\.(css|scss|less)$|components/` **0 命中**，且脚本自检（临时放 1 个 `.css`）退出码**非 0**；③ 全站 DOM 对 `\b[1-3]\d{4}\b`、`Error|Exception`、模型名、向量库、RAG、Agent、token **0 命中**；④ 「暂不支持」「敬请期待」「即将上线」**0 命中** | A |
 
-> **断言总数 115 条**（25 条 P0 × 3-8 条）。其中 **17 个用例可全自动**（标 `A`，含 78 条断言，建议进 CI，见第 7 章）；**8 个用例需「接口断言 + 人工抽验」**（标 `A+M`，含 37 条断言：TC-P3-05/11/12/13/17/20/22/23——凡涉及仓库、外部平台回执、导出文件打开与复制的，接口部分可自动化，结果物必须人工核验）；本阶段**无纯人工用例**。
+> **断言总数 116 条**（25 条 P0 × 3-8 条）。其中 **17 个用例可全自动**（标 `A`，含 79 条断言，建议进 CI，见第 7 章）；**8 个用例需「接口断言 + 人工抽验」**（标 `A+M`，含 37 条断言：TC-P3-05/11/12/13/17/20/22/23——凡涉及仓库、外部平台回执、导出文件打开与复制的，接口部分可自动化，结果物必须人工核验）；本阶段**无纯人工用例**。
 
 ---
 

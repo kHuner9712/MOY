@@ -2,9 +2,9 @@
 
 | 项 | 内容 |
 | --- | --- |
-| 文档版本 | v3.2.0（阶段三架构定稿·封版） |
+| 文档版本 | v3.2.2（阶段三架构定稿·封版） |
 | 文档性质 | 内部交付文档（供交付总监、产品经理、工程师、QA 消费） |
-| 上游输入 | `docs/prd-phase3-increment.md` **v1.1**（25 条 P0 / 6 条 P1 / 4 条 P2 / 13 新增端点 + 4 处扩展 / 16 条错误码需求 / 勘误 3 条）；`docs/prd-phase3-traceability.md`（25 用例 108 断言 / 15 项结果物核查 / 金额三规则）；`docs/architecture-v1.0.md`（30 端点冻结基线 + 红线）；`docs/architecture-phase2.md`（38 端点基线 + 业务库范式）；`docs/phase2-acceptance-report.md` §6 |
+| 上游输入 | `docs/prd-phase3-increment.md` **v1.2 已封版**（606 行 / 25 条 P0 / 6 条 P1 / 4 条 P2 / **16 新增端点** + 4 处扩展 / 16 项错误码需求 / **10 条勘误**）；`docs/prd-phase3-traceability.md`（196 行 / 116 断言 / 15 项结果物核查 / 金额三规则）；`docs/architecture-v1.0.md`（30 端点冻结基线 + 红线）；`docs/architecture-phase2.md`（38 端点基线 + 业务库范式）；`docs/phase2-acceptance-report.md` §6 |
 | 代码基线 | `develop` @ `db7aea7`（core=30 / phase2=38、1119 测试、总覆盖率 89.99%） |
 | 作者 | 高见远（架构师） |
 | 日期 | 2026-10-23 |
@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | v3.0.0 | 2026-10-22 | 首次发布：能力双层模型（授权能力 / 执行原语）、复用 A 域的插件运行时、9 张新表、14 个新端点 + 4 处加性扩展（合计 82）、13 个新错误码、三插件 6 步装配、14 批次（B16-B29）、5 道新门禁、9 条架构决策（D-14~D-22）+ PRD 冲突裁决 6 条 |
 | **v3.1.0** | **2026-10-23** | **吸收 PRD v1.1 勘误 3 条**：① PL4 逐能力返回 `org_switch_enabled`（前端禁硬编码，字段名统一为 `capability_key`）；② 市场页改为「列表照常 + `installable=false`」，`15001` 的拦截点从 PL1/PL2/PL4 后移到 PL5/PL6；③ Offer 金额校验升级为 R1/R2/R3 三规则并明确默认值必须为空。端点数量与基线（14 / 82）不变 |
-| **v3.2.0** | **2026-10-23** | **终裁封版**：① 恢复 **PL14**（`PUT /plugins/{id}/grants`，审计可区分 install / grant_change；team-lead 裁定 upsert 方案因审计退化撤销）；② 新增 **WF2**（`PUT /agent/tasks/{task_id}/artifacts/{artifact_id}`，任务域，闭合三条产物编辑类 P0，并入 B19）；③ **端点 16、合计 84**，基线 `baseline-phase3-16.json`；④ **PL5 回归纯安装**（已安装再调 → `200 + already_installed=true`，授权不变）；⑤ 写接口（含 PUT）统一必需 `Idempotency-Key`；⑥ WF2 的「编辑后重算 sha256 + 重跑脱敏」列为 B19 一票否决项；⑦ §11.2 完备性核对结论：26 条可操作表述 → 25 对上 + 1 补 WF2 + 0 需降级 + 3 类有意只读 |
+| **v3.2.2** | **2026-10-23** | **PL5 重复安装定案（PRD 勘误第 10 条已确认）**：`200 + already_installed=true` + 现状（**授权与设置不变**），`already_installed` 为**常驻字段**（首次 `false`、重复 `true`）；`16003` 与 PL5 彻底解耦；新增 **D-26** 记录判据（客户端重试时返回「还没有添加」与事实相反）；§5.4 给 `16003`/`16004` 各加「**不要倒置**」注（QA 曾把 `16003` 当「已停用」）；上游输入更新为 PRD v1.2 封版（606 行 / 16 端点 / 10 条勘误 / 116 断言） |
 
 ---
 
@@ -721,11 +721,11 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 
 | # | 方法 | 路径 | 请求 | 响应 `data` | 错误码 | 幂等键 |
 | --- | --- | --- | --- | --- | --- | --- |
-| PL1 | GET | `/plugins/market` | `category?, keyword?, sort?(recommended\|newest\|rating), page, page_size=12` | `items[{plugin_id,name,summary,category,icon_key,rating_avg,rating_count,latest_version,installed_status(none\|enabled\|disabled),has_update,installable}]`、`meta`、`categories[{key,name,count}]` | 20001 | — |
+| PL1 | GET | `/plugins/market` | `category?, keyword?, sort?(recommended\|newest\|rating), page, page_size=12` | `items[{plugin_id,name,summary,category,icon_key,rating_avg,rating_count,latest_version,installed_status(none\|enabled\|disabled),has_update,installable}]`、`meta`、`categories[{key,name,count}]`、**`org_capabilities[{capability_key, org_switch_enabled}]`（仅 3 个 `org.*`）** | 20001 | — |
 | PL2 | GET | `/plugins/market/{plugin_id}` | — | `…, description, capabilities[{capability_key,display_name,reason,denial_effect,category(personal\|org),required}], step_titles[], outputs[], settings_schema[], changelog[], versions[{version,published_at}], installed_status, installed_version, has_update, installable` | 16002 | — |
 | PL3 | GET | `/plugins/installed` | `status?` | `items[{plugin_id,name,category,version,latest_version,has_update,status,last_used_at,running_task_count}], meta` | 20003 | — |
 | PL4 | GET | `/plugins/{plugin_id}/capabilities` | — | `items[{capability_key,display_name,reason,denial_effect,category(personal\|org),required,org_switch_enabled}], granted_capabilities[], capability_version, installable` | 16002 | — |
-| PL5 | POST | `/plugins/{plugin_id}/install` | `grants{}`（capability_key→bool）、`settings{}`（可选） | `plugin_id, status(enabled), version, granted_capabilities[], denied_capabilities[], already_installed` | 15001 16002 16005 16006 16009 20001 | **必需** |
+| PL5 | POST | `/plugins/{plugin_id}/install` | `grants{}`（capability_key→bool）、`settings{}`（可选） | `plugin_id, status(enabled), version, granted_capabilities[], denied_capabilities[], already_installed`（**常驻字段**：首次 `false`、重复 `true`） | 15001 16002 16005 16006 16009 20001 | **必需** |
 | PL6 | PATCH | `/plugins/{plugin_id}/state` | `status(enabled\|disabled)` | `plugin_id, status, running_task_count` | 15001 16002 16003 16005 16006 | **必需** |
 | PL7 | DELETE | `/plugins/{plugin_id}` | — | `plugin_id, uninstalled=true, running_task_count, kept_task_count` | 16002 16003 | **必需** |
 | PL8 | POST | `/plugins/{plugin_id}/upgrade` | `target_version` | `plugin_id, version, previous_version, has_update=false` | 16002 16003 16007 16012 | **必需** |
@@ -742,9 +742,16 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 - **PL13 三条配套约束（team-lead 定）**：① **单一读源**：读只走 PL4、写只走 PL13，PL1/PL2 不塞开关（否则列表响应随"插件数 × 能力数"膨胀）；② **写后回读**：响应必须回**全量 6 项**（不是只回改的那一项），前端整体刷新，禁止局部拼状态（否则前端与服务端漂移）；③ **幂等**：必须带 `Idempotency-Key`，同键重放返回首次结果、不产生第二次写入。
 - **PL14 = 「管理权限」入口（D-21，主理人批准新增，闭合 P0-P3-03 ④）**：`PUT /plugins/{plugin_id}/grants`，请求 `grants[{capability_key, granted}]`，响应 **`granted_capabilities[]` + `denied_capabilities[]` + `required_capabilities[]`**。三条硬约束：① **`required: true` 不可撤**（撤了插件直接不可用，用户会当成故障）→ 参数类错误 `20001`，`operator_action` 引导「停用」或「卸载」；② **只能改本人**对该插件的能力集合，管理员改他人授权**不在 V1.0**（避免绕过企业策略）；③ 不新增权限点（**登录即可**，不挂 `team:role:manage`）。
   - **`required_capabilities[]` 的用途（必须写进前端）**：前端据此把「不可撤」的能力项**直接置灰并给原因**；**禁止**前端自己按声明或 `required` 猜（编辑态前端拿不到声明全文，只能靠这个数组）。
-  - **PL5 回归纯粹的安装语义**：重复安装（不同幂等键）→ `200 + already_installed=true` + 现状（**不返回错误码**，也不更新授权）；授权变更一律走 PL14。这样"装"与"改授权"职责分离，审计动作也清楚（`plugin.install` vs `plugin.capability_grant`）。
   - PL14 撤销后下一次任务在**需要该能力的那一步**失败（`16005`，缓存 ≤5s），已完成步骤不回滚。
-- **企业能力开关由端点返回（勘误 #2 + PM 裁决）**：`org_switch_enabled` **只从 PL4 出**。团队设置页读法固定为：`PL1` 取插件列表 → `PL4` 取 6 项能力（含开关态）→ `PL13` 写入 → **用 `PL4` 回读验证**（单一读源，不会两处不一致）。前端**禁止**硬编码 `true` 或按套餐推导。QA 反硬编码用例：把该字段置 `false` 后，前端必须表现为「需管理员在团队设置中开启」+「复制申请说明」。
+- **PL5 重复安装 = `200 + already_installed=true` + 现状（授权与设置不变）**（D-26，PRD 勘误第 10 条已确认）：
+  - `already_installed` 是**常驻字段**（首次 `false`、重复 `true`），**不允许只在重复时出现**——条件字段会让前端 `if (resp.already_installed)` 拿到 `undefined` 静默走错分支，QA 的 schema 断言也会变成「有时有有时没有」；
+  - **判断依据不是「体验好一点」，而是一个事实错误**：客户端发出安装 → 服务端已落库 → 响应在网络层丢失 → 用户重试，此时返回「该插件还没有添加」与事实**相反**（插件其实已装好），用户会去市场再点一次，陷入同样的循环；
+  - **授权与设置一律不动**（不动 = 不变回 upsert，D-21 的否决理由仍然成立）；授权变更走 PL14；
+  - **`16003` 与 PL5 彻底解耦**：`16003` 只用于「未安装却调 PL6/PL7/PL8/PL9/PL10/PL12/PL14」。
+- **企业能力开关由端点返回（勘误 #2 + PM 裁决 + team-lead 补充）**：
+  - **PL4 仍是授权抽屉的唯一读源**（逐能力 6 项，含 `org_switch_enabled`）；
+  - **PL1 顶层加 `org_capabilities[]`（仅 3 个 `org.*`）**，用途只有一个：**「一个插件都没装时」团队设置页也要能读到当前策略**——此时 PL4 没有 `plugin_id` 可用、PL13 又只有写，空态无解（team-lead 在实现期暴露的真实缺口）。只 3 项，不会让列表响应膨胀（"6 插件 × 6 能力笛卡尔"的顾虑是 6 项 × N 插件，这里不成立）；
+  - 团队设置页读法固定为：`PL1.org_capabilities` 或 `PL4` → `PL13` 写入 → **用 `PL4` 回读验证**（单一写源 + 单一校验源，不会两处不一致）。前端**禁止**硬编码 `true` 或按套餐推导。QA 反硬编码用例：把该字段置 `false` 后，前端必须表现为「需管理员在团队设置中开启」+「复制申请说明」。
 - PL5 `grants` 必须覆盖声明的**全部** `required: true` 能力且为 `true`，缺项 → `16005`（`data.missing_capabilities[]`）；多传未声明能力 → `20001`。安装成功即 `status=enabled`（Q3-3）。
 - PL5/PL6 `org.*` 能力在 `plugin_capability_policy` 为 `false` 时 → `16006`（前端显示「需要管理员开启「写入代码仓库」能力」+ 复制申请说明，纯前端）。校验顺序：`15001（套餐）→ 16005（本人未授权）→ 16006（企业未开放）`，因为三条出路的 CTA 不同，顺序决定用户看到哪一条。
 - PL6 停用**不打断在跑任务**（响应 `running_task_count` 供前端提示）；`disabled` 下 A1 建任务 → `16004`。
@@ -799,8 +806,8 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 | code | HTTP | message（前端唯一可见） | 常量 | 内部含义 |
 | --- | --- | --- | --- | --- |
 | 16002 | 404 | 该插件已下架，去市场看看其他插件 | `PLUGIN_NOT_FOUND` | 目录无行 / `hidden`·`offline` |
-| 16003 | 400 | 该插件还没有添加，请先在插件市场添加 | `PLUGIN_NOT_INSTALLED` | 无安装行 / 已卸载 |
-| 16004 | 400 | 该插件已停用，请联系管理员启用 | `PLUGIN_DISABLED` | `status=disabled` 下建任务 |
+| 16003 | 400 | 该插件还没有添加，请先在插件市场添加 | `PLUGIN_NOT_INSTALLED` | **未添加**（PL6/PL7/PL8/PL9/PL10/PL12/PL14）；**PL5 不返回该码**。⚠️ **不要与 16004 倒置** |
+| 16004 | 400 | 该插件已停用，请联系管理员启用 | `PLUGIN_DISABLED` | **已停用**（`status=disabled` 下建任务）。⚠️ **不要与 16003 倒置**：16003=未添加、16004=已停用 |
 | 16005 | 403 | 缺少所需能力，请重新授权后再试 | `CAPABILITY_NOT_GRANTED` | 必需能力未授 / 运行中被撤销；`data.missing_capabilities[]` 给 key，前端映射能力名 |
 | 16006 | 403 | 该能力尚未对企业开放，请联系管理员开启 | `CAPABILITY_POLICY_BLOCKED` | `plugin_capability_policy=false` |
 | 16007 | 400 | 该插件需要更新版本的产品后才能使用，请联系管理员 | `PLUGIN_VERSION_INCOMPATIBLE` | `min_platform_version` 不满足 |
@@ -816,26 +823,31 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 **PRD E-12（并发上限）明确不用码**：第 4 个任务返回 `200 + status=queued`，**不返回 `20006`**（4xx 会被前端渲染成报错页）。`20006` 仍只用于真正的限流。
 **同码多文案（须在此登记）**：`16005` 用于"缺少「使用你已连接的办公工具」能力"与"授权已被撤销"；`17001` 用于"任务正在执行中"与"已完成的任务无需重试"。
 
-### 5.4.1 PRD 16 项错误码需求 → 码值对照（PM 要求，QA 按此逐条建用例）
+### 5.4.1 PRD 16 项错误码需求 → 码值对照（QA 按此逐条建用例）
 
-| PRD 需求 | 码值 | 触发条件 | 用户文案 |
-| --- | --- | --- | --- |
-| E-1 插件不存在/已下架 | **16002** | 目录无行 / `hidden`·`offline` | 该插件已下架，去市场看看其他插件 |
-| E-2 插件未添加 | **16003** | 未安装却调 PL6/PL7/PL8/PL9/PL10/PL12 | 该插件还没有添加，请先在插件市场添加 |
-| E-3 插件已停用 | **16004** | `status=disabled` 下建任务（A1） | 该插件已停用，请联系管理员启用 |
-| E-4 必需能力未授权 | **16005** | 安装缺 `required` 项 / 运行中被撤销 | 缺少所需能力，请重新授权后再试（`data.missing_capabilities[]` 给 key，前端映射能力名） |
-| E-5 能力被企业策略关闭 | **16006** | `plugin_capability_policy=false`（PL5/PL6 校验） | 该能力尚未对企业开放，请联系管理员开启 |
-| E-6 版本不兼容 | **16007** | `min_platform_version` 不满足（PL8） | 该插件需要更新版本的产品后才能使用，请联系管理员 |
-| E-7 只能恢复一个版本 | **16008** | 无 `previous_version`（PL9） | 只能恢复到上一个版本，如需更早版本请联系管理员 |
-| E-8 前置插件缺失 | **16009** | `requires_plugins` 未启用（PL5） | 该插件需要先添加「XX」才能使用（`data.missing_plugins[]` 给名称） |
-| E-9 步骤执行失败 | **无码值** | `steps[].failure{reason_text, retryable}` + 任务状态 | 该步骤没有完成，可以重试（就地展示，不弹错） |
-| E-10 需人工接管 | **无码值** | 任务状态 `waiting_confirm` + `confirm{step_seq, reason, summary}` | 需要你确认后继续 |
-| E-11 任务不可重试 | **17001** | WF1 在 `completed`/`running`/`queued`/`pending` 被调用 | 该任务无法重试，请查看任务状态 |
-| E-12 并发超上限 | **无码值** | 同租户同插件第 4 个任务 | 前面还有 N 个任务在跑，稍后自动开始（`200 + status=queued + queue_position`） |
-| E-13 未使用即评价 | **16011** | PL12 未安装/未使用 | 使用过这个插件才能评价 |
-| E-14 工具未连接 / 授权过期 | **复用 13002 / 13003**（一字不改） | T5 抛出的同一语义 | 沿用阶段一文案 |
-| E-15 套餐不含插件能力 | **复用 15001**（一字不改） | PL5/PL6 | 当前套餐不支持该功能，升级后即可使用 |
-| E-16 无插件相关权限 | **复用 20003**（一字不改） | 任意判权失败 | 当前账号没有该操作的权限 |
+> **加这一列的原因**：QA 曾把 `16003`（未安装）误当成"已停用"（那是 `16004`）。码值相邻、语义相近，光看数字容易对错行——所以把 `errors.py` 的**常量名 + 行号**并列，码值与常量一一对应，对表时不会再串。
+
+| PRD 需求 | 码值 | `errors.py` 常量 | 触发条件 | 用户文案 |
+| --- | --- | --- | --- | --- |
+| E-1 插件不存在/已下架 | **16002** | `PLUGIN_NOT_FOUND`（:113） | 目录无行 / `hidden`·`offline` | 该插件已下架，去市场看看其他插件 |
+| E-2 插件未添加 | **16003** | `PLUGIN_NOT_INSTALLED`（:115） | **未安装**却调 PL6/PL7/PL8/PL9/PL10/PL12/PL14 | 该插件还没有添加，请先在插件市场添加 |
+| E-3 插件已停用 | **16004** | `PLUGIN_DISABLED`（:117） | `status=disabled` 下建任务（A1） | 该插件已停用，请联系管理员启用 |
+| E-4 必需能力未授权 | **16005** | `CAPABILITY_NOT_GRANTED`（:119） | 安装缺 `required` 项 / 运行中被撤销 | 缺少所需能力，请重新授权后再试（`data.missing_capabilities[]` 给 key） |
+| E-5 能力被企业策略关闭 | **16006** | `CAPABILITY_POLICY_BLOCKED`（:121） | `plugin_capability_policy=false`（PL5/PL6/PL14） | 该能力尚未对企业开放，请联系管理员开启 |
+| E-6 版本不兼容 | **16007** | `PLUGIN_VERSION_INCOMPATIBLE`（:123） | `min_platform_version` 不满足（PL8） | 该插件需要更新版本的产品后才能使用，请联系管理员 |
+| E-7 只能恢复一个版本 | **16008** | `PLUGIN_ROLLBACK_UNAVAILABLE`（:125） | 无 `previous_version`（PL9） | 只能恢复到上一个版本，如需更早版本请联系管理员 |
+| E-8 前置插件缺失 | **16009** | `PLUGIN_DEPENDENCY_MISSING`（:127） | `requires_plugins` 未启用（PL5） | 该插件需要先添加「XX」才能使用（`data.missing_plugins[]`） |
+| — 并发/状态冲突（安装·启停竞态） | **16010** | `PLUGIN_STATE_CONFLICT`（:129） | 唯一键或版本指针竞争 | 插件状态已变化，请刷新后重试 |
+| E-13 未使用即评价 | **16011** | `PLUGIN_REVIEW_NOT_ALLOWED`（:131） | PL12 未安装/未使用 | 使用过这个插件才能评价 |
+| — 版本不存在（升级目标无效） | **16012** | `PLUGIN_VERSION_NOT_FOUND`（:133） | `target_version` 无效（PL8） | 该插件版本不存在 |
+| E-11 任务不可重试 | **17001** | `TASK_NOT_RETRYABLE`（:137） | WF1 在 `completed`/`running`/`queued`/`pending` 被调用 | 该任务无法重试，请查看任务状态 |
+| — 步骤失败（内部） | **17002** | `TASK_STEP_FAILED`（:139） | 仅内部汇总与审计 | **不对外**：A3/A4 响应体、`business-errors.ts`、任何 `message` 中 0 命中（G-13 扩展） |
+| E-9 步骤执行失败 | **无码值** | — | `steps[].failure{reason_text, retryable}` + 任务状态 | 该步骤没有完成，可以重试（就地展示，不弹错） |
+| E-10 需人工接管 | **无码值** | — | 任务状态 `waiting_confirm` + `confirm{step_seq, reason, summary}` | 需要你确认后继续 |
+| E-12 并发超上限 | **无码值** | — | 同租户同插件第 4 个任务 | 前面还有 N 个任务在跑，稍后自动开始（`200 + status=queued + queue_position`） |
+| E-14 工具未连接 / 授权过期 | **复用 13002 / 13003**（一字不改） | 阶段一既有 | T5 抛出的同一语义 | 沿用阶段一文案 |
+| E-15 套餐不含插件能力 | **复用 15001**（一字不改） | 阶段二既有 | PL5/PL6 | 当前套餐不支持该功能，升级后即可使用 |
+| E-16 无插件相关权限 | **复用 20003**（一字不改） | 阶段一既有 | 任意判权失败 | 当前账号没有该操作的权限 |
 
 **三条硬约束（QA 会追问，已写死）**：① **E-9/E-10/E-12 显式"无码值"**，走 `steps[].failure` 与任务状态，**A3/A4 永不返回对应码**；② **`17002` 是内部审计码**：A3/A4 响应体、前端 `business-errors.ts`、任何 `message` 中 0 命中（门禁 G-13 扩展 `--forbid-internal 17002`，对应 QA 的 G3-11）；③ **复用项写清"复用哪个码 + 一字不改"**，禁止为"语义更准"另造新码（阶段二 `16001` 就是这么废掉的）。
 
@@ -1034,7 +1046,9 @@ export const pluginApi = {
 
 #### B17 数据模型与市场/安装（14 文件·依赖 B16）
 
-> **本批两条容易被做反的判据**：① **免费版市场仍返回插件**（`installable=false`），PL1/PL2/PL4 **不返回 `15001`**，`15001` 只在 PL5/PL6；② **PL5 只做安装**：重复安装返回 `200 + already_installed=true` + 现状（不报错、**不改授权**），授权变更一律走 PL14（B18）。
+> **本批两条容易被做反的判据**：① **免费版市场仍返回插件**（`installable=false`），PL1/PL2/PL4 **不返回 `15001`**，`15001` 只在 PL5/PL6；② **PL5 只做安装**：重复安装返回 `200 + already_installed=true` + 现状（不报错、**不改授权**），且**首次安装必须返回 `already_installed=false`**（常驻字段）。
+>
+> **重复安装的 4 条断言（QA 已加严，B17 按此验）**：`already_installed=true` / `granted_capabilities[]` **逐项不变** / `settings` **不变** / 审计**仅 1 条** `plugin.install`（这条最硬——它同时证明"装"与"改授权"是两个动作，若审计出现 2 条说明实现偷偷做了 upsert）。
 
 1. `deploy/init-schema-phase3.sql`（9 表 + 共享策略分组重声明 + 6 catalog + 6 version + 3 policy 种子）
 2. `deploy/migrations/0003_phase3_plugin_tasks.sql`
@@ -1273,7 +1287,7 @@ export const pluginApi = {
 
 ---
 
-## 11. 决策记录（D-14 ~ D-25，共 12 条）
+## 11. 决策记录（D-14 ~ D-26，共 13 条）
 
 ### D-14 插件 = 声明式装配，无代码执行（对齐 PRD B-2）
 - **结论**：插件只含 JSON 声明；无 `entry_point/module/image/command/deps` 字段（§4.5）。能力上限即平台能力上限。
@@ -1314,7 +1328,7 @@ export const pluginApi = {
 - **背景**：P0-P3-03 ④ 要求「已安装 → 管理权限」可增减授权，附录 A 只有 PL4 读授权、无写接口。这是与 PL13 同型的「读得到改不了」。
 - **结论**：新增 `PUT /plugins/{plugin_id}/grants`（PL14）→ **phase3 = 15、合计 83**。响应 `granted_capabilities[]` + `denied_capabilities[]` + **`required_capabilities[]`**。
 - **三条约束**：① `required: true` 不可撤（`20001`，引导停用/卸载）；② 只改**本人**对该插件的授权，管理员改他人不在 V1.0；③ 不新增权限点（登录即可，不挂 `team:role:manage`）。
-- **`required_capabilities[]` 是给前端用的**：编辑态拿不到声明全文，只能靠这个数组把"不可撤"项置灰并给原因——**禁止前端自己按声明或 `required` 猜**。
+- **`required_capabilities[]` 是必填字段（不是可选）**：编辑态拿不到声明全文，只能靠这个数组把「不可撤」项**置灰并给原因**——**禁止前端自己按声明或 `required` 猜**。缺该字段即视为契约不完整（QA 会断言字段存在）。
 - **代价**：+1 端点与 1 条基线；换来 P0-P3-03 ④ 可验收、审计动作能与 `plugin.install` 分离。**曾考虑用 PL5 upsert 省掉这个端点，已否决**：让"装"与"改授权"共用一个写入口，会让 `16003`（未添加）与"重复安装"两种语义纠缠，且审计动作无法区分。
 
 ### D-22 任务与步骤本地持久化，A 域双模式共存
@@ -1337,6 +1351,15 @@ export const pluginApi = {
 - **三条硬约束**：① 仅 `type ∈ {draft, doc, table}` 可改，`link`（提交记录/PR）与 `file`（代码文件）**只读**——否则"提交记录可编辑"会毁掉 AC-02 的结果物核查；② `version` 只增不删、旧版可回看；③ **每次保存重算 `content_sha256` 并重跑脱敏**（"用户改过"不是跳过 sanitize 的理由；此条是 B19 一票否决项，我补充的）。
 - **副作用边界**：不改任务状态、不触发重跑、不动 `checklist` 已核查标记——编辑是"事后修订产物"，不是"再执行"。
 - **与 P0-P3-14 的张力已消解（PRD v1.2 勘误）**：原文「已完成任务产物一律只读」已改为「**整体结果不可被流程改写，唯一例外是这类产物（`draft/doc/table`），`link`/`file` 只读**」。所以 WF2 不是"违反只读约束"，而是"约束本身按类型分级"；`link`（提交记录/PR）必须只读，因为它是 AC-02 结果物核查的证据链。
+
+### D-26 PL5 重复安装返回 `200 + already_installed`（而非 `16003`）
+- **背景**：PL5 是 `POST /install`。重复调用时返回什么，曾有三种方案：`16003`、`200 + 标志位`、upsert（顺带改授权）。
+- **结论**：**`200 + already_installed=true` + 现状（授权与设置不变）**；`already_installed` 是**常驻字段**（首次 `false`、重复 `true`）。
+- **判据（不是「体验好一点」，而是一个事实错误）**：客户端发出安装 → 服务端已落库 → 响应在网络层丢失 → 用户重试。此时若返回 `16003`「该插件还没有添加」，与事实**相反**（插件其实已装好），用户会去市场再点一次，陷入同样的循环。主理人原话：**返回「还没有添加」与事实相反**。
+- **为什么「常驻字段」比「选 200 还是 16003」更重要**：条件字段会让前端 `if (resp.already_installed)` 拿到 `undefined` 静默走错分支；QA 的响应 schema 断言会变成「有时有有时没有」，最后没人敢动这个字段。因此**首次也必须返回 `false`**。
+- **upsert 仍然否决**（D-21 理由不变）：返回 `200` ≠ 允许改授权。重复安装**不得**动 `grants`/`settings`，授权变更一律走 PL14——否则审计又会把「撤了写仓库权限」记成「安装了插件」。
+- **`16003` 与 PL5 彻底解耦**：`16003` 只用于「未安装却调 PL6/PL7/PL8/PL9/PL10/PL12/PL14」。
+- **代价**：客户端要靠 `already_installed` 自己区分「首次装上」与「什么也没发生」。因此该字段是契约的一部分，不能省。
 
 ### 与 PRD 的冲突裁决（**15 条，全部已批**：v1.0 六条 + v1.1 勘误三条 + v1.2 裁决六条）
 
