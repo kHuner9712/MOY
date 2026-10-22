@@ -97,7 +97,14 @@ def test_merge_spans_joins_touching_ranges() -> None:
 
 @pytest.mark.parametrize(
     "text",
-    ["2026-11-01", "EMP1234", "薪资 订单 A-100200", "薪资 第 3-5 章", "薪资 比例 20-30%", "薪 -5~-3"],
+    [
+        "2026-11-01",
+        "EMP1234",
+        "薪资 订单 A-100200",
+        "薪资 第 3-5 章",
+        "薪资 比例 20-30%",
+        "薪 -5~-3",
+    ],
 )
 def test_non_amount_numbers_are_not_masked(text: str) -> None:
     """豁免与排除项一律不动：日期 / 编号 / 章节号 / 百分比 / 负数区间。

@@ -774,9 +774,7 @@ def test_d1_deferred_registry_matches_markers() -> None:
             problems.append(
                 f"{item['id']}[{item['level']}] 已过期（due {item['due_batch']}，当前 {now_batch}）"
             )
-    assert not problems, (
-        f"[台账 ⑯] 到期未闭 共 {len(problems)} 条：" + "；".join(problems)
-    )
+    assert not problems, f"[台账 ⑯] 到期未闭 共 {len(problems)} 条：" + "；".join(problems)
 
     red_names = sorted(str(c["name"]) for c in red_cases)
 

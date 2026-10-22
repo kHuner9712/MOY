@@ -62,7 +62,7 @@ async def _real_undefined_column_error(dsn: str) -> BaseException:
         await connection.execute(
             f"SELECT {MISSING_COLUMN} FROM plugin_task LIMIT 1"  # noqa: S608 - 固定字面量
         )
-    except BaseException as exc:  # noqa: BLE001 - 探针：需要拿到原始异常本体
+    except BaseException as exc:
         return exc
     finally:
         await connection.close()
@@ -103,11 +103,14 @@ def test_pg_error_hidden_from_client_but_traceable_in_logs(pg_dsn: str) -> None:
     # ②-a **反向控制**：先断言"日志确实输出了、且含异常消息"——这两条必须绿。
     #     若它们红了，说明"红的原因"不是缺 SQLSTATE（而是日志根本没出/类型不符），
     #     那样下面的红就不可归因——与 P3-B19-04 的"改坏即红 + 改回即绿"同一条纪律。
-    assert entry.get("exc_info"), "反向控制失败：日志没有 exc_info（红的原因会是「日志没输出」而非缺 SQLSTATE）"
+    assert entry.get("exc_info"), (
+        "反向控制失败：日志没有 exc_info（红的原因会是「日志没输出」而非缺 SQLSTATE）"
+    )
     assert entry.get("exception_type") == "UndefinedColumnError", "反向控制失败：日志缺原始异常类型"
     assert MISSING_COLUMN in dumped, "反向控制失败：日志里没有异常消息文本"
 
-    # ②-b 待补项：SQLSTATE 必须进日志，否则「列不存在 42703 / 权限不足 42501 / 连接异常 08006」无法区分
+    # ②-b：SQLSTATE 必须进日志，否则「列不存在 42703 / 权限不足 42501 /
+    # 连接异常 08006」三类无法区分
     assert "42703" in dumped, "日志缺 SQLSTATE——无法区分「列不存在」与「权限/连接」类错误"
 
     # ③ 处理器不中断：有响应、且只记录一次（没有重复告警式重入）
