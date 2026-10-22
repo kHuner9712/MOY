@@ -358,6 +358,36 @@ async def b01_tenants(b01_engine: AsyncEngine) -> AsyncIterator[dict[str, dict[s
                     )
 
 
+def scratch_name(prefix: str, label: str = "") -> str:
+    """返回**进程 + 用例唯一**的临时库名（防并发 `DROP`/`CREATE` 互踢）。
+
+    为什么必须有这个函数（阶段三实测的假抖动）：
+    `create_empty_database()` 开头就是 `DROP DATABASE IF EXISTS {name}` +
+    `CREATE DATABASE {name}`，`finally` 里再 `drop_database`。若库名是**固定**的，
+    两个并发进程（两个人同时跑 `--run-pg`，或 CI 上并行分片）会互相把对方正在
+    `--apply` 的库端掉 → 现象是
+    `InvalidCatalogNameError: database "oa_qa_g11_cli" does not exist`，
+    而同一命令再跑一遍又绿了。**这种"跑两遍才绿"的用例在 CI 上表现为随机红**，
+    最容易被误判成代码缺陷（本轮就误判过一次，结论"缺库、建议预建"是错的：
+    预建既会被 `finally` 删掉，也挡不住 `DROP`/`CREATE` 的竞态）。
+
+    名字里同时带 pid 与短 uuid：
+    - **pid** 区分并发进程（跨人、跨分片）；
+    - **短 uuid** 区分同一进程里的不同用例（同一用例连跑两遍也不会撞）；
+    - 总长控制在 PostgreSQL 标识符上限 63 以内。
+
+    Args:
+        prefix: 业务前缀（如 `oa_qa_g11`）。
+        label: 用例标签（如 `cli` / `apply`），便于在 `pg_database` 里认人。
+
+    Returns:
+        str: 形如 `oa_qa_g11_cli_2f3a_9c1d4e` 的库名。
+    """
+    suffix = f"{os.getpid():x}_{uuid.uuid4().hex[:6]}"
+    body = f"{prefix}_{label}" if label else prefix
+    return f"{body}_{suffix}"[:63]
+
+
 async def list_policy_tables(engine: AsyncEngine, policy: str) -> list[str]:
     """列出挂在指定 RLS 策略下的表名。
 
@@ -462,6 +492,7 @@ __all__ = [
     "drop_database",
     "fetch_scalar",
     "list_policy_tables",
+    "scratch_name",
     "to_async_dsn",
     "to_raw_dsn",
 ]

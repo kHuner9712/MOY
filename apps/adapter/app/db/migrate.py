@@ -133,7 +133,17 @@ class MigrationDatabase(Protocol):
 
 
 def checksum_of(path: Path) -> str:
-    """计算脚本文件的内容摘要。
+    """计算脚本文件的内容摘要（**按 LF 规范化后计算**，跨平台稳定）。
+
+    为什么不是 `read_bytes()`：`.gitattributes` 已声明 `*.sql text eol=lf`，所以
+    **仓库里存的永远是 LF**；但编辑器/同步工具完全可能把工作区文件写成 CRLF。
+    此时 `read_bytes()` 会把同一份脚本算成两个摘要，`--apply` 报
+    `migration checksum drift`（30004）——运维看到的是"迁移内容被改了"，
+    实际只是换行符，排查成本极高（阶段三实测踩过：`0003`/`0004` 台账是 LF、
+    工作区被写成 CRLF，三个 `--run-pg` 用例全红）。
+
+    规范化后：同一份脚本的摘要与它用哪种换行符落盘无关，而**已存在的台账值不变**
+    （当初落盘就是 LF，摘要即 LF 版本的摘要）——所以这是一次零迁移成本的加固。
 
     Args:
         path: 脚本路径。
@@ -141,7 +151,8 @@ def checksum_of(path: Path) -> str:
     Returns:
         str: `sha256:<hex>` 形式的摘要。
     """
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    text = path.read_text(encoding="utf-8")
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
 
 

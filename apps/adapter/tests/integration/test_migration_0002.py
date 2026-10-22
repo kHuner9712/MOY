@@ -30,6 +30,7 @@ from app.db.migrate import AsyncpgMigrationDatabase, apply_migrations, resolve_s
 from tests.integration.pg_fixture import (
     create_empty_database,
     drop_database,
+    scratch_name,
     to_async_dsn,
     to_raw_dsn,
 )
@@ -100,7 +101,7 @@ async def _applied_versions(dsn: str) -> set[str]:
 @pytest.mark.asyncio
 async def test_0002_on_fresh_database(b01_superuser_dsn: str) -> None:
     """空库路径：基线 + 0002 连跑两遍都成功，索引唯一且版本已登记。"""
-    name = f"{SCRATCH_DB_PREFIX}_fresh"
+    name = scratch_name(SCRATCH_DB_PREFIX, "fresh")
     dsn = await create_empty_database(b01_superuser_dsn, name)
     try:
         database = AsyncpgMigrationDatabase(to_raw_dsn(dsn))
@@ -148,7 +149,7 @@ async def test_0002_is_privilege_safe_on_initialized_database(b01_app_dsn: str) 
 @pytest.mark.asyncio
 async def test_0002_fails_loud_when_unique_index_missing(b01_superuser_dsn: str) -> None:
     """约束缺失时迁移必须**失败**，并给出需要 DBA 执行的 DDL 原文。"""
-    name = f"{SCRATCH_DB_PREFIX}_missing"
+    name = scratch_name(SCRATCH_DB_PREFIX, "missing")
     dsn = await create_empty_database(b01_superuser_dsn, name)
     try:
         engine = create_async_engine(

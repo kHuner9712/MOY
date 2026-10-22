@@ -83,15 +83,94 @@ def test_clean_offer_has_no_hits() -> None:
 
 
 def test_r1_catches_amount_with_unit() -> None:
-    """R1：带单位的金额（`8000 元` / `1,200 元` / `8000/月`）。
+    """R1：带单位的金额，**三个分支各自覆盖一类真实写法**（8/8 正样本）。
 
-    判据与追溯表 §3.4 的 R1 正则**逐字一致**（三位及以上数字或千分位写法）。
-    两位数字带 `k` 的写法（`15k`）不在该正则覆盖内——这是已上报的规则缺口，
-    不在这里偷偷加严，以免与 QA 的作用域判据分叉。
+    历史：首版只有「≥3 位数字 + 单位」一支，`15k` / `1.2 万` / `3 亿元` 全部漏检——
+    而 `15k`、`1.2 万` 恰恰是模型最可能写的两种薪资写法。补第三支（1-2 位 + 压缩单位）。
     """
-    for text in ("月薪 8000 元", "补贴 1,200 元", "年薪 8000 元", "月收入 8000/月"):
+    positives = (
+        "15k",
+        "1.2万",
+        "1.2万元",
+        "8000每月",
+        "3 亿元",
+        "1200 亿",
+        "0.5 亿",
+        "3亿",
+    )
+    for text in positives:
         scan = scan_offer_amount(text)
         assert scan.r1, f"R1 未命中：{text}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["8000", "8,000", "1,500", "2026-11-01", "3 个月", "30%", "按公司标准执行"],
+)
+def test_r1_ignores_non_amount_numbers(text: str) -> None:
+    """R1 的 7 个反样本：没有单位就不是金额（防"见数字就报"式假阳性）。"""
+    assert scan_offer_amount(text).r1 == (), f"R1 误命中：{text}"
+
+
+@pytest.mark.parametrize(
+    ("text", "separator"),
+    [
+        ("月薪 8000-10000", "-"),
+        ("月薪 8000–10000", "–"),
+        ("月薪 8000~10000", "~"),
+        ("月薪 8000至10000", "至"),
+        ("薪资 12000-15000", "-"),
+    ],
+)
+def test_r2_catches_salary_range_verbatim(text: str, separator: str) -> None:
+    """R2-a：区间写法必须命中**整段**（不是截成 `000`）。
+
+    区间是中文 Offer 最高频的写法，而它正好落在「R2-b 排除连字符」与
+    「R1 要求带单位」的空隙里——不单列一支就两边都抓不到。
+    """
+    scan = scan_offer_amount(text)
+    assert any(separator in hit for hit in scan.r2), f"R2-a 未命中整段：{text} → {scan.r2}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "薪 -5~-3",  # 负数区间
+        "薪资 2026-11-01",  # 日期（豁免先剥）
+        "薪资 订单 A-100200",  # 编号：lookbehind 的 `-` 挡住
+        "薪资 第 3-5 章",  # 章节号（不足三位）
+        "薪资 比例 20-30%",  # 百分比（豁免先剥）
+    ],
+)
+def test_r2_does_not_fire_on_non_amount_patterns(text: str) -> None:
+    """负样本：**每加一条区间分支，都必须配一条"不该抓的"**，否则就是在移动边界。"""
+    assert scan_offer_amount(text).r2 == (), f"R2 误命中：{text}"
+
+
+@pytest.mark.parametrize("text", ["薪资 EMP-1234", "薪资 EMP1234", "薪资 PO2024001"])
+def test_id_exemption_needs_both_mechanisms(text: str) -> None:
+    """豁免：`EMP-1234`（靠 lookbehind 的 `-`）与 `EMP1234`（**只能靠豁免剥离**）都要测。
+
+    两条都测才构成两个独立机制的证据：只测带连字符那条，把豁免代码删掉照样能过。
+    """
+    assert scan_offer_amount(text).r2 == (), f"编号被当成金额：{text}"
+
+
+@pytest.mark.parametrize("text", ["薪资 RMB8000", "薪资 K8000", "薪资 ¥8000", "薪资 CNY 8000"])
+def test_exemption_does_not_swallow_real_amounts(text: str) -> None:
+    """豁免的守卫样本：**放宽豁免是在移动边界，另一半必须仍抓得到**。
+
+    `RMB8000` 是真实金额写法。若豁免写成 `[A-Za-z]{1,5}-?\\d{4,}` 这种形状匹配，
+    为修 1 个误报会开出 4 个漏检——所以豁免只能是**前缀白名单**。
+    """
+    scan = scan_offer_amount(text)
+    assert scan.r2 or scan.r1, f"真实金额被豁免吞掉：{text}"
+
+
+@pytest.mark.parametrize("text", ["月薪 8000", "薪资 8,000", "待遇 1,500"])
+def test_r2_still_catches_bare_numbers(text: str) -> None:
+    """原 R2-b 未回退：补区间分支不能把裸数字这条搞丢。"""
+    assert scan_offer_amount(text).r2, f"R2-b 未命中：{text}"
 
 
 def test_r2_catches_bare_number_without_unit() -> None:

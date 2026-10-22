@@ -33,6 +33,7 @@ from app.db.migrate import (
 from tests.integration.pg_fixture import (
     create_empty_database,
     drop_database,
+    scratch_name,
     to_async_dsn,
     to_raw_dsn,
 )
@@ -106,7 +107,7 @@ async def _counts(dsn: str) -> tuple[int, int, int]:
 
 async def test_g11_apply_twice_on_empty_database_is_idempotent(b01_superuser_dsn: str) -> None:
     """空库连跑两遍全量迁移：版本集不变、无漂移、无待应用，且数量达标。"""
-    name = f"{SCRATCH_DB_PREFIX}_apply"
+    name = scratch_name(SCRATCH_DB_PREFIX, "apply")
     dsn = await create_empty_database(b01_superuser_dsn, name)
     try:
         database = await _migrate(dsn)
@@ -140,7 +141,7 @@ async def test_g11_apply_twice_on_empty_database_is_idempotent(b01_superuser_dsn
 
 async def test_g11_second_apply_reports_nothing_pending(b01_superuser_dsn: str) -> None:
     """第一遍应真的应用基线；第二遍的待应用清单必须为空。"""
-    name = f"{SCRATCH_DB_PREFIX}_twice"
+    name = scratch_name(SCRATCH_DB_PREFIX, "twice")
     dsn = await create_empty_database(b01_superuser_dsn, name)
     try:
         database = await _migrate(dsn)
@@ -165,7 +166,7 @@ async def test_g11_migrated_tables_stay_forced_rls_even_for_owner(b01_superuser_
     这条专打「表所有者默认绕过 RLS」：只有 `FORCE ROW LEVEL SECURITY` 能压住属主，
     漏了它的话，应用角色建的表对应用角色就是裸奔——而 G-11 的数量断言看不出来。
     """
-    name = f"{SCRATCH_DB_PREFIX}_owner"
+    name = scratch_name(SCRATCH_DB_PREFIX, "owner")
     dsn = await create_empty_database(b01_superuser_dsn, name)
     try:
         database = await _migrate(dsn)
@@ -216,7 +217,7 @@ async def test_g11_migrated_tables_stay_forced_rls_even_for_owner(b01_superuser_
 
 async def test_g11_cli_check_then_apply_on_empty_database(b01_superuser_dsn: str) -> None:
     """CLI 行为：空库 `--check` 列出待应用基线；`--apply` 后 `--check` 报无待应用。"""
-    name = f"{SCRATCH_DB_PREFIX}_cli"
+    name = scratch_name(SCRATCH_DB_PREFIX, "cli")
     dsn = await create_empty_database(b01_superuser_dsn, name)
 
     env = {
