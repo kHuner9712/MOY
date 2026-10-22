@@ -102,6 +102,25 @@ def _row(
     }
 
 
+def _markdown_table(columns: list[str], rows: list[dict[str, str]]) -> str:
+    """把行渲染成 markdown 表格（模拟**模型直接产出**的评分表）。
+
+    真实链路里 `understand` 的产物是模型生成的文本，模型几乎总是用 markdown
+    表格交付评分表；只认 CSV 的门会把这种表误判成"缺少「风险」列"。
+
+    Args:
+        columns: 表头。
+        rows: 行数据。
+
+    Returns:
+        str: markdown 表格文本。
+    """
+    header = "| " + " | ".join(columns) + " |"
+    separator = "| " + " | ".join("---" for _ in columns) + " |"
+    body = ["| " + " | ".join(row.get(key, "") for key in columns) + " |" for row in rows]
+    return "\n".join([header, separator, *body])
+
+
 def _screening_spec() -> StepSpec:
     """构造评分表步骤声明（`understand` + `continue`，与人事插件一致）。
 
@@ -323,6 +342,52 @@ def test_inline_text_fallback_still_checked() -> None:
 
     assert guarded.status == STEP_FAILED
     assert "张伟" in guarded.reason_text
+
+
+def test_markdown_table_with_risk_passes() -> None:
+    """模型用 markdown 表格交付、每行风险非空 → 通过。
+
+    真实链路（`ServicesActionGateway._run_generate`）把模型文本原样落成
+    `inline_text`，所以"只认 CSV"会让每一次真实筛选都判成"缺少风险列"。
+    """
+    text = _markdown_table(SCREENING_COLUMNS, [_row("张伟"), _row("李娜")])
+    outcome = _outcome_with(b"", text)
+
+    guarded = _guard(outcome)
+
+    assert guarded is outcome, f"markdown 表格被误判：{guarded.reason_text}"
+
+
+@pytest.mark.parametrize("header", ["风险", "**风险**", "Risk"])
+def test_markdown_table_blank_risk_is_caught(header: str) -> None:
+    """markdown 表格里风险为空 → 仍然要拦（表头加粗也认）。
+
+    含 `**风险**`：模型常用加粗写表头，去空白后仍是同一列。
+    """
+    columns = ["姓名", header, "结论"]
+    rows = [
+        {"姓名": "张伟", header: "缺少大规模项目经验", "结论": "待定"},
+        {"姓名": "李娜", header: "", "结论": "待定"},
+    ]
+    outcome = _outcome_with(b"", _markdown_table(columns, rows))
+
+    guarded = _guard(outcome)
+
+    assert guarded.status == STEP_FAILED
+    assert "缺少" not in guarded.reason_text, f"markdown 表格被当成缺列：{guarded.reason_text}"
+    assert "李娜" in guarded.reason_text and "第 2 行" in guarded.reason_text
+
+
+def test_markdown_table_without_risk_column_fails() -> None:
+    """markdown 表格缺「风险」列 → 判失败（缺列在哪种表格形态下都不能放过）。"""
+    columns = ["姓名", "匹配分", "结论"]
+    rows = [{"姓名": "张伟", "匹配分": "80", "结论": "待定"}]
+    outcome = _outcome_with(b"", _markdown_table(columns, rows))
+
+    guarded = _guard(outcome)
+
+    assert guarded.status == STEP_FAILED
+    assert "风险" in guarded.reason_text and "列" in guarded.reason_text
 
 
 def test_run_step_wires_screening_gate() -> None:

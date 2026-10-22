@@ -1287,11 +1287,20 @@ def _parse_schedule_time(value: str) -> datetime | None:
 
 
 def _screening_rows(draft: ArtifactDraft) -> list[dict[str, str]]:
-    """取评分表的行（优先**已渲染的 CSV 字节**，没有才回落到内联文本）。
+    """取评分表的行（CSV 或**模型直接产出的 markdown 表格**）。
 
     为什么先看 `content`：`content` 就是用户下载得到的那份表，校验对象必须与
-    交付物一致（与排期表同一口径）。`understand` 类步骤历史上只给 `inline_text`，
-    所以保留回落，但**不因为回落就跳过校验**。
+    交付物一致（与排期表同一口径）。没有字节时回落到 `inline_text`，
+    但**不因为回落就跳过校验**。
+
+    为什么还要认 markdown：真实链路里 `understand` 的产物是**模型生成的文本**
+    （`ServicesActionGateway._run_generate` 把 `data.content` 原样落成
+    `inline_text`），而模型几乎总是用 markdown 表格交付评分表。只认 CSV 会把
+    "表头形态不同"误判成"缺少「风险」列"，让每一次真实筛选都失败——
+    误判和漏判一样会让用户不再信任这道门，只是方向相反。
+
+    判定顺序：先按 CSV 解析，**解析出的列数 > 1** 说明确实是 CSV；否则再试
+    markdown 表格；都不成立时把 CSV 的结果原样返回（交给缺列判据处理）。
 
     Args:
         draft: `screening` 产物草稿。
@@ -1299,13 +1308,115 @@ def _screening_rows(draft: ArtifactDraft) -> list[dict[str, str]]:
     Returns:
         list[dict[str, str]]: 行列表（无可判行时返回空列表）。
     """
-    rows = parse_schedule_rows(draft.content or b"")
-    if rows:
-        return rows
-    text = draft.inline_text or ""
+    text = _screening_text(draft)
     if not text.strip():
         return []
-    return parse_schedule_rows(text.encode("utf-8"))
+    csv_rows = parse_schedule_rows(text.encode("utf-8"))
+    if _column_count(csv_rows) > 1:
+        return csv_rows
+    markdown_rows = _markdown_table_rows(text)
+    if markdown_rows:
+        return markdown_rows
+    return csv_rows
+
+
+def _screening_text(draft: ArtifactDraft) -> str:
+    """取评分表原文（优先 `content` 字节，缺了用 `inline_text`）。
+
+    Args:
+        draft: 产物草稿。
+
+    Returns:
+        str: 表原文（空串表示没有内容）。
+    """
+    if draft.content:
+        try:
+            return draft.content.decode("utf-8-sig")
+        except UnicodeDecodeError:  # pragma: no cover - 渲染器只产出 UTF-8
+            return ""
+    return draft.inline_text or ""
+
+
+def _column_count(rows: list[dict[str, str]]) -> int:
+    """取行里的最大列数（用来判断 CSV 解析是否退化成一列）。
+
+    Args:
+        rows: 行列表。
+
+    Returns:
+        int: 最大列数（空列表返回 0）。
+    """
+    return max((len(row) for row in rows), default=0)
+
+
+def _markdown_table_rows(text: str) -> list[dict[str, str]]:
+    """把 markdown 表格解析成行字典（不是表格时返回空列表）。
+
+    只认以 `|` 开头的行；首行当表头，紧随的 `| --- | --- |` 分隔行跳过，
+    其余行按表头顺序映射成 `{列名: 单元格}`。单元格数少于表头时补空串
+    （缺列不能变成"这一行不存在"）。
+
+    Args:
+        text: 含 markdown 表格的文本。
+
+    Returns:
+        list[dict[str, str]]: 行列表。
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip().startswith("|")]
+    if len(lines) < 2:
+        return []
+    header = _split_markdown_row(lines[0])
+    if len(header) < 2:
+        return []
+    body = lines[1:]
+    if body and _is_markdown_separator(body[0]):
+        body = body[1:]
+    rows: list[dict[str, str]] = []
+    for line in body:
+        cells = _split_markdown_row(line)
+        if not cells:
+            continue
+        rows.append(
+            {
+                name: (cells[index] if index < len(cells) else "")
+                for index, name in enumerate(header)
+            }
+        )
+    return rows
+
+
+def _split_markdown_row(line: str) -> list[str]:
+    """按 `|` 切分 markdown 表格的一行（去掉首尾竖线后逐格去空白）。
+
+    Args:
+        line: 表格行原文。
+
+    Returns:
+        list[str]: 单元格列表（空行返回空列表）。
+    """
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    if not text.strip():
+        return []
+    return [cell.strip() for cell in text.split("|")]
+
+
+def _is_markdown_separator(line: str) -> bool:
+    """判断是否 `| --- | :---: |` 这类表头分隔行。
+
+    Args:
+        line: 表格行原文。
+
+    Returns:
+        bool: 是分隔行返回 True。
+    """
+    cells = _split_markdown_row(line)
+    if not cells:
+        return False
+    return all(cell and set(cell) <= set("-: ") for cell in cells)
 
 
 def scan_screening(rows: list[dict[str, str]]) -> list[str]:
