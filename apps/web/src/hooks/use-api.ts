@@ -138,6 +138,15 @@ export const QUERY_KEYS = {
   /** 个人本月用量（M4，业务化口径） */
   myUsage: (period: string): ApiQueryKey => ['billing', 'my-usage', period],
 
+  // ------------------------------------------------------------------ 记忆
+  /**
+   * 我的记忆列表（类别 + 分页）。
+   *
+   * 键首段用 `memories` 而不是接口名：删除/开关成功后按前缀
+   * `['memories']` 一次性失效全部筛选组合，页面无需知道当前是哪一页。
+   */
+  memories: (params: Record<string, unknown> = {}): ApiQueryKey => ['memories', params],
+
   // ------------------------------------------------------------------ 运营
   /** 运营访问探测（企业账号进入运营页会拿到 20003） */
   opsAccess: (): ApiQueryKey => ['ops', 'access'],

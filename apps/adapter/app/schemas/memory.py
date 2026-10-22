@@ -53,9 +53,15 @@ class MemoryPageData(PageResult[MemoryItem]):
     Attributes:
         enabled: 记忆功能的全局开关。与列表**同包**下发：前端才能区分
             "已关闭"与"还没记到东西"两种空态（PRD §6.1 的三态要求）。
+        category_switches: 分类开关（只含被显式改过的类别，缺省视为开启）。
+            与 `enabled` 同理，**必须同包下发**：否则"我的记忆"页的分类开关
+            在首次渲染时只能全显示为开，用户会看到与真实状态不一致的界面。
     """
 
     enabled: bool = Field(default=True, description="记忆功能是否开启")
+    category_switches: dict[str, bool] = Field(
+        default_factory=dict, description="分类开关（缺省视为开启）"
+    )
 
 
 class MemoryDeleteData(BaseModel):

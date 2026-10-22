@@ -53,6 +53,7 @@ export const PAGES = [
   { route: '/team', file: '(main)/team/page.tsx' },
   { route: '/team/organization', file: '(main)/team/organization/page.tsx' },
   { route: '/profile', file: '(main)/profile/page.tsx' },
+  { route: '/profile/memories', file: '(main)/profile/memories/page.tsx' },
   { route: '/billing', file: '(main)/billing/page.tsx' },
   { route: '/ops/tenants', file: '(main)/ops/tenants/page.tsx' },
   { route: '/ops/tenants/[tenantId]', file: '(main)/ops/tenants/[tenantId]/page.tsx' },

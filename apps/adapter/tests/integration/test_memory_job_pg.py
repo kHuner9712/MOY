@@ -298,6 +298,49 @@ class TestMemoryRepository:
         assert await store.list_embeddings(TENANT, [replacement.memory_id]) == {}
         assert await store.count_active(TENANT, USER) == 0
 
+    async def test_vector_search_and_readiness(self, pg_settings: Settings) -> None:
+        """向量检索（`<=>` 排序）、向量读取与能力自检都走真库。"""
+        store = PostgresMemoryStore(pg_settings)
+        near = await store.insert(
+            MemoryRecord(
+                tenant_id=TENANT,
+                memory_id=new_memory_id(),
+                user_id=USER,
+                category="preference",
+                content="汇报要表格式",
+                normalized_hash=normalized_hash("preference", "汇报要表格式"),
+            )
+        )
+        far = await store.insert(
+            MemoryRecord(
+                tenant_id=TENANT,
+                memory_id=new_memory_id(),
+                user_id=USER,
+                category="identity",
+                content="我叫赵工",
+                normalized_hash=normalized_hash("identity", "我叫赵工"),
+            )
+        )
+        assert near is not None and far is not None
+        # 第一条向量与查询向量同向；第二条正交 → 距离更远
+        await store.upsert_embedding(
+            TENANT, near.memory_id, model="fake", dim=1024, embedding=[1.0] + [0.0] * 1023
+        )
+        await store.upsert_embedding(
+            TENANT, far.memory_id, model="fake", dim=1024, embedding=[0.0, 1.0] + [0.0] * 1022
+        )
+
+        nearest = await store.search_similar(TENANT, USER, [1.0] + [0.0] * 1023, limit=1)
+        assert [item.memory_id for item in nearest] == [near.memory_id]
+
+        both = await store.search_similar(TENANT, USER, [1.0] + [0.0] * 1023, limit=5)
+        assert {item.memory_id for item in both} == {near.memory_id, far.memory_id}
+
+        vectors = await store.list_embeddings(TENANT, [near.memory_id, far.memory_id])
+        assert len(vectors[near.memory_id]) == 1024
+
+        assert await store.vector_ready() is True
+
     async def test_personal_boundary_cannot_read_other_user(self, pg_settings: Settings) -> None:
         """个人边界：同租户的另一个用户读不到（RLS 只管租户，这里是仓储层的职责）。"""
         store = PostgresMemoryStore(pg_settings)

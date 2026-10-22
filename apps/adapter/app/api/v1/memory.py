@@ -131,6 +131,7 @@ async def list_memories(
         items=[_to_item(row) for row in rows],
         meta=PageMeta(page=page, page_size=page_size, total=total, total_pages=total_pages),
         enabled=setting.enabled,
+        category_switches=dict(setting.category_switches),
     )
     return ApiResponse[MemoryPageData].ok(data)
 

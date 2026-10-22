@@ -107,6 +107,12 @@ import type {
   UsageGroupBy,
   VerifyResult,
   Visibility,
+  MemoryBatchDeleteResult,
+  MemoryCategory,
+  MemoryDeleteResult,
+  MemoryPage,
+  MemorySettings,
+  MemorySettingsUpdate,
 } from '@/lib/types';
 
 
@@ -452,6 +458,54 @@ export const modelApi = {
     },
   ): () => void {
     return openStream('/model/generate/stream', body, handlers);
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 我的记忆（阶段四 MM1-MM4）
+// ---------------------------------------------------------------------------
+
+/**
+ * 我的记忆接口（阶段四 MM1-MM4）。
+ *
+ * 两条约定：
+ * 1. **不传 `user_id`**：身份由令牌决定，前端无从指定"查谁的记忆"；
+ * 2. 写操作（MM2/MM3/MM4）由 `buildHeaders` 自动补 `Idempotency-Key`，
+ *    重复点击不会产生第二次删除或第二次开关。
+ */
+export const memoryApi = {
+  /** MM1 列表（类别筛选 + 分页；同包返回全局开关状态） */
+  list(params: { category?: MemoryCategory | ''; page?: number; page_size?: number } = {}): Promise<MemoryPage> {
+    return request<MemoryPage>('GET', '/model/memories', {
+      query: {
+        category: params.category || undefined,
+        page: params.page,
+        page_size: params.page_size,
+      },
+    });
+  },
+
+  /** MM2 删除单条（不可撤销） */
+  remove(memoryId: string): Promise<MemoryDeleteResult> {
+    return request<MemoryDeleteResult>('DELETE', `/model/memories/${encodeURIComponent(memoryId)}`, {
+      idempotent: true,
+    });
+  },
+
+  /** MM3 按类别删除（不传类别 = 清空全部） */
+  removeMany(category?: MemoryCategory | ''): Promise<MemoryBatchDeleteResult> {
+    return request<MemoryBatchDeleteResult>('DELETE', '/model/memories', {
+      query: { category: category || undefined },
+      idempotent: true,
+    });
+  },
+
+  /** MM4 更新开关 */
+  updateSettings(body: MemorySettingsUpdate): Promise<MemorySettings> {
+    return request<MemorySettings>('PUT', '/model/memories/settings', {
+      body,
+      idempotent: true,
+    });
   },
 };
 

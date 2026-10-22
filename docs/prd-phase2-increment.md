@@ -927,6 +927,7 @@
 | 16 | 订阅 / subscription SKU / proration | 套餐、席位、生效中 | SKU、计费周期、proration |
 | 17 | 错误码 / code / stack trace | 业务语言提示 + 解决建议 | 任何 4-5 位数字码、英文异常、堆栈 |
 | 18 | 席位 / seat | 成员席位（可用） | seat、license 数 |
+| 19 | 记忆相关：向量检索 / embedding / 召回 / top-k / score / 记忆图谱 / 抽取器（阶段四 T4-03.7 扩容） | 「我了解到的关于你的信息」（界面上只说「了解你 / 记住 / 删除」，完全不暴露机制） | 向量、embedding、召回、top-k、记忆图谱、抽取器 |
 
 **QA 扫描方式**：对 10 个页面 DOM 文案、`apps/web/src` 全部字符串字面量、`lib/business-errors.ts` 全部 message、后端返回的 `message` 字段做正则扫描（含上表右列全部词 + `\b[1-3]\d{4}\b`），**0 命中**方可过阶段门。
 

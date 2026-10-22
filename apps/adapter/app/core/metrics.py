@@ -1,5 +1,13 @@
 """进程内指标计数器（阶段四 T4-03.4 埋点用；**不引入第三方依赖**）。
 
+⚠ **指标名与标签必须与架构 §8.1 逐字一致**（T4-05.1 只做 exposition、不改名）：
+
+- `memory_injected_total{result="ok"|"empty"|"degraded"}`
+- `memory_recall_degraded_total{reason="timeout"|"vector_unavailable"}`
+
+改这里的名字等于单方面撕毁监控契约：看板、告警规则与 runbook 会同时失效，
+而且失效方式是"新指标 0 增长"（没人会立刻发现）。要改先改架构 §8.1。
+
 为什么是这样一个极小的自制注册表，而不是 `prometheus_client`：
 
 1. 本阶段**端点预算固定 10 个**（PRD §0.3），加 `/metrics` 端点会直接打破

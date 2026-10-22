@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Network,
   Plug,
+  Sparkles,
   User,
   Users,
   Workflow,
@@ -45,6 +46,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: '/team/organization', label: '组织架构', icon: Network },
   { href: '/billing', label: '套餐与账单', icon: CreditCard },
   { href: '/profile', label: '个人中心', icon: User },
+  { href: '/profile/memories', label: '我的记忆', icon: Sparkles },
 ];
 
 /** 插件分组的锚点路由（工作台子项挂在它下面） */

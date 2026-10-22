@@ -103,6 +103,9 @@ export const TERM_GROUPS = [
   { row: 16, kind: 'word', term: "proration" },
   { row: 18, kind: 'word', term: "seat" },
   { row: 18, kind: 'sub', term: "license 数" },
+  { row: 19, kind: 'word', term: "top-k" },
+  { row: 19, kind: 'sub', term: "记忆图谱" },
+  { row: 19, kind: 'sub', term: "抽取器" },
 ];
 // <BANNED_TERMS:END>
 

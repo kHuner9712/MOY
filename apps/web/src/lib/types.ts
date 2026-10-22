@@ -1522,3 +1522,80 @@ export interface TaskQueueInfo {
    */
   queue_position?: number;
 }
+
+// ---------------------------------------------------------------------------
+// 我的记忆（阶段四 MM1-MM4）
+// ---------------------------------------------------------------------------
+
+/**
+ * 记忆类别（**内部标识**，界面一律用 `MEMORY_CATEGORY_LABELS` 的中文名）。
+ *
+ * 与适配层 6 类固定 schema 一一对应；新增类别必须两端同时改。
+ */
+export type MemoryCategory =
+  | 'identity'
+  | 'org'
+  | 'preference'
+  | 'convention'
+  | 'constraint'
+  | 'project';
+
+/** 记忆类别全集（顺序即界面筛选顺序） */
+export const MEMORY_CATEGORIES: readonly MemoryCategory[] = [
+  'identity',
+  'org',
+  'preference',
+  'convention',
+  'constraint',
+  'project',
+];
+
+/** MM1 列表项 */
+export interface MemoryItem {
+  memory_id: string;
+  category: MemoryCategory;
+  /** 事实正文（≤60 字，已是用户可读的一句话） */
+  content: string;
+  /** `high` = 明确陈述；`low` = 推测，界面标「待确认」 */
+  confidence: 'high' | 'low';
+  source_conversation_id: string;
+  updated_at: string;
+  /** 非空表示这是**历史值**（已被新说法取代），界面折叠显示 */
+  superseded_by: string;
+}
+
+/** MM1 列表（`enabled` / `category_switches` 与列表同包下发） */
+export interface MemoryPage {
+  items: MemoryItem[];
+  meta: PageMeta;
+  /** 全局开关：用于区分「已关闭」与「还没记到东西」两种空态 */
+  enabled: boolean;
+  /** 分类开关（只含被显式改过的类别，缺省视为开启） */
+  category_switches: Record<string, boolean>;
+}
+
+/** MM2 单条删除结果 */
+export interface MemoryDeleteResult {
+  memory_id: string;
+  deleted: boolean;
+}
+
+/** MM3 按类 / 全删结果 */
+export interface MemoryBatchDeleteResult {
+  deleted_count: number;
+  /** 空串表示「全部」 */
+  category: string;
+}
+
+/** MM4 开关（`category_switches` 只包含被显式改过的类别，缺省视为开启） */
+export interface MemorySettings {
+  enabled: boolean;
+  category_switches: Record<string, boolean>;
+  updated_at: string;
+}
+
+/** MM4 请求体（两项都可选，但至少一项） */
+export interface MemorySettingsUpdate {
+  enabled?: boolean;
+  category_switches?: Record<string, boolean>;
+}

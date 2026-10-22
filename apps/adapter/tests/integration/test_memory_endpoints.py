@@ -229,6 +229,7 @@ class TestMM1List:
         assert body["code"] == 0
         assert body["data"]["items"] == []
         assert body["data"]["enabled"] is True
+        assert body["data"]["category_switches"] == {}
         assert body["data"]["meta"]["total"] == 0
 
     async def test_lists_items_with_required_fields(self, api: AsyncClient) -> None:
@@ -379,6 +380,10 @@ class TestMM4Settings:
 
         switches = response.json()["data"]["category_switches"]
         assert switches == {"preference": True, "org": False}
+
+        # MM1 必须同包下发分类开关，否则"我的记忆"页的分类开关首屏只能全显示为开
+        listing = await api.get("/api/v1/model/memories", headers=_headers())
+        assert listing.json()["data"]["category_switches"] == switches
 
     async def test_empty_settings_body_returns_20001(self, api: AsyncClient) -> None:
         """两项都没传 → 20001。"""
