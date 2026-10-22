@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS plugin_task (
     retry_of         TEXT,
     from_step        SMALLINT,
     confirm_step_seq SMALLINT,
+    confirmed_step_seq SMALLINT NOT NULL DEFAULT 0,             -- 最近一次被确认的步骤（B19/WF1）
     cancel_requested BOOLEAN     NOT NULL DEFAULT FALSE,
     usage_units      BIGINT      NOT NULL DEFAULT 0 CHECK (usage_units >= 0),
     idem_key         TEXT        NOT NULL,
