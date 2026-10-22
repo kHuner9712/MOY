@@ -702,7 +702,7 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 | 项 | 口径 |
 | --- | --- |
 | 全量基线 | `deploy/init-schema-phase3.sql`（幂等；compose 挂 `docker-entrypoint-initdb.d/22-init-schema-phase3.sql`，**必须在 phase2 之后**） |
-| 增量 | `deploy/migrations/0003_phase3_plugin_tasks.sql`（已建库升级路径，`BEGIN/COMMIT` 内置） |
+| 增量 | `deploy/migrations/0003_phase3_plugin_tables.sql`（已建库升级路径，`BEGIN/COMMIT` 内置） |
 | 回滚 | `deploy/migrations/rollback/0003_*.sql`（手写，不自动执行） |
 | 种子 | 6 条 `plugin_catalog` + 6 条 `plugin_version`（声明全文 + sha256）+ 3 条 `plugin_capability_policy`（org.* 默认关闭，Q3-2） |
 | CI | `pytest tests/integration/test_migrate_phase3.py`：空库 → phase2 → phase3 → 再跑 phase3（幂等）；断言 9 张表 + 6 catalog + 6 version + 3 policy |
@@ -1069,7 +1069,7 @@ export const pluginApi = {
 > **重复安装的 4 条断言（QA 已加严，B17 按此验）**：`already_installed=true` / `granted_capabilities[]` **逐项不变** / `settings` **不变** / 审计**仅 1 条** `plugin.install`（这条最硬——它同时证明"装"与"改授权"是两个动作，若审计出现 2 条说明实现偷偷做了 upsert）。
 
 1. `deploy/init-schema-phase3.sql`（9 表 + 共享策略分组重声明 + 6 catalog + 6 version + 3 policy 种子）
-2. `deploy/migrations/0003_phase3_plugin_tasks.sql`
+2. `deploy/migrations/0003_phase3_plugin_tables.sql`
 3. `deploy/docker-compose.yml` `[改]`（挂 `22-init-schema-phase3.sql`）
 4. `deploy/docker-compose.saas.yml` `[改]`（同上）
 5. `apps/adapter/app/db/repositories/plugin_repo.py`
@@ -1528,3 +1528,54 @@ export const pluginApi = {
 - §9 ← plan 第三阶段排期；批次编号承接阶段二 B15
 - §10 ← `architecture-v1.0.md` §9.6、`docs/phase2-gate-evidence.md`（门禁必须能红）
 - §11 ← PRD §9（R1-R5 风险）、§10（Q3-1~Q3-7）
+
+## 12. 实现落点勘误（B29 追加，2026-10-23）
+
+> **本节的由来**：阶段三收口时做了一次"文档引用的路径是否都真实存在"的全量核查，
+> 结果 `docs/` 下被反引号引用的仓库路径里有 **43 个在磁盘上不存在**。
+> 逐条核对后分为三类：① 在途工程正在创建（不属偏差）；② **文档写错了名字或目录**（真偏差，本节登记）；
+> ③ 从未交付（真缺失，移交 `docs/phase3-progress-audit.md` 跟踪）。
+>
+> **为什么值得单列一节而不是逐个改掉**：这些偏差**不影响任何代码行为**，但它们会让照着文档找文件的人
+> 得到"文件不存在"的结论——**而这与"代码没写"在读者眼里是同一件事**。
+> 保留一份显式勘误表，比把原文改得看不出发生过什么更有利于下一阶段。
+
+### 12.1 文档引用与实现的偏差（已核对，按实际落点执行）
+
+| 本文档写的路径 | 实际落点 | 偏差性质 |
+| --- | --- | --- |
+| `deploy/migrations/0003_phase3_plugin_tasks.sql` | `deploy/migrations/0003_phase3_plugin_tables.sql` | **笔误**（tables 误作 tasks），已就地修正 |
+| `apps/adapter/tests/integration/test_task_flow.py` | `apps/adapter/tests/unit/test_task_flow.py` | 目录写错（unit 误作 integration） |
+| `apps/adapter/tests/integration/test_artifact_edit.py` | `apps/adapter/tests/unit/test_artifact_edit.py` | 目录写错 |
+| `apps/adapter/tests/unit/test_plugin_service.py` | `test_plugin_install.py` + `test_plugin_lifecycle.py` + `test_plugin_assembly.py` + `test_plugin_guardrails.py` | 一个文件拆成四个（按关注点分文件，未按架构文档的单一文件名） |
+| `apps/adapter/tests/unit/test_task_service.py` | `test_task_flow.py` + `test_b19_coverage_gaps.py` | 同上 |
+| `apps/adapter/tests/unit/test_manifest_content.py` / `test_manifest_dev.py` / `test_manifest_hr.py` | `test_plugin_loader.py`（6 份声明合并为一套加载校验用例） | 按插件拆三个文件 → 按"加载器"合成一个 |
+| `apps/adapter/tests/unit/test_plugin_grants.py` / `test_plugin_review.py` / `test_plugin_version.py` | 分别并入 `test_plugin_lifecycle.py` / `test_plugin_assembly.py` | 同上（按 PL 域合并） |
+| `apps/plugins/tools/check_capability_whitelist.py` / `validate_manifests.py` / `make_fixtures.py` | `deploy/validate_plugins.py`（声明 schema + 能力白名单二合一） | **路径根写错**：插件代码在 `apps/adapter/app/plugins/`，不存在 `apps/plugins/`；工具脚本统一在 `deploy/` |
+| `apps/web/scripts/check-plugin-assets.mjs` / `check-plugin-ui-assets.mjs` | `check-no-placeholders.mjs` + `check-workbench-host.mjs` | 脚本改名（按判据命名，不按对象命名） |
+| `apps/web/scripts/scan-forbidden-words.mjs` | `check-banned-terms.mjs` | 脚本改名 |
+| `apps/web/src/components/ui/checkbox.tsx` / `textarea.tsx` | 未单独建组件；勾选与多行输入由既有 `select` / `input` / `feedback` 组合承载 | 未按架构文档拆到组件级（组件库按"复用优先"收敛） |
+| `apps/web/tests/api-client.plugin.spec.ts` | 无独立前端测试目录；请求层由 `scripts/check-plugin-contract.mjs` 契约快照门禁覆盖 | 验证手段不同（契约快照替代单测） |
+| `docs/decisions/0003-...-decision-sheet.md` | 同上，`0003` 为占位写法（含字面 `...`） | **非真实路径**，是模板示例，不构成偏差 |
+
+### 12.2 本文档已登记、由收口阶段补齐的落点
+
+| 路径 | 状态 |
+| --- | --- |
+| `apps/adapter/tests/e2e/`（conftest + 各流程用例） | B26 收口阶段补齐 |
+| `scripts/demo_phase3.sh`、`docs/phase3-demo-script.md` | B26 收口阶段补齐 |
+| `deploy/validate_schema_retention.py`（G-31） | B28 收口阶段补齐 |
+| `docs/plugin-dev-guide.md`（P0-P3-05） | B29 收口阶段补齐 |
+| `docs/phase3-progress-audit.md` | B28 收口阶段补齐 |
+
+### 12.3 本节不覆盖的事项
+
+- **`apps/adapter/tests/integration/` 下 `test_plugin_errors.py` / `test_plugin_reviews.py` / `test_rls_phase3.py` /
+  `test_task_errors.py` / `test_degradation_matrix.py` / `test_three_plugins_e2e.py`**：
+  架构文档列出但**未按该文件名交付**。其中 RLS fail-closed、错误码、降级矩阵的**判据本身已有承载**
+  （分别在 `test_plugin_contract_skeleton.py`、`test_plugin_state.py`、`test_plugin_market.py`、
+  `test_task_repo_pg.py` 与 `pg_fixture.py`），但**没有按架构文档的文件名与粒度落地**。
+  这批移交 `docs/phase3-progress-audit.md` 的未决清单，由下一阶段决定"补文件"还是"改文档登记合并"。
+- **`deploy/validate_capability_usage.py`（G-30 能力使用一致性）与 `deploy/validate_plugin_actions.py`**：
+  架构文档 §10 列为独立门禁脚本，实际由 `deploy/validate_plugins.py` 与前端
+  `check-capability-consistency.mjs` 分担。**判据有承载，脚本未按名单建**——同样移交未决清单。

@@ -8,7 +8,7 @@
 | 验收人 | 齐活林（交付总监） |
 | 代码基线 | `develop` @ **`43be5b7`**（阶段三代码封版 `d20d749`，其后仅文档提交；共 **194 提交 / 118 文件 / +28,031 −506**） |
 | 验收依据 | `docs/plan-v1.0.md` 第三阶段排期；`docs/prd-phase3-increment.md` v1.2（25 条 P0 / 10 条勘误）；`docs/architecture-phase3.md` v3.2.2（16 端点 / 9 表 / 13 错误码 / B16-B29）；`docs/qa-phase3-test-plan.md`、`docs/qa-phase3-batch-acceptance-checklist.md` |
-| 独立验证 | `docs/qa-phase3-b18-report.md`、`docs/qa-phase3-b20-report.md`、`docs/qa-phase3-b21-report.md`、`docs/qa-phase3-traceability.md`（判据真源） |
+| 独立验证 | `docs/qa-phase3-b18-report.md`、`docs/qa-phase3-b20-report.md`（QA 侧批次报告）；`docs/prd-phase3-traceability.md`（判据真源）、`docs/qa-phase3-test-plan.md`、`docs/qa-phase3-batch-acceptance-checklist.md` |
 | **验收结论** | **✅ 通过（PASS）**：6 个批次（B16-B21 + B19c/B21c）全部完成，**16/16 端点就绪**，**0 个未关闭 P0** |
 
 ---
