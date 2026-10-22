@@ -86,7 +86,7 @@ function toTimelineSteps(steps: TaskStep[]): TimelineStep[] {
  * 岗位工作台宿主（P-11）。
  *
  * 6 个插件共用**同一个**宿主：表单、步骤、产物、帮助栏全部由插件声明驱动，
- * 代码里没有 `if (pluginId === ...)` 之类的分支（G-27 脚本会断言）。
+ * 代码里没有任何「按具体插件分支」的判断（G-27 脚本会断言）。
  *
  * @returns 工作台页面元素
  */
