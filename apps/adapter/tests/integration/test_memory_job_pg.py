@@ -82,11 +82,18 @@ async def _clean(pg_dsn: str) -> None:
 
 @pytest.fixture(autouse=True)
 async def _release_engine() -> None:
-    """用例结束后释放进程内引擎，避免连接池泄漏到后续用例。
+    """用例**前后**都释放进程内引擎。
+
+    `get_engine()` 是进程级缓存，而 pytest-asyncio 给每个用例一个新事件循环；
+    旧循环里建的 asyncpg 连接留在池里，下一个用例取到就是
+    `RuntimeError: Event loop is closed`（表现为"单独跑绿、一起跑红"）。
+    既有写法（`test_conversation_rls_pg.py`）只在用例后释放；这里**前置也释放**，
+    因为本文件可能被排在"某个建了引擎但没释放"的文件之后（`-k`/重排/xdist 都会触发）。
 
     Yields:
         None: 用例运行期间。
     """
+    await dispose_engine()
     yield
     await dispose_engine()
 
