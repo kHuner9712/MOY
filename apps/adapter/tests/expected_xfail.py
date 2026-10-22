@@ -63,15 +63,37 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {"id": "P3-B18-01", "level": "P0", "status": "fixed"},  # 0003 只对账 → b5dbd69 幂等建表
     {"id": "P3-B18-02", "level": "P0", "status": "fixed"},  # checksum drift → 同源 b5dbd69
     {"id": "P3-B18-03", "level": "P1", "status": "fixed"},  # G-13/17002 → c340e70 visibility 豁免
-    # 新增号（勿与 B18-02 混用）：改名遗留的 schema_migration 孤儿行——
-    # 「checksum 漂移」是环境态（B18-02），「改名留下孤儿行」是实现/脚本缺陷（本条）。
+    # 新增号（勿与 B18-02 混用）：改名遗留的 schema_migration 孤儿行。
+    # 影响面（按代码事实，勿夸大）：`build_plan()` 只遍历磁盘脚本，孤儿行不进
+    # pending/drifted/checked → **不影响 `--apply`**；30004 的真因是 checksum 漂移
+    # （P3-B18-02，环境态）。本条只是版本表残留旧名，属数据卫生/可观测性 → P2。
     {
         "id": "P3-B18-04",
-        "level": "P1",
+        "level": "P2",
         "status": "open",
         "pinned_by": "test_real_postgres_migration_is_idempotent",
+        "due_batch": "B19",
+        "due_action": "--prune-orphans（改名别名映射落地）",
     },
 )
+
+#: 当前批次是**运行时上下文**，不是跨批事实——所以用函数读环境变量，**不写常量**：
+#: 写成常量会和 `EXPECTED_XFAIL` 一样漂移，而「默认成最新批」更糟：
+#: 最新批的 `due_batch` 最宽松，一切都会绿 → 该红的不红，P2 永久挂账。
+#: 因此**缺失即报错**（KeyError → 红），默认值必须指向"报错"而不是"放行"。
+def current_batch() -> str:
+    """读取当前批次（`OA_BATCH`，如 `B19`）。
+
+    Returns:
+        str: 批次号。
+
+    Raises:
+        KeyError: 未设置 `OA_BATCH` —— **故意不设默认值**，缺失即红。
+    """
+    import os
+
+    return os.environ["OA_BATCH"]
+
 
 __all__: list[str] = [
     "DEFECT_LEDGER",
@@ -81,4 +103,5 @@ __all__: list[str] = [
     "EXPECTED_XFAIL_BY_BATCH",
     "OPEN_CASES_HISTORY",
     "RED_HISTORY",
+    "current_batch",
 ]
