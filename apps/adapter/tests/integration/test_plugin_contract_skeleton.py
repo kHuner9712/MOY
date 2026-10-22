@@ -84,51 +84,48 @@ EXPECTED_PLUGIN_CODES = {
 DEFERRED_CASES: list[dict[str, str | None]] = [
     {
         "name": "test_b1_pl05_already_installed_field_is_always_present",
-        "tc": "TC-P3-MK08-01",
-        "batch": "B17",
-        "why": "PL5 安装响应模型未实现（already_installed 常驻字段）",
-        "landed_in": "B17",
+        "tc": "TC-P3-08 ⑥",
+        "batch": "B18",
+        "why": "PL5 响应缺 already_installed 常驻字段（B17 已交付 PL5，但字段缺失）",
+        "status": "red",
     },
     {
         "name": "test_b2_pl14_update_grants_before_install_returns_16003",
         "tc": "TC-P3-PL03-11",
         "batch": "B18",
-        "why": "PL14 授权写接口未实现",
-        "landed_in": None,
+        "why": "PL14 授权写接口未实现（路由未注册）",
+        "status": "xfail",
     },
     {
         "name": "test_c1_pl05_reinstall_does_not_touch_grants_or_audit",
         "tc": "TC-P3-MK08-06",
-        "batch": "B17",
-        "why": "PL5 重复安装幂等 + 审计计数未实现",
-        "landed_in": "B17",
+        "batch": "B18",
+        "why": "依赖 already_installed 与重复安装零增量（B17 未达标）",
+        "status": "red",
     },
     {
         "name": "test_c2_pl13_capability_policy_idempotent_by_idempotency_key",
-        "tc": "TC-P3-PL03-07",
-        "batch": "B17",
-        "why": "PL13 企业能力策略写接口未实现",
-        "landed_in": "B17",
+        "tc": "TC-P3-PL03-07 ⑥",
+        "batch": "B18",
+        "why": "PL13 写后回读只返 3 项，契约要求全量 6 项",
+        "status": "red",
     },
     {
         "name": "test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched",
         "tc": "TC-P3-WF12-05",
         "batch": "B19",
-        "why": "WF2 产物编辑接口未实现",
-        "landed_in": None,
+        "why": "WF2 产物编辑接口未实现（路由未注册）",
+        "status": "xfail",
     },
     {
         "name": "test_c4_wf2_non_editable_types_rejected_without_version_bump",
         "tc": "TC-P3-WF12-06",
         "batch": "B19",
-        "why": "WF2 只读类型拒绝未实现",
-        "landed_in": None,
+        "why": "WF2 只读类型拒绝未实现（路由未注册）",
+        "status": "xfail",
     },
 ]
 
-#: 预期 xfail 条数来自**唯一真源** `tests/expected_xfail.py`（团队 §0.4 口径），
-#: 本文件不重复定义，避免"骨架里 6、门禁里 5"这种双份漂移。
-#: 刻意不由 `len(DEFERRED_CASES)` 推导：那会让「删一条用例 + 删一条登记」互相掩盖。
 EXPECTED_ACTIVE_XFAIL = EXPECTED_XFAIL
 
 
@@ -445,14 +442,15 @@ def test_c4_wf2_non_editable_types_rejected_without_version_bump(
 # D 组：汇总断言（防"占位永久化"与"登记漂移"）
 # ===========================================================================
 def test_d1_deferred_registry_matches_markers() -> None:
-    """汇总断言：登记表（append-only）与本模块实际打了 `xfail` 的函数必须一致。
+    """汇总断言：登记表（append-only，三态）与实际 `xfail` 标记必须自洽。
 
-    防三类漂移：
-    - 「加了延后用例却忘了登记」→ 名字集合不等；
-    - 「落地后只删代码没删登记」/「只删标记没记落地」→ active 集合不等；
-    - 「把 B17 的条目错标成 B19」→ 逐批比对不等（只比总数会漏）。
+    三态设计（一次教训：「一个字段承载两种语义」会让人误读）：
+    - `xfail`：断言已写、实现未到 → 必须有 `xfail` 标记，计入 `EXPECTED_XFAIL`；
+    - `landed`：已随批次转绿 → 必须无 `xfail` 标记；
+    - `red`：断言已写但**当前是红的**（真缺陷）→ 必须无 `xfail` 标记，且必须在批次报告里列为缺陷。
 
-    另防「6→0 其实是删了 6 条」：登记表 append-only，条目只填 `landed_in`、不删除。
+    早先版本用 `landed_in` 一字段同时表达「断言已实现」与「已验收通过」，
+    导致 `test_b1`（已实现、但红）看起来像"已落地"—— 这正是"一字段两语义"的老毛病。
     """
     module: ModuleType = sys.modules[__name__]
     marked = {
@@ -466,37 +464,44 @@ def test_d1_deferred_registry_matches_markers() -> None:
     names = [str(case["name"]) for case in DEFERRED_CASES]
     assert len(names) == len(set(names)), f"[骨架汇总 ①] 登记表存在重复函数名：{names}"
 
-    active = [case for case in DEFERRED_CASES if not case["landed_in"]]
-    active_names = {str(case["name"]) for case in active}
-    assert marked == active_names, (
-        f"[骨架汇总 ②] xfail 标记与「未落地」条目不一致："
-        f"多标记 {sorted(marked - active_names)}、缺标记 {sorted(active_names - marked)}"
-    )
-    assert len(active) == EXPECTED_ACTIVE_XFAIL, (
-        f"[骨架汇总 ③] 预期仍 xfail {EXPECTED_ACTIVE_XFAIL} 条（唯一真源 "
-        f"tests/expected_xfail.py），实际 {len(active)} 条。落地后请填 landed_in 并同步下调"
-    )
-
+    allowed = {"xfail", "landed", "red"}
     for case in DEFERRED_CASES:
         name = str(case["name"])
-        assert case["tc"], f"[骨架汇总 ④] {name} 缺追溯表编号（验收报告要按 TC 对回 P0）"
-        assert case["why"], (
-            f"[骨架汇总 ⑤] {name} 缺 why（reason 只写本条，写全局说明会让 grep 误命中）"
+        assert case.get("status") in allowed, (
+            f"[骨架汇总 ②] {name} 的 status={case.get('status')!r} 非法，只允许 {sorted(allowed)}"
         )
-        assert case["batch"], f"[骨架汇总 ⑥] {name} 缺应落地批次"
+        assert case["tc"], f"[骨架汇总 ③] {name} 缺追溯表编号"
+        assert case["why"], f"[骨架汇总 ④] {name} 缺 why（reason 只写本条）"
+        assert case["batch"], f"[骨架汇总 ⑤] {name} 缺应落地批次"
+
+    xfail_names = {str(c["name"]) for c in DEFERRED_CASES if c["status"] == "xfail"}
+    assert marked == xfail_names, (
+        f"[骨架汇总 ⑥] xfail 标记与 status=xfail 条目不一致："
+        f"多标记 {sorted(marked - xfail_names)}、缺标记 {sorted(xfail_names - marked)}"
+    )
+    assert len(xfail_names) == EXPECTED_ACTIVE_XFAIL, (
+        f"[骨架汇总 ⑦] 预期 xfail {EXPECTED_ACTIVE_XFAIL} 条（唯一真源 tests/expected_xfail.py），"
+        f"实际 {len(xfail_names)} 条"
+    )
 
     per_batch: dict[str, int] = {}
-    for case in active:
+    for case in DEFERRED_CASES:
+        if case["status"] != "xfail":
+            continue
         batch = str(case["batch"])
         per_batch[batch] = per_batch.get(batch, 0) + 1
     assert per_batch == dict(EXPECTED_XFAIL_BY_BATCH), (
-        f"[骨架汇总 ⑦] 分批剩余与 `EXPECTED_XFAIL_BY_BATCH` 不一致："
+        f"[骨架汇总 ⑧] 分批剩余与 `EXPECTED_XFAIL_BY_BATCH` 不一致："
         f"实际 {per_batch}、期望 {dict(EXPECTED_XFAIL_BY_BATCH)}。"
-        "只比总数会漏掉「把 B17 的条目错标成 B19」这类归属错误"
+        "只比总数会漏掉「把 B18 的条目错标成 B19」这类归属错误"
     )
-    assert sum(per_batch.values()) == EXPECTED_ACTIVE_XFAIL, (
-        f"[骨架汇总 ⑧] 各批剩余合计 {sum(per_batch.values())} != {EXPECTED_ACTIVE_XFAIL}"
-    )
+
+    red_names = sorted(str(c["name"]) for c in DEFERRED_CASES if c["status"] == "red")
+    if red_names:
+        # 红条目不是"未实现"，而是"实现有缺陷"——必须在批次报告里列为缺陷，不能沉淀成背景红
+        assert all(str(c["batch"]) for c in DEFERRED_CASES if c["status"] == "red"), (
+            f"[骨架汇总 ⑨] red 条目必须标注归属批次：{red_names}"
+        )
 
 
 def test_d2_no_pytest_fail_placeholder() -> None:
