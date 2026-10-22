@@ -123,10 +123,16 @@ def test_a1_16003_means_not_installed_and_16004_means_disabled() -> None:
     )
 
 
-def test_a2_plugin_and_task_error_catalog_is_complete() -> None:
-    """TC-P3-PL03-11 ⑤ / G-13：13 个码必须全部定义且全部注册进 `ERROR_REGISTRY`。
+def test_a2_plugin_and_task_error_catalog_matches_whitelist() -> None:
+    """TC-P3-PL03-11 ⑤ / G-13：插件域 + 任务域码集合必须与白名单**集合相等**。
 
-    数量从 `EXPECTED_PLUGIN_CODES` 这个源数据重算，**不引用文档里的「13 条」字样**。
+    为什么用**集合相等**而不是「数量 == 13」：
+    - 计数相等有新码误红的风险（合法新增第 14 个码时，报错会指向"码丢了"的错误方向）；
+    - 计数相等挡不住「删一个旧码 + 加一个新码」（总数不变，仍然绿）；
+    - 集合相等的失败信息能直接给出「缺哪个 / 多哪个」，不用再回查。
+
+    这是「能表达『具体哪个』时不要退化成『一共几个』」的具体应用；
+    计数只在**数量本身就是契约**时使用（如"一个插件只有 1 条安装记录"）。
     """
     actual_values = {int(code) for code in ErrorCode}
     for code_value, name in EXPECTED_PLUGIN_CODES.items():
@@ -138,9 +144,14 @@ def test_a2_plugin_and_task_error_catalog_is_complete() -> None:
             f"[G-13 ②] 错误码 {code_value}（{name}）未注册进 ERROR_REGISTRY"
         )
 
-    assert len(EXPECTED_PLUGIN_CODES) == 13, (
-        f"[G-13 ③] 本阶段应有 13 个新码（11 插件域 + 2 任务域），源数据为 "
-        f"{len(EXPECTED_PLUGIN_CODES)} 个"
+    # 本阶段新增两域的实际码集合：插件域 160xx + 任务域 170xx
+    registered_phase3 = {int(code) for code in ERROR_REGISTRY if 16000 <= int(code) < 18000}
+    expected = set(EXPECTED_PLUGIN_CODES)
+    missing = sorted(expected - registered_phase3)
+    unexpected = sorted(registered_phase3 - expected)
+    assert not missing and not unexpected, (
+        f"[G-13 ③] 插件/任务域码集合与白名单不一致：缺失={missing} 多出={unexpected}。"
+        "新增合法码请先改 EXPECTED_PLUGIN_CODES（人工确认），不要靠总数掩盖"
     )
 
 
