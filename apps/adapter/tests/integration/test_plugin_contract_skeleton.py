@@ -38,6 +38,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.core.errors import ERROR_REGISTRY, ErrorCode
 from tests.expected_xfail import (
+    DEFECT_LEDGER,
     EXPECTED_OPEN,
     EXPECTED_RED,
     EXPECTED_XFAIL,
@@ -247,24 +248,78 @@ def test_b1_pl05_already_installed_field_is_always_present() -> None:
         "[TC-P3-MK08-01 ②] already_installed 不得为必填（首个安装的调用方不会传它），"
         f"实际 required={field.is_required()}"
     )
+    # ③ 首次安装的缺省值必须是 False——否则前端 `if (data.already_installed)` 会走错分支
+    assert field.default is False, (
+        f"[TC-P3-MK08-01 ③] already_installed 缺省值必须为 False，实际 {field.default!r}"
+    )
 
 
-def test_b2_pl14_update_grants_before_install_returns_16003(
-    client: TestClient,
-) -> None:
+async def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
     """TC-P3-PL03-11：未安装直接改授权 → `16003`，且**不产生任何副作用**。
 
-    当前 B18 尚未实现 PL14，故**最弱但真实**的断言是「该路由未注册即不达标」：
-    路由不存在时本用例失败（xfail 兜住），一旦 B18 注册 `/plugins/{id}/grants`，
-    它就会转绿——这是可验收的契约事实，不是 `pytest.fail` 占位。
-    完整断言（码值 + `plugin_grant` 无新增 + 审计无 `plugin.capability_grant`）
-    在路由落地后补齐，届时把它从 xfail 摘掉。
+    三重断言（只断返回码会放过「报错但已写库」的实现）：
+    ① 码值 `16003`（该插件还没有添加）；
+    ② `plugin_grant` **无新增行**（读回为空集合）；
+    ③ 审计**无** `plugin.capability_grant` 事件。
     """
-    paths = client.app.openapi()["paths"]
-    expected = "/api/v1/plugins/{plugin_id}/grants"
-    assert expected in paths, (
-        f"[TC-P3-PL03-11 ①] PL14 授权写接口未注册（B18 应实现），实际路径集合缺 {expected}；"
-        "路由都不存在时，「未安装 → 16003」无从谈起"
+    from app.business.audit_service import (
+        ACTION_PLUGIN_CAPABILITY_GRANT,
+        AuditService,
+        InMemoryAuditRecorder,
+    )
+    from app.business.plugin_grant_service import PluginGrantService
+    from app.business.plugin_service import PluginService
+    from app.core.config import Settings, reset_settings_cache
+    from app.core.errors import ApiError, ErrorCode
+    from app.core.security import AuthContext
+    from app.db.repositories.plugin_repo import InMemoryPluginStore
+    from app.plugins.loader import PluginRegistry
+    from app.schemas.plugin import GrantToggleItem, UpdateGrantsRequest
+
+    reset_settings_cache()
+    settings = Settings(
+        env="test",
+        deploy_mode="private",
+        downstream_enabled=False,
+        auth_mode="stub",
+        jwt_secret="unit-test-secret",
+        ratelimit_enabled=False,
+    )
+    tenant = "default"
+    plugin_id = "plg_mail_draft"
+    owner = AuthContext(user_id="usr_owner", tenant_id=tenant, roles=["owner"])
+
+    registry = PluginRegistry()
+    assert registry.load_all() == []
+    store = InMemoryPluginStore(registry)
+    recorder = InMemoryAuditRecorder()
+    grants = PluginGrantService(settings, store)
+    audit = AuditService(settings, recorder=recorder)
+    service = PluginService(
+        settings,
+        store=store,
+        registry=registry,
+        grants=grants,
+        audit=audit,
+    )
+
+    with pytest.raises(ApiError) as excinfo:
+        await service.update_grants(
+            plugin_id=plugin_id,
+            request=UpdateGrantsRequest(
+                grants=[GrantToggleItem(capability_key="org.external.publish", granted=False)]
+            ),
+            auth=owner,
+        )
+    assert excinfo.value.code is ErrorCode.PLUGIN_NOT_INSTALLED, (
+        f"[TC-P3-PL03-11 ①] 未安装改授权必须返回 16003，实际 {excinfo.value.code}"
+    )
+    assert await grants.snapshot(tenant, plugin_id, owner.user_id) == frozenset(), (
+        "[TC-P3-PL03-11 ②] 拒绝路径不得留下任何 plugin_grant 行（防「报错但已写库」）"
+    )
+    entries = await audit.recent(tenant, action=ACTION_PLUGIN_CAPABILITY_GRANT)
+    assert entries == [], (
+        f"[TC-P3-PL03-11 ③] 拒绝路径不得写 plugin.capability_grant 审计，实际 {len(entries)} 条"
     )
 
 
@@ -506,6 +561,20 @@ def test_d1_deferred_registry_matches_markers() -> None:
     )
 
     red_cases = [c for c in DEFERRED_CASES if c["status"] == "red"]
+
+    # ⑭ defect 编号唯一（防 3 条红共用一个号）
+    red_defects = [str(c["defect"]) for c in red_cases]
+    assert len(red_defects) == len(set(red_defects)), f"[骨架汇总 ⑭] defect 编号重复：{red_defects}"
+
+    # ⑮ red 的 defect ⊆ 台账 open 集合；每个 open 缺陷必须写明 pinned_by
+    open_defects = {d["id"] for d in DEFECT_LEDGER if d["status"] == "open"}
+    unknown = set(red_defects) - open_defects
+    assert not unknown, f"[骨架汇总 ⑮] red 引用了台账里不存在的缺陷编号：{sorted(unknown)}"
+    for item in DEFECT_LEDGER:
+        if item["status"] == "open":
+            assert item.get("pinned_by"), (
+                f"[骨架汇总 ⑮] 开放缺陷 {item['id']} 必须写明 pinned_by（谁钉住它）"
+            )
     red_names = sorted(str(c["name"]) for c in red_cases)
 
     # ⑨ red 不是"未实现"，而是"实现有缺陷"——必须能追到缺陷编号与到期批次

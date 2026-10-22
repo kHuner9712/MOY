@@ -45,7 +45,36 @@ OPEN_HISTORY: Final[tuple[int, ...]] = (6, 6, 2)  # B16 结束 6、B17 结束 6�
 #: B16 结束 0、B17 结束 3（B17 三条缺陷）、B18 结束 0（已随 B18 全部关闭）
 RED_HISTORY: Final[tuple[int, ...]] = (0, 3, 0)
 
+#: 缺陷台账（append-only）。`red` 条目只能用这里 `status="open"` 的编号——
+#: 防「编造编号」与「3 条红共用一个号」两种伪造（骨架汇总 ⑭⑮）。
+#:
+#: 语义边界（易混，写清楚）：
+#: - `red`：**已被骨架断言钉住、且当前是红的**缺陷；
+#: - `open`：**尚未关闭**的缺陷（可能由骨架钉，也可能由别的用例钉，如 g11）。
+#: 因此 ⑮ 用**子集**（red ⊆ open），不是双向相等——否则会把「g11 钉住的迁移缺陷」
+#: 硬塞进骨架，扩大骨架职责。
+DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
+    # B17 的两条 P1（已随 B18 关闭）
+    {"id": "P3-B17-01", "level": "P1", "status": "fixed"},
+    {"id": "P3-B17-02", "level": "P1", "status": "fixed"},
+    # B18 的三条 P1（开放，由 g11 / G-13 用例钉住，不进骨架 red）
+    {"id": "P3-B18-01", "level": "P1", "status": "open", "pinned_by": "test_g11_*"},
+    {
+        "id": "P3-B18-02",
+        "level": "P1",
+        "status": "open",
+        "pinned_by": "test_real_postgres_migration_is_idempotent",
+    },
+    {
+        "id": "P3-B18-03",
+        "level": "P1",
+        "status": "open",
+        "pinned_by": "check_error_catalog --strict",
+    },
+)
+
 __all__: list[str] = [
+    "DEFECT_LEDGER",
     "EXPECTED_OPEN",
     "EXPECTED_RED",
     "EXPECTED_XFAIL",
