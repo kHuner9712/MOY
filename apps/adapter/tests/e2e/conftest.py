@@ -1682,6 +1682,76 @@ def artifact_download_url(settings: Settings, record: Any) -> str:
     return f"/files/artifacts/{token}"
 
 
+def artifact_url_claims(url: str | None, settings: Settings) -> tuple[str, str, int] | None:
+    """把下载地址还原成「产物身份」三元组（租户 / 产物 / 版本）。
+
+    为什么不能直接比字符串：S9 起令牌载荷带 `exp`（默认 15 分钟有效），
+    同一份产物在**不同秒**签发会得到不同令牌。字符串相等因此变成
+    「两次调用是否落在同一秒」的抽奖，而用例真正要钉的是
+    「页面上的下载地址指向的就是这份产物」。
+
+    Args:
+        url: 下载地址（`/files/artifacts/<token>`）。
+        settings: 配置实例（令牌校验用）。
+
+    Returns:
+        tuple[str, str, int] | None: `(tenant_id, artifact_id, version)`；
+        地址为空、非平台代理路径或令牌无效/已过期时返回 None。
+    """
+    from app.core.artifact_token import parse_token
+
+    if not url:
+        return None
+    prefix = "/files/artifacts/"
+    if not url.startswith(prefix):
+        return None
+    claims = parse_token(url[len(prefix) :], settings)
+    if claims is None:
+        return None
+    return claims.tenant_id, claims.artifact_id, claims.version
+
+
+def assert_download_url_matches(url: str | None, settings: Settings, record: Any) -> None:
+    """断言下载地址指向 `record`（按产物身份比对，不按令牌字符串比对）。
+
+    Args:
+        url: 响应里的下载地址。
+        settings: 配置实例。
+        record: 期望的产物行。
+
+    Raises:
+        AssertionError: 地址缺失、令牌无效/已过期，或指向了别的产物。
+    """
+    assert url, "下载地址不得为空"
+    if record.type == "link" and record.external_url:
+        assert url == record.external_url, f"外链产物必须直接指向 {record.external_url}：{url}"
+        return
+    claims = artifact_url_claims(url, settings)
+    assert claims is not None, f"下载令牌无效或已过期：{url}"
+    assert claims == (record.tenant_id, record.artifact_id, record.version), (
+        f"下载地址指向的产物不一致：{claims} vs "
+        f"{(record.tenant_id, record.artifact_id, record.version)}"
+    )
+
+
+def checklist_identity(checklist: list[dict[str, Any]], settings: Settings) -> list[dict[str, Any]]:
+    """把核查清单里的下载地址规范成产物身份，供「刷新后逐项一致」比对。
+
+    Args:
+        checklist: 响应里的 `result.checklist`。
+        settings: 配置实例。
+
+    Returns:
+        list[dict[str, Any]]: 每项把 `download_url` 换成 `__claims` 键。
+    """
+    normalized: list[dict[str, Any]] = []
+    for item in checklist:
+        entry = {key: value for key, value in item.items() if key != "download_url"}
+        entry["__claims"] = artifact_url_claims(item.get("download_url"), settings)
+        normalized.append(entry)
+    return normalized
+
+
 def artifact_of(steps: list[dict[str, Any]], output_key: str) -> dict[str, Any]:
     """从 A4 步骤数据里按产物键取产物。
 
@@ -1767,10 +1837,13 @@ __all__: list[str] = [
     "GatewayScript",
     "artifact_download_url",
     "artifact_of",
+    "artifact_url_claims",
     "artifacts_by_key",
+    "assert_download_url_matches",
     "build_content_script",
     "build_dev_script",
     "build_hr_script",
+    "checklist_identity",
     "checklist_map",
     "create_task",
     "decide",

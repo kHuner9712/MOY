@@ -38,6 +38,7 @@ from tests.e2e.conftest import (
     BareRepo,
     GatewayScript,
     artifacts_by_key,
+    checklist_identity,
     checklist_map,
     create_task,
     decide,
@@ -221,11 +222,13 @@ async def test_commit_exists_and_content_identical(
     )
     assert all(items[key]["download_url"] for key in order), "每项核查结果都要能点开"
 
-    # 重新 GET（换端/刷新等价）结果必须一致
+    # 重新 GET（换端/刷新等价）结果必须一致。
+    # 下载地址按**产物身份**（租户/产物/版本）比对：令牌自 S9 起带 `exp`，
+    # 不同秒签发字面量必然不同，直接比字符串会把用例绑死在时钟上。
     again = await task_detail(client, admin_headers, task_id)
-    assert again["result"]["checklist"] == detail["result"]["checklist"], (
-        "E2E-DEV-04 刷新后核查清单必须逐项一致"
-    )
+    assert checklist_identity(again["result"]["checklist"], e2e_settings) == checklist_identity(
+        detail["result"]["checklist"], e2e_settings
+    ), "E2E-DEV-04 刷新后核查清单必须逐项一致"
 
 
 @pytest.mark.asyncio

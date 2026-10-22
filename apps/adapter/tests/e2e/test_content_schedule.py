@@ -33,6 +33,7 @@ from tests.e2e.conftest import (
     STUB_RECEIPT_ID,
     artifact_download_url,
     artifacts_by_key,
+    assert_download_url_matches,
     build_content_script,
     checklist_map,
     create_task,
@@ -137,9 +138,11 @@ async def test_schedule_table_and_csv(
         assert row["计划时间"].strip(), f"⑤ 计划时间不得为空：{row}"
         assert row["状态"].strip(), f"⑤ 状态不得为空：{row}"
 
-    # A3 核查清单里的「排期表」必须指向同一份可下载产物（页面与导出同源）
+    # A3 核查清单里的「排期表」必须指向同一份可下载产物（页面与导出同源）。
+    # 比对的是**产物身份**（租户/产物/版本），不是令牌字符串：S9 起令牌带 `exp`，
+    # 不同秒签发必然不同字面量，按字符串比等于把用例绑在时钟上。
     items = checklist_map(detail)
-    assert items["schedule"]["download_url"] == artifact_download_url(e2e_settings, schedule)
+    assert_download_url_matches(items["schedule"]["download_url"], e2e_settings, schedule)
     assert items["schedule"]["status"] == "checked"
 
 

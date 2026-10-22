@@ -4,50 +4,79 @@
 下载是**内容代理**（无 JSON 信封、无业务语义），塞进 `/api/v1` 会让端点计数与
 基线门禁失去意义（见 `app/core/artifact_token.py` 的说明）。
 
-**鉴权靠令牌**：链接自带租户 + 产物 + 版本并经 HMAC 签名，因此不需要登录态
-（浏览器直接点开下载、复制到聊天窗口都可用），但伪造令牌解不开别人的租户。
+**鉴权靠令牌**：链接自带租户 + 产物 + 版本 + 过期时间并经 HMAC 签名，因此不需要
+登录态（浏览器直接点开下载、复制到聊天窗口都可用），但伪造令牌解不开别人的租户，
+且链接到期即失效（S9，2026-10-23）。另按「租户 + 客户端 IP」限流，防止令牌被
+拿到后批量拉取产物。
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Path
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Path, Request
 from fastapi.responses import Response
 
 from app.core.artifact_token import parse_token
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, get_request_settings
+from app.core.errors import ApiError
+from app.core.ratelimit import get_request_rate_limiter
 from app.db.repositories.artifact_repo import get_artifact_store
 
 router = APIRouter(prefix="/files/artifacts", tags=["产物下载"])
+
+#: 单个「租户 + IP」每分钟下载次数上限（下载是低频动作，60 足够正常使用）
+_DOWNLOAD_RATE_LIMIT: int = 60
+
+#: 统一的失效文案（不区分「令牌伪造 / 过期 / 产物不存在」，避免探测）
+_INVALID_LINK_TEXT: str = "链接无效或已过期"
 
 
 @router.get(
     "/{token}",
     summary="下载产物（平台代理）",
-    description="按下载令牌返回产物内容。令牌自带租户、产物与版本，过期的产物返回 404。",
+    description="按下载令牌返回产物内容。令牌自带租户、产物、版本与过期时间，过期后返回 404。",
     response_class=Response,
 )
 async def download_artifact(
-    token: str = Path(..., description="下载令牌", min_length=8, max_length=256),
+    request: Request,
+    token: str = Path(..., description="下载令牌", min_length=8, max_length=512),
 ) -> Response:
     """下载产物内容。
 
     Args:
+        request: FastAPI 请求对象（取注入配置与限流器）。
         token: 下载令牌。
 
     Returns:
-        Response: 产物字节；令牌非法或产物不存在时返回 404 文本。
+        Response: 产物字节；令牌非法、过期或产物不存在时返回 404 文本；
+        触发限流时返回 429 文本。
 
     Raises:
-        None: 失败一律以 404 响应表达（下载链路上不应出现 JSON 错误信封）。
+        None: 失败一律以文本响应表达（下载链路上不应出现 JSON 错误信封）。
     """
-    settings: Settings = get_settings()
-    parsed = parse_token(token, settings)
-    if parsed is None:
-        return Response(status_code=404, content="链接无效或已过期".encode())
-    tenant_id, artifact_id, version = parsed
-    record = await get_artifact_store(settings).get(tenant_id, artifact_id)
-    if record is None:
-        return Response(status_code=404, content="产物不存在或已过期".encode())
+    settings: Settings = get_request_settings(request)
+    claims = parse_token(token, settings)
+    if claims is None:
+        return Response(status_code=404, content=_INVALID_LINK_TEXT.encode())
+
+    limiter = get_request_rate_limiter(request)
+    if limiter.enabled:
+        client_ip = request.client.host if request.client else "unknown"
+        try:
+            await limiter.check(
+                claims.tenant_id,
+                client_ip,
+                "/files/artifacts",
+                limit=_DOWNLOAD_RATE_LIMIT,
+                window_seconds=60,
+            )
+        except ApiError:
+            return Response(status_code=429, content="请求过于频繁，请稍后再试".encode())
+
+    record = await get_artifact_store(settings).get(claims.tenant_id, claims.artifact_id)
+    if record is None or _is_expired(record.expires_at):
+        return Response(status_code=404, content=_INVALID_LINK_TEXT.encode())
     content = record.content
     if not content:
         content = record.inline_text.encode("utf-8")
@@ -57,9 +86,35 @@ async def download_artifact(
         media_type=record.content_type or "application/octet-stream",
         headers={
             "Content-Disposition": _content_disposition(filename),
-            "X-Artifact-Version": str(version),
+            "X-Artifact-Version": str(claims.version),
+            "Cache-Control": "private, no-store",
         },
     )
+
+
+def _is_expired(expires_at: str) -> bool:
+    """判断产物留存期是否已过。
+
+    `expires_at` 由仓储层写成 ISO 8601（UTC，`Z` 结尾）；空值视为「未设置」
+    （内存后端的历史记录），不拦截。解析失败同样不拦截——留存期是业务约束，
+    不应该因为格式异常让所有下载 500。
+
+    Args:
+        expires_at: 过期时间字符串。
+
+    Returns:
+        bool: 已过期返回 True。
+    """
+    text = (expires_at or "").strip()
+    if not text:
+        return False
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed <= datetime.now(UTC)
 
 
 def _content_disposition(filename: str) -> str:

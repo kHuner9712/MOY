@@ -210,6 +210,9 @@ class Settings(BaseSettings):
     plugin_task_concurrency: int = Field(default=3, ge=1, le=20)
     plugin_task_timeout_seconds: int = Field(default=900, ge=30, le=86_400)
     plugin_artifact_retention_days: int = Field(default=180, ge=1, le=3_650)
+    #: 产物下载令牌有效期（秒）。默认 900（15 分钟），上限 86400：
+    #: 链接是短期凭证不是资源标识，泄漏后可自然失效（S9，2026-10-23）。
+    artifact_token_ttl_seconds: int = Field(default=900, ge=60, le=86_400)
     plugin_retry_backoff_ms: int = Field(default=800, ge=0, le=5_000)
     #: 产物下载地址前缀（平台代理，**不暴露对象存储地址**，§3.5）
     plugin_artifact_download_prefix: str = "/api/v1/agent/artifacts"

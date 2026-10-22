@@ -323,6 +323,11 @@ def build_service(
         mock_mode=True,
         plugin_task_concurrency=concurrency,
         plugin_retry_backoff_ms=0,
+        # S9（2026-10-23）：产物下载令牌**不再回落硬编码开发密钥**，空 `jwt_secret`
+        # 直接拒绝签发。任务详情/步骤响应会为每个产物签发下载地址，因此这里必须
+        # 配一个测试密钥——修夹具，不是削弱校验（生产由 `validate_auth_startup`
+        # 在启动时保证非空）。
+        jwt_secret="task-helper-test-secret",
     )
     tasks = InMemoryTaskStore()
     artifacts = InMemoryArtifactStore()

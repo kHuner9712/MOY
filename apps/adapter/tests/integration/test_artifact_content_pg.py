@@ -442,7 +442,7 @@ def _asgi_client(settings: Settings) -> AsyncClient:
 
 
 async def test_download_endpoint_returns_real_zip_in_pg_mode(
-    store: PostgresArtifactStore, pg_settings: Settings, monkeypatch: pytest.MonkeyPatch
+    store: PostgresArtifactStore, pg_settings: Settings
 ) -> None:
     """`GET /files/artifacts/{token}` 在 PG 模式下返回**真 docx 字节**。
 
@@ -454,9 +454,8 @@ async def test_download_endpoint_returns_real_zip_in_pg_mode(
     record = _record(task_id, blob=blob)
     await store.add_artifacts([record])
 
-    # 端点内部走 `get_settings()` 与 `get_artifact_store(settings)` 两个模块级入口：
-    # 前者注入配置，后者随配置选中 PG 实现（`_store` 单例已由夹具重置）。
-    monkeypatch.setattr("app.api.v1.artifact_files.get_settings", lambda: pg_settings)
+    # 端点通过 `get_request_settings(request)` 取注入配置（app.state.settings），
+    # 不再读模块级 `get_settings()` 单例——这正是 S9 修复顺带纠掉的配置注入问题。
     reset_artifact_store()
 
     token = make_token(
@@ -483,7 +482,7 @@ async def test_download_endpoint_returns_real_zip_in_pg_mode(
 
 
 async def test_download_endpoint_still_falls_back_to_inline_text(
-    store: PostgresArtifactStore, pg_settings: Settings, monkeypatch: pytest.MonkeyPatch
+    store: PostgresArtifactStore, pg_settings: Settings
 ) -> None:
     """纯文本产物仍按 `inline_text` 出字节（回落分支不许被这次修复删掉）。
 
@@ -502,7 +501,6 @@ async def test_download_endpoint_still_falls_back_to_inline_text(
     )
     await store.add_artifacts([record])
 
-    monkeypatch.setattr("app.api.v1.artifact_files.get_settings", lambda: pg_settings)
     reset_artifact_store()
 
     token = make_token(

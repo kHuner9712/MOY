@@ -38,6 +38,7 @@ from tests.e2e.conftest import (
     SCREENING_COLUMNS,
     artifact_download_url,
     artifacts_by_key,
+    assert_download_url_matches,
     build_hr_script,
     checklist_map,
     create_task,
@@ -143,10 +144,11 @@ async def test_scoring_table_fields(
         assert row["结论"] in CONCLUSIONS, f"⑥ {who} 的结论不在枚举内：{row['结论']!r}"
         assert len(row["理由"].strip()) >= 30, f"⑥ {who} 的理由不足 30 字：{len(row['理由'])}"
 
-    # 核查清单里「筛选评分表」必须指向同一份可下载产物
+    # 核查清单里「筛选评分表」必须指向同一份可下载产物（按产物身份比对，
+    # 令牌带 `exp` 后不同秒签发字面量必然不同，字符串相等会绑在时钟上）
     items = checklist_map(detail)
     assert items["screening"]["status"] == "checked"
-    assert items["screening"]["download_url"] == artifact_download_url(e2e_settings, screening)
+    assert_download_url_matches(items["screening"]["download_url"], e2e_settings, screening)
 
 
 @pytest.mark.asyncio
