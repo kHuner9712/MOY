@@ -81,6 +81,21 @@ class Settings(BaseSettings):
     # Agent 任务专用工作流应用密钥（缺省回退 dify_default_app_key）；
     # 会话（chat）与任务（workflow）在底座侧是两类应用，密钥必须可分离
     dify_agent_app_key: str = ""
+    # ------------------------------------------------------------------
+    # 档位路由的 4 个底座应用密钥（阶段四 P4-10 / 架构 §6.3）
+    #
+    # 变量名与 `app/registry/profile_routes.yaml` 的 `default_app_env` **逐字对应**
+    # （`OA_DIFY_CODE_APP_KEY` / `..._LONG_CONTEXT_APP_KEY` / `..._REASONING_APP_KEY` /
+    # `..._FALLBACK_APP_KEY`）。此前这 4 个只在 yaml 里被引用、Settings 里没有声明，
+    # 靠 `registry/loader.py:106-113` 直接读 `os.environ` 兜住——结果是：
+    # 契约测试无从断言"4 档 4 个 key"，而漏配一个 key 只会在运行时静默降级到默认档。
+    # 缺省空串 = 该档不可用（`resolve_app_key()` 返回空 → M3 目录 `status=unavailable`）。
+    # ------------------------------------------------------------------
+    dify_code_app_key: str = ""
+    dify_long_context_app_key: str = ""
+    dify_reasoning_app_key: str = ""
+    #: 降级链末端密钥（通用档 fallback；四个档位都可能落到它）
+    dify_fallback_app_key: str = ""
     dify_connect_timeout_seconds: float = Field(default=3.0, gt=0)
     dify_read_timeout_seconds: float = Field(default=60.0, gt=0)
     dify_stream_first_byte_timeout_seconds: float = Field(default=15.0, gt=0)
@@ -216,6 +231,47 @@ class Settings(BaseSettings):
     plugin_retry_backoff_ms: int = Field(default=800, ge=0, le=5_000)
     #: 产物下载地址前缀（平台代理，**不暴露对象存储地址**，§3.5）
     plugin_artifact_download_prefix: str = "/api/v1/agent/artifacts"
+
+    # ------------------------------------------------------------------
+    # 数据保留期与记忆（阶段四 §3.5 口径表）
+    #
+    # 全部可配、**不得写死在代码里**：保留期是合规条款的一部分（私有化客户合同里
+    # 会写具体天数），而"改一个天数要重新发版"是没人愿意做的操作。
+    # `retention_*` 的消费者是后台任务 `retention_cleanup`（T4-05.3）；
+    # `memory_*` 的消费者是记忆抽取与召回（T4-03）。
+    # ------------------------------------------------------------------
+    #: 审计日志保留天数（**DBA 执行**：应用角色对 audit_log 无 DELETE 权限，见 F-9）
+    retention_audit_days: int = Field(default=180, ge=1, le=3_650)
+    #: 用量事件保留月数（13 = 12 个月账单 + 1 个月缓冲）
+    retention_usage_months: int = Field(default=13, ge=1, le=120)
+    #: 插件任务/产物保留天数（与 `plugin_artifact_retention_days` 同口径，单独一项以便解耦）
+    retention_task_days: int = Field(default=180, ge=1, le=3_650)
+    #: 会话保留天数（硬删；软删由 `conversation_soft_delete_recover_days` 管）
+    retention_conversation_days: int = Field(default=365, ge=1, le=3_650)
+    #: 会话软删后可恢复天数（MC3 返回 `recoverable_until`）
+    conversation_soft_delete_recover_days: int = Field(default=30, ge=1, le=365)
+    #: 单用户记忆条数上限（超出按"最久未命中 + low 置信度优先"淘汰）
+    memory_max_per_user: int = Field(default=200, ge=1, le=10_000)
+    #: 每 N 轮对话触发一次事实抽取（0 = 关闭抽取，只保留手动与历史数据）
+    memory_extract_every_turns: int = Field(default=10, ge=0, le=100)
+
+    # ------------------------------------------------------------------
+    # 记忆向量化（阶段四 §3.3.1 / 决策 A-1）
+    #
+    # 默认**关闭**（A-1）：Dify Service API 不提供 raw embedding，DeepSeek 系模型
+    # 也没有 embeddings 端点。关闭时召回退化为"类别 + 时间 + 置信度"、去重退化为
+    # `difflib` 比值（可离线单测、无外网）。客户自带 OpenAI 兼容 embeddings 时再开。
+    # 维度固定进索引（`vector(N)`），换模型必须重建列——这条写进运维手册。
+    # ------------------------------------------------------------------
+    memory_embedding_enabled: bool = False
+    memory_embedding_dim: int = Field(default=1024, ge=64, le=4096)
+    memory_embedding_model: str = ""
+    memory_embedding_base_url: str = ""
+    memory_embedding_api_key: str = ""
+    #: 单次向量化请求超时（秒）；召回整体超时另由 300ms 预算控制（§4.5）
+    memory_embedding_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    #: 单批向量化条数（超批会拉长单次事务，且多数网关有条数上限）
+    memory_embedding_batch_size: int = Field(default=16, ge=1, le=256)
 
     # ------------------------------------------------------------------
     # 幂等与限流（架构文档 3.0.4）

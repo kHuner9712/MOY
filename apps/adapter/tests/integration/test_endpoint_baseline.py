@@ -34,6 +34,7 @@ VALIDATOR_PATH = REPO_ROOT / "deploy" / "validate_openapi.py"
 CORE_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-core-30.json"
 PHASE3_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase3-16.json"
 PHASE2_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase2-38.json"
+PHASE4_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase4-10.json"
 SNAPSHOT_PATH = REPO_ROOT / "docs" / "api" / "openapi.snapshot.json"
 
 
@@ -140,6 +141,9 @@ def test_repository_passes_gates_with_allow_missing_phase2() -> None:
         core_baseline=validator.load_baseline(CORE_BASELINE_PATH),
         phase2_baseline=validator.load_baseline(PHASE2_BASELINE_PATH),
         phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
+        # 阶段四基线必须一并传入：它是 core 的扣除项之一，漏传会把 10 条登记
+        # 端点算进 core（G1 报"多出端点"），也会让 G6 判"基线不足 10 条"。
+        phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
         snapshot=_load_snapshot(),
         allow_missing_phase2=True,
         skip_diff=False,
@@ -148,6 +152,7 @@ def test_repository_passes_gates_with_allow_missing_phase2() -> None:
     assert stats["core"] == 30
     assert stats["phase2"] == 38
     assert stats["phase3"] == 16, "阶段三端点必须精确 16 条（PL1-PL14 + WF1/WF2）"
+    assert stats["phase4_declared"] == 10
 
 
 def _load_snapshot() -> dict[str, Any]:
@@ -256,6 +261,71 @@ def test_g3_phase3_count_is_always_strict() -> None:
     assert validator.gate_counts(30, 38, 15, allow_missing=True)
     assert validator.gate_counts(30, 38, 17, allow_missing=True)
     assert validator.gate_counts(30, 38, 16, allow_missing=True) == []
+
+
+# ===========================================================================
+# 3b. G6：阶段四「登记先于实现」口径（T4-01.3）
+# ===========================================================================
+def test_phase4_baseline_declares_exactly_10_endpoints() -> None:
+    """阶段四基线必须精确 10 条（MC1-MC4 / MM1-MM4 / TD1-TD2）。"""
+    declared = validator.load_baseline(PHASE4_BASELINE_PATH)
+    assert len(declared) == validator.PHASE4_BASELINE_COUNT == 10
+
+
+def test_phase4_missing_is_pending_but_not_red_by_default() -> None:
+    """`declared - actual` 非空时默认只报 `[PENDING]`，不判红（实现侧宽容）。"""
+    declared = validator.load_baseline(PHASE4_BASELINE_PATH)
+    assert validator.gate_phase4_baseline(set(), declared, strict=False) == []
+
+
+def test_phase4_missing_is_red_under_strict() -> None:
+    """`--strict` 时同一条件必须判红（W2 起的 CI 口径）。"""
+    declared = validator.load_baseline(PHASE4_BASELINE_PATH)
+    failures = validator.gate_phase4_baseline(set(), declared, strict=True)
+    assert failures and failures[0].gate == "G6"
+
+
+def test_phase4_baseline_shrink_is_red() -> None:
+    """把基线删成 9 条（"让 missing 变 0"的常见做法）→ G6 立刻红。"""
+    declared = validator.load_baseline(PHASE4_BASELINE_PATH)
+    shrunk = set(sorted(declared, key=validator.operation_sort_key)[:9])
+    failures = validator.gate_phase4_baseline(shrunk, shrunk, strict=False)
+    assert failures, "基线少于 10 条必须判红（删基线不算修复）"
+    assert "10" in failures[0].detail
+
+
+def test_unregistered_endpoint_is_red_without_strict_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """未登记的端点必须**立刻**红——G6 的宽容只针对"已登记未实现"，不针对"偷偷加端点"。
+
+    这条是整批判据里最不能松的一条：不加它，阶段四期间任何人往 `/api/v1` 里塞
+    端点都能过门禁（因为 core 精确相等会被新端点打破，但有人可能顺手改基线）。
+    """
+    import json
+
+    schema = validator.build_schema()
+    paths = json.loads(json.dumps(schema["paths"]))
+    paths["/api/v1/model/rogue"] = {"get": {"responses": {"200": {"description": "ok"}}}}
+    monkeypatch.setattr(validator, "build_schema", lambda: {**schema, "paths": paths})
+    assert validator.main(["--no-write-openapi"]) == 1
+
+
+def test_strict_flag_only_changes_verdict_when_phase4_missing() -> None:
+    """`--strict` 的判定只由「是否有缺失」决定，避免端点补齐后这条用例变成假阳性。"""
+    _failures, stats = validator.collect_failures(
+        validator.build_schema(),
+        core_baseline=validator.load_baseline(CORE_BASELINE_PATH),
+        phase2_baseline=validator.load_baseline(PHASE2_BASELINE_PATH),
+        phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
+        phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
+        snapshot=_load_snapshot(),
+        allow_missing_phase2=False,
+        skip_diff=False,
+        strict_phase4=False,
+    )
+    expected = 1 if stats["phase4_missing"] else 0
+    assert validator.main(["--no-write-openapi", "--strict"]) == expected
 
 
 # ===========================================================================

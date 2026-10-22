@@ -12,6 +12,7 @@
 - 15001-15999：计费与订阅错误（阶段二 B09，架构文档 §7.1）；
 - 16001-16099：插件域（阶段三，**16001 已注销不复用**，从 16002 起）；
 - 17001-17099：任务域（阶段三，重试语义）；
+- 18001-18099：会话与记忆域（阶段四 P4-07 / P4-09，个人数据对象）；
 - 20000-20999：通用业务错误；
 - 30000-30999：系统错误。
 """
@@ -104,7 +105,7 @@ class ErrorCode(IntEnum):
     PENDING_ORDER_EXISTS = 15004
     #: 降级将在当前周期结束后生效（**非阻断提示码**，BL3）
     PLAN_CHANGE_PENDING = 15005
-    #: 额度用尽（软限制，不停服；M1/M2/R3/A1）
+    #: 额度用尽（阶段四起为**硬止损**：402 + 上游调用 0 次；M1/M2/R3/A1）
     QUOTA_EXHAUSTED = 15006
     #: 支付未完成，请重新支付（BL6 BL8）
     PAYMENT_INCOMPLETE = 15007
@@ -146,6 +147,19 @@ class ErrorCode(IntEnum):
     #: 步骤失败汇总（**仅内部/审计文案**，A3 永不返回该码）
     TASK_STEP_FAILED = 17002
 
+    # ---------------- 会话与记忆域 18001-18099（阶段四 P4-07 / P4-09） ----------------
+    #
+    # 为什么新开一段而不是复用 12001（任务不存在）或 20004（通用资源不存在）：
+    # 会话/记忆是**个人数据**，客户端需要据此决定交互（"这条对话已经没了 → 回到
+    # 新建对话"vs"这条任务失败了 → 展示失败原因"）。复用通用码会让前端只能弹
+    # 一句"内容不存在"，用户不知道该回哪一屏。18xxx 由架构 §4.2 分配，未被占用。
+    #: 会话不存在 / 已删除 / 不属于本人（MC2/MC3/MC4）
+    CONVERSATION_NOT_FOUND = 18001
+    #: 记忆不存在 / 已删除 / 不属于本人（MM2）
+    MEMORY_NOT_FOUND = 18002
+    #: 删除确认文本不匹配（TD2 需逐字输入企业名称）
+    DELETE_CONFIRM_MISMATCH = 18003
+
     # ---------------- 系统错误 30001-30099 ----------------
     DOWNSTREAM_UNAVAILABLE = 30001
     DOWNSTREAM_TIMEOUT = 30002
@@ -178,6 +192,20 @@ class ErrorSpec:
     #:   ③ 前端兜底表仍**必须**覆盖（随时可能上线，前端要继续能翻译它）；
     #:   ④ 任何人不得把预留码当僵尸码删除，也不得在未接架构文档的情况下上线。
     visibility: str = "对外"
+
+    @property
+    def status(self) -> int:
+        """HTTP 状态码（`http_status` 的只读别名）。
+
+        为什么留两个名字：字段名历史为 `http_status`（语义明确），而架构文档
+        §4.2 与 §11 的验收命令按 `ErrorSpec.status` 书写。少一个别名，运维/QA
+        照着文档敲就会 `AttributeError`，然后误以为「这个码没登记」。这里让
+        文档命令可以直接执行，**只读**、不可赋值，避免两处各自漂移。
+
+        Returns:
+            int: 传输层 HTTP 状态码。
+        """
+        return self.http_status
 
 
 # ---------------------------------------------------------------------------
@@ -350,9 +378,14 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
     ),
     ErrorCode.QUOTA_EXHAUSTED: ErrorSpec(
         ErrorCode.QUOTA_EXHAUSTED,
-        200,
-        "本月额度已用完，当前为常规模式，升级套餐可恢复完整能力",
-        "额度用尽（软限制，不停服）",
+        # 阶段四 §7.3：由 200 改为 **402**。200 让"额度用尽"这个真实阻断
+        # 伪装成成功响应，前端只能靠 `notice_*` 猜；402 是语义正确的传输层信号，
+        # 客户端库/网关/监控都能直接识别，不必逐层传一个自造字段。
+        # **不要**复用 10005 MODEL_QUOTA_EXHAUSTED：那是"上游回传额度不足"
+        # （`model_service.py:669` 的映射分支），与自研侧硬止损是两件事。
+        402,
+        "本月可用量已用完，请联系管理员调整",
+        "额度/预算用尽（E-3 个人额度、E-4 租户预算同码；唯一判定点见 usage_service）",
     ),
     ErrorCode.PAYMENT_INCOMPLETE: ErrorSpec(
         ErrorCode.PAYMENT_INCOMPLETE, 200, "支付未完成，请重新支付", "支付失败/超时"
@@ -449,6 +482,25 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
         "任务执行未能完成，可重试",
         "仅内部汇总与审计文案；A3 不返回该码（步骤失败走状态）",
         visibility="内部",
+    ),
+    # 会话与记忆域（阶段四 P4-07 / P4-09）
+    ErrorCode.CONVERSATION_NOT_FOUND: ErrorSpec(
+        ErrorCode.CONVERSATION_NOT_FOUND,
+        404,
+        "该对话已不存在",
+        "会话不存在 / 已软删 / 不属于本人（对象级 fail-closed，不区分三态以免探测）",
+    ),
+    ErrorCode.MEMORY_NOT_FOUND: ErrorSpec(
+        ErrorCode.MEMORY_NOT_FOUND,
+        404,
+        "这条信息已不存在",
+        "记忆不存在 / 已删除 / 不属于本人",
+    ),
+    ErrorCode.DELETE_CONFIRM_MISMATCH: ErrorSpec(
+        ErrorCode.DELETE_CONFIRM_MISMATCH,
+        400,
+        "请输入完整的企业名称以确认",
+        "租户数据删除的二次确认文本与库内企业名不逐字一致",
     ),
     # 系统错误
     ErrorCode.DOWNSTREAM_UNAVAILABLE: ErrorSpec(

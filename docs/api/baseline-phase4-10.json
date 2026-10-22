@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "frozen_target": 10,
+  "note": "阶段四新增 10 个端点（架构 §4.2：MC1-MC4 会话 / MM1-MM4 记忆 / TD1-TD2 租户数据）。T4-01.3 只登记不实现：present 由门禁按实际 OpenAPI 文档算出，missing 以 [PENDING] 打印但默认不判红；CI 自 W2 起带 --strict，missing>0 即红。任何**未登记**的新端点一律立即判红（G1 多出端点），这条没有放宽开关。路径参数名与本仓既有约定一致（{conversation_id} / {memory_id}），实现时必须逐字对齐，否则门禁会把同一个端点算成两条。",
+  "endpoints": [
+    {
+      "id": "MC1",
+      "method": "GET",
+      "path": "/api/v1/model/conversations"
+    },
+    {
+      "id": "MC2",
+      "method": "GET",
+      "path": "/api/v1/model/conversations/{conversation_id}/messages"
+    },
+    {
+      "id": "MC3",
+      "method": "DELETE",
+      "path": "/api/v1/model/conversations/{conversation_id}"
+    },
+    {
+      "id": "MC4",
+      "method": "PATCH",
+      "path": "/api/v1/model/conversations/{conversation_id}"
+    },
+    {
+      "id": "MM1",
+      "method": "GET",
+      "path": "/api/v1/model/memories"
+    },
+    {
+      "id": "MM2",
+      "method": "DELETE",
+      "path": "/api/v1/model/memories/{memory_id}"
+    },
+    {
+      "id": "MM3",
+      "method": "DELETE",
+      "path": "/api/v1/model/memories"
+    },
+    {
+      "id": "MM4",
+      "method": "PUT",
+      "path": "/api/v1/model/memories/settings"
+    },
+    {
+      "id": "TD1",
+      "method": "POST",
+      "path": "/api/v1/ops/tenant-data/export"
+    },
+    {
+      "id": "TD2",
+      "method": "DELETE",
+      "path": "/api/v1/ops/tenant-data"
+    }
+  ]
+}

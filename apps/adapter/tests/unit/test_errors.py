@@ -57,6 +57,8 @@ def test_code_segments_are_strictly_ranged() -> None:
             or 15001 <= value <= 15999
             or 16001 <= value <= 16099
             or 17001 <= value <= 17099
+            # 阶段四 §4.2 分配给会话与记忆域（18001-18003 已用，段内留余量）
+            or 18001 <= value <= 18099
             or 20001 <= value <= 20999
             or 30001 <= value <= 30999
         ), f"错误码 {value} 超出注册分段"
