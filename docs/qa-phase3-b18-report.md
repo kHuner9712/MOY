@@ -53,7 +53,7 @@
 | `test_b1` / `c1` / `c2` | **PASSED** | 登记表 `status` 改 `landed`、填 `defect` 关闭信息 |
 | `test_b2` | **XPASS**（PL14 已落地，标记仍在） | 摘 `xfail` 标记 + `status=landed` |
 | `test_c3` / `c4` | XFAIL（B19 未实现） | 保持 |
-| 常量 | 当前 `EXPECTED_XFAIL=3 / RED=3 / OPEN=6` | 应改 **2 / 0 / 2**，`OPEN_CASES_HISTORY` 追加 2、`RED_HISTORY` 追加 0 |
+| 常量 | 当前 `EXPECTED_XFAIL=3 / EXPECTED_RED=3 / EXPECTED_OPEN_CASES=6` | 应改 **2 / 0 / 2**，`OPEN_CASES_HISTORY` 追加 2、`RED_HISTORY` 追加 0 |
 
 > 说明：仓库工作区里 `-2-2` 已把 b1/b2/c1/c2 改成 `landed` 并摘了 b2 标记，但 `expected_xfail.py` 常量未同步，导致 `d1` 报 `[骨架汇总 ⑩] 预期 red 3 条，实际 0 条`。**常量与登记表必须同一次提交改完**，否则 d1 必红。
 
@@ -258,3 +258,8 @@ current_batch = os.environ["OA_BATCH"]   # 缺失即红，不给静默默认
 **为什么不能"默认成最新批"**：最新批的 `due_batch` 最宽松，一切都会绿——**"默认"恰好指向最危险的方向**（该红的不红，P2 永久挂账）。
 
 理由：**P2 最容易"永远挂在下一批"**——它不阻塞签收，没有到期机制就会被无限推迟；而 P2 累积即技术债复利。`due_action` 还回答"怎么关"，避免下一批重新调研。
+
+
+> **常量改名说明**（`6e471a1`/`a27d03b`）：`EXPECTED_OPEN → EXPECTED_OPEN_CASES`、`OPEN_HISTORY → OPEN_CASES_HISTORY`。
+> 原因：`EXPECTED_OPEN_CASES` 数的是**断言层**（xfail + red），而 `DEFECT_LEDGER` 的 `status="open"` 是**缺陷层**；
+> 同词不同轴必须进名字，不能只靠注释——注释在读代码时最先被跳过。
