@@ -79,6 +79,17 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {"id": "P3-B19-02", "level": "P0", "status": "fixed"},  # b75f0ab（空库 apply 直接语法失败）
     # 同一文件的第二个缺陷：0004 无条件 ALTER 在已初始化库必失败（权限模型，非语法）→ 三分支
     {"id": "P3-B19-03", "level": "P1", "status": "fixed"},  # d75aa3a（init 脚本补列）
+    # B19 漏网 P0：create_task() 的 PG INSERT 列数/值数不匹配 + 引用不存在的 queue_position 列。
+    # **HEAD 仍在**（25 列/24 值）；工作区已改（23/23）但**未提交**。
+    # 闭合条件必须是「已提交 + PG create_task 用例走通」，不能只看工作区。
+    {
+        "id": "P3-B19-04",
+        "level": "P0",
+        "status": "open",
+        "pinned_by": "SQL↔DDL 静态门禁 + PG create_task 用例",
+        "due_batch": "B21",
+        "due_action": "修复提交落库 + PG create_task 用例走通（工作区改动不算）",
+    },
     # B20 两条挂账（到期 B21，到期即红）
     # 升级 P1→P0：缺口落在核心路径（task 47.81% / artifact 60.67% / plugin 67.80%），
     # 且未覆盖是**整段方法**（586-612 / 645-656 / 685-708 …）而非异常分支
