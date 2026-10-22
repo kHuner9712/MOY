@@ -244,6 +244,17 @@ for migration in available:            # 只迭代磁盘上存在的脚本
  "pinned_by": "test_real_postgres_migration_is_idempotent",
  "due_batch": "B19", "due_action": "--prune-orphans"}
 ```
-断言：`status == "open"` 必须同时有 `due_batch` 与 `due_action`；且 `CURRENT_BATCH >= due_batch` 仍 open → 红。
+断言：`status == "open"` 必须同时有 `due_batch` 与 `due_action`；且**当前批次 ≥ `due_batch` 仍 open → 红**。
+
+**"当前批次"必须是运行时输入，不能是常量**（pm 指出，采纳；我最初建议"`CURRENT_BATCH` 常量每批人工改"——那正是 `EXPECTED_XFAIL` 双份漂移的翻版）：
+```python
+current_batch = os.environ["OA_BATCH"]   # 缺失即红，不给静默默认
+```
+| 项 | 性质 | 正确归属 |
+| --- | --- | --- |
+| `EXPECTED_XFAIL` / `DEFECT_LEDGER` | **配置/事实**，跨运行不变 | 代码常量（唯一真源） |
+| **当前批次** | **运行时上下文**，每次不同 | 调用方传入（env/参数），缺失即红 |
+
+**为什么不能"默认成最新批"**：最新批的 `due_batch` 最宽松，一切都会绿——**"默认"恰好指向最危险的方向**（该红的不红，P2 永久挂账）。
 
 理由：**P2 最容易"永远挂在下一批"**——它不阻塞签收，没有到期机制就会被无限推迟；而 P2 累积即技术债复利。`due_action` 还回答"怎么关"，避免下一批重新调研。
