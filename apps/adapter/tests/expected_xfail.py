@@ -80,9 +80,12 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     # 同一文件的第二个缺陷：0004 无条件 ALTER 在已初始化库必失败（权限模型，非语法）→ 三分支
     {"id": "P3-B19-03", "level": "P1", "status": "fixed"},  # d75aa3a（init 脚本补列）
     # B20 两条挂账（到期 B21，到期即红）
+    # 升级 P1→P0：缺口落在核心路径（task 47.81% / artifact 60.67% / plugin 67.80%），
+    # 且未覆盖是**整段方法**（586-612 / 645-656 / 685-708 …）而非异常分支
+    # → 按 §7.1 后果面「生产实现路径未被验」定 P0。**P1 可带出批次，P0 不能。**
     {
         "id": "P3-B20-01",
-        "level": "P1",
+        "level": "P0",
         "status": "open",
         "pinned_by": "G-05 覆盖率（business+db）",
         "due_batch": "B21",
