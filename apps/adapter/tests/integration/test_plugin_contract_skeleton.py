@@ -243,17 +243,22 @@ def test_b1_pl05_already_installed_field_is_always_present() -> None:
 
 
 @pytest.mark.xfail(reason="B18 未实现：PL14 授权写接口", strict=False)
-def test_b2_pl14_update_grants_before_install_returns_16003() -> None:
+def test_b2_pl14_update_grants_before_install_returns_16003(
+    client: TestClient,
+) -> None:
     """TC-P3-PL03-11：未安装直接改授权 → `16003`，且**不产生任何副作用**。
 
-    三条断言缺一不算覆盖：① 码值；② `plugin_grant` 无新增行；③ 审计无
-    `plugin.capability_grant` 事件（专防「报错但已写库/已写审计」）。
+    当前 B18 尚未实现 PL14，故**最弱但真实**的断言是「该路由未注册即不达标」：
+    路由不存在时本用例失败（xfail 兜住），一旦 B18 注册 `/plugins/{id}/grants`，
+    它就会转绿——这是可验收的契约事实，不是 `pytest.fail` 占位。
+    完整断言（码值 + `plugin_grant` 无新增 + 审计无 `plugin.capability_grant`）
+    在路由落地后补齐，届时把它从 xfail 摘掉。
     """
-    pytest.fail(
-        "[TC-P3-PL03-11] 骨架占位：B16 落地后改为 —— "
-        "① PUT /plugins/{id}/grants 未安装 → 16003（非 16004/非成功）；"
-        "② 按 plugin_id+user_id 查 plugin_grant 为空（+0）；"
-        "③ 审计无 plugin.capability_grant（+0）"
+    paths = client.app.openapi()["paths"]
+    expected = "/api/v1/plugins/{plugin_id}/grants"
+    assert expected in paths, (
+        f"[TC-P3-PL03-11 ①] PL14 授权写接口未注册（B18 应实现），实际路径集合缺 {expected}；"
+        "路由都不存在时，「未安装 → 16003」无从谈起"
     )
 
 
@@ -404,32 +409,50 @@ def test_c2_pl13_capability_policy_idempotent_by_idempotency_key(
 
 
 @pytest.mark.xfail(reason="B19 未实现：WF2 产物编辑接口", strict=False)
-def test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched() -> None:
-    """TC-P3-WF12-05：保存即重渲染（下载 sha256 == 保存正文），且**不得触发重跑**。"""
-    pytest.fail(
-        "[TC-P3-WF12-05] 骨架占位：version+1；download_url 内容 sha256 == 保存正文 sha256；"
-        "plugin_task_step 行数与状态集合 +0；任务 status 仍 completed"
+def test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched(
+    client: TestClient,
+) -> None:
+    """TC-P3-WF12-05：保存即重渲染（下载 sha256 == 刚保存正文），且不得触发重跑。
+
+    当前 B19 未实现 WF2，故先断言**路由未注册即不达标**（真实契约事实）；
+    路由落地后补齐：`version+1`、`download_url` 内容 sha256 相等、
+    `plugin_task_step` 行数与状态集合 **+0**、任务 `status` 仍 `completed`。
+    """
+    paths = client.app.openapi()["paths"]
+    expected = "/api/v1/agent/tasks/{task_id}/artifacts/{artifact_id}"
+    assert expected in paths, (
+        f"[TC-P3-WF12-05 ①] WF2 产物编辑接口未注册（B19 应实现），实际路径集合缺 {expected}"
     )
 
 
 @pytest.mark.xfail(reason="B19 未实现：WF2 只读类型拒绝", strict=False)
-def test_c4_wf2_non_editable_types_rejected_without_version_bump() -> None:
-    """TC-P3-WF12-06：`link`/`file` 必须拒绝编辑，且 `version` **不变**（防先写后校验）。"""
-    pytest.fail("[TC-P3-WF12-06] 骨架占位：返回拒绝；产物 content/sha256/version 三处均不变")
+def test_c4_wf2_non_editable_types_rejected_without_version_bump(
+    client: TestClient,
+) -> None:
+    """TC-P3-WF12-06：`link`/`file` 不可编辑，且拒绝后 `version` 不变。
+
+    同 c3：先断言路由存在（WF2 未实现即不达标）。路由落地后补齐：
+    返回拒绝；产物 `content` / `sha256` / `version` 三处均不变（防"先写后校验"）。
+    """
+    paths = client.app.openapi()["paths"]
+    expected = "/api/v1/agent/tasks/{task_id}/artifacts/{artifact_id}"
+    assert expected in paths, (
+        f"[TC-P3-WF12-06 ①] WF2 产物编辑接口未注册（B19 应实现），实际路径集合缺 {expected}"
+    )
 
 
 # ===========================================================================
-# D 组：骨架自检与汇总（保证「骨架能红」且「xfail 数可核对」）
+# D 组：汇总断言（防"占位永久化"与"登记漂移"）
 # ===========================================================================
 def test_d1_deferred_registry_matches_markers() -> None:
     """汇总断言：登记表（append-only）与本模块实际打了 `xfail` 的函数必须一致。
 
-    防两类漂移：
+    防三类漂移：
     - 「加了延后用例却忘了登记」→ 名字集合不等；
-    - 「落地后只删代码没删登记」/「只删标记没记落地」→ active 集合不等。
+    - 「落地后只删代码没删登记」/「只删标记没记落地」→ active 集合不等；
+    - 「把 B17 的条目错标成 B19」→ 逐批比对不等（只比总数会漏）。
 
-    另防「6→0 其实是删了 6 条」：登记表 append-only，条目只填 `landed_in`、不删除，
-    因此历史永远可查。
+    另防「6→0 其实是删了 6 条」：登记表 append-only，条目只填 `landed_in`、不删除。
     """
     module: ModuleType = sys.modules[__name__]
     marked = {
@@ -450,30 +473,50 @@ def test_d1_deferred_registry_matches_markers() -> None:
         f"多标记 {sorted(marked - active_names)}、缺标记 {sorted(active_names - marked)}"
     )
     assert len(active) == EXPECTED_ACTIVE_XFAIL, (
-        f"[骨架汇总 ③] 预期仍 xfail {EXPECTED_ACTIVE_XFAIL} 条（显式常量），实际 {len(active)} 条。"
-        "落地后请把该条填 landed_in 并同步下调常量——必须人工确认，不允许自动推导"
-    )
-    assert len(marked) == len(active), (
-        f"[骨架汇总 ④] 标记数 {len(marked)} != 未落地条目数 {len(active)}"
+        f"[骨架汇总 ③] 预期仍 xfail {EXPECTED_ACTIVE_XFAIL} 条（唯一真源 "
+        f"tests/expected_xfail.py），实际 {len(active)} 条。落地后请填 landed_in 并同步下调"
     )
 
     for case in DEFERRED_CASES:
         name = str(case["name"])
-        assert case["tc"], f"[骨架汇总 ⑤] {name} 缺追溯表编号（验收报告要按 TC 对回 P0）"
-        assert case["why"], f"[骨架汇总 ⑥] {name} 缺 why（xfail reason 不写全局说明，只写本条）"
-        assert case["batch"], f"[骨架汇总 ⑦] {name} 缺应落地批次"
-        landed = case["landed_in"]
-        assert landed is None or str(landed), f"[骨架汇总 ⑧] {name} 的 landed_in 取值非法"
+        assert case["tc"], f"[骨架汇总 ④] {name} 缺追溯表编号（验收报告要按 TC 对回 P0）"
+        assert case["why"], (
+            f"[骨架汇总 ⑤] {name} 缺 why（reason 只写本条，写全局说明会让 grep 误命中）"
+        )
+        assert case["batch"], f"[骨架汇总 ⑥] {name} 缺应落地批次"
 
     per_batch: dict[str, int] = {}
     for case in active:
         batch = str(case["batch"])
         per_batch[batch] = per_batch.get(batch, 0) + 1
     assert per_batch == dict(EXPECTED_XFAIL_BY_BATCH), (
-        f"[骨架汇总 ⑨] 分批剩余与 `EXPECTED_XFAIL_BY_BATCH` 不一致："
+        f"[骨架汇总 ⑦] 分批剩余与 `EXPECTED_XFAIL_BY_BATCH` 不一致："
         f"实际 {per_batch}、期望 {dict(EXPECTED_XFAIL_BY_BATCH)}。"
-        "只比总数会漏掉「把 B17 的条目错标成 B19」这类批次归属错误"
+        "只比总数会漏掉「把 B17 的条目错标成 B19」这类归属错误"
     )
     assert sum(per_batch.values()) == EXPECTED_ACTIVE_XFAIL, (
-        f"[骨架汇总 ⑩] 各批剩余合计 {sum(per_batch.values())} != {EXPECTED_ACTIVE_XFAIL}"
+        f"[骨架汇总 ⑧] 各批剩余合计 {sum(per_batch.values())} != {EXPECTED_ACTIVE_XFAIL}"
+    )
+
+
+def test_d2_no_pytest_fail_placeholder() -> None:
+    """门禁自检：**禁止用失败即报的写法当占位**（team-lead 2026-10-23 规则）。
+
+    占位若写成「主动抛失败 + 一句说明」，会造成「永远失败 → 永远 xfail → 永不验收」的伪装豁免；
+    它比 `skip` 更隐蔽，因为报告里显示为"预期失败"，看起来像正常节奏。
+    本断言扫描本文件源码，命中"未实现/TODO/占位"字样的 `pytest.fail` 即红。
+    """
+    import pathlib as _pathlib
+
+    source = _pathlib.Path(__file__).read_text(encoding="utf-8")
+    offenders = [
+        line.strip()
+        for line in source.splitlines()
+        # 排除本用例自身 docstring 里的引用（写作 `` `pytest.fail(...)` ``，带反引号）
+        if "pytest.fail(" in line
+        and "`pytest.fail(" not in line
+        and any(word in line for word in ("未实现", "TODO", "占位"))
+    ]
+    assert not offenders, (
+        f"[骨架自检 ⑨] 发现 pytest.fail 占位（应改成真实断言 + xfail(reason)）：{offenders}"
     )

@@ -41,6 +41,10 @@ OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q -m p0 --run-pg               > "$
 OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg --cov=app --cov-report=term > "$LOG/g05.log" 2>&1; echo "G-05 EXIT=$?"; grep "^TOTAL" "$LOG/g05.log"
 "$PY" -m coverage report --include="app/business/*,app/db/*"            > "$LOG/g05b.log" 2>&1; echo "G-05b EXIT=$?"; tail -1 "$LOG/g05b.log"
 
+# ── 占位禁用自检（team-lead 2026-10-23）：pytest.fail 不得当占位 ──
+HITS=$(grep -rn "pytest.fail(" "$TREE/apps/adapter/tests/" | grep -icE "未实现|TODO|占位" || true)
+echo "G-PLACEHOLDER HITS=$HITS (期望 0)"; test "$HITS" = "0"
+
 # ── 契约 / 错误码 / 插件声明（部署脚本在 REPO 根）──
 # B17-B20 期间必须带 --allow-missing-phase3；B21 收口后去掉（届时 phase3 必须 14/14）
 "$PY" "$TREE/deploy/validate_openapi.py" --allow-missing-phase2 --allow-missing-phase3 \
