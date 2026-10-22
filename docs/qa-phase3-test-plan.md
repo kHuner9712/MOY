@@ -268,6 +268,7 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | --- | --- |
 | 编号 | `TC-P3-<模块><需求号>-<序号>`；模块为 `PL/MK/WF/DEV/CNT/HR/UI/E2E`；跨域风险用例 `TC-P3-RISK-<序号>` |
 | 「期望」列 | 一律可断言（状态码 / `code` 语义 / 字段值 / 集合相等 / 计数 / 字节数 / 时间注入后的状态）；**不出现**「正常」「可用」「体验良好」 |
+| **「禁止类」判据的写法**（pm 2026-10-23 通则） | 凡是「某接口**不得**做某事」，一律**追加副作用计数/存在性断言**（审计条数、表行数、`version`/`updated_at` 不变、无某事件），**不接受只断言返回值**——「报错但已写库」能通过任何行为断言。正向流程**不加**计数断言，避免用例膨胀 |
 | 「落点」列 | 文件 + 函数名（架构落稿后补全）；`#anchor` 为手工走查单章节 |
 | 标记 | `p0`（阶段门）、`pg`（需 PostgreSQL）、`slow`（>10s）、`e2e`（结果物组） |
 | 错误码 | 架构落稿后统一映射；本表用 `E-1`~`E-16`（PRD 附录 A.3 语义编号）占位，**不写具体数值** |
@@ -295,10 +296,10 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | TC-P3-PL03-04 | 03 | 已授权② | 撤销②→立即执行 | `E-4`；审计有 1 条授权变更；恢复授权后 retry 成功 | 同上 `::test_revoke_takes_effect_within_ttl` |
 | TC-P3-PL03-05 | 03 | 普通成员 + 管理员未开⑤总开关 | 安装研发工作台 | 第 2 步提示「需要管理员开启「写入代码仓库」能力」+「复制申请说明」（前端复制，无新端点） | 同上 `::test_org_switch_off_shows_apply_hint` |
 | TC-P3-PL03-06 | 03 | 三个前置可控 | 分别只破一个前置（套餐不支持 / 成员未授权 / 企业策略关闭） | 码值分别为 `15001` / `16005` / `16006`（**不是** `16005`/`16006` 混用）；三者 `message` 与 CTA 不同（升级套餐 / 重新授权 / 找管理员）；同时破多个时**按 `15001 → 16005 → 16006` 顺序返回** | 同上 `::test_error_order_plan_then_grant_then_policy` |
-| TC-P3-PL03-07 | 03 | 企业开关可控 | 依次置 `org_switch_enabled` = `false` / `true` 后安装 | ①**PL1 顶层含 `org_capabilities` 且恰好 3 项**（3 个 `org.*` 能力，每项 `{capability_key, org_switch_enabled}`）；②**PL4 逐插件返回 6 项**且每项含 `org_switch_enabled`；③`false` → 安装失败 + `16006` 文案 + 按钮置灰；④`true` → 安装成功且 `granted_capabilities` 含⑤；⑤**两次表现必须不同**（证明前端未硬编码） | 同上 `::test_org_switch_flips_install_outcome` |
+| TC-P3-PL03-07 | 03 | 企业开关可控 | 依次置 `org_switch_enabled` = `false` / `true` 后安装 | ①**PL1 顶层含 `org_capabilities` 且恰好 3 项**（3 个 `org.*` 能力，每项 `{capability_key, org_switch_enabled}`）；②**PL4 逐插件返回 6 项**且每项含 `org_switch_enabled`；③`false` → 安装失败 + `16006` 文案 + 按钮置灰；④`true` → 安装成功且 `granted_capabilities` 含⑤；⑤**两次表现必须不同**（证明前端未硬编码）；⑥**PL13 幂等（副作用计数）**：同 `Idempotency-Key` 重放 → 响应与首次一致，且 `plugin.capability_policy` 审计**仅 1 条**、策略表行数不变（不得产生第二次写入）；⑦**`personal.*` 不可被企业关闭**：PL13 传个人能力 → `20001`，策略表**无新增/无修改**（个人能力恒开，个人能力的三项状态不得被企业策略覆盖） | 同上 `::test_org_switch_flips_install_outcome` |
 | TC-P3-PL03-08 | 03 | 已安装、已授权②③⑤ | `PUT /plugins/{id}/grants` 改本人授权（撤③加④） | 请求 `grants[{capability_key, granted}]`；响应含 `granted_capabilities[]` / `denied_capabilities[]` / `required_capabilities[]`；撤③后数组相应变化；**同 `Idempotency-Key` 重复提交 → 结果收敛**（授权状态与审计条数不变，仅 1 条） | `test_plugin_authz.py::test_update_own_grants_and_idempotent` |
 | TC-P3-PL03-09 | 03 | 同上 | 尝试撤 `required=true` 的能力（②） | 失败（`16005` 语义）+ 文案说明必需能力不可撤销；授权状态**不变**（读回仍含②） | 同上 `::test_cannot_revoke_required_capability` |
-| TC-P3-PL03-10 | 03 | A、B 两名成员各已安装 | 用 A 的 token 改 B 的授权 | 越权拒绝（`20003` 语义）；**A 与 B 的授权均不变**（分别读回比对） | 同上 `::test_cannot_update_others_grants` |
+| TC-P3-PL03-10 | 03 | A、B 两名成员各已安装 | 用 A 的 token 改 B 的授权 | 越权拒绝（`20003` 语义）；**A 与 B 的授权均不变**（分别读回比对）；**副作用计数**：`plugin_grant` 行数与内容均不变（无新增/无修改）、审计**无** `plugin.capability_grant` 事件 | 同上 `::test_cannot_update_others_grants` |
 | TC-P3-PL03-11 | 03 | **未安装** | 直接 `PUT /plugins/{id}/grants` 改授权 | **`16003`**（「该插件还没有添加」；**不是 `16004`、不是成功**）；② `plugin_grant` **无新增行**（按 `plugin_id`+`user_id` 查为空，证明「没装就先改授权」这条隐性路径不存在）；③ 审计**无** `plugin.capability_grant` 事件（专防「报错但已写库/已写审计」的实现） | `test_plugin_authz.py::test_update_grants_before_install_rejected` |
 | TC-P3-PL04-01 | 04 | 已装 1.0.0 | 发布 1.1.0 → 升级 | `installed_version==1.1.0`；`has_update==false`；任务可执行 | `test_plugin_version.py::test_upgrade_updates_version` |
 | TC-P3-PL04-02 | 04 | 同上 | 连点两次升级 | 版本记录**仅 1 条**（幂等）；`previous_version` 不被覆盖成 1.1.0 | 同上 `::test_upgrade_idempotent` |
@@ -321,10 +322,10 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | TC-P3-MK07-03 | 07 | 4 种状态各一 | 详情页主按钮 | 未安装→「安装」；已安装启用→「打开工作台」；已禁用→「启用」；有更新→「更新」（4 断言） | 同上 `::test_primary_button_by_status` |
 | TC-P3-MK07-04 | 07 | 不存在/已下架 | `GET market/{id}` | `E-1` + 文案「该插件已下架，去市场看看其他插件」；页面给「返回市场」 | 同上 `::test_unlisted_plugin_detail` |
 | TC-P3-MK08-01 | 08 | 未安装 | 安装 → `GET installed` | `status=enabled`（Q3-3/ADJ-9）；**响应含 `already_installed=false`**（字段恒有，不得缺省）；导航出现入口 | `test_plugin_install.py::test_install_enables` |
-| TC-P3-MK08-02 | 08 | 已启用 | 禁用 → 再启用 | `disabled` → `enabled`；禁用后宿主页置灰 + 文案「该插件已停用，请联系管理员启用」 | 同上 `::test_disable_then_enable` |
+| TC-P3-MK08-02 | 08 | 已启用 | 禁用 → 再启用 | `disabled` → `enabled`；禁用后宿主页置灰 + 文案「该插件已停用，请联系管理员启用」；**副作用计数**：`plugin.state_change` 审计**恰好 2 条**（停用、启用各 1）、`plugin.install` 审计 **0 条新增**（启停不得走安装路径） | 同上 `::test_disable_then_enable` |
 | TC-P3-MK08-03 | 08 | 有 2 个历史任务 | 卸载 | `GET installed` 不含；`GET tasks?plugin_id=X` 仍返回 2 条且详情可打开（只读） | `test_plugin_uninstall.py::test_uninstall_keeps_history` |
 | TC-P3-MK08-04 | 08 | 有 1 个执行中任务 | 卸载 | 允许卸载 + `running_task_count==1`；该任务最终 completed（不被打断） | 同上 `::test_uninstall_with_running_task` |
-| TC-P3-MK08-06 | 08 | 已安装（已授权②③⑤、有 settings） | 重复调 `POST /plugins/{id}/install` | **HTTP 200 + `already_installed=true`**（字段恒有；**不是 `16003`**）；`granted_capabilities[]` 与 `settings` **均不变**；审计仅 **1 条** `plugin.install`（证明「装」与「改授权」是两个动作） | `test_plugin_install.py::test_reinstall_is_idempotent_no_grant_change` |
+| TC-P3-MK08-06 | 08 | 已安装（已授权②③⑤、有 settings） | 重复调 `POST /plugins/{id}/install` | **HTTP 200 + `already_installed=true`**（字段恒有；**不是 `16003`**）；`granted_capabilities[]` 与 `settings` **均不变**；**副作用计数**：`plugin_install` 记录仍 **1 条**、`plugin_grant` 行数不变、审计仅 **1 条** `plugin.install` 且 `plugin.capability_grant` **0 条**（证明「装」与「改授权」是两个动作，出现第 2 条即说明偷偷 upsert） | `test_plugin_install.py::test_reinstall_is_idempotent_no_grant_change` |
 | TC-P3-MK08-05 | 08 | 弹窗 | 禁用/卸载二次确认 | 禁用文案含「停用后工作台入口将不可用，已发起的任务会继续完成」；卸载含「历史任务记录会保留但不能再发起新任务」+「已生成的产物 180 天后清理」（3 条字符串断言） | 同上 `::test_confirm_dialog_consequences` |
 | TC-P3-MK09-01 | 09 | 已安装 | 同成员同插件提交 2 次 | 评价总数 **1** 条且内容为第二次；`rating_avg` 随更新重算 | `test_plugin_review.py::test_review_upsert` |
 | TC-P3-MK09-02 | 09 | 未安装用户 | 提交评价 | `E-13` + 文案「使用过这个插件才能评价」 | 同上 `::test_review_requires_installed` |
@@ -346,8 +347,8 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | TC-P3-WF12-02 | 12 | 6 步任务 | 读 `steps[].artifacts[]` | 类型覆盖 file/link/table/稿件/文档 时字段齐备（`download_url` 或 `url` 或 `preview_text` 至少 1）；表格给前 5 行预览 | 同上 `::test_artifact_payload_by_type` |
 | TC-P3-WF12-03 | 12 | 产物过期（时钟 +181d） | 点下载 | 文案「产物已过期，可重新发起任务」；**不出现**错误码/堆栈；任务记录仍可打开 | 同上 `::test_expired_artifact_message`（`pg`） |
 | TC-P3-WF12-04 | 12 | 已完成任务 | 产物卡片 DOM | 已完成任务的**提交记录/代码文件**无编辑入口；可编辑类型（稿件/JD/公文）有「编辑」入口（AC-02 与 P0-19/21 口径并存） | `#p3-manual` |
-| TC-P3-WF12-05 | 12 | 稿件/JD（可编辑类型） | `PUT /agent/tasks/{id}/artifacts/{aid}` 保存编辑 | `version` **+1**；`version_history[]` 含旧版本且内容**逐字一致**；`download_url` 下载到**新版本**（sha256 == 保存内容 sha256，**不得「存了但下载还是旧的」**） | `test_workflow_artifact_edit.py::test_edit_bumps_version_and_download_new` |
-| TC-P3-WF12-06 | 12 | `type=link` / `type=file` 产物 | 调 WF2 编辑 | **必须被拒**（代码文件与提交记录不可编辑，否则 AC-02 结果物核查作废）；拒绝后产物内容与 sha256 均不变 | 同上 `::test_non_editable_types_rejected` |
+| TC-P3-WF12-05 | 12 | 稿件/JD（可编辑类型） | `PUT /agent/tasks/{id}/artifacts/{aid}` 保存编辑 | `version` **+1**；`version_history[]` 含旧版本且内容**逐字一致**；`download_url` 下载到**新版本**（sha256 == 保存内容 sha256，**不得「存了但下载还是旧的」**）；**副作用计数（禁重跑）**：`plugin_task_step` 的**行数与各 step 状态集合均不变**、任务 `status` 仍 `completed`（编辑不得触发重新执行） | `test_workflow_artifact_edit.py::test_edit_bumps_version_and_download_new` |
+| TC-P3-WF12-06 | 12 | `type=link` / `type=file` 产物 | 调 WF2 编辑 | **必须被拒**（代码文件与提交记录不可编辑，否则 AC-02 结果物核查作废）；拒绝后产物内容与 sha256 均不变，**且 `version` 不变**（防「先写后校验」：报错但已落库的实现在此暴露） | 同上 `::test_non_editable_types_rejected` |
 | TC-P3-WF12-07 | 12 | docx 产物 | 改字段后**重新导出** | 新 docx 可解压出 `word/document.xml` 且段落含新字段值；`content_sha256` **已重算**（≠ 旧 sha）；`version_history` 追加 1 条 | 同上 `::test_reexport_docx_and_sha_recomputed` |
 | TC-P3-WF12-08 | 12 | content 含敏感词 | 保存编辑后读产物 | **一票否决**：编辑后**必须重跑脱敏**——产物中该敏感词被消解（**不得因「用户改过」跳过 sanitize**）；审计留 1 条编辑记录 | 同上 `::test_edit_reruns_sanitize` |
 | TC-P3-WF13-01 | 13 | 注入「工具未连接」 | 读失败步骤 → 点重试本步 | `code==0`；`failure.retryable==true`；3 个动作齐；新任务 `retry_of`=原任务；前序步骤 `skipped` 且 `artifact_id` 复用（ADJ-2） | `test_workflow_retry.py::test_retry_step_reuses_prior_artifacts` |
@@ -356,7 +357,7 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | TC-P3-WF13-04 | 13 | 失败态 | 点「联系管理员」 | 复制文本 `\b[1-3]\d{4}\b` **0 命中**、无 `Traceback`/`at 0x`/堆栈特征 | 同上 `::test_diagnostic_copy_has_no_codes_or_stack` |
 | TC-P3-WF14-01 | 14 | 5 个不同插件/状态/发起人/时间的任务 | 四维筛选 + 1 条组合 | 4 条独立断言 + 1 条组合断言，返回集合精确相等（不是子集） | `test_workflow_history.py::test_filters_four_dimensions` |
 | TC-P3-WF14-02 | 14 | 三插件各完成 1 次 | 读 `result.checklist[]` | 项数 **4 / 3 / 4**，名称与 PRD §3.2.3 ②**逐字相等**；每项 `status ∈ {verified, pending_manual}` | 同上 `::test_checklist_items_exact`（`e2e`） |
-| TC-P3-WF14-03 | 14 | 非发起人且无管理权 | 打开他人任务 | 权限错误 + 文案「你没有权限查看该任务」；**不返回**任务内容（响应体不含任务名/产物名） | 同上 `::test_cross_user_task_detail_denied` |
+| TC-P3-WF14-03 | 14 | 非发起人且无管理权 | 打开他人任务 | 权限错误 + 文案「你没有权限查看该任务」；**不返回**任务内容（响应体不含任务名/产物名）；**副作用计数**：任务与产物的**行数、`updated_at`、`version` 均不变**（本阶段**无读审计**动作，故不用「无读取审计」判据；引入读审计后另行追加） | 同上 `::test_cross_user_task_detail_denied` |
 
 ### 4.4 研发工作台（DEV，8 条，映射 P0-P3-15~17）
 
