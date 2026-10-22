@@ -347,9 +347,11 @@ class PluginEngine:
     ) -> None:
         """建任务前的声明级预检（不调下游）。
 
-        校验顺序固定：**必填输入（20001）→ 能力（16005）**。
+        校验顺序固定：**必填输入（20001）→ 长度（20001）→ 选项（20001）→
+        数量（20001）→ 能力（16005）**。
         先查输入是有意的：参数错了让用户改输入即可，不该先弹"缺能力"把
-        用户引到授权页去白跑一趟。
+        用户引到授权页去白跑一趟；数量也排在能力之前——"一次最多 20 份"是用户
+        在上传框里就能改的事，没有理由先让他去授权。
 
         Args:
             manifest: 插件声明。
@@ -357,7 +359,8 @@ class PluginEngine:
             granted: 已授能力集合。
 
         Raises:
-            ApiError: 必填输入缺失/非法（20001）、缺少所需能力（16005）。
+            ApiError: 必填输入缺失/非法（20001）、数量超上限（20001）、
+                缺少所需能力（16005）。
         """
         for spec in manifest.inputs:
             value = inputs.get(spec.key)
@@ -388,6 +391,20 @@ class PluginEngine:
                         message=f"「{spec.label}」的取值不在可选范围内",
                         internal_detail=f"input {spec.key} unknown={unknown}",
                     )
+            # 数量上限（PRD P0-P3-21 验收②，「一次最多 20 份」）。
+            # 只对列表/元组计数：单个字符串按 1 份算——用户只传一份简历时
+            # 可能给的是字符串而不是列表，那不该被判成"超量"。
+            if (
+                spec.max_items is not None
+                and isinstance(value, list | tuple)
+                and len(value) > spec.max_items
+            ):
+                raise ApiError(
+                    ErrorCode.PARAM_INVALID,
+                    # 「份」是 PRD 原文的用词（用户可见文案逐字对齐验收标准）
+                    message=f"一次最多 {spec.max_items} 份，请分批上传",
+                    internal_detail=f"input {spec.key} exceeds max_items",
+                )
 
         declared = set(manifest.capability_keys)
         required = set(manifest.required_capability_keys)

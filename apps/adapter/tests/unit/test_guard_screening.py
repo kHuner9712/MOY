@@ -26,8 +26,9 @@ import io
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
-from app.core.errors import ErrorCode
+from app.core.errors import ApiError, ErrorCode
 from app.plugins.actions import ActionResult, ArtifactDraft, RunContext
 from app.plugins.engine import (
     DEFAULT_OPERATOR_ACTION,
@@ -38,8 +39,8 @@ from app.plugins.engine import (
     StepOutcome,
     StepPlan,
 )
-from app.plugins.schema import StepSpec
-from tests.unit.task_helpers import GRANTED, EchoGateway
+from app.plugins.schema import InputSpec, StepSpec
+from tests.unit.task_helpers import GRANTED, EchoGateway, load_manifest
 
 #: 评分表六列（与 e2e 的 `SCREENING_COLUMNS` 同口径）
 SCREENING_COLUMNS: list[str] = ["姓名", "匹配分", "亮点", "风险", "结论", "理由"]
@@ -344,3 +345,72 @@ def test_run_step_wires_screening_gate() -> None:
     assert outcome.status == STEP_FAILED
     assert outcome.retryable is True
     assert "李娜" in outcome.reason_text
+
+
+# ======================================================================
+# 缺陷 B：简历「一次最多 20 份」
+# ======================================================================
+def _engine() -> PluginEngine:
+    """构造只用于 `preflight()` 的引擎（网关不会被调用）。
+
+    Returns:
+        PluginEngine: 引擎实例。
+    """
+    return PluginEngine(EchoGateway())
+
+
+def _resumes(count: int) -> list[str]:
+    """生成 `count` 个简历文件名。
+
+    Args:
+        count: 份数。
+
+    Returns:
+        list[str]: 文件名列表。
+    """
+    return [f"候选人{index:02d}.pdf" for index in range(1, count + 1)]
+
+
+def test_twenty_resumes_pass_preflight() -> None:
+    """① 20 份 → 通过（上限是闭区间，卡在 20 本身不能被拒）。"""
+    manifest = load_manifest("plg_hr_admin")
+    _engine().preflight(manifest, {**HR_INPUTS, "resumes": _resumes(20)}, GRANTED)
+
+
+def test_twenty_one_resumes_rejected_with_verbatim_message() -> None:
+    """② 21 份 → 20001，且文案**逐字**等于 PRD 验收标准里的那句。"""
+    manifest = load_manifest("plg_hr_admin")
+    with pytest.raises(ApiError) as excinfo:
+        _engine().preflight(manifest, {**HR_INPUTS, "resumes": _resumes(21)}, GRANTED)
+
+    assert excinfo.value.code == ErrorCode.PARAM_INVALID
+    assert excinfo.value.message == "一次最多 20 份，请分批上传"
+
+
+def test_single_string_resume_not_rejected() -> None:
+    """③ 单个字符串（非列表）→ 按 1 份算，不误拒。
+
+    前端历史上给 `file` 输入传的可能是字符串；把"不是列表"当成"超量"会让
+    只传一份简历的用户直接被拦在门外。
+    """
+    manifest = load_manifest("plg_hr_admin")
+    _engine().preflight(manifest, {**HR_INPUTS, "resumes": "张伟.pdf"}, GRANTED)
+
+
+def test_max_items_on_single_value_input_is_rejected() -> None:
+    """④ `max_items` 声明在 `text` 类型上 → 声明校验报错。
+
+    单值输入声明数量上限属于"看上去限制了、其实没限"的假护栏：
+    运行期永远算不出超限，所以必须在加载期就拒掉。
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        InputSpec(key="topic", label="主题", type="text", max_items=5)
+
+    assert "数量上限" in str(excinfo.value)
+
+
+def test_max_items_allowed_on_file_and_multi_select() -> None:
+    """④ 反向：`file` / `multi_select` 允许声明（收紧约束不能收成"谁都不许"）。"""
+    for input_type in ("file", "multi_select"):
+        spec = InputSpec(key="items", label="条目", type=input_type, max_items=20)
+        assert spec.max_items == 20

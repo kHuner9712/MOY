@@ -240,6 +240,7 @@ class InputSpec(_StrictModel):
         required: 是否必填。
         max_length: 文本类输入的长度上限。
         options: `select` / `multi_select` 的候选值。
+        max_items: 多值输入（`file` / `multi_select`）的数量上限。
     """
 
     key: str = Field(min_length=1, max_length=64, description="输入键")
@@ -250,6 +251,29 @@ class InputSpec(_StrictModel):
     required: bool = Field(default=False, description="是否必填")
     max_length: int | None = Field(default=None, ge=1, le=8000, description="长度上限")
     options: list[str] = Field(default_factory=list, max_length=20, description="候选值")
+    max_items: int | None = Field(
+        default=None, ge=1, le=200, description="数量上限（file / multi_select）"
+    )
+
+    @model_validator(mode="after")
+    def _item_limit_only_for_multi_value(self) -> InputSpec:
+        """`max_items` 只对**多值输入**有意义（`file` / `multi_select`）。
+
+        为什么写在形态校验里：单值输入声明数量上限，说明声明作者把"份数"
+        理解错了；这种声明放过去，运行期永远算不出超限，等于给了一条
+        "看上去限制了、其实没限"的假护栏。宁可加载期就报错。
+
+        Returns:
+            InputSpec: 自身。
+
+        Raises:
+            ValueError: 单值输入声明了 `max_items`。
+        """
+        if self.max_items is not None and self.type not in {"file", "multi_select"}:
+            raise ValueError(
+                f"输入项 {self.key} 是单值输入（{self.type}），不能声明数量上限 max_items"
+            )
+        return self
 
     @model_validator(mode="after")
     def _text_only_constraints(self) -> InputSpec:

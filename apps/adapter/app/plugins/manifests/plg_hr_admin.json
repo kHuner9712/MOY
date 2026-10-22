@@ -71,7 +71,8 @@
       "key": "resumes",
       "label": "简历文件",
       "type": "file",
-      "required": false
+      "required": false,
+      "max_items": 20
     },
     {
       "key": "doc_type",

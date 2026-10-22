@@ -7,6 +7,8 @@
   ∈ 枚举；理由 ≥30 字
 - **`test_blank_risk_row_fails_the_screening_step`**（TC-P3-HR21-01 反面）：某行风险为空 →
   平台**在引擎层就判该步失败并置可重试**，且不把这张表交给用户
+- **`test_resume_limit_twenty`**（TC-P3-HR21-02）：第 21 份 → `20001`
+  +「一次最多 20 份，请分批上传」
 
 **判据为什么必须落在导出文件上**：评分表的用户交付面是那张表（导出 CSV / 页面表格），
 不是任务状态。只断言"任务 completed"会把"表里没有风险一列"这种事故放过去——
@@ -23,6 +25,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import pytest
@@ -213,6 +216,46 @@ def test_screening_problems_can_go_red() -> None:
     problems = screening_problems(broken)
     assert problems, "负样本自检失败：风险被清空后判据仍全绿，说明判据不可红"
     assert all("风险" in item for item in problems), f"必须只报出风险为空：{problems}"
+
+
+@pytest.mark.asyncio
+async def test_resume_limit_twenty(
+    client: AsyncClient, admin_headers: dict[str, str], hr_ready: None
+) -> None:
+    """TC-P3-HR21-02：第 21 份被拒，20 份放行（PRD P0-P3-21 验收②）。
+
+    判据（三条）：
+    ① 21 份 → 400/403 + `20001`，文案**逐字**等于「一次最多 20 份，请分批上传」；
+    ② 20 份 → 能建任务（证明拒绝是"因份数"而不是"这条路本身不通"）；
+    ③ 拒绝发生在建任务前（A1 返回错误，不产生半成品任务）。
+
+    Args:
+        client: 异步客户端。
+        admin_headers: 管理员请求头。
+        hr_ready: 前置装配。
+    """
+    too_many = [f"候选人{index:02d}.pdf" for index in range(1, 22)]
+    rejected = await client.post(
+        "/api/v1/agent/tasks",
+        headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
+        json={
+            "plugin_id": HR_PLUGIN,
+            "conversation_id": "conv_e2e_hr_limit",
+            "goal": "",
+            "inputs": {**HR_INPUTS, "resumes": too_many},
+        },
+    )
+    assert rejected.status_code in {400, 403}, f"① 21 份必须被拒：{rejected.text}"
+    body = rejected.json()
+    assert body["code"] == 20001, f"① 应为 20001，实际 {body}"
+    assert body["message"] == "一次最多 20 份，请分批上传", f"① 文案必须逐字一致：{body['message']}"
+    assert "task_id" not in str(body.get("data") or {}), "③ 拒绝不得留下半成品任务"
+
+    exactly_twenty = [f"候选人{index:02d}.pdf" for index in range(1, 21)]
+    created = await create_task(
+        client, admin_headers, HR_PLUGIN, {**HR_INPUTS, "resumes": exactly_twenty}
+    )
+    assert created["task_id"], "② 20 份必须能建任务（上限是闭区间）"
 
 
 def screening_problems(rows: list[dict[str, str]]) -> list[str]:
