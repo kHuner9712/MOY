@@ -97,8 +97,11 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {
         "id": "P3-B20-01",
         "level": "P0",
-        # 关闭依据：lead 权威数据 分支 2404/2840=84.65%（需 2176，余量 +228）
-        # QA 独立复算同冻结点 2170/2840=76.41%，差 234 分支疑 skip 差异
+        # 关闭依据（`d20d749` 导出树，coverage json 平账核对）：
+        # covered_branches 2176 / num_branches 2840 = 76.62%，门槛 ceil(0.766×2840)=2176，**余量 0**
+        # 注：曾误用 num_partial_branches（436，为"部分分支未走的行数"）当 missing，
+        #     算出 2404/84.65%/余量+228 —— 已作废；covered+missing=2840 平账可自证。
+        # 余量 0 属已知脆弱点：观察项 due 阶段四首周，动作=分支余量补到 ≥50 条。
         "status": "fixed",
         "pinned_by": "G-05 覆盖率（business+db）",
         "due_batch": "B21",
