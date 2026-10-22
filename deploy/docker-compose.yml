@@ -456,7 +456,13 @@ services:
       OA_DIFY_BASE_URL: http://dify-api:5001
       OA_KEYCLOAK_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
-      OA_DATABASE_URL: postgresql+asyncpg://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD}@postgres:5432/${OA_POSTGRES_DB:-officeai}
+      # **业务库连接串优先取 `.env` 的 `OA_DATABASE_URL`**（`.env.example:160` 要求用
+      # `officeai_app`：NOSUPERUSER + NOBYPASSRLS）。此前这里写死用 `${OA_POSTGRES_USER}`
+      # （库属主/超级用户），会把 .env 里配好的应用角色串**静默覆盖**掉；
+      # 适配层的 `/readyz` 权限自检随即判 `db_privilege=false`，容器永远不 healthy——
+      # 而 RLS 对超级用户根本不生效，等于把多租户隔离关掉了。
+      # 缺省值仍回落到库属主，保持既有单机起步路径可用。
+      OA_DATABASE_URL: ${OA_DATABASE_URL:-postgresql+asyncpg://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD}@postgres:5432/${OA_POSTGRES_DB:-officeai}}
       OA_MILVUS_URI: http://milvus:19530
       OA_OBJECT_STORE_ENDPOINT: http://object-store:8333
       # 私有化部署面向本机 Dify，必须真实联调（T01 桩模式仅用于无底座开发）
