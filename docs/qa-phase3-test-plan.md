@@ -61,9 +61,11 @@
 | **金额扫描范围** | 只扫 **`output_key=offer`** 的产物；简历筛选结论里的「待定」是**合法值**（表示判断未定），不得误判 | TC-P3-HR23-02 / E2E-HR-03 / HV-4；扫描器入参必须显式带 `output_key=offer` |
 | **步骤状态枚举（DDL 权威）** | 步骤状态只能是 **`pending` / `running` / `completed` / `failed` / `skipped`**；**`waiting_confirm` 是任务级状态，不是步骤级** | TC-P3-WF11-02 / WF13-03；断言步骤状态 `in {...}` 五元集合，不得出现 `succeeded`/`waiting_confirm` |
 | **企业开关字段位置（两处都要断言）** | ①**PL1 顶层必须含 `org_capabilities`，且恰好 3 项**（只含 3 个 `org.*` 能力，每项 `{capability_key, org_switch_enabled}`）；②**PL4 仍逐插件返回 6 项**，每项含 `org_switch_enabled`。两处同时断言，正好证明「列表页用 PL1、授权抽屉用 PL4」 | TC-P3-PL03-07 |
-| **PL14 授权写接口** | `PUT /plugins/{plugin_id}/grants` 必须带 `Idempotency-Key`；**只能改本人**；`required=true` 不可撤 | TC-P3-PL03-08/09/10 |
+| **PL14 授权写接口** | `PUT /plugins/{plugin_id}/grants` 必须带 `Idempotency-Key`；**只能改本人**；`required=true` 不可撤 | TC-P3-PL03-08/09/10/**11** |
 | **WF2 产物编辑** | 仅**可编辑类型**（稿件/JD/公文）允许；`type=link`/`type=file` 必须拒；保存 → `version+1` + 下载拿新版本；**编辑后必须重跑脱敏**（一票否决） | TC-P3-WF12-05~08 |
-| **不装/停用/重复装 三个码值** | **`16003`＝该插件还没有添加**（未安装却调 PL6/PL7/PL8/PL9/PL10）；**`16004`＝该插件已停用**（`disabled` 时执行任务）；**PL5 重复安装 = `200` + `already_installed=true`**（两个码都不是）。依据 `errors.py:115/117`（`PLUGIN_NOT_INSTALLED` / `PLUGIN_DISABLED`）| TC-P3-PL02-01（16003）、TC-P3-PL02-05（16004）、TC-P3-MK08-06（200+flag） |
+| **副作用计数断言（通用）** | 凡「不改 X / 不产生 Y」的语义，除断返回值外**必须再断侧效应计数**（审计条数、版本行数、授权行数、产物版本号）——返回值可以「嘴上遵守」，计数不会 | 例：MK08-06「审计仅 1 条 `plugin.install`」、PL02-01「无 `plugin.capability_grant` 审计」、PL04-02「版本记录仅 1 条」、WF12-05「`version_history` 仅 +1」 |
+| **`already_installed` 恒有** | 该字段**必须常驻**：首次安装 `false`、重复安装 `true`（**不允许只在重复时才出现**，否则前端无法稳定渲染） | TC-P3-MK08-01（首次 false）、TC-P3-MK08-06（重复 true） |
+| **不装/停用/重复装 三个码值** | **`16003`＝该插件还没有添加**（未安装却调 **PL6/PL7/PL8/PL9/PL10/PL12/PL14**）；**`16004`＝该插件已停用**（`disabled` 时执行任务）；**PL5 重复安装 = `200` + `already_installed=true`**（两个码都不是）。依据 `errors.py:115/117`（`PLUGIN_NOT_INSTALLED` / `PLUGIN_DISABLED`）| TC-P3-PL02-01（16003·PL6）、**TC-P3-PL03-11（16003·PL14）**、TC-P3-PL02-05（16004）、TC-P3-MK08-06（200+flag） |
 | 字数 | 去空白后的 Unicode 字符数（见 ADJ-5） | 全案统一 helper，禁止各用例自算 |
 | 进度百分比 | `已完成步骤数 / 总步骤数`，6 步完成 3 步 = **50%**（含浮点误差 <1e-6） | TC-P3-WF11-03 |
 | 失败与接管 | **不返回非 0 `code`**；用 `steps[].failure.retryable` 与 `status=waiting_confirm` | TC-P3-WF13-02/03 同时断言 `code==0` |
@@ -102,8 +104,8 @@
 
 | 维度 | 数量 | 说明 |
 | --- | --- | --- |
-| 用例总数 | **138** | P0 **116**（104 条按 PRD 条目 + 12 条按 AC-02 结果物）+ 非 P0 22 |
-| P0 映射 | 25 条 P0 → **每条 ≥2 条**（最少 2 条、最多 12 条） | §4.9 逐条核对表（合计 116，每条数已核对） |
+| 用例总数 | **139** | P0 **117**（105 条按 PRD 条目 + 12 条按 AC-02 结果物）+ 非 P0 22 |
+| P0 映射 | 25 条 P0 → **每条 ≥2 条**（最少 2 条、最多 12 条） | §4.9 逐条核对表（合计 117，每条数已核对） |
 | P0 分层：单元层（`apps/adapter/tests/unit/**`） | 30 | manifest 校验、能力映射、状态机、字数/金额正则、进度计算、错误映射 |
 | P0 分层：集成层（`apps/adapter/tests/integration/**`） | 74 | 端点契约、授权、幂等、并发、历史筛选、E2E（内存 + bare 仓库 + 桩） |
 | 其中需 `--run-pg` | **18**（⊂74） | 插件安装/状态/卸载落库、版本快照与回滚、评价唯一性、RLS 跨租户、并发计数、审计 |
@@ -116,16 +118,18 @@
 
 ## 2. 质量门禁（G-26 起；与架构对齐后定稿）
 
-### 2.1 门禁总表（新增 6 道 + 沿用阶段二相关 20 道）
+### 2.1 门禁总表（新增 6 道 + 沿用阶段二相关 20 道；**命令已换成仓库真实路径**）
 
 | 编号 | 门禁 | 命令（草案，路径随架构定） | 判据 | 生效批次 |
 | --- | --- | --- | --- | --- |
-| **G-26** | 插件声明 schema 校验 | `python apps/plugins/tools/validate_manifests.py --strict` | 退出码 0；3 份内置 manifest + 1 份样例全通过；非法声明**加载失败且市场不展示** | B16 |
+| **G-26** | 插件声明 schema 校验 | `python deploy/validate_plugins.py`（默认扫 `apps/adapter/app/plugins/manifests`，**6 份**）；自检 `--self-test` | 正常 0；6 份全通过；`--self-test` **exit 1**（脚本内置 6 条负样本）；另 6 类非法声明由 `tests/unit/test_manifest_validation.py` 覆盖（合计 12 类） | B16 |
+| **G-27a** | 前端↔插件契约扫描（**已入库**） | `node apps/web/scripts/check-plugin-contract.mjs`；自检 `--self-test` | 正常 0；`--self-test` **exit 1**（负样本全被抓到） | B23 |
+| **G-27b** | 插件资产与宿主分支（**待 B24 落地**） | `node apps/web/scripts/check-plugin-ui-assets.mjs`（脚本未入库前**不得勾选**该项） | 插件目录 `.css/.scss/.less/.jsx/.tsx` = 0、字体图标包 = 0；宿主 `pluginId` 布局分支 = 0 | B24 |
 | **G-27** | 插件界面仅用平台组件库 | `node apps/web/scripts/check-plugin-ui-assets.mjs` | 插件目录 0 个 `.css/.scss/.less/.jsx/.tsx`（UI 组件）、0 字体/图标包；宿主页 0 处 `pluginId` 布局分支 | B16（资产）/ B24（宿主） |
-| **G-28** | 插件能力白名单 | `python apps/plugins/tools/check_capability_whitelist.py` | 插件代码只调用「已声明能力 → 允许端点」映射内的端点；白名单外/未声明能力 → 违规 | B17 |
+| **G-28** | 插件能力白名单 | ①**已入库**：`python deploy/validate_plugins.py` 校验 `capabilities[].key` ⊆ 6 项枚举；②**待入库**：端点级白名单检查器（B19 运行时守卫 + 静态清单），未入库前只按 ① 判 | 能力 key ∈ 6 项枚举（①）；插件实际调用端点 ⊆「已声明能力 → 允许端点」映射（②） | B17（①）/ B19（②） |
 | **G-29** | 端点三基线 | `python deploy/validate_openapi.py`（扩展 G6） | `core=30`、**`phase2=38` 不回改**、**`phase3=16`**（PL1-PL14 + WF1/WF2，合计 84）全实现；G4 加性 diff 0 violation | **B21** |
 | **G-30** | 错误码三处一致（含阶段三新码）——**与阶段二 G-13 合并为同一脚本，不新建第二个** | `python apps/adapter/scripts/check_error_catalog.py --strict`（同一脚本扩段） | 新码不与既有段冲突、**不复用 `16001`**、`business-errors.ts` 覆盖、同码文案 ≤2 种、0 PENDING；阶段二 52 码仍全绿 | B17 |
-| **G3-10** | docx 依赖与插件纯净（PM 追溯表；并入 G-22 + G-27 + 单测，不新建扫描器） | `python deploy/validate_deps.py` + `node apps/web/scripts/check-plugin-ui-assets.mjs` + `pytest tests/unit/test_docx_artifact.py` | ①依赖登记 **16** 项且含 `python-docx`；②插件目录 `import docx` **0 命中**；③产物 `.docx` 可解压出 `word/document.xml` | B21 |
+| **G3-10** | docx 依赖与插件纯净（PM 追溯表；并入 G-22 + G-27b + 单测，不新建扫描器） | `python deploy/validate_deps.py` + `node apps/web/scripts/check-plugin-ui-assets.mjs` + `pytest tests/unit/test_docx_artifact.py` | ①依赖登记 **16** 项且含 `python-docx`；②插件目录 `import docx` **0 命中**；③产物 `.docx` 可解压出 `word/document.xml` | B21 |
 | **G3-11** | `17002` 不外泄（PM 追溯表；并入 G-30 同一脚本扩段） | `python apps/adapter/scripts/check_error_catalog.py --strict --forbid-public 17002` | ①`17002` 仅允许出现在后端内部定义与单测；**A3/A4 响应、前端兜底表、任何 `message` 中 0 命中**；②**脚本内置内部码豁免名单 `{17002}`**——内部码**不要求前端覆盖**（理由：G3-11 禁止其外泄，若仍要求 `business-errors.ts` 覆盖则 G-13 永远红），且豁免必须**显式登记**（新增内部码也要登记，不得默认豁免）；③反例：从豁免名单删掉 `17002` 后 `--strict` 必须失败（证明豁免是白名单而非关闭检查） | B21 |
 | ~~G-31~~ | ~~产物留存与过期~~ → **移出本阶段**（主理人裁定：需注入时钟，成本高于收益） | 本阶段只做**静态断言**：`pytest tests/unit/test_artifact_retention.py` | ①产物表/模型存在「保留期」字段且默认值 == 180（天）；②过期文案常量存在于代码（`产物已过期，可重新发起任务`）；③**真实清理留阶段四压测**，本阶段不断言清理行为 | B19 |
 | 沿用 | G-01~G-03（ruff/format/mypy）、G-04（全量 0 failed/0 skip）、G-05（覆盖率）、G-07/08/09（并入 G-29）、G-12（RLS）、G-13（并入 G-30）、G-14~G-18（禁词/占位/三态）、G-19~G-21（tsc/lint/build）、G-22（依赖/镜像）、G-24（p0） | 同阶段二 | 同阶段二 | — |
@@ -136,9 +140,9 @@
 
 #### G-26 插件声明 schema 校验
 
-- **正常模式**：扫描插件目录下全部 `manifest.json` → 校验 6 段（基本信息 / 能力 / 输入 / 输出 / 界面描述 / 步骤定义）与字段类型、枚举、版本号形态（`^\d+\.\d+\.\d+$`）、步骤序号连续、文案禁词；0 违规 → exit 0。
-- **负样本自检（12 条，`--self-test` → exit 1）**：① 缺 `capabilities` ② 缺 `steps` ③ 缺 `ui` ④ 版本 `abc` ⑤ 步骤序号 `1,3,4` ⑥ 未知顶层字段 `script` ⑦ 能力 key 不在 6 项枚举 ⑧ 名称含禁词「RAG 助手」⑨ `plugin_id` 无 `plg_` 前缀 ⑩ `required` 非布尔 ⑪ 步骤标题含英文技术词（`LLM`/`workflow`）⑫ 缺图标。
-- **正样本**：3 份内置 manifest + 1 份样例插件必须判绿（否则脚本过度严格）。
+- **正常模式**：`deploy/validate_plugins.py` 扫描 `apps/adapter/app/plugins/manifests`（**6 份**）→ 校验 6 段（基本信息 / 能力 / 输入 / 输出 / 界面描述 / 步骤定义）与字段类型、枚举、版本号形态（`^\d+\.\d+\.\d+$`）、步骤序号连续、文案禁词；0 违规 → exit 0。
+- **负样本自检（脚本内置 6 条 → `--self-test` exit 1；另 6 类由单测覆盖，合计 12 类）**：① 缺 `capabilities` ② 缺 `steps` ③ 缺 `ui` ④ 版本 `abc` ⑤ 步骤序号 `1,3,4` ⑥ 未知顶层字段 `script` ⑦ 能力 key 不在 6 项枚举 ⑧ 名称含禁词「RAG 助手」⑨ `plugin_id` 无 `plg_` 前缀 ⑩ `required` 非布尔 ⑪ 步骤标题含英文技术词（`LLM`/`workflow`）⑫ 缺图标。
+- **正样本**：**6 份内置 manifest** + 1 份样例插件必须判绿（否则脚本过度严格）。
 - **为什么不会永远绿**：负样本里 ④⑤⑥⑫ 是「结构合法但语义非法」，只有真正做了 schema + 语义两层校验才会全部命中；⑧ 证明文案门禁接入到了**声明期**而非只在渲染期。
 
 #### G-27 插件界面仅用平台组件库
@@ -174,6 +178,12 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 
 任一项红即阻断合入。`pg` 组要求「不带 `--run-pg` 时跳过、带时 **0 skip / 0 fail**」。
 
+> **退出码取法（强制）**：一律 **重定向到文件后单独取 `$?`**，禁止管道：
+> ```bash
+> "$PY" deploy/validate_plugins.py --self-test > "$LOG/g26.log" 2>&1; echo "G-26 EXIT=$?"; tail -3 "$LOG/g26.log"
+> ```
+> 原因（主理人 2026-10-23 抽验发现）：`cmd | tail -3; echo $?` 取到的是 **`tail` 的退出码（恒 0）**，会把「自检通过=1」误判成「永远绿」；三个前端 `.mjs` 扫描器同理。
+
 ### 2.4 豁免流程（受控）
 
 | 规则 | 内容 |
@@ -191,7 +201,7 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | 2 | **禁止空标记**：不得用 `p0` + `pass` / `assert True` / `xfail` / 无条件 `skip` 凑数（视为伪造门禁，P0 级流程缺陷） |
 | 3 | 批次准出前 QA 实跑 `pytest -q -m p0 --run-pg`，要求 `failed=0 且 skipped=0`，并在批次报告贴出 p0 用例数 |
 | 4 | 缺陷钉住统一用 `xfail(strict=True)`；修复后**自动 XPASS → hard error**，强制摘标记（W3 已验证该机制有效，见 `qa-phase2-w3-r2-report.md` §1） |
-| 5 | 阶段门之前 p0 总数 ≥60（本方案目标 **116**），且 25 条 P0 **每条 ≥2 条用例**（§4.9 核对） |
+| 5 | 阶段门之前 p0 总数 ≥60（本方案目标 **117**），且 25 条 P0 **每条 ≥2 条用例**（§4.9 核对） |
 
 ---
 
@@ -263,7 +273,7 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | 错误码 | 架构落稿后统一映射；本表用 `E-1`~`E-16`（PRD 附录 A.3 语义编号）占位，**不写具体数值** |
 | P1/P2 | 单独标注，不计入 P0 统计 |
 
-### 4.1 插件标准与运行时（PL，13 条，映射 P0-P3-01~05）
+### 4.1 插件标准与运行时（PL，14 条，映射 P0-P3-01~05）
 
 | 编号 | 需求 | 前置 | 步骤 | 期望（可断言） | 落点 |
 | --- | --- | --- | --- | --- | --- |
@@ -271,7 +281,8 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | TC-P3-PL01-02 | 01 | 合法声明 | `GET market/{id}` | `step_titles[]` 与 manifest `steps[].title` **逐项相等**（`==`） | 同上 `::test_step_titles_match_manifest` |
 | TC-P3-PL01-03 | 01 | 同名声明重复注册 | 重复注册 | 第二次失败；原条目字段**逐字段不变**（快照 diff 为空） | 同上 `::test_duplicate_plugin_id_keeps_original` |
 | TC-P3-PL01-04 | 01 | 声明含自带依赖段 | 加载 | 拒绝加载 + 原因「不支持自带依赖」（B-5） | 同上 `::test_manifest_with_dependencies_rejected` |
-| TC-P3-PL02-01 | 02 | 未安装 | 直接 `PATCH state` | `E-2`；`GET installed` 不含该项（不得隐式创建） | `test_plugin_lifecycle.py::test_state_before_install_rejected` |
+| TC-P3-PL02-01 | 02 | 未安装 | 直接 `PATCH state`（PL6） | **`16003`**（「该插件还没有添加」）；`GET installed` 不含该项（不得隐式创建） | `test_plugin_lifecycle.py::test_state_before_install_rejected` |
+> **PL14 的「未安装直调」口径单列在 `TC-P3-PL03-11`**（含 `plugin_grant` 无新增行 + 审计无事件的三重断言），本用例只判 PL6，避免两处重复。
 | TC-P3-PL02-02 | 02 | 已启用 | 执行任务 → `GET tasks?plugin_id=X` | 能筛出且 `plugin_id` 非空、与入参相等 | 同上 `::test_task_carries_plugin_id` |
 | TC-P3-PL02-03 | 02 | 长任务 + 超时 5s | 执行 → 等超时 | 状态「未完成（超时）」；已完成步骤 `artifacts.length ≥1` **仍可取** | 同上 `::test_timeout_keeps_finished_artifacts` |
 | TC-P3-PL02-04 | 02 | 并发上限 3 | 同时提交 4 个 | 第 4 个 **HTTP 200** + `status=queued` + `queue_position≥1`；**不是 4xx/429**（ADJ-1 裁定） | 同上 `::test_concurrency_queue_slot` |
@@ -288,6 +299,7 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | TC-P3-PL03-08 | 03 | 已安装、已授权②③⑤ | `PUT /plugins/{id}/grants` 改本人授权（撤③加④） | 请求 `grants[{capability_key, granted}]`；响应含 `granted_capabilities[]` / `denied_capabilities[]` / `required_capabilities[]`；撤③后数组相应变化；**同 `Idempotency-Key` 重复提交 → 结果收敛**（授权状态与审计条数不变，仅 1 条） | `test_plugin_authz.py::test_update_own_grants_and_idempotent` |
 | TC-P3-PL03-09 | 03 | 同上 | 尝试撤 `required=true` 的能力（②） | 失败（`16005` 语义）+ 文案说明必需能力不可撤销；授权状态**不变**（读回仍含②） | 同上 `::test_cannot_revoke_required_capability` |
 | TC-P3-PL03-10 | 03 | A、B 两名成员各已安装 | 用 A 的 token 改 B 的授权 | 越权拒绝（`20003` 语义）；**A 与 B 的授权均不变**（分别读回比对） | 同上 `::test_cannot_update_others_grants` |
+| TC-P3-PL03-11 | 03 | **未安装** | 直接 `PUT /plugins/{id}/grants` 改授权 | **`16003`**（「该插件还没有添加」；**不是 `16004`、不是成功**）；② `plugin_grant` **无新增行**（按 `plugin_id`+`user_id` 查为空，证明「没装就先改授权」这条隐性路径不存在）；③ 审计**无** `plugin.capability_grant` 事件（专防「报错但已写库/已写审计」的实现） | `test_plugin_authz.py::test_update_grants_before_install_rejected` |
 | TC-P3-PL04-01 | 04 | 已装 1.0.0 | 发布 1.1.0 → 升级 | `installed_version==1.1.0`；`has_update==false`；任务可执行 | `test_plugin_version.py::test_upgrade_updates_version` |
 | TC-P3-PL04-02 | 04 | 同上 | 连点两次升级 | 版本记录**仅 1 条**（幂等）；`previous_version` 不被覆盖成 1.1.0 | 同上 `::test_upgrade_idempotent` |
 | TC-P3-PL04-03 | 04 | 已升级 | 回滚 → 再回滚 | 首次回滚到 `1.0.0`；第二次 `E-7`（或 20005）且版本不变 | 同上 `::test_rollback_once_only` |
@@ -308,11 +320,11 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | TC-P3-MK07-02 | 07 | 无评价 | 详情页评价区 | 文案「还没有人评价，用过后可以来说说」；**不是**空表格（DOM 断言有该文本节点） | 同上 `::test_empty_review_guidance` |
 | TC-P3-MK07-03 | 07 | 4 种状态各一 | 详情页主按钮 | 未安装→「安装」；已安装启用→「打开工作台」；已禁用→「启用」；有更新→「更新」（4 断言） | 同上 `::test_primary_button_by_status` |
 | TC-P3-MK07-04 | 07 | 不存在/已下架 | `GET market/{id}` | `E-1` + 文案「该插件已下架，去市场看看其他插件」；页面给「返回市场」 | 同上 `::test_unlisted_plugin_detail` |
-| TC-P3-MK08-01 | 08 | 未安装 | 安装 → `GET installed` | `status=enabled`（Q3-3/ADJ-9）；导航出现入口 | `test_plugin_install.py::test_install_enables` |
+| TC-P3-MK08-01 | 08 | 未安装 | 安装 → `GET installed` | `status=enabled`（Q3-3/ADJ-9）；**响应含 `already_installed=false`**（字段恒有，不得缺省）；导航出现入口 | `test_plugin_install.py::test_install_enables` |
 | TC-P3-MK08-02 | 08 | 已启用 | 禁用 → 再启用 | `disabled` → `enabled`；禁用后宿主页置灰 + 文案「该插件已停用，请联系管理员启用」 | 同上 `::test_disable_then_enable` |
 | TC-P3-MK08-03 | 08 | 有 2 个历史任务 | 卸载 | `GET installed` 不含；`GET tasks?plugin_id=X` 仍返回 2 条且详情可打开（只读） | `test_plugin_uninstall.py::test_uninstall_keeps_history` |
 | TC-P3-MK08-04 | 08 | 有 1 个执行中任务 | 卸载 | 允许卸载 + `running_task_count==1`；该任务最终 completed（不被打断） | 同上 `::test_uninstall_with_running_task` |
-| TC-P3-MK08-06 | 08 | 已安装（已授权②③⑤、有 settings） | 重复调 `POST /plugins/{id}/install` | **HTTP 200 + `already_installed=true`**（**不是 `16003`**）；`granted_capabilities[]` 与 `settings` **均不变**；审计仅 **1 条** `plugin.install`（证明「装」与「改授权」是两个动作） | `test_plugin_install.py::test_reinstall_is_idempotent_no_grant_change` |
+| TC-P3-MK08-06 | 08 | 已安装（已授权②③⑤、有 settings） | 重复调 `POST /plugins/{id}/install` | **HTTP 200 + `already_installed=true`**（字段恒有；**不是 `16003`**）；`granted_capabilities[]` 与 `settings` **均不变**；审计仅 **1 条** `plugin.install`（证明「装」与「改授权」是两个动作） | `test_plugin_install.py::test_reinstall_is_idempotent_no_grant_change` |
 | TC-P3-MK08-05 | 08 | 弹窗 | 禁用/卸载二次确认 | 禁用文案含「停用后工作台入口将不可用，已发起的任务会继续完成」；卸载含「历史任务记录会保留但不能再发起新任务」+「已生成的产物 180 天后清理」（3 条字符串断言） | 同上 `::test_confirm_dialog_consequences` |
 | TC-P3-MK09-01 | 09 | 已安装 | 同成员同插件提交 2 次 | 评价总数 **1** 条且内容为第二次；`rating_avg` 随更新重算 | `test_plugin_review.py::test_review_upsert` |
 | TC-P3-MK09-02 | 09 | 未安装用户 | 提交评价 | `E-13` + 文案「使用过这个插件才能评价」 | 同上 `::test_review_requires_installed` |
@@ -439,7 +451,7 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | --- | --- | --- | --- | --- | --- |
 | 01 PL 声明标准 | PL01-01~04 | **4** | 14 WF 历史与核查 | WF14-01~03 + E2E-DEV-04/CNT-04 | **5** |
 | 02 PL 运行时 | PL02-01~07 | **7** | 15 DEV 需求与方案 | DEV15-01~03 | **3** |
-| 03 PL 能力授权 | PL03-01~10 | **10** | 16 DEV 代码与用例 | DEV16-01~03 | **3** |
+| 03 PL 能力授权 | PL03-01~11 | **11** | 16 DEV 代码与用例 | DEV16-01~03 | **3** |
 | 04 PL 版本管理 | PL04-01~04 | **4** | 17 DEV 提交可核查 | DEV17-01~03 + E2E-DEV-01~03 | **6** |
 | 05 PL 开发文档 | PL05-01~03 | **3** | 18 CNT 素材与策划 | CNT18-01~04 | **4** |
 | 06 MK 市场浏览 | MK06-01~04 | **4** | 19 CNT 稿件与配图 | CNT19-01~03 + E2E-CNT-01 + WF12-05/06 | **6** |
@@ -449,9 +461,9 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | 10 MK 已安装管理 | MK10-01~02 | **2** | 23 HR Offer 与公文 | HR23-01~04 + E2E-HR-03/04 + WF12-07 | **7** |
 | 11 WF 进度时间线 | WF11-01~05 | **5** | 24 UI 宿主与入口 | UI24-01~04 | **4** |
 | 12 WF 产物展示 | WF12-01~04 | **4** | 25 UI 文案与合规 | UI25-01~03 + WF12-08 | **4** |
-| 13 WF 失败与重试 | WF13-01~04 | **4** | — | **合计（去重后）** | **116** |
+| 13 WF 失败与重试 | WF13-01~04 | **4** | — | **合计（去重后）** | **117** |
 
-> 去重说明：E2E 组 12 条在本表中**按服务对象归属到对应 P0**（每条只计一次），因此合计 = 矩阵中 4.1~4.7 的 104 条 + E2E 组 12 条 = **116**，与 §4.1~§4.8 的行数逐一对应。25 条 P0 全部 ≥2 条 ✓，P0 总数 **116 ≥ 60** ✓。
+> 去重说明：E2E 组 12 条在本表中**按服务对象归属到对应 P0**（每条只计一次），因此合计 = 按 PRD 条目 **105** 条 + 按 AC-02 结果物（E2E 专组）**12** 条 = **117**；与 §4.1~§4.8 的表格行数逐一对应（E2E 组 12 条只在所属 P0 行计一次，不在 4.8 重复计）。分层口径另见 §5.2：pytest **105**（单元 30 + 集成 75，其中集成含 E2E 12）+ 前端静态 **8** + 手工 **4** = **117**，两条轴（来源 / 分层）结论一致。25 条 P0 全部 ≥2 条 ✓，P0 总数 **117 ≥ 60** ✓。
 
 ### 4.10 非 P0 用例（22 条，不计入阶段门）
 
@@ -557,7 +569,7 @@ manifest 校验（8）、能力→端点映射与白名单（5）、状态机合
 | `apps/web/scripts/check-plugin-ui-assets.mjs` | 门禁 G-27 |
 | `apps/web/docs/qa-manual-checklist-phase3.md` | 手工 4 条 |
 
-> 合计核对：P0 单元 **30** + P0 集成 **74**（含 `pg` 18）= **104** 条 pytest（新增 `test_workflow_artifact_edit.py` 4 条、`test_plugin_install.py` +1）；另有前端静态断言 **8** 与手工抽验 **4**（脚本/走查单实现，同样计入 §1.3 的 **116** 条 P0）。另 22 条非 P0 散布于上述文件（单元 10 / 集成 10 / 手工 2）。原 `test_plugin_artifact_retention.py` 按裁定降级为 `tests/unit/test_artifact_retention.py` 的 2 条静态断言，已计入单元 30。
+> 合计核对：P0 单元 **30** + P0 集成 **75**（含 `pg` 18）= **105** 条 pytest（新增 `test_workflow_artifact_edit.py` 4 条、`test_plugin_install.py` +1）；另有前端静态断言 **8** 与手工抽验 **4**（脚本/走查单实现，同样计入 §1.3 的 **117** 条 P0）。另 22 条非 P0 散布于上述文件（单元 10 / 集成 10 / 手工 2）。原 `test_plugin_artifact_retention.py` 按裁定降级为 `tests/unit/test_artifact_retention.py` 的 2 条静态断言，已计入单元 30。
 
 ---
 
@@ -618,7 +630,7 @@ manifest 校验（8）、能力→端点映射与白名单（5）、状态机合
 
 | 项 | 门槛 |
 | --- | --- |
-| P0 用例 | **全绿**（**116** 条，0 failed / 0 skipped） |
+| P0 用例 | **全绿**（**117** 条，0 failed / 0 skipped） |
 | 覆盖率 | 总 **≥85%**、`business+db` **≥88%**、插件域新模块 **≥90%** |
 | 门禁 | **G-26~G-30** 全绿（含负样本自检），阶段二 G-01~G-25 相关项不回退；G-31 已移出本阶段（只留保留期静态断言） |
 | 回归 | 阶段二 1119 用例 0 failed / 0 skipped；core 30 + phase2 38 不变 |
@@ -627,7 +639,7 @@ manifest 校验（8）、能力→端点映射与白名单（5）、状态机合
 
 ### 7.4 阶段门 checklist
 
-① `pytest -q -m p0 --run-pg` → 0 failed / 0 skipped，p0 **≥116**；② 25 条 P0 各有 ≥2 条用例且全绿；③ **G-26~G-30** 全绿 + 各自 `--self-test` exit 1（G-31 已移出，改为保留期静态断言）；④ 三插件 E2E 12/12；⑤ 禁词/占位/插件资产三面 0 命中；⑥ 阶段二 1119 用例零回退；⑦ 覆盖率三项达标；⑧ 未验证项 V-1~V-7 已按 §10 披露。
+① `pytest -q -m p0 --run-pg` → 0 failed / 0 skipped，p0 **≥117**；② 25 条 P0 各有 ≥2 条用例且全绿；③ **G-26~G-30** 全绿 + 各自 `--self-test` exit 1（G-31 已移出，改为保留期静态断言）；④ 三插件 E2E 12/12；⑤ 禁词/占位/插件资产三面 0 命中；⑥ 阶段二 1119 用例零回退；⑦ 覆盖率三项达标；⑧ 未验证项 V-1~V-7 已按 §10 披露。
 
 ---
 
@@ -669,13 +681,13 @@ manifest 校验（8）、能力→端点映射与白名单（5）、状态机合
 | 批次 | 范围 | 本方案用例 | 出口判据（p0 累计） |
 | --- | --- | --- | --- |
 | **B16** | 声明模型 + 加载器 + 6 份 manifest + G-26 schema | PL01-01~04、PL05-01~03（**7**） | G-26 `--strict` 0 / `--self-test` 1；累计 **≥7** |
-| **B17** | 市场与安装（PL1-PL5 + PL13/**PL14**） | MK06-01~04、MK07-01~04、PL03-01~**10**、MK10-02（**19**） | G-28/G-30 绿；报错顺序 15001→16005→16006；PL14 改本人授权 + `required` 撤不掉 + 他人越权 + 幂等；累计 **≥26** |
-| **B18** | 生命周期（PL6-PL12） | PL02-01、MK08-01~**06**、PL04-01~04、MK09-01~04、MK10-01（**16**，含 `pg`） | 迁移幂等 + PL5 重复安装幂等；累计 **≥42** |
-| **B19** | 任务引擎 + A 域扩展 + 9 表（超时/排队/续跑/产物编辑/核查清单） | PL02-02~07、WF11-01~05、**WF12-01~08**、WF13-01~04、WF14-01~03（**26**） | 超时不丢产物；排队 `code=0`+`queued` 并自动转 running；**WF2 编辑版本+1/下载新版本/编辑后重跑脱敏**；累计 **≥68** |
-| **B20** | 三插件装配与降级矩阵（验收粒度拆两屏） | B20-1：DEV15~17 + E2E-DEV（**13**）<br>B20-2：CNT18~20 + HR21~23 + E2E-CNT/HR（**28**） | B20-1 → 累计 **≥81**；B20-2 → 累计 **≥109** |
-| **B21** | 端点基线与门禁（收口批次，不新增 p0） | —（G-29/G-30 + G3-10/G3-11 + 阶段二零回退） | 三基线 **30/38/16**（合计 84）；累计仍 **109** |
-| **B23** | 授权抽屉文案与 `16006` 提示（UI25 界面层复核） | **0**（复核 B17 的 MK06-04/PL03-05/PL03-07 界面层） | 前端门禁绿 + `16006` 文案与后端一致；累计仍 **109** |
-| **B24** | 宿主页唯一与三态（UI24/UI25） | UI24-01~04 + UI25-01~03（**7**） | 宿主组件唯一 + 三态齐备；**p0 116 全绿** |
+| **B17** | 市场与安装（PL1-PL5 + PL13/**PL14**） | MK06-01~04、MK07-01~04、PL03-01~**11**、MK10-02（**20**） | G-28/G-30 绿；报错顺序 15001→16005→16006；PL14 改本人授权 + `required` 撤不掉 + 他人越权 + 幂等 + **未安装改授权 → `16003`**；累计 **≥27** |
+| **B18** | 生命周期（PL6-PL12） | PL02-01、MK08-01~**06**、PL04-01~04、MK09-01~04、MK10-01（**16**，含 `pg`） | 迁移幂等 + PL5 重复安装幂等；累计 **≥43** |
+| **B19** | 任务引擎 + A 域扩展 + 9 表（超时/排队/续跑/产物编辑/核查清单） | PL02-02~07、WF11-01~05、**WF12-01~08**、WF13-01~04、WF14-01~03（**26**） | 超时不丢产物；排队 `code=0`+`queued` 并自动转 running；**WF2 编辑版本+1/下载新版本/编辑后重跑脱敏**；累计 **≥69** |
+| **B20** | 三插件装配与降级矩阵（验收粒度拆两屏） | B20-1：DEV15~17 + E2E-DEV（**13**）<br>B20-2：CNT18~20 + HR21~23 + E2E-CNT/HR（**28**） | B20-1 → 累计 **≥82**；B20-2 → 累计 **≥110** |
+| **B21** | 端点基线与门禁（收口批次，不新增 p0） | —（G-29/G-30 + G3-10/G3-11 + 阶段二零回退） | 三基线 **30/38/16**（合计 84）；累计仍 **110** |
+| **B23** | 授权抽屉文案与 `16006` 提示（UI25 界面层复核） | **0**（复核 B17 的 MK06-04/PL03-05/PL03-07 界面层） | 前端门禁绿 + `16006` 文案与后端一致；累计仍 **110** |
+| **B24** | 宿主页唯一与三态（UI24/UI25） | UI24-01~04 + UI25-01~03（**7**） | 宿主组件唯一 + 三态齐备；**p0 117 全绿** |
 
 > 每批结束都要跑「阶段二 1119 用例零回退」，不是只在 B21 跑。
 > **串号提醒**：超时/并发排队/停用拦截/直连拒绝属 **B19（任务引擎）**，不得写进 B16 的验收项——这正是主理人 2026-10-23 指出的协调缺陷，已在检查单 §5 第 9 条列为退回情形。
@@ -712,7 +724,7 @@ manifest 校验（8）、能力→端点映射与白名单（5）、状态机合
 
 1. **本方案不含「表现正常/体验良好」类不可断言判据**；每条期望都落到状态码/字段值/集合相等/计数/正则/字节数/注入时钟后的状态。
 2. **每道新门禁都给了负样本自检**（G-26 12 条、G-27 4 条、G-28 5 条、G-29 4 条），并明确「自检 exit 1 = 通过」的返回码约定；同时给正样本防「全判红」。
-3. **没有为了凑数把 P0 拆成多条**：116 条 P0 中 104 条按 PRD 条目（每条 P0 ≥2，最多 12）、12 条按 AC-02 结果物；§4.9 的合计与 §4.1~§4.8 的表格行数**逐条对得上**（104 + 12 = 116）。
+3. **没有为了凑数把 P0 拆成多条**：117 条 P0 中 105 条按 PRD 条目（每条 P0 ≥2，最多 12）、12 条按 AC-02 结果物；§4.9 的合计与 §4.1~§4.8 的表格行数**逐条对得上**（105 + 12 = 117）。
 
 ---
 

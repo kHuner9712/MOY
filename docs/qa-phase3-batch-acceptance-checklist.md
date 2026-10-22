@@ -23,21 +23,32 @@
 ### 0.1 通用门禁命令块（每批必跑，复制即用）
 
 ```bash
-PY="<python>"                 # 主仓 apps/adapter/.venv 解释器
-DSN="postgresql://officeai_app:***@127.0.0.1:55433/officeai"
-TREE="<导出目录>"              # git archive <SHA> | tar -x -C <导出目录>
+# ── 路径（架构已封版 16 端点，以下为真实路径，不再用占位符）──
+REPO="C:/Users/15864/Desktop/麦子"
+PY="$REPO/apps/adapter/.venv/Scripts/python.exe"
+TREE="$REPO/_qa/p3/<SHA>"          # 导出目录：git archive <SHA> | tar -x -C "$TREE"
+LOG="$REPO/_qa/p3/logs/<SHA>"       # 日志目录，先 mkdir -p
+DSN="postgresql://officeai_app:CHANGE_ME_APP_PASSWORD@127.0.0.1:55433/officeai"
+mkdir -p "$LOG"
 
+# ── 静态 / 测试（每条都重定向后单独取 $?，禁止管道）──
 cd "$TREE/apps/adapter"
-"$PY" -m ruff check .                        # G-01 期望 All checks passed
-"$PY" -m ruff format --check .               # G-02 期望 N files already formatted
-"$PY" -m mypy app                            # G-03 期望 Success: no issues found
-OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg -rxX           # G-04 期望 0 failed/0 skipped/0 xfail/0 xpass
-OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q -m p0 --run-pg          # G-24 期望 0 failed/0 skipped
-OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg --cov=app --cov-report=term   # G-05
-"$PY" -m coverage report --include="app/business/*,app/db/*"
-cd "$TREE" && "$PY" deploy/validate_openapi.py                          # G-29 期望 core=30 / phase2=38 / phase3 全实现
-cd "$TREE/apps/adapter" && "$PY" scripts/check_error_catalog.py --strict # G-30（与阶段二 G-13 同一脚本扩段）
+"$PY" -m ruff check .                                  > "$LOG/g01.log" 2>&1; echo "G-01 EXIT=$?"; tail -1 "$LOG/g01.log"
+"$PY" -m ruff format --check .                         > "$LOG/g02.log" 2>&1; echo "G-02 EXIT=$?"; tail -1 "$LOG/g02.log"
+"$PY" -m mypy app                                      > "$LOG/g03.log" 2>&1; echo "G-03 EXIT=$?"; tail -1 "$LOG/g03.log"
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg -rxX                > "$LOG/g04.log" 2>&1; echo "G-04 EXIT=$?"; tail -3 "$LOG/g04.log"
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q -m p0 --run-pg               > "$LOG/g24.log" 2>&1; echo "G-24 EXIT=$?"; tail -2 "$LOG/g24.log"
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest -q --run-pg --cov=app --cov-report=term > "$LOG/g05.log" 2>&1; echo "G-05 EXIT=$?"; grep "^TOTAL" "$LOG/g05.log"
+"$PY" -m coverage report --include="app/business/*,app/db/*"            > "$LOG/g05b.log" 2>&1; echo "G-05b EXIT=$?"; tail -1 "$LOG/g05b.log"
+
+# ── 契约 / 错误码 / 插件声明（部署脚本在 REPO 根）──
+"$PY" "$TREE/deploy/validate_openapi.py"                                  > "$LOG/g29.log" 2>&1; echo "G-29 EXIT=$?"; tail -2 "$LOG/g29.log"
+"$PY" "$TREE/apps/adapter/scripts/check_error_catalog.py" --strict        > "$LOG/g30.log" 2>&1; echo "G-30 EXIT=$?"; tail -1 "$LOG/g30.log"
+"$PY" "$TREE/deploy/validate_plugins.py"                                  > "$LOG/g26.log" 2>&1; echo "G-26 EXIT=$?"; tail -2 "$LOG/g26.log"
+"$PY" "$TREE/deploy/validate_plugins.py" --self-test                      > "$LOG/g26s.log" 2>&1; echo "G-26SELF EXIT=$? (期望 1)"; tail -2 "$LOG/g26s.log"
 ```
+
+> **退出码纪律（主理人 2026-10-23 抽验教训，强制）**：`cmd | tail -3; echo $?` 取到的是 **`tail` 的退出码（恒 0）**，会把「自检通过=1」误判成「永远绿」。**所有门禁必须重定向到日志后单独取 `$?`**；前端三个 `.mjs` 扫描器同理。**违反此纪律的输出一律视为无效证据（见 §5 第 10 条）。**
 
 ### 0.2 工程师自测证据包（缺项直接退回，不进验收）
 
@@ -48,16 +59,16 @@ cd "$TREE/apps/adapter" && "$PY" scripts/check_error_catalog.py --strict # G-30�
 | 批次 | 本批 p0 | 累计 p0 | 主要用例前缀 |
 | --- | --- | --- | --- |
 | B16 | 7 | 7 | PL01、PL05 |
-| B17 | **19** | **26** | MK06、MK07、PL03（含 **PL14** 的 3 条）、MK10-02 |
-| B18 | **16** | **42** | PL02-01、MK08（含 **PL5 重复安装**）、PL04、MK09、MK10-01 |
-| B19 | **26** | **68** | PL02-02~07、WF11、**WF12（含 WF2 编辑 4 条）**、WF13、WF14 |
-| **B20-1** | 13 | **81** | DEV15~17、E2E-DEV |
-| **B20-2** | 28 | **109** | CNT18~20、HR21~23、E2E-CNT/HR |
-| B21 | 0（门禁批次） | 109 | —（G-29/G-30 + G3-10/G3-11 + 阶段二零回退） |
-| **B23** | **0**（界面复核） | 109 | —（复核 MK06-04 / PL03-05 / PL03-07 的界面层） |
-| **B24** | **7** | **116** | UI24、UI25 |
+| B17 | **20** | **27** | MK06、MK07、PL03（含 **PL14** 的 4 条，其中 **PL03-11 = 未安装改授权**）、MK10-02 |
+| B18 | **16** | **43** | PL02-01、MK08（含 **PL5 重复安装**）、PL04、MK09、MK10-01 |
+| B19 | **26** | **69** | PL02-02~07、WF11、**WF12（含 WF2 编辑 4 条）**、WF13、WF14 |
+| **B20-1** | 13 | **82** | DEV15~17、E2E-DEV |
+| **B20-2** | 28 | **110** | CNT18~20、HR21~23、E2E-CNT/HR |
+| B21 | 0（门禁批次） | 110 | —（G-29/G-30 + G3-10/G3-11 + 阶段二零回退） |
+| **B23** | **0**（界面复核） | 110 | —（复核 MK06-04 / PL03-05 / PL03-07 的界面层） |
+| **B24** | **7** | **117** | UI24、UI25 |
 
-> 说明：B21 是**收口批次**，不新增 p0，验收对象是三基线（30/38/**16**，合计 84）、错误码一致性（含 `17002` 不外泄 + 内部码豁免）与阶段二零回退；**p0 116 全绿在 B24 收口**。B23 只做界面层复核（主理人已确认记 0 条新 p0，避免与 B17 重复计数）。
+> 说明：B21 是**收口批次**，不新增 p0，验收对象是三基线（30/38/**16**，合计 84）、错误码一致性（含 `17002` 不外泄 + 内部码豁免）与阶段二零回退；**p0 117 全绿在 B24 收口**。B23 只做界面层复核（主理人已确认记 0 条新 p0，避免与 B17 重复计数）。
 
 ---
 
@@ -80,17 +91,18 @@ cd "$TREE/apps/adapter" && "$PY" scripts/check_error_catalog.py --strict # G-30�
 | 7 | 文档 6 节齐全 | 声明字段表/能力枚举/输入规范/输出类型/界面规范/允许接口清单 | QA |
 | 8 | 文档与代码一致 | 「允许调用的接口」集合 **==** 代码端点集合（双向差集空） | QA |
 | 9 | 样例插件可跑 | 固定输入跑通 1 次任务，产物 ≥1，无人工参数注入 | QA |
-| 10 | G-26 可红 | `--self-test` **exit 1**（12 负样本全命中）；正样本 4 个判绿不误报 | QA |
+| 10 | G-26 可红 | `--self-test` **exit 1**（脚本内置 6 条全命中）+ 单测 6 类（合计 12 类）；**6 份真实 manifest 判绿不误报** | QA |
 
 **实跑命令**
 
 ```bash
 cd "$TREE/apps/adapter"
-"$PY" apps/plugins/tools/validate_manifests.py --strict
-"$PY" apps/plugins/tools/validate_manifests.py --self-test          # 期望 exit 1
-"$PY" -m pytest tests/unit/test_manifest_validation.py -q           # 8 条
-"$PY" -m pytest tests/integration/test_plugin_manifest_load.py -q
+"$PY" deploy/validate_plugins.py            > "$LOG/b16-g26.log" 2>&1; echo "G-26 EXIT=$?"; tail -2 "$LOG/b16-g26.log"
+"$PY" deploy/validate_plugins.py --self-test > "$LOG/b16-g26s.log" 2>&1; echo "G-26SELF EXIT=$? (期望 1)"; tail -2 "$LOG/b16-g26s.log"
+"$PY" -m pytest tests/unit/test_manifest_validation.py -q > "$LOG/b16-unit.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b16-unit.log"
+"$PY" -m pytest tests/integration/test_plugin_manifest_load.py -q > "$LOG/b16-int.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b16-int.log"
 ```
+> 说明：`validate_plugins.py` 默认扫 `apps/adapter/app/plugins/manifests`（**6 份**）；其 `--self-test` 内置 **6 条**负样本，另 6 类非法声明由 `tests/unit/test_manifest_validation.py` 覆盖（合计 12 类）。
 
 **通过判据**：10 项全过 + 通用门禁 + 累计 p0 ≥7。
 **常见退回原因**：① 只测合法声明，12 负样本漏检；② `--self-test` 返回 0（脚本不会报错）却当绿；③ 禁词只在渲染期拦，声明期放行；④ 文档接口清单写了代码里没有的端点；⑤ **把超时/排队写进本批**（应在 B19）。
@@ -100,7 +112,7 @@ cd "$TREE/apps/adapter"
 ## B17 市场与安装（PL1 列表 / PL2 详情 / PL3 已安装 / PL4 能力 / PL5 安装 / PL13 配置 / **PL14 改本人授权**）
 
 **范围**：市场浏览与详情、能力清单与逐项授权、安装（含企业开关）、已安装列表的「最近使用时间」。
-**用例**：`TC-P3-MK06-01~04`、`TC-P3-MK07-01~04`、`TC-P3-PL03-01~10`、`TC-P3-MK10-02`（**19 条 p0**）。
+**用例**：`TC-P3-MK06-01~04`、`TC-P3-MK07-01~04`、`TC-P3-PL03-01~11`、`TC-P3-MK10-02`（**20 条 p0**）。
 
 **准入**：能力→端点映射表已给定（G-28 输入）；错误码 `16001-16006` 已分配并三处同步；市场分类枚举与 6 份 manifest 对齐。
 
@@ -119,22 +131,23 @@ cd "$TREE/apps/adapter"
 | 11 | 撤销 ≤5s | 撤销②→立即调用 `16005`；恢复后 retry 成功；TTL 边界用注入时钟验证 | QA |
 | 12 | **报错顺序（新口径）** | 同时满足「套餐不支持 / 未授权 / 企业策略关闭」时，返回顺序 **`15001` → `16005` → `16006`**；三者 CTA 不同（升级套餐 / 重新授权 / 找管理员） | QA |
 | 13 | 企业开关（两处都断言） | ①**PL1 顶层含 `org_capabilities` 且恰好 3 项**（`{capability_key, org_switch_enabled}`）；②**PL4 逐插件 6 项**且每项含 `org_switch_enabled`；③`false` → 安装失败 + `16006`；④`true` → 成功且 `granted_capabilities` 含⑤；⑤两次表现必须不同 | QA |
-| 14 | **PL14 改本人授权** | `PUT /plugins/{id}/grants` 改本人（撤③加④）：响应 `granted_capabilities[]`/`denied_capabilities[]`/`required_capabilities[]` 与请求一致 | QA |
+| 14 | **PL14 改本人授权** | `PUT /plugins/{id}/grants` 改本人（撤③加④）：响应三个数组与请求一致；**审计留 1 条 `plugin.capability_grant`**（未安装直调 `16003` 的口径在 B18 第 1 项） | QA |
 | 15 | **PL14 幂等** | 同 `Idempotency-Key` 重复提交 → 结果收敛（授权状态不变、审计仅 1 条） | QA |
 | 16 | **PL14 两条反例** | ①撤 `required=true` → 失败（`16005` 语义）且授权不变；②用 A 的 token 改 B 的授权 → 越权拒绝（`20003` 语义）且双方授权均不变 | QA |
 | 17 | 最近使用时间 | `last_used_at` == 最近一次任务 `created_at`；无任务为 `null` 且页面「尚未使用」 | QA |
 | 18 | G-30 可红 | `--strict` exit 0；删 1 条前端映射 → exit 非 0；`16001` 未被复用 | QA |
+| 19 | **PL14 未安装时改授权（补齐 PL14）** | `PUT /plugins/{id}/grants` 对未安装插件 → **`16003`**（不是 `16004`、不是成功）；② `plugin_grant` **无新增行**；③ 审计**无** `plugin.capability_grant` 事件（三条缺一不算覆盖） | QA |
 
 **实跑命令**
 
 ```bash
 cd "$TREE/apps/adapter"
-"$PY" -m pytest tests/integration/test_plugin_market.py tests/integration/test_plugin_detail.py -q
-"$PY" -m pytest tests/integration/test_plugin_authz.py -q   # 含 PL14 三条
+"$PY" -m pytest tests/integration/test_plugin_market.py tests/integration/test_plugin_detail.py -q > "$LOG/b17-market.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b17-market.log"
+"$PY" -m pytest tests/integration/test_plugin_authz.py -q   # 含 PL14 四条（08/09/10/11） > "$LOG/b17-authz.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b17-authz.log"
 "$PY" scripts/check_error_catalog.py --strict
 ```
 
-**通过判据**：**18 项**全过 + 通用门禁 + 累计 p0 **≥26**。
+**通过判据**：**19 项**全过 + 通用门禁 + 累计 p0 **≥27**。
 **常见退回原因**：① `16005`/`16006` 合并成一个码；② 报错顺序反了（用户被引到错误出路）；③ 撤销后仍可调用；④ 前端硬编码开关为 `true`（第 13 项必须两次表现不同）；⑤ 市场数量硬编码 6。
 
 ---
@@ -142,14 +155,14 @@ cd "$TREE/apps/adapter"
 ## B18 生命周期（PL6 状态 / PL7 卸载 / PL8 升级 / PL9 回退 / PL10 配置 / PL11-12 评价）
 
 **范围**：安装即启用、启停、卸载保留历史、版本升级与恢复上一版本、评价 upsert。
-**用例**：`TC-P3-PL02-01`（未安装即改状态 → **`16003`**）、`TC-P3-MK08-01~06`、`TC-P3-PL04-01~04`、`TC-P3-MK09-01~04`、`TC-P3-MK10-01`（**16 条 p0**）。
+**用例**：`TC-P3-PL02-01`（未安装即改状态 PL6 → `16003`；PL14 的未安装直调归 B17 第 19 项）、`TC-P3-MK08-01~06`、`TC-P3-PL04-01~04`、`TC-P3-MK09-01~04`、`TC-P3-MK10-01`（**16 条 p0**）。
 
 **准入**：安装表与版本快照表的唯一约束已落迁移；步骤定义随版本存档方案已定。
 
 | # | 验收项 | 判据 | 谁跑 |
 | --- | --- | --- | --- |
-| 1 | 未安装不可改状态 | `PATCH state` → **`16003`**（该码只用于「未安装却调 PL6/PL7/PL8/PL9/PL10/PL12」）；`GET installed` 不含（无隐式创建） | QA |
-| 2 | 安装即启用 | 安装后 `status=enabled`（不断言 `installed` 中间态） | QA |
+| 1 | 未安装不可改状态（PL6） | `PATCH state` → **`16003`**（「该插件还没有添加」）；`GET installed` 不含（无隐式创建）。**PL14 的未安装直调口径在 B17 第 19 项**，本项不重复判 | QA |
+| 2 | 安装即启用 + `already_installed` 恒有 | 安装后 `status=enabled`（不断言 `installed` 中间态）；**首次安装响应含 `already_installed=false`**（字段常驻，不得只在重复时出现） | QA |
 | 3 | 启停往返 | `disabled` → `enabled`；禁用后宿主页置灰 + 文案 | QA |
 | 4 | 卸载保留历史 | `GET installed` 不含；历史任务仍可查且详情可打开（只读） | QA |
 | 5 | 卸载时有在跑任务 | 允许卸载 + `running_task_count==1`；任务最终 completed | QA |
@@ -169,12 +182,12 @@ cd "$TREE/apps/adapter"
 
 ```bash
 cd "$TREE/apps/adapter"
-OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_lifecycle.py -q --run-pg
-OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_version.py tests/integration/test_plugin_review.py -q --run-pg
-OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_isolation.py -q --run-pg
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_lifecycle.py -q --run-pg > "$LOG/b18-life.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b18-life.log"
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_version.py tests/integration/test_plugin_review.py -q --run-pg > "$LOG/b18-ver.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b18-ver.log"
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_isolation.py -q --run-pg > "$LOG/b18-iso.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b18-iso.log"
 ```
 
-**通过判据**：**16 项**全过 + 通用门禁 + 累计 p0 **≥42**。
+**通过判据**：**16 项**全过 + 通用门禁 + 累计 p0 **≥43**。
 **常见退回原因**：① 卸载级联删历史任务；② 升级后用当前模板渲染历史任务（第 10 项）；③ 连点升级产生两条版本记录；④ `last_used_at` 用 `updated_at`；⑤ 内存后端绿但 `pg` 唯一约束缺失。
 
 ---
@@ -220,14 +233,14 @@ OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_isolat
 
 ```bash
 cd "$TREE/apps/adapter"
-OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_lifecycle.py -q --run-pg -k "queue or timeout or disabled"
-"$PY" -m pytest tests/integration/test_workflow_progress.py tests/integration/test_workflow_artifacts.py -q
-"$PY" -m pytest tests/integration/test_workflow_retry.py tests/integration/test_workflow_history.py -q
-"$PY" -m pytest tests/unit/test_artifact_retention.py -q
-OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_migrate.py -q --run-pg
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_plugin_lifecycle.py -q --run-pg -k "queue or timeout or disabled" > "$LOG/b19-life.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b19-life.log"
+"$PY" -m pytest tests/integration/test_workflow_progress.py tests/integration/test_workflow_artifacts.py -q > "$LOG/b19-wf1.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b19-wf1.log"
+"$PY" -m pytest tests/integration/test_workflow_retry.py tests/integration/test_workflow_history.py -q > "$LOG/b19-wf2.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b19-wf2.log"
+"$PY" -m pytest tests/unit/test_artifact_retention.py -q > "$LOG/b19-ret.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b19-ret.log"
+OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_migrate.py -q --run-pg > "$LOG/b19-mig.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b19-mig.log"
 ```
 
-**通过判据**：**25 项**全过 + 通用门禁 + 累计 p0 **≥68**。
+**通过判据**：**25 项**全过 + 通用门禁 + 累计 p0 **≥69**。
 **常见退回原因**：① 超时把已完成产物一起清空（第 2 项）；② 第 4 个任务返回 429（违反 ADJ-1）；③ 排队任务不自动启动（第 4 项）；④ 步骤失败返回非 0 `code`（前端整屏报错，违反 FLOW-04）；⑤ 重试把前序步骤重跑；⑥ 产物挂任务级而非步骤级；⑦ 核查清单用 `in` 而不是 `==`。
 
 ---
@@ -287,16 +300,16 @@ OA_TEST_DATABASE_URL="$DSN" "$PY" -m pytest tests/integration/test_migrate.py -q
 ```bash
 cd "$TREE/apps/adapter"
 # B20-1
-"$PY" -m pytest tests/integration/test_dev_workbench.py -q
-"$PY" -m pytest tests/integration/test_dev_commit_e2e.py -q -m e2e
+"$PY" -m pytest tests/integration/test_dev_workbench.py -q > "$LOG/b20-dev.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b20-dev.log"
+"$PY" -m pytest tests/integration/test_dev_commit_e2e.py -q -m e2e > "$LOG/b20-dev-e2e.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b20-dev-e2e.log"
 # B20-2
-"$PY" -m pytest tests/integration/test_content_workbench.py tests/integration/test_content_schedule.py -q
-"$PY" -m pytest tests/integration/test_hr_screening.py tests/integration/test_hr_interview.py tests/integration/test_hr_offer_docs.py -q
-"$PY" -m pytest tests/integration/test_plugin_e2e_content.py tests/integration/test_plugin_e2e_hr.py -q -m e2e
+"$PY" -m pytest tests/integration/test_content_workbench.py tests/integration/test_content_schedule.py -q > "$LOG/b20-cnt.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b20-cnt.log"
+"$PY" -m pytest tests/integration/test_hr_screening.py tests/integration/test_hr_interview.py tests/integration/test_hr_offer_docs.py -q > "$LOG/b20-hr.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b20-hr.log"
+"$PY" -m pytest tests/integration/test_plugin_e2e_content.py tests/integration/test_plugin_e2e_hr.py -q -m e2e > "$LOG/b20-e2e.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b20-e2e.log"
 cd "$TREE" && node apps/web/scripts/check-plugin-ui-assets.mjs --self-test   # 期望 exit 1
 ```
 
-**通过判据**：B20-1 13 项（累计 **≥76**）+ B20-2 18 项（累计 **≥104**）全过 + 通用门禁。
+**通过判据**：B20-1 13 项（累计 **≥77**）+ B20-2 18 项（累计 **≥105**）全过 + 通用门禁。
 **常见退回原因**：① 只在桩里「假装提交」，bare 仓库无对象；② 抽样只断言「非空」而非逐字节；③ 未确认就能提交（接管点形同虚设）；④ 未接入平台造假回执；⑤ **金额扫描扫到简历筛选产物**，把合法的「待定」误判为违规；⑥ 缺能力时整个任务失败而非单步降级。
 
 ---
@@ -304,7 +317,7 @@ cd "$TREE" && node apps/web/scripts/check-plugin-ui-assets.mjs --self-test   # �
 ## B21 端点基线与门禁（收口批次，不新增 p0）
 
 **范围**：三段基线（core 30 / phase2 38 / **phase3 16**）、错误码三处一致（含 `17002` 不外泄 + 内部码豁免）、docx 依赖与插件纯净、前端五门禁、阶段二零回退。
-**p0**：0（本批只做门禁与回归；**p0 116 全绿在 B24 收口**）。
+**p0**：0（本批只做门禁与回归；**p0 117 全绿在 B24 收口**）。
 
 **准入**：所有后端批次已合入；`docs/api/README.md` 与基线 JSON 已同步；前端已构建。
 
@@ -323,11 +336,19 @@ cd "$TREE" && node apps/web/scripts/check-plugin-ui-assets.mjs --self-test   # �
 **实跑命令**
 
 ```bash
-cd "$TREE" && "$PY" deploy/validate_openapi.py
-cd "$TREE/apps/adapter" && "$PY" scripts/check_error_catalog.py --strict
-cd "$TREE/apps/web" && npm run typecheck && npm run lint && npm run build
-node scripts/check-banned-terms.mjs && node scripts/check-banned-terms.mjs --self-test
-node scripts/check-no-placeholders.mjs && node scripts/check-page-states.mjs
+"$PY" "$TREE/deploy/validate_openapi.py"                           > "$LOG/b21-openapi.log" 2>&1; echo "G-29 EXIT=$?"; tail -2 "$LOG/b21-openapi.log"
+"$PY" "$TREE/apps/adapter/scripts/check_error_catalog.py" --strict > "$LOG/b21-catalog.log" 2>&1; echo "G-30 EXIT=$?"; tail -1 "$LOG/b21-catalog.log"
+"$PY" "$TREE/deploy/validate_plugins.py" --self-test               > "$LOG/b21-g26s.log" 2>&1; echo "G-26SELF EXIT=$? (期望 1)"; tail -1 "$LOG/b21-g26s.log"
+cd "$TREE/apps/web"
+npm run typecheck        > "$LOG/b21-tsc.log" 2>&1;   echo "TSC EXIT=$?";   tail -2 "$LOG/b21-tsc.log"
+npm run lint             > "$LOG/b21-lint.log" 2>&1;  echo "LINT EXIT=$?";  tail -2 "$LOG/b21-lint.log"
+npm run build            > "$LOG/b21-build.log" 2>&1; echo "BUILD EXIT=$?"; tail -2 "$LOG/b21-build.log"
+node scripts/check-banned-terms.mjs                > "$LOG/b21-banned.log" 2>&1;   echo "BANNED EXIT=$?";   tail -2 "$LOG/b21-banned.log"
+node scripts/check-banned-terms.mjs --self-test    > "$LOG/b21-banneds.log" 2>&1;  echo "BANNED_SELF EXIT=$? (期望 1)"; tail -2 "$LOG/b21-banneds.log"
+node scripts/check-no-placeholders.mjs             > "$LOG/b21-ph.log" 2>&1;      echo "PLACEHOLDER EXIT=$?"; tail -2 "$LOG/b21-ph.log"
+node scripts/check-page-states.mjs                 > "$LOG/b21-states.log" 2>&1;  echo "STATES EXIT=$?"; tail -2 "$LOG/b21-states.log"
+node scripts/check-plugin-contract.mjs             > "$LOG/b21-contract.log" 2>&1; echo "CONTRACT EXIT=$?"; tail -2 "$LOG/b21-contract.log"
+node scripts/check-plugin-contract.mjs --self-test > "$LOG/b21-contracts.log" 2>&1; echo "CONTRACT_SELF EXIT=$? (期望 1)"; tail -2 "$LOG/b21-contracts.log"
 ```
 
 **通过判据**：**9 项**全过；任一红即 B21 不通过（本批没有「部分通过」）。
@@ -339,7 +360,7 @@ node scripts/check-no-placeholders.mjs && node scripts/check-page-states.mjs
 
 **范围**：免费版市场的降级表现、授权抽屉文案、`16006` 提示与后端一致性。
 **用例**：**0 条新 p0** —— 这三条是对 B17 已过用例的**界面层复核**（后端断言在 B17，界面文案在 B23），**不重复计 p0**，累计仍 104。
-> 口径说明（主理人 2026-10-23 已确认）：B23 三项分别对应 `MK06-04`、`PL03-05`、`PL03-07` 的**界面层**断言，按「复核」处理，**记 0 条新 p0**（后端断言属 B17），累计从 109 起算。
+> 口径说明（主理人 2026-10-23 已确认）：B23 三项分别对应 `MK06-04`、`PL03-05`、`PL03-07` 的**界面层**断言，按「复核」处理，**记 0 条新 p0**（后端断言属 B17），累计从 110 起算。
 
 | # | 验收项 | 判据 | 谁跑 |
 | --- | --- | --- | --- |
@@ -351,8 +372,8 @@ node scripts/check-no-placeholders.mjs && node scripts/check-page-states.mjs
 
 ```bash
 cd "$TREE/apps/web"
-node scripts/check-banned-terms.mjs --p3-authz-drawer    # 抽屉文案禁词
-node scripts/check-page-states.mjs --p3-plugins-page     # 免费版降级不是错误态
+node scripts/check-banned-terms.mjs --p3-authz-drawer  > "$LOG/b23-drawer.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b23-drawer.log"
+node scripts/check-page-states.mjs --p3-plugins-page   > "$LOG/b23-freeplan.log" 2>&1; echo "EXIT=$?"; tail -2 "$LOG/b23-freeplan.log"
 ```
 
 **通过判据**：3 项全过；p0 累计**仍 109**（本批不计 p0）。
@@ -374,7 +395,7 @@ node scripts/check-page-states.mjs --p3-plugins-page     # 免费版降级不是
 | 6 | 插件资产 0 | `.css/.scss/.less/.jsx/.tsx` = 0；字体图标包 = 0；`--self-test` exit 1 |
 | 7 | 手工抽验 HV-5~8 | 各 3 次重复一致，留证齐全（抽样规则见测试方案 §4.11） |
 
-**通过判据**：7 项全过 + **p0 116 全绿** + 阶段二 1119 零回退。
+**通过判据**：7 项全过 + **p0 117 全绿** + 阶段二 1119 零回退。
 
 ---
 
@@ -391,6 +412,7 @@ node scripts/check-page-states.mjs --p3-plugins-page     # 免费版降级不是
 | 7 | 验收项只写「已实现/正常」，无「可断言证据」 | 该项按未通过计 |
 | 8 | 自测证据包缺项（§0.2 六项之一） | 退回补证，合规后重新排期 |
 | 9 | **批次内容串号**（如把 B19 的超时/排队写进 B16） | 退回重报，避免「我说过了、你说没过」的扯皮 |
+| 10 | **用管道取门禁退出码**（`cmd \| tail -n; echo $?`）或未附「EXIT=」原始行 | 该证据视为无效，按未跑处理（易把「自检=1」误判成「恒绿」） |
 
 ---
 
@@ -399,14 +421,14 @@ node scripts/check-page-states.mjs --p3-plugins-page     # 免费版降级不是
 | 批次 | 用例前缀 | 条数 | 累计 |
 | --- | --- | --- | --- |
 | B16 | PL01、PL05 | 7 | 7 |
-| B17 | MK06、MK07、PL03（含 PL14）、MK10-02 | 19 | 26 |
-| B18 | PL02-01、MK08（含 PL5 重复安装）、PL04、MK09、MK10-01 | 16 | 42 |
-| B19 | PL02-02~07、WF11、WF12（含 WF2）、WF13、WF14 | 26 | 68 |
-| B20-1 | DEV15~17、E2E-DEV | 13 | 81 |
-| B20-2 | CNT18~20、HR21~23、E2E-CNT/HR | 28 | 109 |
-| B21 | —（门禁批次，含 G3-10/G3-11） | 0 | 109 |
-| B23 | —（界面复核，不新增 p0） | 0 | 109 |
-| B24 | UI24、UI25 | 7 | **116** |
+| B17 | MK06、MK07、PL03（含 PL14 含 PL03-11）、MK10-02 | 20 | 27 |
+| B18 | PL02-01、MK08（含 PL5 重复安装）、PL04、MK09、MK10-01 | 16 | 43 |
+| B19 | PL02-02~07、WF11、WF12（含 WF2）、WF13、WF14 | 26 | 69 |
+| B20-1 | DEV15~17、E2E-DEV | 13 | 82 |
+| B20-2 | CNT18~20、HR21~23、E2E-CNT/HR | 28 | 110 |
+| B21 | —（门禁批次，含 G3-10/G3-11） | 0 | 110 |
+| B23 | —（界面复核，不新增 p0） | 0 | 110 |
+| B24 | UI24、UI25 | 7 | **117** |
 
 ---
 
