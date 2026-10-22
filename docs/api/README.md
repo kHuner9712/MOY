@@ -75,6 +75,12 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 > 合计 **84 个业务端点**（30 冻结 + 38 阶段二 + 16 阶段三）。基线文件：
 > `docs/api/baseline-phase3-16.json`（**文件名即域内冻结总数 16**，逐个登记已实现端点；
 > B17 登记 6 条、B18 追加 8 条、B19 追加 WF1/WF2 → 16/16 收口）。
+> **非业务端点（不计入基线）**：`GET /files/artifacts/{token}` —— 产物内容代理。
+> 它**不挂 `/api/v1`**、不参与 `PHASE3_DOMAIN_ENDPOINTS` 计数：无 JSON 信封、无业务
+> 语义、无版本化契约，只是把产物字节按签名令牌吐出去（令牌自带租户 + 产物 + 版本并经
+> HMAC 签名，所以不需要登录态）。把它挂进 `/api/v1` 会让「16 条冻结端点」这个对 QA 与
+> 客户的承诺失去意义——审计看到未登记路径时，请对照这一条。
+>
 > 另 **4 处 A 域加性扩展**（A1/A2/A3/A4）不新增端点数，只加可选字段与枚举加宽，
 > 由 G4 加性 diff 逐项覆盖（`baseline-core-30.json` 与 `baseline-phase2-38.json`
 > **一个字节不改**，CI 另有 hash 断言）。

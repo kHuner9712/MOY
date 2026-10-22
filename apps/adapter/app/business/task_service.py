@@ -316,7 +316,7 @@ class TaskService:
 
         if copy_steps_from is not None and from_step > 1:
             await self._replay_prior_steps(record, copy_steps_from, manifest)
-        await self._advance(record.task_id)
+        await self._advance_record(record)
         latest = await self._tasks.get_task(auth.tenant_id, task_id) or record
         data = await self._create_data(latest, manifest)
         return data
@@ -346,29 +346,6 @@ class TaskService:
     # ------------------------------------------------------------------
     # 推进（唯一状态机入口）
     # ------------------------------------------------------------------
-    async def _advance(self, task_id: str) -> None:
-        """推进任务到终态 / `waiting_confirm`（一次调用跑到底）。
-
-        Args:
-            task_id: 任务 ID。
-        """
-        record = await self._tasks.get_task(self._tenant_of(task_id), task_id)
-        if record is None:  # pragma: no cover - 调用方总是先取到记录
-            return
-        await self._advance_record(record)
-
-    def _tenant_of(self, task_id: str) -> str:
-        """从任务 ID 无法反推租户，占位返回空串（调用方应直接用记录）。
-
-        Args:
-            task_id: 任务 ID。
-
-        Returns:
-            str: 空串（`_advance_record` 才是主路径）。
-        """
-        del task_id
-        return ""
-
     async def _advance_record(self, record: TaskRecord) -> None:
         """按记录推进任务（内部主流程）。
 
