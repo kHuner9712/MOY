@@ -70,10 +70,8 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {
         "id": "P3-B18-04",
         "level": "P2",
-        "status": "open",
+        "status": "fixed",  # dd28d13：orphans/aliased 可见化 + --prune-orphans + 0002 别名映射
         "pinned_by": "test_real_postgres_migration_is_idempotent",
-        "due_batch": "B19c",
-        "due_action": "--prune-orphans + 0002 别名映射（B19c 孤儿治理）",
     },
 )
 
