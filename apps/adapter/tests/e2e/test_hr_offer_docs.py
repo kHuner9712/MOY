@@ -2,10 +2,16 @@
 
 | 用例 | 计划编号 | 判定点 |
 | --- | --- | --- |
-| `test_amount_fields_empty` | TC-P3-HR23-01 / E2E-HR-03 ① | 三个金额字段 `== ""`（`null` / `0` / 「面议」/「待定」均判失败） |
-| `test_no_fabricated_amount` | TC-P3-HR23-02 / E2E-HR-03 ②③④⑤ | R1/R2 0 命中；正样本必红；豁免项不计；**扫描范围只含 offer** |
-| `test_export_blocked_without_salary` | TC-P3-HR23-03 | 金额位置写「面议」→ 被拦 + **不产生文件**（offer 产物不落库） |
-| `test_four_doc_types_exportable` | TC-P3-HR23-04 / E2E-HR-04 | 4 类公文各 1 篇；`.docx` 可被 `python-docx` 打开且段落 > 0 |
+- **`test_amount_fields_empty`**（TC-P3-HR23-01 / E2E-HR-03 ①）：三个金额字段 `== ""`（`null` /
+`0` /
+  「面议」/「待定」均判失败）
+- **`test_no_fabricated_amount`**（TC-P3-HR23-02 / E2E-HR-03 ②③④⑤）：R1/R2 0 命中；正样本必红；
+豁免项不计；扫描范围只含
+  offer
+| `test_export_blocked_without_salary` | TC-P3-HR23-03 | 金额位置写「面议」→ 被拦 +
+**不产生文件**（offer 产物不落库） |
+- **`test_four_doc_types_exportable`**（TC-P3-HR23-04 / E2E-HR-04）：4 类公文各 1 篇；`.docx` 可被
+  `python-docx` 打开且段落 > 0
 
 **金额规则用的是平台自己那份实现**（`app.plugins.engine.scan_offer_amount` 与
 `sanitizer` 的豁免规则），不是测试另写一份——判据与护栏同源，才能保证
@@ -299,9 +305,9 @@ async def test_four_doc_types_exportable(
         assert document.content_sha256, f"② 「{doc_type}」必须记录内容摘要"
 
         items = checklist_map(detail)
-        assert [items[key]["name"] for key in ("jd", "screening", "outlines", "document")] == names, (
-            "④ 核查项名称必须与声明逐字相等"
-        )
+        assert [
+            items[key]["name"] for key in ("jd", "screening", "outlines", "document")
+        ] == names, "④ 核查项名称必须与声明逐字相等"
         states = {key: value["status"] for key, value in items.items()}
         assert all(state == "checked" for state in states.values()), (
             f"④ 「{doc_type}」应全部 checked：{states}"

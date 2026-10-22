@@ -4,9 +4,13 @@
 
 | 用例 | 计划编号 | 判定点 |
 | --- | --- | --- |
-| `test_schedule_table_and_csv` | TC-P3-CNT20-01 / E2E-CNT-02 | 表头逐字等于 [平台, 标题, 计划时间, 状态]；行数 == 稿件数；导出 CSV 逐行与页面一致 |
-| `test_publish_receipt_and_manual_pending` | TC-P3-CNT20-03 / E2E-CNT-03 | 公众号 `已发布` + `receipt_id` 非空；小红书 `待人工发布` + 稿件下载 200 且非空 |
-| `test_past_schedule_rejected` | TC-P3-CNT20-02 | 计划时间在过去 → 该步失败并指出冲突行；改时间后重试本步成功且**不重跑步骤 3** |
+- **`test_schedule_table_and_csv`**（TC-P3-CNT20-01 / E2E-CNT-02）：表头逐字等于 [平台, 标题,
+计划时间, 状态]；行数 ==
+  稿件数；导出 CSV 逐行与页面一致
+- **`test_publish_receipt_and_manual_pending`**（TC-P3-CNT20-03 / E2E-CNT-03）：公众号 `已发布` +
+  `receipt_id` 非空；小红书 `待人工发布` + 稿件下载 200 且非空
+| `test_past_schedule_rejected` | TC-P3-CNT20-02 | 计划时间在过去 → 该步失败并指出冲突行；
+改时间后重试本步成功且**不重跑步骤 3** |
 
 **这份 CSV 不是拼出来的字符串**：桩只提供"三个平台各一篇"的输入，CSV 由平台的
 `FileRenderer.render_csv`（真实现，带 BOM）渲染，落库后由排期护栏
@@ -27,8 +31,8 @@ from tests.e2e.conftest import (
     ORG_CAPABILITIES,
     SCHEDULE_COLUMNS,
     STUB_RECEIPT_ID,
-    artifacts_by_key,
     artifact_download_url,
+    artifacts_by_key,
     build_content_script,
     checklist_map,
     create_task,
@@ -272,9 +276,7 @@ async def test_past_schedule_rejected(
     assert len(rows) == len(CHANNELS), f"④ 修好后仍应是 {len(CHANNELS)} 行，实际 {len(rows)}"
 
 
-async def _download(
-    client: AsyncClient, settings: Any, record: Any
-) -> tuple[int, bytes]:
+async def _download(client: AsyncClient, settings: Any, record: Any) -> tuple[int, bytes]:
     """按产物行下载内容。
 
     Args:

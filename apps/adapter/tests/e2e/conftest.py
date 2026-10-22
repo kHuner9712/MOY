@@ -301,9 +301,7 @@ class BareRepo:
             else f"040000 tree {tree}\t{parts[0]}\n"
         )
         root = self._git_stdin("mktree", stdin=entries).strip()
-        commit = self._git_stdin(
-            "commit-tree", root, "-p", base, "-m", message, stdin=None
-        ).strip()
+        commit = self._git_stdin("commit-tree", root, "-p", base, "-m", message, stdin=None).strip()
         self._git("update-ref", "refs/heads/main", commit)
         return commit
 
@@ -438,9 +436,7 @@ class CorpusActionGateway:
             raise ValueError(f"action={action} not in whitelist")
         return f"corpus.{action}"
 
-    async def invoke(
-        self, ctx: RunContext, action: str, params: dict[str, Any]
-    ) -> ActionResult:
+    async def invoke(self, ctx: RunContext, action: str, params: dict[str, Any]) -> ActionResult:
         """执行一个原语（先记流水，再按脚本应答）。
 
         Args:
@@ -515,7 +511,12 @@ def _dev_step1(ctx: RunContext, params: dict[str, Any], script: GatewayScript) -
         ActionResult: 成功结果。
     """
     del ctx, script
-    text = "要点,说明\n导出入口,列表页需要一个导出按钮\n导出范围,导出当前筛选结果\n兼容性,不改变现有列表行为"
+    text = (
+        "要点,说明\n"
+        "导出入口,列表页需要一个导出按钮\n"
+        "导出范围,导出当前筛选结果\n"
+        "兼容性,不改变现有列表行为"
+    )
     return _text_artifacts(params, text, artifact_type="table")
 
 
@@ -652,9 +653,7 @@ def build_dev_script(repo: BareRepo) -> GatewayScript:
 # ===========================================================================
 # 内容运营（plg_content_ops）语料
 # ===========================================================================
-def _content_step1(
-    ctx: RunContext, params: dict[str, Any], script: GatewayScript
-) -> ActionResult:
+def _content_step1(ctx: RunContext, params: dict[str, Any], script: GatewayScript) -> ActionResult:
     """步骤 1「检索素材」：三条带来源的要点。
 
     Args:
@@ -674,9 +673,7 @@ def _content_step1(
     return _text_artifacts(params, text, artifact_type="table")
 
 
-def _content_step2(
-    ctx: RunContext, params: dict[str, Any], script: GatewayScript
-) -> ActionResult:
+def _content_step2(ctx: RunContext, params: dict[str, Any], script: GatewayScript) -> ActionResult:
     """步骤 2「选题策划」。
 
     Args:
@@ -689,15 +686,12 @@ def _content_step2(
     """
     del ctx, script
     text = (
-        "选题,标题\n安装避坑,三分钟装机指南\n新品亮点,新品上手第一课\n"
-        "客服答疑,装机常见问题一次讲清"
+        "选题,标题\n安装避坑,三分钟装机指南\n新品亮点,新品上手第一课\n客服答疑,装机常见问题一次讲清"
     )
     return _text_artifacts(params, text, artifact_type="table")
 
 
-def _content_step3(
-    ctx: RunContext, params: dict[str, Any], script: GatewayScript
-) -> ActionResult:
+def _content_step3(ctx: RunContext, params: dict[str, Any], script: GatewayScript) -> ActionResult:
     """步骤 3「生成稿件」：三个平台各一篇（平台互不相同）。
 
     Args:
@@ -717,9 +711,7 @@ def _content_step3(
     return _text_artifacts(params, "\n\n".join(body))
 
 
-def _content_step4(
-    ctx: RunContext, params: dict[str, Any], script: GatewayScript
-) -> ActionResult:
+def _content_step4(ctx: RunContext, params: dict[str, Any], script: GatewayScript) -> ActionResult:
     """步骤 4「配图建议」。
 
     Args:
@@ -735,9 +727,7 @@ def _content_step4(
     return _text_artifacts(params, text)
 
 
-def _content_step5(
-    ctx: RunContext, params: dict[str, Any], script: GatewayScript
-) -> ActionResult:
+def _content_step5(ctx: RunContext, params: dict[str, Any], script: GatewayScript) -> ActionResult:
     """步骤 5「安排发布排期」：用**真渲染器**出 4 列 CSV。
 
     排期表不是"随便拼字符串"：这里调用平台自己的 `ArtifactSanitizer.render_file`
@@ -781,9 +771,7 @@ def _content_step5(
     )
 
 
-def _content_step6(
-    ctx: RunContext, params: dict[str, Any], script: GatewayScript
-) -> ActionResult:
+def _content_step6(ctx: RunContext, params: dict[str, Any], script: GatewayScript) -> ActionResult:
     """步骤 6「发布」：已接入平台给回执，未接入平台如实标「待人工发布」。
 
     Args:
@@ -985,7 +973,7 @@ def _hr_step3(ctx: RunContext, params: dict[str, Any], script: GatewayScript) ->
         for index in range(1, 6):
             lines.append(f"{index}. 请举例说明你在同类项目里的第 {index} 项关键做法")
             lines.append(f"   考察点：岗位要求的第 {index} 项能力是否具备")
-            lines.append(f"   参考追问：如果当时资源只有一半，你会怎么调整？")
+            lines.append("   参考追问：如果当时资源只有一半，你会怎么调整？")
         blocks.append("\n".join(lines))
     return _text_artifacts(params, "\n\n".join(blocks))
 
@@ -1188,6 +1176,7 @@ async def _isolate_singletons() -> AsyncIterator[None]:
     Yields:
         AsyncIterator[None]: 无值。
     """
+
     def _reset() -> None:
         reset_settings_cache()
         reset_task_service()
@@ -1469,11 +1458,7 @@ async def set_org_switches(
     response = await client.put(
         "/api/v1/plugins/capability-policy",
         headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
-        json={
-            "policies": [
-                {"capability_key": key, "enabled": enabled} for key in capabilities
-            ]
-        },
+        json={"policies": [{"capability_key": key, "enabled": enabled} for key in capabilities]},
     )
     assert response.status_code == 200, response.text
     assert response.json()["code"] == 0, response.text
@@ -1549,9 +1534,7 @@ async def create_task(
     return body["data"]
 
 
-async def task_detail(
-    client: AsyncClient, headers: dict[str, str], task_id: str
-) -> dict[str, Any]:
+async def task_detail(client: AsyncClient, headers: dict[str, str], task_id: str) -> dict[str, Any]:
     """读 A3 任务详情。
 
     Args:
@@ -1623,9 +1606,7 @@ async def decide(
     return body["data"]
 
 
-async def download(
-    client: AsyncClient, download_url: str | None
-) -> tuple[int, bytes]:
+async def download(client: AsyncClient, download_url: str | None) -> tuple[int, bytes]:
     """按 A3/A4 给出的下载地址取产物字节（真令牌、真代理）。
 
     Args:
@@ -1640,9 +1621,7 @@ async def download(
     return response.status_code, response.content
 
 
-async def artifacts_by_key(
-    settings: Settings, tenant_id: str, task_id: str
-) -> dict[str, Any]:
+async def artifacts_by_key(settings: Settings, tenant_id: str, task_id: str) -> dict[str, Any]:
     """直接读 `plugin_artifact` 表，按产物键返回落库产物行。
 
     **为什么 e2e 从表里读而不是从 A4 读**：QA 计划 §4.8 明确要求结果物用例
@@ -1664,9 +1643,7 @@ async def artifacts_by_key(
     return {str(row.output_key): row for row in rows}
 
 
-async def step_records(
-    settings: Settings, tenant_id: str, task_id: str
-) -> dict[int, Any]:
+async def step_records(settings: Settings, tenant_id: str, task_id: str) -> dict[int, Any]:
     """直接读 `plugin_task_step` 表，按步骤序号返回步骤行。
 
     Args:
@@ -1750,9 +1727,7 @@ def checklist_map(detail: dict[str, Any]) -> dict[str, dict[str, Any]]:
     Returns:
         dict[str, dict[str, Any]]: 核查项映射。
     """
-    return {
-        str(item["key"]): item for item in (detail.get("result") or {}).get("checklist") or []
-    }
+    return {str(item["key"]): item for item in (detail.get("result") or {}).get("checklist") or []}
 
 
 def parse_csv_bytes(content: bytes) -> tuple[list[str], list[dict[str, str]]]:
@@ -1803,8 +1778,8 @@ __all__: list[str] = [
     "install_plugin",
     "parse_csv_bytes",
     "schedule_rows",
-    "sha256_of",
     "set_org_switches",
+    "sha256_of",
     "step_records",
     "task_detail",
     "task_steps",

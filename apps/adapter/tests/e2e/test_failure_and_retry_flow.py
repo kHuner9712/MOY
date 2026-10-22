@@ -2,9 +2,14 @@
 
 | 用例 | 计划编号 | 判定点 |
 | --- | --- | --- |
-| `test_failed_step_exposes_three_actions` | TC-P3-WF13-01 ① | 失败步骤给出「原因 / 可重试性 / 建议动作」三要素，且响应体不含内部错误码 |
-| `test_retry_step_reuses_prior_artifacts` | TC-P3-WF13-01 ② | 新任务 `retry_of` 指向原任务；前序步骤**一次都不重跑**且产物 `sha256` 逐字相等 |
-| `test_three_plugins_checklist_exact` | TC-P3-WF14-02 | 三插件的核查清单项数 **4 / 3 / 4**，名称逐字相等，状态全部 `checked` |
+- **`test_failed_step_exposes_three_actions`**（TC-P3-WF13-01 ①）：失败步骤给出「原因 / 可重试性 /
+  建议动作」三要素，且响应体不含内部错误码
+- **`test_retry_step_reuses_prior_artifacts`**（TC-P3-WF13-01 ②）：新任务 `retry_of` 指向原任务；
+前序步骤一次都不重跑且产物
+  `sha256` 逐字相等
+- **`test_three_plugins_checklist_exact`**（TC-P3-WF14-02）：三插件的核查清单项数 4 / 3 / 4，
+名称逐字相等，状态全部
+  `checked`
 
 **"前序不重跑"为什么必须用调用流水证明**：只看任务详情，`completed` 的步骤
 长得一模一样；只有"下游这一单到底被调了几次"能区分「复用」与「重新生成」。
@@ -103,9 +108,7 @@ async def test_failed_step_exposes_three_actions(
         bare_repo: 裸仓库（占位，保证 dev 语料可装配）。
     """
     script = build_content_script()
-    await _prepare(
-        client, admin_headers, e2e_settings, tenant, use_script, script, CONTENT_PLUGIN
-    )
+    await _prepare(client, admin_headers, e2e_settings, tenant, use_script, script, CONTENT_PLUGIN)
     script.fail_at(
         5,
         error_code=30001,
@@ -167,9 +170,7 @@ async def test_retry_step_reuses_prior_artifacts(
         bare_repo: 裸仓库（占位）。
     """
     script = build_content_script()
-    await _prepare(
-        client, admin_headers, e2e_settings, tenant, use_script, script, CONTENT_PLUGIN
-    )
+    await _prepare(client, admin_headers, e2e_settings, tenant, use_script, script, CONTENT_PLUGIN)
     script.fail_at(
         5,
         error_code=30001,
@@ -283,7 +284,7 @@ async def test_three_plugins_checklist_exact(
         assert detail["status"] == "completed", f"{plugin_id} 未完成：{detail['status']}"
 
         items = checklist_map(detail)
-        assert list(items) == [item for item in _keys_of(plugin_id)], (
+        assert list(items) == list(_keys_of(plugin_id)), (
             f"② {plugin_id} 核查项顺序与键必须与声明一致：{list(items)}"
         )
         assert len(items) == len(names), f"① {plugin_id} 应有 {len(names)} 项，实际 {len(items)}"
@@ -314,9 +315,7 @@ def _keys_of(plugin_id: str) -> tuple[str, ...]:
     return mapping[plugin_id]
 
 
-async def _finish(
-    client: AsyncClient, headers: dict[str, str], task_id: str
-) -> dict[str, Any]:
+async def _finish(client: AsyncClient, headers: dict[str, str], task_id: str) -> dict[str, Any]:
     """把任务推到终态（一路确认所有人工接管点，最多 3 次）。
 
     Args:
@@ -334,4 +333,3 @@ async def _finish(
         await decide(client, headers, task_id, "continue")
         detail = await task_detail(client, headers, task_id)
     return detail
-

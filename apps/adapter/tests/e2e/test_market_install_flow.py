@@ -2,9 +2,15 @@
 
 | 用例 | 计划编号 | 判定点 |
 | --- | --- | --- |
-| `test_free_plan_market_lists_all_and_blocks_install` | 勘误 #1 / TC-P3-MK06-01/04 | 免费版市场仍返回 6 条 + `installable=false`；点安装才 `15001` |
-| `test_org_switch_closed_loop_flips_install_outcome` | 勘误 #2 / TC-P3-PL03-07 | `org_switch_enabled=false` → 安装 `16006`；改回 `true` → 安装成功（证明状态从库里读） |
-| `test_install_makes_entry_appear_and_uninstall_keeps_history` | TC-P3-MK08-01/03 | 安装即启用并出现在已添加列表；卸载后入口消失但历史任务仍可打开 |
+- **`test_free_plan_market_lists_all_and_blocks_install`**（勘误 #1 / TC-P3-MK06-01/04）：
+免费版市场仍返回 6 条
+  + `installable=false`；点安装才 `15001`
+- **`test_org_switch_closed_loop_flips_install_outcome`**（勘误 #2 /
+  TC-P3-PL03-07）：`org_switch_enabled=false` → 安装 `16006`；改回 `true` →
+  安装成功（证明状态从库里读）
+- **`test_install_makes_entry_appear_and_uninstall_keeps_history`**（TC-P3-MK08-01/03）：
+安装即启用并出现在已添加
+  列表；卸载后入口消失但历史任务仍可打开
 
 **为什么这两条勘误必须是 e2e**：它们防的都是"前端硬编码/整页降级"这类
 **跨层**事故——市场层照着套餐把整页变成升级提示、或把企业能力开关写死成 `true`，
@@ -138,16 +144,12 @@ async def test_org_switch_closed_loop_flips_install_outcome(
     assert all("org_switch_enabled" in item for item in org_items), "① 每项都必须带开关态"
 
     # ② 只关「写入代码仓库」
-    await set_org_switches(
-        client, admin_headers, enabled=True, capabilities=ORG_CAPABILITIES
-    )
-    await set_org_switches(
-        client, admin_headers, enabled=False, capabilities=("org.repo.write",)
-    )
-    after = await client.get(
-        f"/api/v1/plugins/{DEV_PLUGIN}/capabilities", headers=admin_headers
-    )
-    switches = {item["capability_key"]: item["org_switch_enabled"] for item in after.json()["data"]["items"]}
+    await set_org_switches(client, admin_headers, enabled=True, capabilities=ORG_CAPABILITIES)
+    await set_org_switches(client, admin_headers, enabled=False, capabilities=("org.repo.write",))
+    after = await client.get(f"/api/v1/plugins/{DEV_PLUGIN}/capabilities", headers=admin_headers)
+    switches = {
+        item["capability_key"]: item["org_switch_enabled"] for item in after.json()["data"]["items"]
+    }
     assert switches["org.repo.write"] is False, "② 关掉之后必须读到 false"
     assert switches["personal.tool.use"] is True, "② 个人能力恒开，不受企业策略影响"
 
@@ -170,9 +172,7 @@ async def test_org_switch_closed_loop_flips_install_outcome(
     assert DEV_PLUGIN not in listed, "③ 被拦住时不得留下安装行"
 
     # ④ 打开之后再装
-    await set_org_switches(
-        client, admin_headers, enabled=True, capabilities=("org.repo.write",)
-    )
+    await set_org_switches(client, admin_headers, enabled=True, capabilities=("org.repo.write",))
     installed = await install_plugin(client, admin_headers, DEV_PLUGIN)
     assert installed["status"] == "enabled", "④ 安装即启用"
     assert "org.repo.write" in installed["granted_capabilities"], "④ 必须含写入代码仓库"

@@ -2,8 +2,11 @@
 
 | 用例 | 计划编号 | 判定点 |
 | --- | --- | --- |
-| `test_outline_five_questions` | TC-P3-HR22-01 / E2E-HR-02 | 提纲份数 == 建议面试人数；每份 ≥5 问；每题含考察点；含参考追问 ≥1 |
-| `test_channel_not_connected` | TC-P3-HR22-02 | 渠道未连接时该步失败并给「先连接」的出路，不静默成功 |
+- **`test_outline_five_questions`**（TC-P3-HR22-01 / E2E-HR-02）：提纲份数 == 建议面试人数；每份
+≥5 问；每题含考察点；含参考追问
+  ≥1
+| `test_channel_not_connected` | TC-P3-HR22-02 | 渠道未连接时该步失败并给「先连接」的出路，
+不静默成功 |
 
 **本文件未落点的计划用例**：`test_schedule_conflict_gives_options`（TC-P3-HR22-03）——
 "面试官时间冲突给 2 个可选时间"需要日程查询/冲突消解能力，平台侧还没有这条链路
@@ -120,7 +123,9 @@ async def test_outline_five_questions(
     assert len(sections) == len(invited), (
         f"① 提纲份数必须等于建议面试人数 {len(invited)}，实际 {len(sections)}：{list(sections)}"
     )
-    assert set(sections) == set(invited), f"① 提纲对象必须与建议面试名单相等：{sections} vs {invited}"
+    assert set(sections) == set(invited), (
+        f"① 提纲对象必须与建议面试名单相等：{sections} vs {invited}"
+    )
 
     for who, questions in sections.items():
         assert len(questions) >= 5, f"② {who} 的提纲只有 {len(questions)} 问"
@@ -174,7 +179,9 @@ async def test_channel_not_connected(
     records = await step_records(e2e_settings, tenant, task_id)
     assert records[4].status == "failed", "① 渠道未连接时邀约步骤必须失败"
     assert "没有连接" in records[4].reason_text, records[4].reason_text
-    assert "连接" in records[4].operator_action, f"① 建议动作必须指向连接：{records[4].operator_action}"
+    assert "连接" in records[4].operator_action, (
+        f"① 建议动作必须指向连接：{records[4].operator_action}"
+    )
     assert "重试" not in records[4].operator_action or "连接" in records[4].operator_action
 
     assert detail["status"] == "completed", f"② 部分失败不得拖垮整体：{detail['status']}"
@@ -224,4 +231,3 @@ def parse_outlines(text: str) -> dict[str, list[dict[str, Any]]]:
             elif line.startswith("参考追问"):
                 sections[current][-1]["参考追问"].append(line.split("：", 1)[-1].strip())
     return sections
-

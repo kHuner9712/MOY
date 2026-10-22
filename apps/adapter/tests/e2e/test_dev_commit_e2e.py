@@ -4,9 +4,13 @@
 
 | 用例 | 计划编号 | 判定点 |
 | --- | --- | --- |
-| `test_no_commit_before_confirm` | TC-P3-DEV17-01 / E2E-DEV-01 | 未确认不得提交（`git rev-list --count` 必须不变） |
-| `test_commit_exists_and_content_identical` | TC-P3-DEV17-02 / E2E-DEV-02/03/04 | 提交真的存在，且**抽一个文件逐字相同**；合并请求只发一次且 `head==sha` |
-| `test_repo_auth_expired_recoverable` | TC-P3-DEV17-03 | 授权过期 → 原因与「重新连接」→ 重连后重试本步成功，前序不重跑 |
+- **`test_no_commit_before_confirm`**（TC-P3-DEV17-01 / E2E-DEV-01）：未确认不得提交（`git
+rev-list --count`
+  必须不变）
+- **`test_commit_exists_and_content_identical`**（TC-P3-DEV17-02 /
+  E2E-DEV-02/03/04）：提交真的存在，且抽一个文件逐字相同；合并请求只发一次且 `head==sha`
+| `test_repo_auth_expired_recoverable` | TC-P3-DEV17-03 | 授权过期 → 原因与「重新连接」→
+重连后重试本步成功，前序不重跑 |
 
 **判据为什么必须落在 git 对象上**：`plugin_artifact` 里存的是"平台认为发生了什么"，
 只有 `git cat-file` / `git show` 才能证明"仓库里真的发生了什么"。两者不一致
@@ -192,9 +196,10 @@ async def test_commit_exists_and_content_identical(
     committed = bare_repo.file_text(sha, DEV_CODE_PATH)
     assert sha256_of(committed) == sha256_of(preview), "TC-P3-DEV17-02 ③ 提交内容与产物不一致"
     assert committed.splitlines() == preview.splitlines(), "TC-P3-DEV17-02 ③ 逐行比对必须无差异"
-    assert artifacts["code_files"].content_sha256 == hashlib.sha256(
-        preview.encode("utf-8")
-    ).hexdigest(), "产物自身的 sha256 也要与内容一致（否则下载到的是另一份）"
+    assert (
+        artifacts["code_files"].content_sha256
+        == hashlib.sha256(preview.encode("utf-8")).hexdigest()
+    ), "产物自身的 sha256 也要与内容一致（否则下载到的是另一份）"
 
     # ④ 合并请求只发 1 次，head == sha
     pr_calls = [item for item in script.published if item.get("tool") == "github"]
@@ -211,7 +216,9 @@ async def test_commit_exists_and_content_identical(
         "TC-P3-WF14-02 / E2E-DEV-04 核查项名称必须与 PRD §3.2.3 ② 逐字相等"
     )
     states = {key: value["status"] for key, value in items.items()}
-    assert all(state == "checked" for state in states.values()), f"E2E-DEV-04 应全部 checked：{states}"
+    assert all(state == "checked" for state in states.values()), (
+        f"E2E-DEV-04 应全部 checked：{states}"
+    )
     assert all(items[key]["download_url"] for key in order), "每项核查结果都要能点开"
 
     # 重新 GET（换端/刷新等价）结果必须一致
