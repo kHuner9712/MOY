@@ -73,6 +73,10 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         "status": "fixed",  # dd28d13：orphans/aliased 可见化 + --prune-orphans + 0002 别名映射
         "pinned_by": "test_real_postgres_migration_is_idempotent",
     },
+    # B19：任务推进从未执行（任务永远 running 且不报错），由骨架外的单测抓到 → 已修
+    {"id": "P3-B19-01", "level": "P0", "status": "fixed"},  # ae69a4a（test_task_flow 抓到）
+    # B19：0004 迁移守卫块标签不匹配（DO $guard$ vs END $$）→ 已修
+    {"id": "P3-B19-02", "level": "P0", "status": "fixed"},  # b75f0ab（空库 apply 直接语法失败）
 )
 
 #: 当前批次是**运行时上下文**，不是跨批事实——所以用函数读环境变量，**不写常量**：
