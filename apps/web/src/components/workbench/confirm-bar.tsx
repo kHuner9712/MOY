@@ -53,8 +53,12 @@ export function ConfirmBar({
       <div className="flex items-start gap-2">
         <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="space-y-1">
-          <p className="font-medium">任务停在第 {confirm?.step_seq ?? '—'} 步，等你确认后继续</p>
-          <p className="text-amber-900/80">{orPlaceholder(confirm?.reason, '确认内容后可继续执行')}</p>
+          <p className="font-medium">
+            任务已暂停，等你确认后继续（第 {confirm?.step_seq ?? '—'} 步）
+          </p>
+          <p className="text-amber-900/80">
+            {orPlaceholder(confirm?.reason, '确认内容后可继续执行；这不是故障，确认后任务会从当前步骤继续')}
+          </p>
         </div>
       </div>
 

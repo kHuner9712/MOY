@@ -60,6 +60,9 @@ const PLUGIN_BRANCH_PATTERNS = [
   { pattern: /pluginId\s*===/, hint: 'pluginId ===' },
   { pattern: /pluginId\s*==(?!=)/, hint: 'pluginId ==' },
   { pattern: /pluginId\s*!==/, hint: 'pluginId !==' },
+  { pattern: /switch\s*\(\s*pluginId/, hint: 'switch (pluginId)' },
+  // layoutMap[pluginId] 这类「用插件 id 当查表键」的写法同样是按插件分叉
+  { pattern: /\[\s*pluginId\s*\]/, hint: 'layoutMap[pluginId]' },
 ];
 
 /** 写死插件标识（`plg_xxx`）的特征 */
@@ -226,6 +229,22 @@ const NEGATIVE = [
     }),
   },
   {
+    name: 'switch(pluginId) 分叉',
+    expect: 'switch (pluginId)',
+    run: () => checkNoPluginBranch({
+      file: 'page.tsx',
+      content: 'switch (pluginId) { default: break; }',
+    }),
+  },
+  {
+    name: 'layoutMap[pluginId] 查表分叉',
+    expect: 'layoutMap[pluginId]',
+    run: () => checkNoPluginBranch({
+      file: 'page.tsx',
+      content: 'const Layout = layoutMap[pluginId];',
+    }),
+  },
+  {
     name: '写死插件标识',
     expect: '写死的插件标识',
     run: () => checkNoPluginBranch({ file: 'page.tsx', content: "const id = 'plg_hr_admin';" }),
@@ -304,7 +323,7 @@ function selfTest() {
 
   console.info(
     `SELF-TEST PASS：正样本 ${POSITIVE.length} 条 0 误报（含注释内提及）；` +
-      `负样本 ${NEGATIVE.length}/${NEGATIVE.length} 全部抓到（多宿主/非动态段/按插件分支/写死标识/自有样式/三方 UI/跨域引用）`,
+      `负样本 ${NEGATIVE.length}/${NEGATIVE.length} 全部抓到（多宿主/非动态段/比较/switch/查表/写死标识/自有样式/三方 UI/跨域引用）`,
   );
   return 1;
 }

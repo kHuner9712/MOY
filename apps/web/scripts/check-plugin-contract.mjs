@@ -10,6 +10,9 @@
  *   - 多键（类型有、契约没有）→ 红
  *   - 可选性翻转（契约必填、类型写成可选，或反之）→ 红
  *   - 接口缺失 → 红
+ *   - **枚举缺值 / 多值 → 红**（`enums` 段：TaskStatus / StepStatus / ArtifactType /
+ *     PluginInstalledStatus / PluginCapabilityKey）。枚举漂移是这类契约最常出的错，
+ *     只校验键名抓不到（例如 `queued` 漏了、`completed`/`succeeded` 混用）。
  *
  * 为什么不用 vitest：这件事本质是「类型声明与契约文本对齐」，
  * 一个零依赖静态脚本即可，且不引入新的 CI 安装与版本维护成本。
@@ -86,6 +89,57 @@ export function parseInterfaces(source) {
 }
 
 /**
+ * 从 TypeScript 源码里解析「字面量联合类型」（`export type X = 'a' | 'b';`）。
+ *
+ * 只处理字符串字面量联合（本仓库枚举都是这种写法），遇到含泛型/交叉类型的别名直接跳过。
+ *
+ * @param {string} source - types.ts 源码
+ * @returns {Map<string, string[]>} 类型名 → 字面量取值
+ */
+export function parseEnums(source) {
+  const cleaned = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+  const result = new Map();
+  for (const match of cleaned.matchAll(/export type ([A-Za-z0-9_]+)\s*=\s*([\s\S]*?);/g)) {
+    const name = match[1];
+    const body = match[2];
+    const values = [...body.matchAll(/'([^']+)'/g)].map((item) => item[1]);
+    // 只收录「纯字符串字面量联合」，其它形态（对象/泛型）不参与枚举校验
+    const stripped = body.replace(/'[^']*'/g, '').replace(/[\s|]/g, '');
+    if (values.length > 0 && stripped === '') {
+      result.set(name, values);
+    }
+  }
+  return result;
+}
+
+/**
+ * 比对枚举取值集合。
+ *
+ * @param {string} name - 类型名
+ * @param {string[]} expected - 契约快照里的取值
+ * @param {string[]|undefined} actual - 源码里解析到的取值
+ * @returns {Array<string>} 差异说明
+ */
+export function compareEnum(name, expected, actual) {
+  if (!actual) {
+    return [`缺少枚举类型 ${name}`];
+  }
+  const problems = [];
+  const expectedSet = new Set(expected);
+  const actualSet = new Set(actual);
+  for (const value of expectedSet) {
+    if (!actualSet.has(value)) problems.push(`${name} 缺值「${value}」（契约有、类型没有）`);
+  }
+  for (const value of actualSet) {
+    if (!expectedSet.has(value)) problems.push(`${name} 多值「${value}」（类型有、契约没有）`);
+  }
+  return problems;
+}
+
+/**
  * 比对单个接口。
  *
  * @param {string} name - 接口名
@@ -142,10 +196,11 @@ export function compareInterface(name, expected, actual) {
  * @param {Map<string, {required: string[], optional: string[]}>} interfaces - 解析出的接口表
  * @returns {{problems: Array<string>, interfaceCount: number, fieldCount: number}} 比对结果
  */
-export function compareAll(contract, interfaces) {
+export function compareAll(contract, interfaces, enums = new Map()) {
   const problems = [];
   let interfaceCount = 0;
   let fieldCount = 0;
+  let enumCount = 0;
 
   for (const [name, expected] of Object.entries(contract.interfaces ?? {})) {
     interfaceCount += 1;
@@ -153,7 +208,12 @@ export function compareAll(contract, interfaces) {
     problems.push(...compareInterface(name, expected, interfaces.get(name)));
   }
 
-  return { problems, interfaceCount, fieldCount };
+  for (const [name, expected] of Object.entries(contract.enums ?? {})) {
+    enumCount += 1;
+    problems.push(...compareEnum(name, expected, enums.get(name)));
+  }
+
+  return { problems, interfaceCount, fieldCount, enumCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +265,28 @@ const NEGATIVE = [
   },
 ];
 
+/** 枚举契约样本 */
+const ENUM_CONTRACT = { interfaces: {}, enums: { DemoStatus: ['a', 'b'] } };
+
+/** 枚举负样本：各自只破坏一件事 */
+const ENUM_NEGATIVE = [
+  {
+    name: '枚举缺值',
+    expect: '缺值',
+    source: "export type DemoStatus = 'a';",
+  },
+  {
+    name: '枚举多值',
+    expect: '多值',
+    source: "export type DemoStatus = 'a' | 'b' | 'c';",
+  },
+  {
+    name: '枚举类型整体缺失',
+    expect: '缺少枚举类型',
+    source: 'export const nothing = 1;',
+  },
+];
+
 /**
  * 自检。
  *
@@ -227,6 +309,21 @@ function selfTest() {
     failures.push(`嵌套对象字段被误解析：${JSON.stringify(nestedFields)}`);
   }
 
+  // 枚举：正样本必须通过
+  const enumBase = compareAll(ENUM_CONTRACT, new Map(), parseEnums("export type DemoStatus = 'a' | 'b';"));
+  if (enumBase.problems.length > 0) {
+    failures.push(`枚举正样本误报：${enumBase.problems.join('；')}`);
+  }
+
+  for (const sample of ENUM_NEGATIVE) {
+    const result = compareAll(ENUM_CONTRACT, new Map(), parseEnums(sample.source));
+    if (!result.problems.some((problem) => problem.includes(sample.expect))) {
+      failures.push(
+        `枚举负样本漏抓「${sample.name}」：期望含「${sample.expect}」，实际 ${result.problems.join('；') || '无问题'}`,
+      );
+    }
+  }
+
   for (const sample of NEGATIVE) {
     const result = compareAll(BASE_CONTRACT, parseInterfaces(sample.source));
     if (!result.problems.some((problem) => problem.includes(sample.expect))) {
@@ -244,7 +341,8 @@ function selfTest() {
 
   console.info(
     `SELF-TEST PASS：正样本 1 条 0 误报；嵌套字段解析正确；` +
-      `负样本 ${NEGATIVE.length}/${NEGATIVE.length} 全部抓到（缺键/多键/双向可选性翻转/接口缺失）`,
+      `负样本 ${NEGATIVE.length}/${NEGATIVE.length} 全部抓到（缺键/多键/双向可选性翻转/接口缺失）；` +
+      `枚举正样本 1 条 0 误报、负样本 ${ENUM_NEGATIVE.length}/${ENUM_NEGATIVE.length} 抓到（缺值/多值/类型缺失）`,
   );
   return 1;
 }
@@ -267,17 +365,18 @@ function main(argv) {
   }
 
   const interfaces = parseInterfaces(source);
-  const { problems, interfaceCount, fieldCount } = compareAll(contract, interfaces);
+  const enums = parseEnums(source);
+  const { problems, interfaceCount, fieldCount, enumCount } = compareAll(contract, interfaces, enums);
 
   if (argv.includes('--json')) {
-    console.info(JSON.stringify({ interfaceCount, fieldCount, problems }, null, 2));
+    console.info(JSON.stringify({ interfaceCount, fieldCount, enumCount, problems }, null, 2));
   } else if (problems.length === 0) {
     console.info(
-      `检查 ${interfaceCount} 个接口 / ${fieldCount} 个字段，与契约快照完全一致（0 差异）` +
+      `检查 ${interfaceCount} 个接口 / ${fieldCount} 个字段 / ${enumCount} 个枚举，与契约快照完全一致（0 差异）` +
         `（快照 ${relative(WEB_ROOT, CONTRACT_PATH).replace(/\\/g, '/')}）`,
     );
   } else {
-    console.info(`检查 ${interfaceCount} 个接口 / ${fieldCount} 个字段，${problems.length} 处差异：`);
+    console.info(`检查 ${interfaceCount} 个接口 / ${fieldCount} 个字段 / ${enumCount} 个枚举，${problems.length} 处差异：`);
     for (const problem of problems) console.info(`  - ${problem}`);
   }
 

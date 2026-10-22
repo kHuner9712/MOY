@@ -1,7 +1,7 @@
 {
   "version": "phase3-pl-v1",
   "source": "docs/architecture-phase3.md §5.2 / §5.3（PL1-PL14 + WF1 + WF2，共 16 端点）",
-  "note": "required 与 optional 均须与 src/lib/types.ts 逐键一致；可选性翻转即视为契约漂移。",
+  "note": "required/optional 逐键一致；enums 逐值一致。可选性翻转、缺值、多值均视为契约漂移。",
   "interfaces": {
     "PluginMarketItem": {
       "required": [
@@ -337,5 +337,44 @@
         "options"
       ]
     }
+  },
+  "enums": {
+    "TaskStatus": [
+      "queued",
+      "pending",
+      "running",
+      "waiting_confirm",
+      "completed",
+      "failed",
+      "cancelled"
+    ],
+    "StepStatus": [
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "skipped"
+    ],
+    "ArtifactType": [
+      "draft",
+      "doc",
+      "table",
+      "link",
+      "file",
+      "text"
+    ],
+    "PluginInstalledStatus": [
+      "none",
+      "enabled",
+      "disabled"
+    ],
+    "PluginCapabilityKey": [
+      "personal.knowledge.read",
+      "personal.tool.use",
+      "personal.file.read",
+      "org.directory.read",
+      "org.repo.write",
+      "org.external.publish"
+    ]
   }
 }
