@@ -832,3 +832,43 @@ manifest 校验（8）、能力→端点映射与白名单（5）、状态机合
 ---
 
 *作者：严过关（QA 工程师）· 2026-10-23 · 本方案只写判据与落点，**不含用例代码**（B16 批次落地后按本方案实现）；待主理人裁决 §0.3 的 10 条后定稿。*
+
+---
+
+## 附录：用例文件落点核对（收口期补，2026-10-23）
+
+> **本节是把"计划里引用的测试文件"与"仓库里实际存在的文件"逐条对照后的结论。**
+> 计划写于批次落地之前，文件是后写的——两者在**文件名粒度**上发生了合并与改名。
+> 不记录这件事的后果：照计划找用例的人会得到"文件不存在"，而**这与"用例没写"在读者眼里是同一件事**。
+
+### A.1 已按计划文件名交付（可直接按 `文件::用例` 定位）
+
+`apps/adapter/tests/e2e/` 下 22 条用例，文件名严格按本计划：`test_market_install_flow.py`、
+`test_dev_commit_e2e.py`、`test_dev_workbench.py`、`test_content_schedule.py`、`test_content_workbench.py`、
+`test_hr_screening.py`、`test_hr_interview.py`、`test_hr_offer_docs.py`、`test_failure_and_retry_flow.py`。
+（B26 收口期补交付，此前整批缺失。）
+
+### A.2 计划里按"域"拆多个文件，实际按"关注点"合并（判据有承载，文件名不符）
+
+| 计划引用 | 实际落点 |
+| --- | --- |
+| `test_plugin_lifecycle.py` / `test_plugin_uninstall.py` / `test_plugin_version.py` / `test_plugin_review.py` / `test_plugin_installed_list.py` | `tests/unit/test_plugin_lifecycle.py`（含 PL6-PL12、PL14、评价、计数类判据） |
+| `test_plugin_authz.py` / `test_plugin_detail.py` | `tests/integration/test_plugin_state.py` / `test_plugin_market.py`（含 PL1-PL5 授权与详情） |
+| `test_workflow_progress.py` / `test_workflow_artifacts.py` / `test_workflow_retry.py` / `test_workflow_history.py` | `tests/unit/test_task_flow.py` / `test_b19_coverage_gaps.py` + `tests/integration/test_task_repo_pg.py` |
+| `test_manifest_validation.py` / `test_capability_whitelist_runtime.py` | `tests/unit/test_plugin_loader.py` + `deploy/validate_plugins.py --self-test` |
+| `test_artifact_retention.py` / `test_plugin_artifact_retention.py` | `deploy/validate_schema_retention.py`（G-31，含改坏即红自证）+ `tests/unit/test_artifact_content_column.py` |
+| `test_docx_artifact.py` | `tests/unit/test_plugin_renderer.py` + `tests/integration/test_artifact_content_pg.py` |
+| `test_plugin_error_mapping.py` | `tests/unit/test_errors.py` + `tests/integration/test_plugin_contract_skeleton.py`（G-13） |
+| `test_text_metrics.py` / `test_version_semver.py` / `test_summary_counts.py` | 分别并入 `test_plugin_renderer.py` / `test_plugin_lifecycle.py` / `test_task_flow.py` |
+| `test_plugin_isolation.py` | `tests/integration/test_plugin_repo_pg.py`（按租户隔离断言） |
+| `test_plugin_dev_doc.py` | **无**——插件开发文档的验收改为人工核对（`docs/plugin-dev-guide.md` 与端点/字段逐条比对），未写成自动化用例 |
+
+### A.3 判据口径差异（实现与计划不一致，按实现登记）
+
+| 项 | 计划写的 | 实现是 | 处置 |
+| --- | --- | --- | --- |
+| 核查清单状态 | `verified` / `pending_manual` | `checked` / `pending` / `missing` | 以实现为准；计划属设计期措辞，未回改（历史报告不回改原则） |
+| `test_plugin_market.py` / `test_plugin_state.py` | 计划按功能点给函数名 | 实际函数名不同（如计划要 `test_state_before_install_rejected`） | 按实际函数名定位，判据已在 |
+
+> **通用规则（建议进检查单）**：用例定位一律以**实际文件里的函数名**为准，不以计划里的名字为准；
+> 计划与实现的差异登记在本文，不靠"应该有这么个文件"推断。
