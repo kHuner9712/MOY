@@ -304,6 +304,15 @@ ok = covered * 100 >= threshold_pp * total      # ✅ 整数比较
 | `list_queued` 位次 1..n（建任务即回填） | `test_queued_tasks_get_derived_positions`（断言 `[1,2]`，新建位次 3） | 通过 |
 | 异常分支"能看到原始 PG 错误" | **无用例**；探针：`SELECT queue_position …` → `UndefinedColumnError: column "queue_position" does not exist` | **列名可见**；`__cause__ = None`（未包装，属现状设计） |
 
-> **口径待定（A/B）**：A=原始异常不丢、日志可见即达标（现状）；B=要求 `ApiError(...) from exc` 显式链（需 repo 层加包装）。
-> 本文倾向 A：**"能不丢原始错误"比"必须挂 cause"更本质**。
+> **口径已定：A 档**（原始异常不丢、日志可见即达标；不引入 `raise ... from exc` 包装）。
+> **但要求把"现状正确"变成"被守住"**——用例：`tests/integration/test_pg_error_surfacing.py`（`ae54db4`）：
+> | 断言 | 结果 |
+> | --- | --- |
+> | ① 响应 `code=30003`，**不含列名 / SQLSTATE** | ✅ |
+> | ②-a 反向控制：日志有 `exc_info` + 异常类型 + 消息 | ✅ |
+> | ②-b 日志含 **SQLSTATE（42703）** | ✅（`27bcb5f` 落库后） |
+> | ③ 处理器不中断、只记 1 次 | ✅ |
+>
+> **`27bcb5f` 的实现比"加一行"更强**：`_sqlstate_of(exc)` **沿 `__cause__` / `.orig` 链查找**——
+> 因此**将来若引入包装层（B 档），日志仍有 SQLSTATE**；A/B 之争由此兼容而非二选一。
 > **注意**：`9a85de6` 时工作区仍 4 个文件未提交、`artifact_repo`/`plugin_repo` PG 用例未补、四档未复测 —— **不构成 B21 冻结**。
