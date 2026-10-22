@@ -1,171 +1,276 @@
 'use client';
 
+import { ArrowRight, Search } from 'lucide-react';
+import Link from 'next/link';
 import * as React from 'react';
 
-import { StatusBadge } from '@/components/common/status-badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { RunStatusBadge } from '@/components/workflow/run-status-badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { EmptyState, ErrorState, LoadingState } from '@/components/ui/feedback';
-import { useApiQuery } from '@/hooks/use-api';
-import { agentApi } from '@/lib/api-client';
+import { ErrorState } from '@/components/ui/feedback';
+import { Input } from '@/components/ui/input';
+import { Pagination } from '@/components/ui/pagination';
+import { CompactSelect } from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableEmpty,
+  TableHead,
+  TableHeader,
+  TableLoading,
+  TableRow,
+} from '@/components/ui/table';
+import { QUERY_KEYS, useApiQuery } from '@/hooks/use-api';
+import { agentApi, pluginsApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { formatDateTime, orPlaceholder } from '@/lib/format';
-import type { TaskItem } from '@/lib/types';
+import type { TaskItem, TaskStatus } from '@/lib/types';
 
-/** 任务列表查询键（工作流域，B13/B14 统一用域名作第一段） */
-const TASKS_KEY = ['workflows', 'tasks'] as const;
+/** 任务状态筛选项（含任务级 `queued` / `waiting_confirm`） */
+const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: '全部状态' },
+  { value: 'queued', label: '排队中' },
+  { value: 'pending', label: '等待开始' },
+  { value: 'running', label: '执行中' },
+  { value: 'waiting_confirm', label: '已暂停，待确认' },
+  { value: 'completed', label: '已完成' },
+  { value: 'failed', label: '未完成' },
+  { value: 'cancelled', label: '已取消' },
+];
+
+/** 表格列数 */
+const COLUMN_COUNT = 8;
+
+/** 每页条数 */
+const PAGE_SIZE = 20;
 
 /**
- * 工作流页（任务进度与执行步骤）。
+ * 工作流列表页（P-13）：四维筛选 + 8 列表格。
  *
- * 数据来源：A2 任务列表 + A4 步骤详情；两段数据各有独立三态，
- * 任一段失败都能就地重试，不会把整页拖成空白。
+ * 四个筛选维度：插件 / 状态 / 发起人 / 时间范围（对应 A2 的加性 query）。
+ * 列表只展示聚合信息；步骤、产物与核查清单在任务详情页。
  *
- * @returns 工作流页元素
+ * @returns 任务列表页元素
  */
 export default function WorkflowsPage(): React.JSX.Element {
-  const [selectedTaskId, setSelectedTaskId] = React.useState<string>('');
+  const [pluginId, setPluginId] = React.useState<string>('');
+  const [status, setStatus] = React.useState<string>('');
+  const [initiatorId, setInitiatorId] = React.useState<string>('');
+  const [createdFrom, setCreatedFrom] = React.useState<string>('');
+  const [createdTo, setCreatedTo] = React.useState<string>('');
+  const [page, setPage] = React.useState<number>(1);
 
-  const tasksQuery = useApiQuery(TASKS_KEY, () => agentApi.listTasks({ page: 1, page_size: 20 }));
-  const tasks = React.useMemo<TaskItem[]>(() => tasksQuery.data?.items ?? [], [tasksQuery.data]);
+  const installedQuery = useApiQuery(QUERY_KEYS.installedPlugins(), () => pluginsApi.installed());
 
-  // 默认选中第一个任务（不覆盖用户选择）
-  React.useEffect(() => {
-    if (selectedTaskId || tasks.length === 0) return;
-    const first = tasks[0];
-    if (first) setSelectedTaskId(first.task_id);
-  }, [selectedTaskId, tasks]);
+  const params = {
+    page,
+    page_size: PAGE_SIZE,
+    ...(pluginId ? { plugin_id: pluginId } : {}),
+    ...(status ? { status } : {}),
+    ...(initiatorId.trim() ? { initiator_id: initiatorId.trim() } : {}),
+    ...(createdFrom ? { created_from: `${createdFrom}T00:00:00Z` } : {}),
+    ...(createdTo ? { created_to: `${createdTo}T23:59:59Z` } : {}),
+  };
+  const tasksQuery = useApiQuery(QUERY_KEYS.pluginTasks(params), () => agentApi.listTasks(params));
 
-  const stepsQuery = useApiQuery(
-    ['workflows', 'tasks', selectedTaskId, 'steps'],
-    () => agentApi.listSteps(selectedTaskId),
-    { enabled: Boolean(selectedTaskId) },
-  );
+  const tasks = tasksQuery.data?.items ?? [];
+  const total = tasksQuery.data?.meta.total ?? 0;
+  const hasFilter = Boolean(pluginId || status || initiatorId.trim() || createdFrom || createdTo);
 
-  const steps = stepsQuery.data?.steps ?? [];
+  const pluginNameMap = React.useMemo<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const plugin of installedQuery.data?.items ?? []) {
+      map[plugin.plugin_id] = plugin.name;
+    }
+    return map;
+  }, [installedQuery.data]);
+
+  const resetFilters = (): void => {
+    setPluginId('');
+    setStatus('');
+    setInitiatorId('');
+    setCreatedFrom('');
+    setCreatedTo('');
+    setPage(1);
+  };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold">工作流</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          查看长任务的执行步骤与结果，可随时中断或重新发起
-        </p>
+    <div className="mx-auto max-w-6xl space-y-4">
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="sm:w-48">
+          <CompactSelect
+            aria-label="按插件筛选"
+            value={pluginId}
+            onChange={(event) => {
+              setPluginId(event.target.value);
+              setPage(1);
+            }}
+            options={[
+              { value: '', label: '全部插件' },
+              ...(installedQuery.data?.items ?? []).map((plugin) => ({
+                value: plugin.plugin_id,
+                label: plugin.name,
+              })),
+            ]}
+          />
+        </div>
+        <div className="sm:w-40">
+          <CompactSelect
+            aria-label="按状态筛选"
+            value={status}
+            onChange={(event) => {
+              setStatus(event.target.value);
+              setPage(1);
+            }}
+            options={STATUS_OPTIONS}
+          />
+        </div>
+        <div className="relative sm:w-44">
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            value={initiatorId}
+            onChange={(event) => {
+              setInitiatorId(event.target.value);
+              setPage(1);
+            }}
+            placeholder="发起人标识"
+            aria-label="按发起人筛选"
+            className="h-9 pl-9 text-xs"
+          />
+        </div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <Input
+            type="date"
+            value={createdFrom}
+            aria-label="创建时间起"
+            className="h-9 w-36 text-xs"
+            onChange={(event) => {
+              setCreatedFrom(event.target.value);
+              setPage(1);
+            }}
+          />
+          <span>至</span>
+          <Input
+            type="date"
+            value={createdTo}
+            aria-label="创建时间止"
+            className="h-9 w-36 text-xs"
+            onChange={(event) => {
+              setCreatedTo(event.target.value);
+              setPage(1);
+            }}
+          />
+        </div>
+        {hasFilter ? (
+          <Button type="button" variant="ghost" size="sm" onClick={resetFilters}>
+            清空筛选
+          </Button>
+        ) : null}
       </div>
 
-      {tasksQuery.isLoading ? (
-        <LoadingState label="正在加载任务…" />
-      ) : tasksQuery.error ? (
-        <ErrorState
-          message={toBusinessMessage(tasksQuery.error)}
-          onRetry={() => void tasksQuery.refetch()}
-        />
-      ) : tasks.length === 0 ? (
-        <EmptyState
-          title="还没有任务"
-          description="在对话中发起一个需要多步完成的任务后，执行进度会显示在这里"
-        />
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>任务列表</CardTitle>
-                <Button variant="ghost" size="sm" onClick={() => void tasksQuery.refetch()}>
-                  刷新
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <ul className="divide-y">
-                {tasks.map((task) => (
-                  <li key={task.task_id}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setSelectedTaskId(task.task_id)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          setSelectedTaskId(task.task_id);
-                        }
-                      }}
-                      aria-current={task.task_id === selectedTaskId ? 'true' : undefined}
-                      className={`w-full cursor-pointer py-3 text-left transition-colors ${
-                        task.task_id === selectedTaskId ? 'text-primary' : 'hover:text-foreground'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-medium">
-                          {orPlaceholder(task.goal, '未命名任务')}
-                        </span>
-                        <StatusBadge status={task.status} />
-                      </div>
-                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full rounded-full bg-primary transition-all"
-                          style={{ width: `${task.progress}%` }}
-                        />
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        更新于 {formatDateTime(task.updated_at)}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>执行步骤</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {!selectedTaskId ? (
-                <EmptyState
-                  title="请选择一个任务"
-                  description="左侧点选任务即可查看每一步的执行情况"
-                />
-              ) : stepsQuery.isLoading ? (
-                <LoadingState label="正在加载步骤…" />
-              ) : stepsQuery.error ? (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>任务</TableHead>
+            <TableHead>插件</TableHead>
+            <TableHead>状态</TableHead>
+            <TableHead>进度</TableHead>
+            <TableHead>提醒</TableHead>
+            <TableHead>创建时间</TableHead>
+            <TableHead>更新时间</TableHead>
+            <TableHead className="text-right">操作</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {tasksQuery.isLoading ? (
+            <TableLoading columns={COLUMN_COUNT} rows={5} />
+          ) : tasksQuery.error ? (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={COLUMN_COUNT} className="p-0">
                 <ErrorState
-                  message={toBusinessMessage(stepsQuery.error)}
-                  onRetry={() => void stepsQuery.refetch()}
+                  message={toBusinessMessage(tasksQuery.error)}
+                  onRetry={() => void tasksQuery.refetch()}
                 />
-              ) : steps.length === 0 ? (
-                <EmptyState
-                  title="暂无步骤信息"
-                  description="任务开始执行后会按步骤展示进度，若长时间为空可刷新任务列表"
-                />
-              ) : (
-                <ol className="space-y-3">
-                  {steps.map((step) => (
-                    <li key={step.step_id} className="flex gap-3">
-                      <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="truncate text-sm font-medium">
-                            {step.sequence}. {step.title}
-                          </p>
-                          <StatusBadge status={step.status} />
-                        </div>
-                        {step.output_summary ? (
-                          <p className="text-sm text-muted-foreground">{step.output_summary}</p>
-                        ) : null}
-                        <p className="text-xs text-muted-foreground">
-                          {formatDateTime(step.finished_at ?? step.started_at ?? '')}
-                        </p>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+              </TableCell>
+            </TableRow>
+          ) : tasks.length === 0 ? (
+            <TableEmpty
+              colSpan={COLUMN_COUNT}
+              title={hasFilter ? '没有符合条件的任务' : '还没有自动化任务'}
+              description={
+                hasFilter
+                  ? '换个筛选条件再看，也可以清空筛选查看全部任务'
+                  : '添加岗位工作台后即可发起任务，执行记录会出现在这里'
+              }
+              action={
+                hasFilter ? (
+                  <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
+                    清空筛选
+                  </Button>
+                ) : (
+                  <Button asChild size="sm">
+                    <Link href="/plugins">去添加工作台</Link>
+                  </Button>
+                )
+              }
+            />
+          ) : (
+            tasks.map((task: TaskItem) => (
+              <TableRow key={task.task_id}>
+                <TableCell className="max-w-[16rem]">
+                  <p className="truncate text-sm font-medium" title={task.goal}>
+                    {orPlaceholder(task.goal, '未命名任务')}
+                  </p>
+                  <p className="truncate font-mono text-[11px] text-muted-foreground">
+                    {task.task_id}
+                  </p>
+                </TableCell>
+                <TableCell className="max-w-[10rem] truncate text-sm">
+                  {task.plugin_id ? (
+                    orPlaceholder(pluginNameMap[task.plugin_id], task.plugin_id)
+                  ) : (
+                    <Badge variant="outline">通用任务</Badge>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <RunStatusBadge status={task.status as TaskStatus} />
+                </TableCell>
+                <TableCell className="text-sm tabular-nums">{task.progress}%</TableCell>
+                <TableCell className="text-sm tabular-nums text-muted-foreground">
+                  {task.warning_count > 0 ? `${task.warning_count} 处` : '—'}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                  {formatDateTime(task.created_at)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                  {formatDateTime(task.updated_at)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button asChild variant="ghost" size="sm">
+                    <Link href={`/workflows/${task.task_id}`}>
+                      详情
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+
+      <Pagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        onPageChange={setPage}
+        disabled={tasksQuery.isLoading}
+      />
+
     </div>
   );
 }

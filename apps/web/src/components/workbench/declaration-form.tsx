@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 
+import { FilePicker } from '@/components/workbench/file-picker';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -95,23 +96,19 @@ export function DeclarationForm({
         }
 
         if (spec.type === 'file') {
-          const fileName = value instanceof File ? value.name : '';
           return (
             <Field
               key={spec.key}
               label={spec.label}
-              htmlFor={fieldId}
               required={spec.required}
               error={errors[spec.key]}
-              hint="单个文件不超过 50MB"
+              hint="从你已上传的文件中选择（不在这里上传）"
             >
-              <Input
-                id={fieldId}
-                type="file"
+              <FilePicker
+                value={Array.isArray(value) ? value : []}
                 disabled={disabled}
-                onChange={(event) => onChange(spec.key, event.target.files?.[0] ?? null)}
+                onChange={(next) => onChange(spec.key, next)}
               />
-              {fileName ? <p className="text-xs text-muted-foreground">已选择：{fileName}</p> : null}
             </Field>
           );
         }

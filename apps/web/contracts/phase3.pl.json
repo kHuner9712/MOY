@@ -257,7 +257,8 @@
         "storage_key",
         "size_bytes",
         "expires_at",
-        "created_at"
+        "created_at",
+        "download_url"
       ]
     },
     "TaskDetail": {

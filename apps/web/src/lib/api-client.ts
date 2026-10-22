@@ -37,6 +37,8 @@ import type {
   PluginStateResult,
   PluginUninstallResult,
   PluginUpgradeResult,
+  TaskArtifactUpdateRequest,
+  TaskArtifactUpdateResult,
   TaskDetail,
   TaskQueueInfo,
   TaskRetryRequest,
@@ -703,6 +705,20 @@ export const agentApi = {
    */
   retryTask(taskId: string, body: TaskRetryRequest = {}): Promise<TaskRetryResult> {
     return request('POST', `/agent/tasks/${taskId}/retry`, { body });
+  },
+
+  /**
+   * WF2 编辑产物并重新导出。
+   *
+   * 仅 `draft` / `doc` / `table` 可编辑；`link` / `file` 只读（UI 不渲染编辑入口）。
+   * 保存即渲染：`download_url` 拿到的是新版本，**任务状态与执行流程都不变**；`version` 每次 +1。
+   */
+  updateArtifact(
+    taskId: string,
+    artifactId: string,
+    body: TaskArtifactUpdateRequest,
+  ): Promise<TaskArtifactUpdateResult> {
+    return request('PUT', `/agent/tasks/${taskId}/artifacts/${artifactId}`, { body });
   },
 
   /** A6 任务事件推送 */

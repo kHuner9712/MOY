@@ -11,8 +11,8 @@ import { useCallback, useMemo, useState } from 'react';
 
 import type { PluginInputSpec } from '@/lib/types';
 
-/** 表单值形态：文本 / 多选 / 文件 */
-export type DeclarationValue = string | string[] | File | null;
+/** 表单值形态：文本 / 多选 / 文件（文件为已上传文档的 `doc_` id 数组） */
+export type DeclarationValue = string | string[] | null;
 
 /** 提交给 A1 的 inputs（扁平标量 + 多选数组） */
 export type DeclarationInputs = Record<string, string | string[] | number | boolean>;
@@ -38,9 +38,6 @@ export interface UseDeclarationFormResult {
 /** 邮箱格式（与声明里的 email 控件配套，规则写在前端一处） */
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** 文件大小上限（与知识库上传一致：50MB） */
-const FILE_MAX_BYTES = 50 * 1024 * 1024;
-
 /**
  * 生成初始值。
  *
@@ -51,7 +48,7 @@ function buildInitialValues(inputs: PluginInputSpec[]): Record<string, Declarati
   const initial: Record<string, DeclarationValue> = {};
   for (const spec of inputs) {
     if (spec.type === 'multi_select') initial[spec.key] = [];
-    else if (spec.type === 'file') initial[spec.key] = null;
+    else if (spec.type === 'file') initial[spec.key] = [];
     else if (spec.type === 'select') initial[spec.key] = spec.options?.[0] ?? '';
     else initial[spec.key] = '';
   }
@@ -66,12 +63,10 @@ function buildInitialValues(inputs: PluginInputSpec[]): Record<string, Declarati
  * @returns 错误文案；通过返回空串
  */
 export function validateField(spec: PluginInputSpec, value: DeclarationValue): string {
-  const isFile = spec.type === 'file';
-  const isEmpty = isFile
-    ? value === null
-    : Array.isArray(value)
-      ? value.length === 0
-      : String(value ?? '').trim().length === 0;
+  // 文件类输入在 V1.0 是「选已上传的文件」，值是 doc_id 数组，与多选同样判空
+  const isEmpty = Array.isArray(value)
+    ? value.length === 0
+    : String(value ?? '').trim().length === 0;
 
   if (spec.required && isEmpty) {
     return `请填写${spec.label}`;
@@ -97,9 +92,6 @@ export function validateField(spec: PluginInputSpec, value: DeclarationValue): s
     if (picked.some((item) => !spec.options?.includes(item))) {
       return `${spec.label}包含无效选项`;
     }
-  }
-  if (isFile && value instanceof File && value.size > FILE_MAX_BYTES) {
-    return '文件超出大小限制（上限 50MB）';
   }
   return '';
 }
@@ -148,8 +140,8 @@ export function useDeclarationForm(inputs: PluginInputSpec[]): UseDeclarationFor
     for (const spec of inputs) {
       const value = values[spec.key] ?? null;
       if (spec.type === 'file') {
-        // 当前无文件上传通道：只带文件名，供后端登记与人工核对
-        payload[spec.key] = value instanceof File ? value.name : '';
+        // 文件类输入：回传所选文档的 doc_id 数组（插件凭 personal.file.read 读取）
+        payload[spec.key] = Array.isArray(value) ? value : [];
         continue;
       }
       if (spec.type === 'multi_select') {

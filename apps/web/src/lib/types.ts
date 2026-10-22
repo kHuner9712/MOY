@@ -1452,8 +1452,15 @@ export interface TaskArtifact {
   preview_text?: string | null;
   /** 链接类地址（http/https） */
   external_url?: string | null;
-  /** 文件类下载地址 */
+  /** 文件类存储键（后端内部使用，前端不展示） */
   storage_key?: string | null;
+  /**
+   * 下载地址（文件/导出类）。
+   *
+   * 注：A4 的产物模型原本只有 `storage_key`，前端无法直接下载；
+   * WF2 响应给了 `download_url`，因此这里补同名可选字段，待后端在 A4 一并返回。
+   */
+  download_url?: string | null;
   size_bytes?: number | null;
   /** 过期时间（180 天），过期后提示「产物已过期，可重新发起任务」 */
   expires_at?: string | null;
