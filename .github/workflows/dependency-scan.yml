@@ -201,7 +201,10 @@ jobs:
       - name: 扫描 Python 依赖协议
         run: |
           python -m pip install --upgrade pip
-          pip install pip-licenses
+          # pyyaml 是下方协议判定脚本解析 images.lock / compose 的硬依赖。
+          # 此前只装了 pip-licenses，脚本一执行到 `yaml.safe_load` 就 NameError，
+          # 整条合规门禁恒红（S8 故障点③，2026-10-23）。
+          pip install pip-licenses pyyaml
           pip install -e "apps/adapter[dev]" --quiet
           pip-licenses format=markdown --with-urls --with-license-file \
             > python-licenses.md
@@ -229,6 +232,8 @@ jobs:
           import pathlib
           import re
           import sys
+
+          import yaml
 
           # 黑名单：GPL / AGPL / SSPL（含各类变体）
           BLACKLIST = re.compile(
@@ -277,10 +282,24 @@ jobs:
                   locked_images.add((str(entry.get('name', '')), str(entry.get('tag', ''))))
                   license_name = str(entry.get('license', ''))
                   role = str(entry.get('role', ''))
+                  # 「独立容器」豁免：GPL 类协议只要**不进入核心代码库**、仅以独立
+                  # 容器进程调用，即符合总方案 5.3 的灰名单口径（ADR-0002 AC-11）。
+                  # 判定不看协议文本，只看 images.lock 是否显式声明 distribution——
+                  # 缺字段一律按黑名单处理，避免「把 GPL 塞进 GREYLIST 正则」式放水。
+                  distribution = str(entry.get('distribution', '') or '')
+                  independent = distribution == 'independent-container'
                   if BLACKLIST.search(license_name):
-                      findings['black'].append(
-                          f'[infra] {entry.get("name")}:{entry.get("tag")} 协议 {license_name}（{role}）'
-                      )
+                      if independent:
+                          findings['grey'].append(
+                              f'[infra] {entry.get("name")}:{entry.get("tag")} '
+                              f'协议 {license_name}（{role}），独立容器运行，'
+                              f'不进入核心代码库'
+                          )
+                      else:
+                          findings['black'].append(
+                              f'[infra] {entry.get("name")}:{entry.get("tag")} '
+                              f'协议 {license_name}（{role}）且未声明 independent-container'
+                          )
                   elif GREYLIST.search(license_name):
                       findings['grey'].append(
                           f'[infra] {entry.get("name")}:{entry.get("tag")} 协议 {license_name}（{role}）'
@@ -288,21 +307,9 @@ jobs:
           else:
               findings['black'].append('[infra] 缺少 deploy/images.lock（镜像唯一事实来源）')
 
-          # MinIO 必须锁定 AGPL 之前的精确版本线
-          minio_entry = next(
-              (n, t) for n, t in locked_images if n == 'minio/minio'
-          ) if any(n == 'minio/minio' for n, _ in locked_images) else None
-          if minio_entry is None:
-              findings['black'].append('[infra] images.lock 未登记 minio/minio')
-          elif minio_entry[1] != 'RELEASE.2021-04-22T15-44-28Z':
-              findings['black'].append(
-                  f'[infra] MinIO 未锁定 AGPL 前的精确版本线：{minio_entry[1]}'
-              )
-          else:
-              findings['grey'].append(
-                  '[infra] MinIO 锁定 AGPL 前精确版本线'
-                  '（RELEASE.2021-04-22T15-44-28Z），独立容器运行，D-06 待决'
-              )
+          # 说明：MinIO 已按 D-06 全面替换为 SeaweedFS（Apache-2.0），
+          # 原「必须登记 minio/minio 且锁定 AGPL 前版本」的死规则已删除——
+          # 它会让任何正确删除 MinIO 的仓库恒红（S8 故障点②，2026-10-23）。
 
           if any(n == 'valkey/valkey' for n, _ in locked_images):
               findings['grey'].append('[infra] 缓存使用 Valkey（BSD-3-Clause），D-06 待决')

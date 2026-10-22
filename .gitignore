@@ -93,6 +93,12 @@ apps/adapter/qa_probe/probe_contract.py
 apps/adapter/qa_probe/probe_runtime.py
 # 注意：qa_probe/ 下的长期资产（mock_llm.py 契约测试 mock、
 # integration_real.py 真实联调脚本）必须入库，不适用本忽略规则
+# 一次性排障插件（本轮用来在终端摘要被日志重绑定吞掉时落盘失败清单）不入库
+apps/adapter/qa_probe/_fail_recorder.py
+
+# 本地手工造数脚本（直接对着运行中的库 DELETE/INSERT 演示订阅行），
+# 不是迁移也不是种子，无任何 CI/脚本引用——留在本地，不入库
+.seed.sql
 
 # ---------------------------------------------------------------------------
 # 构建产物：OpenAPI 规范（CI 每次生成并归档为 artifact，不入库以避免噪声 diff）

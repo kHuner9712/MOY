@@ -133,6 +133,9 @@ images:
     license: GPL-2.0
     role: 出站代理（SSRF 防护）
     source: docker-hub
+    # 强传染协议的唯一合法形态：独立容器进程，不与核心代码库链接。
+    # 合规门禁只认这个字段（缺字段 = 按黑名单判红），不靠把 GPL 塞进灰名单正则（S8）。
+    distribution: independent-container
     note: 灰名单，仅独立进程调用；2026-10-21 由 5.2-22.04_beta 升至 6.13-25.04_beta（最新）
 
   - name: prom/prometheus

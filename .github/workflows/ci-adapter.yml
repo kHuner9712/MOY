@@ -417,6 +417,21 @@ jobs:
           python -m pip install pyyaml
           python deploy/validate_deps.py
 
+      - name: 校验部署形态一致性（G-34）
+        working-directory: .
+        run: |
+          python -m pip install pyyaml
+          python deploy/validate_deploy.py
+          set +e
+          python deploy/validate_deploy.py --self-test
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "部署形态门禁自检未按预期命中负样本（退出码 $code，期望 1）"
+            exit 1
+          fi
+          echo "部署形态门禁自检通过：负样本行为符合预期"
+
       - name: 依赖漏洞扫描（pip-audit，独立 venv）
         working-directory: .
         run: |
