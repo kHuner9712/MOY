@@ -760,14 +760,23 @@ def test_d1_deferred_registry_matches_markers() -> None:
     # ⑯ open 缺陷必须有到期机制：due_batch + due_action，且未过期
     #    只记「谁钉住」(pinned_by) 不够——没有到期，P2 会被无限推后（技术债复利）
     now_batch = current_batch()  # 缺失 OA_BATCH 即 KeyError → 红（默认必须指向报错）
+    #    **收集后单次断言**：逐条 assert 只报第一个，工程侧会变成"修一条→再跑→再看到一条"的多轮修复；
+    #    一次报全 + `len(problems)` 让"命中几条"可数（与"三种红三种文案"合起来 = 可操作的红）。
+    problems: list[str] = []
     for item in DEFECT_LEDGER:
         if item["status"] != "open":
             continue
-        assert item.get("due_batch"), f"[台账 ⑯] {item['id']} 缺 due_batch（无到期=永久挂账）"
-        assert item.get("due_action"), f"[台账 ⑯] {item['id']} 缺 due_action（无动作=下批重新调研）"
-        assert now_batch < item["due_batch"], (
-            f"[台账 ⑯] {item['id']} 已过期：当前 {now_batch} ≥ due {item['due_batch']} 仍 open"
-        )
+        if not item.get("due_batch"):
+            problems.append(f"{item['id']} 缺 due_batch（无到期=永久挂账）")
+        elif not item.get("due_action"):
+            problems.append(f"{item['id']} 缺 due_action（无动作=下批重新调研）")
+        elif not now_batch < str(item["due_batch"]):
+            problems.append(
+                f"{item['id']}[{item['level']}] 已过期（due {item['due_batch']}，当前 {now_batch}）"
+            )
+    assert not problems, (
+        f"[台账 ⑯] 到期未闭 共 {len(problems)} 条：" + "；".join(problems)
+    )
 
     red_names = sorted(str(c["name"]) for c in red_cases)
 
