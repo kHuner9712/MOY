@@ -81,6 +81,7 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {"id": "P3-B19-03", "level": "P1", "status": "fixed"},  # d75aa3a（init 脚本补列）
 )
 
+
 #: 当前批次是**运行时上下文**，不是跨批事实——所以用函数读环境变量，**不写常量**：
 #: 写成常量会和 `EXPECTED_XFAIL` 一样漂移，而「默认成最新批」更糟：
 #: 最新批的 `due_batch` 最宽松，一切都会绿 → 该红的不红，P2 永久挂账。
