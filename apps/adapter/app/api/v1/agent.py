@@ -204,7 +204,9 @@ async def list_tasks(
     merged = list(plugin_page.items) + [
         item for item in base_page.items if item.task_id not in seen
     ]
-    total = plugin_page.total + base_page.total
+    # `PageResult` 只有 `items` + `meta`（`meta.total` 才是总数），
+    # 直接读 `.total` 会抛 `AttributeError` → 有插件任务的租户一打开"我的任务"就 500。
+    total = plugin_page.meta.total + base_page.meta.total
     start = max(0, (page - 1) * page_size)
     page_items = merged[start : start + page_size]
     return ApiResponse[PageResult[TaskItem]].ok(
