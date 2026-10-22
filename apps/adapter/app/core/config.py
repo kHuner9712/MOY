@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     dify_reasoning_app_key: str = ""
     #: 降级链末端密钥（通用档 fallback；四个档位都可能落到它）
     dify_fallback_app_key: str = ""
+    #: 事实抽取专用工作流应用密钥（阶段四 T4-03，架构 §5.3）。
+    # 抽取是**内部**模型调用，与会话/档位/Agent 用的是不同应用（提示词与 JSON
+    # 输出约束不同）；缺省回退 `dify_default_app_key`。**绝不复用 `ModelService`**：
+    # 那条路径会写 message、可能再次触发抽取，形成自喂循环。
+    dify_memory_app_key: str = ""
     dify_connect_timeout_seconds: float = Field(default=3.0, gt=0)
     dify_read_timeout_seconds: float = Field(default=60.0, gt=0)
     dify_stream_first_byte_timeout_seconds: float = Field(default=15.0, gt=0)
@@ -254,6 +259,29 @@ class Settings(BaseSettings):
     memory_max_per_user: int = Field(default=200, ge=1, le=10_000)
     #: 每 N 轮对话触发一次事实抽取（0 = 关闭抽取，只保留手动与历史数据）
     memory_extract_every_turns: int = Field(default=10, ge=0, le=100)
+
+    # ------------------------------------------------------------------
+    # 后台任务引擎（阶段四 T4-03.2，架构 §2.3 / §3.4）
+    #
+    # `background_jobs_enabled` 是**总开关**（默认 true）：关掉后进程内不再跑轮询，
+    # 队列里的任务留在库里（`queued`），不会丢——恢复开关即继续消费。
+    # 测试与 CI 一律 false（`env=test` 时 lifespans 也不启动，见 `app/main.py`），
+    # 避免后台协程在 pytest 事件循环里留尾巴（会触发 "Task was destroyed but it is
+    # pending" 并污染后续用例）。需要驱动任务的用例显式开开关并手动 `tick()`。
+    #
+    # 租约口径：`locked_until = now() + lease`；进程崩溃后由下一次认领回收
+    # （`status='running' AND locked_until < now()`）。租约必须**显著大于**任务超时，
+    # 否则一个还在跑的长任务会被第二个进程重复认领（重复写记忆）。
+    # ------------------------------------------------------------------
+    background_jobs_enabled: bool = True
+    #: 轮询间隔（秒）。默认 1s：抽取是分钟级才需要一次，1s 的额外查询可忽略
+    background_job_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60.0)
+    #: 租约时长（秒）。取 2 × 任务超时的量级（架构 §2.3 第 2 条）
+    background_job_lease_seconds: int = Field(default=120, ge=5, le=3_600)
+    #: 单任务执行超时（秒）；超时按失败处理（`asyncio.wait_for`）
+    background_job_timeout_seconds: float = Field(default=60.0, gt=0, le=900.0)
+    #: 单轮认领条数上限（批量认领，避免一次 tick 抢空队列）
+    background_job_batch_size: int = Field(default=5, ge=1, le=100)
 
     # ------------------------------------------------------------------
     # 记忆向量化（阶段四 §3.3.1 / 决策 A-1）

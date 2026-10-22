@@ -167,6 +167,7 @@ markers = [
     "integration: 契约/集成测试",
     "contract: 接口契约测试",
     "p0: P0 红线用例（测试方案 §7.1，G-24 门禁）",
+    "memory: 记忆内核用例（阶段四 T4-03：抽取/去重/上限/降级）",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:httpx.*",

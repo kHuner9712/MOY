@@ -296,6 +296,7 @@ class ModelService:
         usage: UsageService | None = None,
         conversations: ConversationService | None = None,
         assembler: ContextAssembler | None = None,
+        memory: Any | None = None,
     ) -> None:
         """初始化服务。
 
@@ -309,6 +310,12 @@ class ModelService:
             usage: 可选计量服务（测试注入；D-12 唯一写入口）。
             conversations: 可选会话服务（阶段四落库；测试注入）。
             assembler: 可选上下文组装器（阶段四自研组装；测试注入）。
+            memory: 可选记忆服务（阶段四抽取触发；测试注入）。
+
+                **类型留作 `Any` 是刻意的**：`app/business/memory_service.py`
+                会反向 import `app/services/*`，在模块顶层互相 import 会在
+                `app.services` 包初始化期间命中"部分初始化的模块"。
+                真正取用的地方（`_memory_service()`）才做惰性 import。
         """
         self._settings = settings or get_settings()
         self._routes = routes or get_profile_routes()
@@ -322,6 +329,25 @@ class ModelService:
             self._settings
         )
         self._assembler: ContextAssembler = assembler or get_context_assembler(self._settings)
+        # 阶段四 T4-03.3：记忆抽取触发（助手消息 settled 后入队，不阻塞对话）
+        self._memory_cached: Any | None = memory
+
+    def _memory_service(self) -> Any | None:
+        """取记忆服务（惰性 import，见 `__init__` 的 `memory` 参数说明）。
+
+        Returns:
+            Any | None: 记忆服务；构造失败时返回 None（记忆是增强，不是依赖）。
+        """
+        if self._memory_cached is not None:
+            return self._memory_cached
+        try:
+            from app.business.memory_service import get_memory_service
+
+            self._memory_cached = get_memory_service(self._settings)
+        except Exception as exc:  # 记忆不可用不得影响对话
+            logger.warning("memory_service_unavailable", detail=type(exc).__name__)
+            return None
+        return self._memory_cached
 
     # ------------------------------------------------------------------
     # 租户与授权库解析（B05）
@@ -627,6 +653,37 @@ class ModelService:
                 "assistant_message_finalize_failed",
                 conversation_id=started.conversation.conversation_id,
                 message_id=started.assistant_message.message_id,
+                detail=type(exc).__name__,
+            )
+            return
+        # 阶段四 T4-03.3：只有**正常定稿**才触发抽取。
+        # `aborted`/`failed` 轮次不抽：那一轮助手没给出完整回答，用户那句话往往
+        # 只是半句（"我想说的是…"），抽出来的"事实"比不抽更糟。
+        if status == "settled":
+            await self._maybe_enqueue_memory_extract(tenant_id, started)
+
+    async def _maybe_enqueue_memory_extract(
+        self, tenant_id: str, started: StartedGeneration
+    ) -> None:
+        """达到阈值时入队一次记忆抽取（**任何异常都不影响对话**）。
+
+        Args:
+            tenant_id: 企业 ID。
+            started: 本轮两条消息句柄（取 `user_id` 与 `conversation_id`）。
+        """
+        memory = self._memory_service()
+        if memory is None:
+            return
+        try:
+            await memory.maybe_enqueue_extract(
+                tenant_id,
+                started.user_message.user_id,
+                started.conversation.conversation_id,
+            )
+        except Exception as exc:  # `maybe_enqueue_extract` 自身不抛，这里是最后一道保险
+            logger.warning(
+                "memory_extract_trigger_failed",
+                conversation_id=started.conversation.conversation_id,
                 detail=type(exc).__name__,
             )
 

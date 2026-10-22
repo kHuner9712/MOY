@@ -272,6 +272,10 @@ class MessageStore(Protocol):
         """按 ID 读取。"""
         ...
 
+    async def count_role(self, tenant_id: str, conversation_id: str, *, role: str) -> int:
+        """统计会话内某个角色的消息条数（阶段四 T4-03.3「每 10 轮」触发用）。"""
+        ...
+
     async def list_before(
         self,
         tenant_id: str,
@@ -614,6 +618,30 @@ class InMemoryMessageStore:
             if item.tenant_id == tenant_id and item.message_id == message_id:
                 return item
         return None
+
+    async def count_role(self, tenant_id: str, conversation_id: str, *, role: str) -> int:
+        """统计会话内某个角色的消息条数。
+
+        用"库里真实条数"而不是 `conversation.message_count`（后者含 assistant 行）：
+        抽取触发口径是**用户轮次**（每 10 轮），拿总条数当轮次会让触发频率翻倍。
+
+        Args:
+            tenant_id: 企业 ID。
+            conversation_id: 会话 ID。
+            role: 角色（`user` / `assistant` / `system`）。
+
+        Returns:
+            int: 条数。
+        """
+        return len(
+            [
+                item
+                for item in self._items
+                if item.tenant_id == tenant_id
+                and item.conversation_id == conversation_id
+                and item.role == role
+            ]
+        )
 
     async def list_before(
         self,
@@ -1026,6 +1054,30 @@ class PostgresMessageStore:
                 repo.params(message_id=message_id),
             )
         return _to_message(row) if row is not None else None
+
+    async def count_role(self, tenant_id: str, conversation_id: str, *, role: str) -> int:
+        """统计会话内某个角色的消息条数。
+
+        Args:
+            tenant_id: 企业 ID。
+            conversation_id: 会话 ID。
+            role: 角色。
+
+        Returns:
+            int: 条数。
+        """
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _MessageTableRepository(uow)
+            total = await repo.fetch_scalar(
+                f"""
+                SELECT count(*) FROM {MESSAGE_TABLE}
+                 WHERE {repo.tenant_clause()}
+                   AND conversation_id = :conversation_id
+                   AND role = :role
+                """,
+                repo.params(conversation_id=conversation_id, role=role),
+            )
+        return int(total or 0)
 
     async def list_before(
         self,

@@ -21,7 +21,9 @@ from fastapi.testclient import TestClient
 from jose import jwt
 
 from app.business.audit_service import reset_audit_recorder
+from app.business.conversation_service import reset_conversation_service
 from app.business.credential_service import reset_credential_resolver
+from app.business.memory_service import reset_memory_service
 from app.business.order_service import reset_order_service
 from app.business.payment_gateway import reset_payment_gateway
 from app.business.plan_service import reset_plan_service
@@ -49,7 +51,9 @@ from app.db.repositories.conversation_repo import reset_conversation_stores
 from app.db.repositories.credential_repo import reset_credential_stores
 from app.db.repositories.document_repo import reset_document_store
 from app.db.repositories.grant_repo import reset_grant_store
+from app.db.repositories.job_repo import reset_job_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
+from app.db.repositories.memory_repo import reset_memory_store
 from app.db.repositories.ops_repo import reset_ops_store
 from app.db.repositories.org_repo import reset_org_store
 from app.db.repositories.plugin_repo import reset_plugin_store
@@ -66,6 +70,7 @@ from app.services.model_service import reset_model_service
 from app.services.rag_service import reset_rag_service
 from app.services.tool_service import reset_tool_service
 from app.tools.wechat_mp_connector import reset_publish_registry
+from app.workers.job_runner import reset_job_runner
 
 #: 测试用租户 ID
 TEST_TENANT_ID = "tnt_test_tenant"
@@ -192,6 +197,18 @@ def _reset_all() -> None:
     reset_document_store()
     reset_grant_store()
     reset_conversation_stores()
+    # **会话服务单例也必须重置**（阶段四 T4-03 暴露的隔离缺口）：
+    # `reset_conversation_stores()` 只清模块级存储指针，而已构造的
+    # `ConversationService` 仍持有**上一个用例的**存储对象——
+    # 于是本用例写入的消息落在旧存储里，本用例的 `get_message_store()` 读到空表。
+    # 表现为"单独跑绿、连着跑红"（T4-03.3 的 10 轮触发用例实测命中）。
+    reset_conversation_service()
+    # 阶段四 T4-03：记忆/任务存储与 Runner（后台任务用例之间必须完全隔离，
+    # 否则上一个用例留下的 queued 任务会被本用例的 tick() 认领走）
+    reset_memory_store()
+    reset_job_store()
+    reset_memory_service()
+    reset_job_runner()
     reset_segment_store()
     reset_segment_service()
     reset_policy_service()
@@ -231,6 +248,9 @@ def settings() -> Settings:
         auth_mode="stub",
         jwt_secret=TEST_JWT_SECRET,
         ratelimit_enabled=False,
+        # 阶段四 T4-03.2：测试环境**一律不启动**后台轮询（`should_start_runner` 另有
+        # `env != "test"` 兜底）。需要驱动任务的用例显式打开并手动 `runner.tick()`。
+        background_jobs_enabled=False,
     )
 
 

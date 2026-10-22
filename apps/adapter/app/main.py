@@ -12,6 +12,10 @@
 阶段二新增（D-02）：`lifespan` 负责业务库引擎初始化与启动期迁移；
 `/readyz` 纳入数据库检查项。`business_store=memory` 时**完全不创建引擎**，
 既不连接数据库，也不执行迁移（保证离线单测与 T01 演示可用）。
+
+阶段四新增（T4-03.2）：`lifespan` 按 `OA_BACKGROUND_JOBS_ENABLED` 启停后台任务轮询
+（记忆抽取的载体）。关停顺序是**先停轮询、再释放连接池**——反序会让正在执行的任务
+拿到已 dispose 的引擎，把一次干净的停机变成一堆 `InterfaceError` 日志。
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from app.db.engine import dispose_engine, get_engine
 from app.db.migrate import run_startup_migrations
 from app.middleware.error_handler import register_exception_handlers
 from app.middleware.trace import AccessLogMiddleware, TraceMiddleware
+from app.workers.job_runner import JobRunner, get_job_runner, should_start_runner
 
 logger = get_logger(__name__)
 
@@ -129,10 +134,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
         raise
 
-    yield
+    # 阶段四 T4-03.2：后台任务轮询（抽取记忆、导出、保留期清理的载体）。
+    # **只在 `OA_BACKGROUND_JOBS_ENABLED=true` 且 `env != test` 且确有数据库时启动**：
+    # 测试环境起一个永不结束的协程会污染 pytest 事件循环（"Task was destroyed"），
+    # 而 `business_store=memory` 下没有队列可消费，起来只是空转。
+    runner: JobRunner | None = None
+    if should_start_runner(settings, has_engine=engine is not None):
+        runner = get_job_runner(settings)
+        runner.start()
+    app.state.job_runner = runner
 
-    await dispose_engine()
-    logger.info("adapter_stopping")
+    try:
+        yield
+    finally:
+        # 先停轮询再释放连接池：反序会让 in-flight 任务拿到已 dispose 的引擎
+        if runner is not None:
+            await runner.stop()
+        await dispose_engine()
+        logger.info("adapter_stopping")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
