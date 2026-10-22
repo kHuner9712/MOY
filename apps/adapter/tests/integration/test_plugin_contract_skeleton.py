@@ -94,7 +94,7 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
         "tc": "TC-P3-08 ⑥",
         "batch": "B18",
         "why": "PL5 响应缺 already_installed 常驻字段（B17 已交付 PL5，但字段缺失）",
-        "status": "red",
+        "status": "landed",
         "defect": "P3-B17-01",
     },
     {
@@ -102,14 +102,14 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
         "tc": "TC-P3-PL03-11",
         "batch": "B18",
         "why": "PL14 授权写接口未实现（路由未注册）",
-        "status": "xfail",
+        "status": "landed",
     },
     {
         "name": "test_c1_pl05_reinstall_does_not_touch_grants_or_audit",
         "tc": "TC-P3-MK08-06",
         "batch": "B18",
         "why": "依赖 already_installed 与重复安装零增量（B17 未达标）",
-        "status": "red",
+        "status": "landed",
         "defect": "P3-B17-01",
     },
     {
@@ -117,7 +117,7 @@ DEFERRED_CASES: list[dict[str, str | None]] = [
         "tc": "TC-P3-PL03-07 ⑥",
         "batch": "B18",
         "why": "PL13 写后回读只返 3 项，契约要求全量 6 项",
-        "status": "red",
+        "status": "landed",
         "defect": "P3-B17-02",
     },
     {
@@ -249,7 +249,6 @@ def test_b1_pl05_already_installed_field_is_always_present() -> None:
     )
 
 
-@pytest.mark.xfail(reason="B18 未实现：PL14 授权写接口", strict=False)
 def test_b2_pl14_update_grants_before_install_returns_16003(
     client: TestClient,
 ) -> None:
@@ -415,7 +414,7 @@ def test_c2_pl13_capability_policy_idempotent_by_idempotency_key(
     )
 
 
-@pytest.mark.xfail(reason="B19 未实现：WF2 产物编辑接口", strict=False)
+@pytest.mark.xfail(reason="B19 未实现：WF2 产物编辑接口", strict=True)
 def test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched(
     client: TestClient,
 ) -> None:
@@ -432,7 +431,7 @@ def test_c3_wf2_edit_rerenders_download_and_keeps_steps_untouched(
     )
 
 
-@pytest.mark.xfail(reason="B19 未实现：WF2 只读类型拒绝", strict=False)
+@pytest.mark.xfail(reason="B19 未实现：WF2 只读类型拒绝", strict=True)
 def test_c4_wf2_non_editable_types_rejected_without_version_bump(
     client: TestClient,
 ) -> None:

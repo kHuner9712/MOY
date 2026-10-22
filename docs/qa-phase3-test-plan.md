@@ -72,6 +72,15 @@
 | 失败与接管 | **不返回非 0 `code`**；用 `steps[].failure.retryable` 与 `status=waiting_confirm` | TC-P3-WF13-02/03 同时断言 `code==0` |
 | 离线可跑 | 所有 P0 用例在**无外网**下可跑：GitHub→本地 bare 仓库 + `git` CLI；公众号/邮件/企微→契约桩 | 见 §8.1；CI 用 `--offline` 模式一次性验证「无外网也能绿」 |
 
+### 0.5 门禁「验错对象」的两类假绿（复核人必读）
+
+| 陷阱 | 表现 | 防法 |
+| --- | --- | --- |
+| **管道吞退出码** | `cmd \| tail -3; echo $?` 取到的是 `tail` 的 0，把「自检通过=1」看成「永远绿」 | 一律 `cmd > "$LOG/x.log" 2>&1; echo "EXIT=$?"` |
+| **扫描对象跑偏** | 在导出树跑 `validate_plugins.py` 不带 `--dir`，缺省路径解析到**主仓**——输出里是主仓目录，结论却是「导出树通过」 | 显式 `--dir app/plugins/manifests`；并断言输出里**打印的目录 ∈ 导出树**（B16 实测踩过：日志里赫然是 `...Desktop/麦子/apps/adapter/app/plugins/manifests`） |
+
+> 这两类的共同点：**门禁是绿的，但验的不是该验的东西**。比门禁缺失更危险，因为没人会去查。
+
 ---
 
 ## 1. 测试范围与不测范围
@@ -212,10 +221,11 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 
 | 规则 | 内容 |
 | --- | --- |
-| ① `skipped` | **任何批次、任何模式都不允许出现 `skipped`**（`--run-pg` 与不带 PG 两种口径均为 0）。自检类测试文件在**正常模式下用 `conftest.py` 的 `collect_ignore` 不收集**，**不是**收集后用 `skipif` 跳过——否则「0 skipped」这条永远做不到 |
-| ② `xfailed` | 正常模式允许 `xfailed == EXPECTED_XFAIL`（模块级常量，写在 `tests/expected_xfail.py`）；**该批完成后必须归 0** |
+| ① `skipped` | **任何批次、任何模式都必须为 0**（`--run-pg` 与不带 PG 两种口径）。自检类用例的「正常模式不收集」**机制自选**：文件名不带 `test_` 前缀，或在 `conftest.py::collect_ignore` 里排除；**不得「收集后用 `skipif`」**（报告里仍会出现 skipped 计数）。理由：`conftest.py` 全仓共享，为一个自检文件加全局条件，误改一次波及所有人 |
+| ② `xfailed` | 正常模式允许 `xfailed == EXPECTED_XFAIL`（唯一天源 `tests/expected_xfail.py`）。**按归属表下降，不是每批归零**：`B16=6 → B17=3 → B18=1 → B19=0`（`EXPECTED_XFAIL_BY_BATCH` 逐批表达）；每批只要求**该批归属的** xfail 转 pass——B16 只有声明模型，不可能让 PL5/PL13/PL14/WF2 的 6 条转绿 |
 | ③ 汇总断言 | 必须同时打印**两个数字**：`EXPECTED_XFAIL`（预期）与**当前实际 `xfailed`**；两者不等即整批红。这样「这批做完了」是**机器判定**，不靠人评 |
 | ④ 回归基线 | `xfailed > EXPECTED_XFAIL` → 新增了未登记缺陷（红）；`xfailed < EXPECTED_XFAIL` → 缺陷已修但常量未减（红，强制摘标记） |
+| ⑤ 转绿名单 | 批次报告必须**逐条列出**「转绿的用例原名 → 新 pass 名」，**防「6→3 其实是删了 3 条」**；名单与 `EXPECTED_XFAIL_BY_BATCH` 的差值必须一一对应 |
 
 **汇总断言的落地写法**（`tests/test_summary_counts.py`，随批次维护）：
 
@@ -233,6 +243,8 @@ def test_xfail_budget_matches_request(pytestconfig):
 ```
 
 **验收报告口径（四列，不是三列）**：`passed / failed / skipped / xfailed`。只写三列会让读者把 `4 passed + 6 xfailed` 误读成「只跑了 4 条」。
+
+**判定示例**（按归属表）：B16 结束应为 `xfailed=6`、B17 结束 `3`、B18 结束 `1`、B19 结束 `0`；其余组合一律红。
 
 **判定示例**：`4 passed + 6 xfailed + 0 skipped` = **合格**（6 条为已登记缺陷）；`4 passed + 6 xfailed + 2 skipped` = **红**（2 条 skipped 无到期日）；`10 passed + 0 xfailed` 但 `EXPECTED_XFAIL=6` = **红**（常量未减，强制摘标记）。
 
