@@ -772,3 +772,52 @@ MSYS_NO_PATHCONV=1 docker run --rm --entrypoint promtool \
 | 3 | 架构 §9.1 提到的 `--profile with-ssrf` **未实现** | 需要抓 URL 的知识库同步不可用 | 3b 或 V1.1 补；本批在 compose 末尾「已知限制」里如实写明 |
 | 4 | `dify-web` 只发布到 `127.0.0.1` | 现场要 Remote 进机器才能配 provider | 运维手册（T4-05.6）写清 `ssh -L 3001:127.0.0.1:3001` |
 | 5 | 本批**未**覆盖"知识库检索 + 记忆向量"的真实链路 | 向量通路只到"扩展可装" | 属交付流程（装 deepseek 插件 + 填 Key），baseline §2.4 已用标准栈同镜像测过增量（+10 MiB） |
+
+---
+
+## 33. 暂停点（2026-10-23 11:57，按用户要求暂停开发）
+
+### 33.1 当前状态
+
+| 项 | 值 |
+| --- | --- |
+| 分支 / HEAD | `main` / `5d1f29b`（本文件提交后为新的 docs 提交） |
+| 端点基线 | `phase4_present=10`，`validate_openapi.py --strict` **EXIT 0**（G1-G6 全过） |
+| 镜像门禁 | `images.lock` 17 引用 / 17 登记，digest 全量登记，**EXIT 0** |
+| 最后一次全量 | **1993 passed / 0 failed**（`--run-pg`，511s；此后仅改 deploy 脚本与文档，未动应用代码） |
+| 工作区 | 仅 6 个 CRLF 假 M（`git diff HEAD --numstat` 为空）+ `scripts/bench/` 未跟踪 |
+
+### 33.2 已交付（阶段四范围内）
+
+- T4-01 ~ T4-04 全批（基座整改、会话落库、记忆、任务引擎加固、成本护栏、安全收口）。
+- T4-05.1/.2 可观测：15+2 指标、两个 exporter、5 条告警；**真栈 4/4 target UP**，`promtool test rules` **SUCCESS**（5 条规则成对断言）。
+- T4-05.3 数据权利：保留清理（审计 skipped 为预期）、TD1 同步导出（20 万行上限、复用产物令牌）、TD2 删除（`pending DBA` 证明、业务字段清空、证明留存 180 天）。
+- 3a 轻量版九容器：**9/9 healthy / 1875.5 MiB / ready in 59s**（口径：不含 initdb、镜像已在本地）。
+- 3b-1 `install.sh`（1004 行）：实跑安装 + 幂等 + 三组负样本（端口占用/checksums/容器名冲突）。
+- 3b-2 前半 `backup.sh` / `restore.sh`：静态校验与参数用例通过；**restore 未实跑**。
+  - 修掉一个 source 变量名冲突：`backup/restore/install` 共用 `_INSTALL_SAVED_ARGS` 会被后者覆盖为空，表现为 `--help`/`--out-dir` 静默失效、仍按默认路径备份；已改为三者互不相同的变量并验证。
+
+### 33.3 未完成（恢复开发按此顺序）
+
+| # | 事项 | 关键口径 |
+| --- | --- | --- |
+| 1 | `upgrade.sh` | 顺序不可颠倒：vector 预检 **exit 4** → init 指纹 **exit 6** → 备份 → migrate（DBA **exit 5**）→ 冒烟 → 失败自动回滚；目标版本 <0006 **exit 7** |
+| 2 | `rollback.sh` | 薄封装 `migrate.py --rollback`（已内置回滚前强制备份）；`OA_MAINTENANCE=1` + 停 proxy/web |
+| 3 | 离线包 `deploy/offline/` | 17 镜像 digest 已登记；**9 个 tar 连续 load 未实测**（只验了 2 个） |
+| 4 | T4-05.6 | SBOM 四层 + `.difypkg` 扫描 + 合规三件套 + About 页 |
+| 5 | T4-05.7 | 性能基线（首屏/首字/并发）+ 金标任务集 20 条 + 部署/使用手册 |
+| 6 | QA 终验 | 全量回归 + 五类攻击 + 弱网/断网部署 + 阶段四验收报告 |
+
+### 33.4 恢复开发的第一步（可直接执行）
+
+1. `bash deploy/validate_lite_up.sh` 起轻量栈（约 60s；**单机只能跑一套**）。
+2. `bash deploy/backup.sh` → 手工删 20 条 `message` + 5 条 `user_memory` → `OA_MAINTENANCE=1 bash deploy/restore.sh` → 逐表行数与抽查一致。
+3. 再实现 `upgrade.sh` / `rollback.sh`，先跑两个负样本（`DROP EXTENSION vector` → exit 4 且迁移 0 行；篡改安装台账 init sha256 → exit 6）。
+
+### 33.5 环境事实（接续者必读）
+
+- 轻量栈已 `down -v`；`oa-*` 标准栈未动；测试库 `moy-qa-pg-vec`（55434）。
+- **Git Bash 的 `mktemp` 返回 `C:\...`，`rm` 会被安全删除钩子拒绝** → 脚本不要落临时文件，输出收进变量。
+- **单机只能跑一套轻量版**：`container_name: oal-*` 写死，换项目名仍撞名。
+- `OA_MAINTENANCE` 全仓无消费点，只是脚本侧意图；真拦流量靠 `stop proxy web`。
+- 回滚 down SQL 只有 `0006–0011`；`0002–0005` 没有，且不补（补写等于给客户库准备删除脚本）。
