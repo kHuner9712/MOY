@@ -663,3 +663,112 @@ MSYS_NO_PATHCONV=1 docker run --rm --entrypoint promtool \
 
 结果：`test_retention_export_delete.py` **15 passed**；全量 `pytest tests --run-pg`
 **1993 passed / 0 failed**（519s）；`ruff check` / `format --check` / `mypy app` 全绿。
+
+---
+
+## 32. T4-05 第三批 3a：轻量版九容器编排与起栈校验（2026-10-24）
+
+> 本批只做**编排 + 起栈校验**。离线包与 `install.sh` / `upgrade.sh` / `rollback.sh` 不属本批（3b 及后续）。
+
+### 32.1 交付物（5 个文件，全部新增）
+
+| 文件 | 作用 | 关键点 |
+| --- | --- | --- |
+| `deploy/docker-compose.lite.yml` | 轻量版编排，**常驻 9 个**容器 | `dify-web` 在 `profiles:[admin]`、`migrate` 在 `profiles:[migrate]`；只有 `proxy` 映射宿主端口 |
+| `deploy/nginx/nginx.conf` | 主配置（日志格式 / 压缩 / 上传上限 / 长连接超时） | `client_max_body_size 50m` 与 `OA_MAX_UPLOAD_BYTES=52428800` **必须一致** |
+| `deploy/nginx/lite.conf` | 站点配置（唯一入口的四条路由） | SSE 三件套（`proxy_buffering off` + `X-Accel-Buffering no` + HTTP/1.1）、`resolver 127.0.0.11` 跟随容器重建、`/readyz` 与 `/metrics` 限内网 |
+| `deploy/.env.lite.example` | 轻量版环境样例（**无 Milvus / 对象存储 / sandbox 键**） | 口令一律 `openssl rand -hex 24`（URL 安全：口令要嵌进 DSN） |
+| `deploy/validate_lite_up.sh` | 静态断言 + 真起栈校验 | 36 条 compose 断言 + 10 条 nginx 断言；起栈后断言 9 容器 / 全 healthy / < 6 GiB |
+| `deploy/images.lock` | 补登 `nginx:1.29-alpine`（BSD-2） | 门禁要求「compose 引用 ⊆ lock 登记」；不登 CI 必红 |
+
+### 32.2 实测结果（**口径必须一起引用**）
+
+| 项 | 值 | 口径 |
+| --- | --- | --- |
+| 起栈命令 | `bash deploy/validate_lite_up.sh` | 退出码 **0** |
+| 运行容器数 | **9** | `docker compose ps --status running` 计数 |
+| 健康状态 | **9/9 healthy** | 各服务 healthcheck（PG 断言 `schema_migration`；Keycloak 探 9000 `/health/ready`） |
+| 总内存 | **1875.5 MiB (1.83 GiB)** | `docker stats --no-stream`，9 个 `oal-*` 容器工作集合计，起栈后 ~30 s 采样一次 |
+| 就绪耗时 | **ready in 59s**（判据 ≤180 s） | `up -d` → `GET http://127.0.0.1:80/readyz` 首次 200 的墙钟差 |
+| `compose config -q` | **EXIT 0** | 用 `.env.lite.example` 的占位值（QA 静态验收口径） |
+
+**ready in 59s 的口径警告（不得简写成"轻量版 59 秒起栈"）**：
+
+1. 该数字**不含** postgres initdb——脚本在迁移前就先把 postgres 拉起（并断言 `healthy`），
+   计时从 `up -d` 开始，此时 initdb 已完成；
+2. 镜像**全在本地**（无拉取耗时）；
+3. 宿主上同时跑着标准栈 17 个容器（Docker Desktop / WSL2），比 baseline 的独占环境更苛刻；
+4. baseline §3.1 的 **95.7 s** 是"空卷首次启动 + 含 initdb"的完整口径，两者不可互换。
+
+逐容器内存（同一次采样，MiB）：
+
+| keycloak | dify-api | dify-worker | postgres | adapter | web | proxy | plugin_daemon | valkey | 合计 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 667.3 | 465.9 | 455.2 | 105.9 | 85.5 | 35.6 | 29.3 | 24.6 | 6.2 | **1875.5** |
+
+与 baseline §2.3（1927.2 MiB）相差 −51.7 MiB（−2.7%），差异来自 keycloak 尚未被访问 + 采样时点不同。
+
+### 32.3 端到端证据（不是只看容器"跑起来了"）
+
+| 证据 | 命令 | 结果 |
+| --- | --- | --- |
+| 经 proxy 的适配层就绪 | `curl http://127.0.0.1:80/readyz` | `{"code":0,...,"status":"ready"}`，5 项检查全 `ready:true`（含 `db_privilege`） |
+| nginx 自身 | `curl http://127.0.0.1:80/healthz` | `ok` |
+| 前端同源链路 | `curl -L http://127.0.0.1:80/` | 307 → `/chat` → **200** |
+| Dify 自身 | `docker exec oal-dify-api curl -s localhost:5001/health` | `{"status":"ok","version":"1.17.1"}` |
+| Dify 库建表 | `psql -d dify -tAc "select count(*) from information_schema.tables where table_schema='public'"` | **144**（`MIGRATION_ENABLED=true` 生效） |
+| Keycloak 管理端口 | `docker exec oal-keycloak bash -c '.../dev/tcp/127.0.0.1/9000...'` | `"status": "UP"` |
+| pgvector 可装 | `select name,default_version from pg_available_extensions where name='vector'` | `vector\|0.8.7`（**文件在镜像里**） |
+| 迁移 | `--profile migrate run --rm migrate` | `applied_now=9 / already_applied=2`，退出 0 |
+
+### 32.4 从镜像里核过的事实（不是文档推测）
+
+本批所有"为什么这么写"都在容器内验过一遍，避免抄错键名：
+
+| 结论 | 证据（镜像内路径） |
+| --- | --- |
+| `STORAGE_TYPE=local` 可用且等价于 OpenDAL fs | `api/extensions/ext_storage.py:32-35` `case StorageType.LOCAL → OpenDALStorage(scheme="fs", root=STORAGE_LOCAL_PATH)`；`configs/middleware/__init__.py:80` 声明 `STORAGE_LOCAL_PATH`（标记 deprecated） |
+| `CODE_EXECUTION_ENDPOINT` 空串会让进程退出 | `configs/feature/__init__.py:110` `CODE_EXECUTION_ENDPOINT: HttpUrl`（空串 → `ValidationError`） |
+| `SSRF_PROXY_HTTP_URL` 是 `str \| None`，空串不报校验但会让 httpx 拿不到代理 | `configs/feature/__init__.py:691` |
+| 7 个 `PGVECTOR_*` 是硬要求且 MIN < MAX | `dify_vdb_pgvector/pgvector.py:39-53`（逐条 `ValueError: config PGVECTOR_XXX is required`） |
+| Dify 会自己 `CREATE EXTENSION vector` | `dify_vdb_pgvector/pgvector.py:269`（本栈 Dify 用超级用户 `officeai`，能建） |
+| dify-api 有 `/health` 且镜像内有 curl | `api/extensions/ext_app_metrics.py:20`；`command -v curl` → `/usr/bin/curl` |
+| plugin_daemon 有 `/health/check` 且有 curl | 二进制内含 `internal/server/controllers/health_check.go` 与字符串 `/health/check` |
+| dify-worker **没有 ps**，PID 1 就是 celery | entrypoint.sh: `exec celery -A celery_entrypoint.celery worker ...`；`command -v ps` 为空 → 探针改读 `/proc/1/cmdline` |
+| Keycloak 镜像有 bash/grep、**没有 curl** | `command -v bash /usr/bin/bash`、`command -v curl` 为空 → 探针用 bash `/dev/tcp` 手写 HTTP |
+| web 镜像（alpine）有 wget、没有 curl | `command -v wget /usr/bin/wget` |
+| adapter 镜像内**不含** `deploy/` | `ls /app` → 只有 `app / pyproject.toml / README.md` → migrate Job 必须挂 `./:/app/deploy:ro` 并设 `OA_DB_SQL_DIR` |
+
+### 32.5 断言不是恒真的（负样本自证）
+
+| 负样本 | 改动 | 期望 | 实测 |
+| --- | --- | --- | --- |
+| 1 | 删掉 `JAVA_OPTS_APPEND` 一行（**注释里仍留着这串字**） | 静态断言红 | `[FAIL] Keycloak 带 JVM 限堆…实际 None`，EXIT 1 |
+| 2 | `CODE_EXECUTION_ENDPOINT: ""` | 静态断言红 | `[FAIL] 未设置 CODE_EXECUTION_ENDPOINT / SSRF_PROXY_*`，EXIT 1 |
+| 复位 | 还原编排 | 全绿 | 36 条 compose + 10 条 nginx 全 `OK`，EXIT 0 |
+
+负样本 1 是关键：证明断言走的是 `compose config` 的**解析结果**而不是 grep 全文——
+注释里也写着 `-Xms64m -Xmx384m`，grep 会假通过。
+
+### 32.6 三处与架构文档不一致（需要下游知道）
+
+| # | 架构 §9.1 写法 | 本批实现 | 依据 |
+| --- | --- | --- | --- |
+| 1 | 资源限制只给 4 个关键容器（postgres 1G / keycloak 768M / dify-api 1G / adapter 768M），"其余不设（留弹性）" | **9 个全设**：postgres 512M / valkey 384M / keycloak **1024M** / dify-api 1024M / dify-worker 768M / plugin_daemon 512M / adapter 512M / web 384M / proxy 128M（合计 5248M） | ① `keycloak 768M` 与 baseline §2.3 实测 **cgroup 909.1 MiB** 冲突，按 768M 会被 OOM killer 杀掉（表现为"无日志反复重启"）——数字以实测为准；② "其余不设"在 8G 单机上等于没有兜底，一个失控容器就能压死整机 |
+| 2 | 启动顺序写 `dify-api(healthcheck) → … → adapter(healthy /readyz)` | `adapter` 对 `dify-api` 用 `condition: service_started`（postgres/valkey/keycloak 仍用 `service_healthy`） | dify-api 首启固有 78-85 s（baseline §3.2 证明与迁移无关），等它 healthy 只会把链路串长；适配层启动期**不依赖**底座在线（`/readyz` 的 5 项检查里不含下游）。**改这条前先看 baseline §3.2**：那不是可以优化掉的耗时 |
+| 3 | 对象存储 `STORAGE_TYPE: local` + `STORAGE_LOCAL_PATH: /app/api/storage` | 同架构，另加：`dify-api` 与 `dify-worker` **共用同一个卷** | worker 写入的分段文件 api 侧要能读到；分卷会让知识库"索引完成但预览 404" |
+
+另有一处**新增**（架构未写）：`validate_lite_up.sh` 在迁移前会幂等地把库里 `officeai_app` 的口令
+对齐到 `OA_DATABASE_URL`。原因：`init-app-role.sql` 用占位口令建角色（SQL 无变量），
+全新环境不先对齐，第一次 `migrate --apply` 必然 `28P01`，而报错只出现在 migrate 日志里，
+现场极易误判成"编排写错了"。**install.sh（3b）必须保留这一步**。
+
+### 32.7 遗留（不属本批，交 3b / QA / 架构）
+
+| # | 事项 | 影响 | 建议 |
+| --- | --- | --- | --- |
+| 1 | `langgenius/dify-web:1.17.1` 的 **digest 未核验**（本轮未拉取该镜像） | `--profile admin` 首次用时会现拉 | 3b 做离线包时 `docker manifest inspect` 补 digest 进 `images.lock` 与 `OFFLINE_IMAGES` |
+| 2 | `vector` 扩展在 **dify 库**是**惰性创建**（首次建知识库时由 Dify 自己执行） | 起栈校验看不到它，属正常 | 存量升级仍需 DBA 手工 `CREATE EXTENSION`（架构 §9.3.1），两件事别混 |
+| 3 | 架构 §9.1 提到的 `--profile with-ssrf` **未实现** | 需要抓 URL 的知识库同步不可用 | 3b 或 V1.1 补；本批在 compose 末尾「已知限制」里如实写明 |
+| 4 | `dify-web` 只发布到 `127.0.0.1` | 现场要 Remote 进机器才能配 provider | 运维手册（T4-05.6）写清 `ssh -L 3001:127.0.0.1:3001` |
+| 5 | 本批**未**覆盖"知识库检索 + 记忆向量"的真实链路 | 向量通路只到"扩展可装" | 属交付流程（装 deepseek 插件 + 填 Key），baseline §2.4 已用标准栈同镜像测过增量（+10 MiB） |
