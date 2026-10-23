@@ -24,9 +24,13 @@ from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
 from app.core.config import Settings, get_settings
-from app.core.errors import ERROR_REGISTRY, ErrorCode
+from app.core.errors import ERROR_REGISTRY, ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
+from app.db.repositories.budget_repo import (
+    BudgetStore,
+    get_budget_store,
+)
 from app.db.repositories.usage_repo import (
     CAPABILITY_AUTOMATION,
     CAPABILITY_CHAT,
@@ -57,6 +61,12 @@ CAPABILITY_DISPLAY_NAMES: Final[dict[str, str]] = {
 }
 
 #: 资源类型
+#: 个人套餐额度的预警线（达到即提示，不阻断）
+DEFAULT_PLAN_WARN_PERCENT: Final[float] = 80.0
+
+#: 租户预算达预警线时的**非阻断**提示文案（挂在 `data.notice_message` 上）
+BUDGET_WARN_MESSAGE: Final[str] = "本月可用量已用到八成，建议联系管理员提前调整"
+
 RESOURCE_GENERATION: Final[str] = "generation"
 RESOURCE_DOCUMENT: Final[str] = "document"
 RESOURCE_TASK: Final[str] = "task"
@@ -195,6 +205,33 @@ def _percent(used: int, total: int) -> float:
     return round(used / total * 100, 2)
 
 
+@dataclass(slots=True)
+class BudgetStatus:
+    """一次"能否继续生成"的判定结果（阶段四 T4-04.2 / T4-04.3）。
+
+    Attributes:
+        plan_total_units: 个人套餐额度总量（0 = 无套餐额度口径）。
+        plan_remaining_units: 个人剩余额度。
+        budget_units: 租户月度预算（0 = 未设）。
+        budget_used_units: 租户当月已用。
+        budget_ratio: 预算使用比例（未设预算时 0）。
+        exhausted: 是否已用尽（任一判据命中）。
+        warn: 是否应发"即将用尽"提示（达预警线但未用尽）。
+        warn_ratio: 预算预警比例。
+        budget_enabled: 预算护栏是否真的在管。
+    """
+
+    plan_total_units: int = 0
+    plan_remaining_units: int = 0
+    budget_units: int = 0
+    budget_used_units: int = 0
+    budget_ratio: float = 0.0
+    exhausted: bool = False
+    warn: bool = False
+    warn_ratio: float = 0.0
+    budget_enabled: bool = False
+
+
 class UsageService:
     """计量服务（D-12 唯一写入口 + M4/BL5 同源读）。
 
@@ -209,6 +246,7 @@ class UsageService:
         settings: Settings | None = None,
         store: UsageStore | None = None,
         directory: UsageDirectory | None = None,
+        budgets: BudgetStore | None = None,
     ) -> None:
         """初始化服务。
 
@@ -216,10 +254,12 @@ class UsageService:
             settings: 可选配置实例。
             store: 可选计量存储（测试注入）。
             directory: 可选组织信息解析器（测试注入）。
+            budgets: 可选租户预算存储（阶段四 T4-04.3；测试注入）。
         """
         self._settings = settings or get_settings()
         self._store: UsageStore = store or get_usage_store(self._settings)
         self._directory: UsageDirectory = directory or _default_directory(self._settings)
+        self._budgets: BudgetStore = budgets or get_budget_store(self._settings)
 
     @property
     def settings(self) -> Settings:
@@ -268,6 +308,10 @@ class UsageService:
             department_id=department_id,
             resource_type=event.resource_type,
             resource_id=event.resource_id or event.idem_key,
+            profile=event.profile,
+            provider=event.provider,
+            prompt_tokens=event.prompt_tokens,
+            completion_tokens=event.completion_tokens,
             event_id=event.event_id or new_resource_id(USAGE_EVENT_PREFIX),
             occurred_at=event.occurred_at or datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
@@ -292,6 +336,11 @@ class UsageService:
         units: int,
         source: str = SOURCE_SETTLED,
         has_authorized_bases: bool = False,
+        profile: str = "",
+        provider: str = "",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        estimated: bool = False,
     ) -> bool:
         """结算一次对话生成（M1/M2）。
 
@@ -302,10 +351,22 @@ class UsageService:
             units: 结算额度。
             source: 结算来源（`settled` / `estimated`）。
             has_authorized_bases: 本次是否使用知识库（决定 `doc_qa` 与 `chat` 口径）。
+            profile: 能力档位（阶段四 M11 维度）。
+            provider: 生成方标识（阶段四 M11 维度）。
+            prompt_tokens: 输入 token（真实或估算）。
+            completion_tokens: 输出 token（真实或估算）。
+            estimated: token 是否为**估算值**（仅用于日志；`source` 只表达额度来源）。
 
         Returns:
             bool: 首次写入返回 True。
         """
+        if estimated:
+            logger.info(
+                "usage_tokens_estimated",
+                generation_id=generation_id,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
         return await self.record_event(
             UsageEventRecord(
                 tenant_id=tenant_id,
@@ -313,9 +374,17 @@ class UsageService:
                 capability=CAPABILITY_DOC_QA if has_authorized_bases else CAPABILITY_CHAT,
                 idem_key=generation_id,
                 units=units,
+                # ⚠ `source` 是**额度**来源（`settled` = 按下游 usage 结算 / `estimated` =
+                # 中断后按已产出折算），**不是 token 来源**。token 估算不改变它：
+                # 复用同一个字段会让"流式中断折算"与"token 是估算的"混成一件事，
+                # 直接打破既有判据（`test_b07_4` 要求中断场景仍能区分两类事件）。
                 source=source,
                 resource_type=RESOURCE_GENERATION,
                 resource_id=generation_id,
+                profile=profile,
+                provider=provider,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
             )
         )
 
@@ -484,6 +553,86 @@ class UsageService:
             event_counts=counts,
         )
 
+    async def budget_status(self, *, tenant_id: str, user_id: str) -> BudgetStatus:
+        """取一次"能否继续生成"的判定快照（**只读、不抛**）。
+
+        判据有两条，任一用尽即拦停：
+
+        1. **个人套餐额度**：`snapshot().remaining_units <= 0`（与 M4/BL5 同源）；
+        2. **租户月度预算**（阶段四 T4-04.3）：企业当月总用量 ≥ `monthly_budget_units`。
+
+        两者都"没有额度"时（免费壳/桩模式，`total_units == 0` 且预算未设）
+        **不拦**——这是既有行为，不能因为加了护栏让离线演示与免费用户全挂。
+
+        Args:
+            tenant_id: 租户 ID。
+            user_id: 用户 ID。
+
+        Returns:
+            BudgetStatus: 判定结果（含预警比例）。
+        """
+        snapshot = await self.snapshot(tenant_id=tenant_id, user_id=user_id)
+        budget = await self._budgets.get(tenant_id)
+        used = await self.tenant_total(tenant_id=tenant_id) if budget.effective else 0
+
+        plan_exhausted = snapshot.total_units > 0 and snapshot.remaining_units <= 0
+        budget_exhausted = budget.exhausted(used)
+        plan_warn = (
+            snapshot.total_units > 0
+            and not plan_exhausted
+            and snapshot.usage_percent >= DEFAULT_PLAN_WARN_PERCENT
+        )
+        return BudgetStatus(
+            plan_total_units=snapshot.total_units,
+            plan_remaining_units=snapshot.remaining_units,
+            budget_units=budget.monthly_budget_units,
+            budget_used_units=used,
+            budget_ratio=budget.usage_ratio(used),
+            exhausted=plan_exhausted or budget_exhausted,
+            warn=plan_warn or budget.should_warn(used),
+            warn_ratio=budget.warn_ratio,
+            budget_enabled=budget.effective,
+        )
+
+    async def check_generation_allowed(self, *, tenant_id: str, user_id: str) -> BudgetStatus:
+        """成本硬止损：**上游调用之前**判定额度（架构 §7.2 唯一判定点）。
+
+        为什么必须在调用之前：额度已用尽时仍打上游，等于"用户看到 402、账单还在涨"。
+        判定失败直接抛 `15006`（HTTP 402），上层因此**一次上游都不会发**。
+
+        **不要用 `10005 MODEL_QUOTA_EXHAUSTED`**：它表示"上游回传额度不足"
+        （底座侧的 429/配额错误），与自研侧的硬止损是两件事——复用会让排障时
+        分不清"我们的额度用完了"还是"上游说我们额度用完了"。
+
+        Args:
+            tenant_id: 租户 ID。
+            user_id: 用户 ID。
+
+        Returns:
+            BudgetStatus: 判定结果（未用尽时返回，供上层决定是否带预警提示）。
+
+        Raises:
+            ApiError: 额度/预算已用尽（15006，HTTP 402）。
+        """
+        status = await self.budget_status(tenant_id=tenant_id, user_id=user_id)
+        if status.exhausted:
+            logger.warning(
+                "generation_budget_exhausted",
+                tenant_id=tenant_id,
+                user_id=user_id,
+                plan_remaining=status.plan_remaining_units,
+                budget_units=status.budget_units,
+                budget_used=status.budget_used_units,
+            )
+            raise ApiError(
+                ErrorCode.QUOTA_EXHAUSTED,
+                internal_detail=(
+                    f"hard stop: plan_remaining={status.plan_remaining_units} "
+                    f"budget={status.budget_used_units}/{status.budget_units}"
+                ),
+            )
+        return status
+
     async def quota_notice(self, *, tenant_id: str, user_id: str) -> tuple[int, str]:
         """取"额度将要用尽"的**非阻断提示**（B27 `15006` 的唯一出品口）。
 
@@ -514,6 +663,17 @@ class UsageService:
         except Exception as exc:  # 提示失败绝不能影响主流程（对话/上传/建任务）
             logger.warning("quota_notice_failed", detail=type(exc).__name__)
             return 0, ""
+        # 阶段四 T4-04.3：租户月度预算达预警线（默认 80%）→ 非阻断提示。
+        # 放在"套餐已超额"判定之前：已超额时走的是硬止损（402），不会走到这里。
+        try:
+            budget = await self._budgets.get(tenant_id)
+            if budget.effective:
+                used = await self.tenant_total(tenant_id=tenant_id)
+                if budget.should_warn(used):
+                    spec = ERROR_REGISTRY[ErrorCode.QUOTA_EXHAUSTED]
+                    return int(spec.code), BUDGET_WARN_MESSAGE
+        except Exception as exc:  # 预算读取失败同样不得影响主流程
+            logger.warning("budget_notice_failed", detail=type(exc).__name__)
         if not snapshot.over_quota_warning:
             return 0, ""
         spec = ERROR_REGISTRY[ErrorCode.QUOTA_EXHAUSTED]

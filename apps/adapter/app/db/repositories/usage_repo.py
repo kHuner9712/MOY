@@ -25,6 +25,7 @@ from typing import Any, Final, Protocol
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.db.repositories.base import BaseRepository
+from app.db.schema_guard import usage_dimension_supported
 from app.db.session import tenant_scope
 
 logger = get_logger(__name__)
@@ -121,6 +122,10 @@ class UsageEventRecord:
         resource_type: 资源类型（`generation` / `document` / `task`）。
         resource_id: 资源 ID。
         occurred_at: 发生时间（ISO 8601）。
+        profile: 能力档位（阶段四 M11；空串表示未知）。
+        provider: 生成方标识（阶段四 M11；空串表示未知）。
+        prompt_tokens: 输入 token（真实值或估算值）。
+        completion_tokens: 输出 token（真实值或估算值）。
     """
 
     tenant_id: str
@@ -135,6 +140,12 @@ class UsageEventRecord:
     resource_type: str = ""
     resource_id: str = ""
     event_id: str = ""
+    # 阶段四 T4-04.2（M11）：4 个计量维度（迁移 0007 的加性列）。
+    # 无法取得真实 token 时写估算值，并把 `source` 置为 `estimated`。
+    profile: str = ""
+    provider: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     occurred_at: str = ""
 
     @property
@@ -520,34 +531,72 @@ class PostgresUsageStore:
         """
         period = record.period or current_period()
         units = record.normalized_units
+        # 四列的唯一读取口径（架构 §7.4）：旧库没有这些列时降级为不写，而不是报错
+        dimensions = await usage_dimension_supported(self._settings)
         async with tenant_scope(record.tenant_id, settings=self._settings) as uow:
             event_repo = _UsageEventTableRepository(uow)
-            inserted = await event_repo.fetch_one(
-                f"""
-                INSERT INTO {USAGE_EVENT_TABLE} (
-                    tenant_id, event_id, org_id, department_id, user_id, capability,
-                    resource_type, resource_id, idem_key, units, period, source
-                ) VALUES (
-                    :tenant_id, :event_id, :org_id, :department_id, :user_id, :capability,
-                    :resource_type, :resource_id, :idem_key, :units, :period, :source
+            # 两条**静态** SQL 而不是拼接列名：`test_sql_insert_consistency` 会静态
+            # 解析 INSERT 的列清单与 DDL 对账（拼接出的列名它看不见，等于把守门人绕过去）。
+            if dimensions:
+                inserted = await event_repo.fetch_one(
+                    f"""
+                    INSERT INTO {USAGE_EVENT_TABLE} (
+                        tenant_id, event_id, org_id, department_id, user_id, capability,
+                        resource_type, resource_id, idem_key, units, period, source,
+                        profile, provider, prompt_tokens, completion_tokens
+                    ) VALUES (
+                        :tenant_id, :event_id, :org_id, :department_id, :user_id, :capability,
+                        :resource_type, :resource_id, :idem_key, :units, :period, :source,
+                        :profile, :provider, :prompt_tokens, :completion_tokens
+                    )
+                    ON CONFLICT (tenant_id, capability, idem_key) DO NOTHING
+                    RETURNING event_id
+                    """,
+                    event_repo.params(
+                        event_id=record.event_id,
+                        org_id=record.org_id,
+                        department_id=record.department_id,
+                        user_id=record.user_id,
+                        capability=record.capability,
+                        resource_type=record.resource_type,
+                        resource_id=record.resource_id,
+                        idem_key=record.idem_key,
+                        units=units,
+                        period=period,
+                        source=record.source,
+                        profile=record.profile,
+                        provider=record.provider,
+                        prompt_tokens=max(0, int(record.prompt_tokens)),
+                        completion_tokens=max(0, int(record.completion_tokens)),
+                    ),
                 )
-                ON CONFLICT (tenant_id, capability, idem_key) DO NOTHING
-                RETURNING event_id
-                """,
-                event_repo.params(
-                    event_id=record.event_id,
-                    org_id=record.org_id,
-                    department_id=record.department_id,
-                    user_id=record.user_id,
-                    capability=record.capability,
-                    resource_type=record.resource_type,
-                    resource_id=record.resource_id,
-                    idem_key=record.idem_key,
-                    units=units,
-                    period=period,
-                    source=record.source,
-                ),
-            )
+            else:
+                inserted = await event_repo.fetch_one(
+                    f"""
+                    INSERT INTO {USAGE_EVENT_TABLE} (
+                        tenant_id, event_id, org_id, department_id, user_id, capability,
+                        resource_type, resource_id, idem_key, units, period, source
+                    ) VALUES (
+                        :tenant_id, :event_id, :org_id, :department_id, :user_id, :capability,
+                        :resource_type, :resource_id, :idem_key, :units, :period, :source
+                    )
+                    ON CONFLICT (tenant_id, capability, idem_key) DO NOTHING
+                    RETURNING event_id
+                    """,
+                    event_repo.params(
+                        event_id=record.event_id,
+                        org_id=record.org_id,
+                        department_id=record.department_id,
+                        user_id=record.user_id,
+                        capability=record.capability,
+                        resource_type=record.resource_type,
+                        resource_id=record.resource_id,
+                        idem_key=record.idem_key,
+                        units=units,
+                        period=period,
+                        source=record.source,
+                    ),
+                )
             if inserted is None:
                 # 幂等命中：整个事务不做任何累加（架构文档 2.5 第 2 条）
                 return False

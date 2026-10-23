@@ -159,10 +159,15 @@ def _sse_frames(text: str) -> list[tuple[str, dict[str, Any]]]:
 # ===========================================================================
 # M1 非流式
 # ===========================================================================
-async def test_m1_generate_over_quota_carries_notice_and_keeps_code_zero(
+async def test_m1_generate_over_quota_is_hard_stopped(
     client: TestClient, settings: Settings, auth_headers: dict[str, str]
 ) -> None:
-    """M1 超额：`code==0` + `data.notice_code==15006`，且正文照常生成。"""
+    """M1 超额：**硬止损** —— HTTP 402 / `15006`，且**一次上游都不发**。
+
+    阶段四 T4-04.2（E-3/E-4）把这里从"软限制提示"改成"拒绝"：额度已用尽还继续打上游，
+    等于"用户看到提示、账单还在涨"。非阻断提示仍然存在，但它现在只服务 **80% 预警**
+    （见 `tests/unit/test_usage_guard.py::TestBudgetNotice`）。
+    """
     state = await _seed_usage(settings, over=True)
     assert state.over_quota, "造数失败：已用额度未达到上限"
 
@@ -171,16 +176,14 @@ async def test_m1_generate_over_quota_carries_notice_and_keeps_code_zero(
         json=_generate_payload(),
         headers=_write_headers(auth_headers, "quota-m1-over"),
     )
-    assert response.status_code == 200
+    assert response.status_code == 402
     body = response.json()
-    # 红线①：提示绝不占用 code —— 超额仍是一次成功响应
-    assert body["code"] == 0
-    # 红线②：成功路径行为不变（正文照常返回）
-    assert body["data"]["content"]
-    # 提示字段
-    assert body["data"]["notice_code"] == int(ErrorCode.QUOTA_EXHAUSTED)
-    assert body["data"]["notice_code"] == 15006
-    assert body["data"]["notice_message"] == NOTICE_MESSAGE
+    assert body["code"] == int(ErrorCode.QUOTA_EXHAUSTED)
+    assert body["code"] == 15006
+    # 拒绝时没有正文（没有生成，也没有结算）；文案是业务语言，不含错误码与堆栈
+    assert body["data"] is None
+    assert body["message"]
+    assert "15006" not in body["message"]
 
 
 async def test_m1_generate_under_quota_has_no_notice(
@@ -224,7 +227,11 @@ async def test_m1_generate_without_subscription_has_no_notice(
 async def test_m2_stream_over_quota_notice_only_on_done_frame(
     client: TestClient, settings: Settings, auth_headers: dict[str, str]
 ) -> None:
-    """M2 超额：提示只在 `done` 帧，`start` / `delta` 帧里不得出现提示字段。"""
+    """M2 超额：**开流前**就以 `error` 帧拒绝（不产生 `start`/`delta`，不碰上游）。
+
+    为什么用 `error` 帧而不是抛异常：流已经建立，抛异常会让前端拿到一条断掉的连接，
+    而不是一条可读的业务提示（见 `generate_stream` 里的注释）。
+    """
     state = await _seed_usage(settings, over=True)
     assert state.over_quota
 
@@ -236,18 +243,10 @@ async def test_m2_stream_over_quota_notice_only_on_done_frame(
     assert response.status_code == 200
     frames = _sse_frames(response.text)
     names = [name for name, _ in frames]
-    assert names[0] == "start"
-    assert names[-1] == "done", f"最后一帧必须是 done，实际：{names}"
-    assert "error" not in names, "超额不得降级为 error 帧"
 
-    # 中途帧不带提示（不插帧、不提前暴露）
-    for name, payload in frames[:-1]:
-        assert payload.get("notice_code", 0) == 0, f"{name} 帧不应携带额度提示"
-        assert "notice_message" not in payload or payload["notice_message"] == ""
-
-    done_payload = frames[-1][1]
-    assert done_payload["notice_code"] == 15006
-    assert done_payload["notice_message"] == NOTICE_MESSAGE
+    assert names == ["error"], f"超额必须在开流前拒绝，实际帧序列：{names}"
+    assert frames[0][1]["code"] == 15006
+    assert "start" not in names and "delta" not in names
 
 
 async def test_m2_stream_under_quota_has_no_notice(

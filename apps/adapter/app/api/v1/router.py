@@ -154,6 +154,7 @@ async def readyz(request: Request) -> ApiResponse[ReadyData]:
     except ApiError:
         checks.append(ReadyCheck(name="tool_registry", ready=False, detail="工具注册表不可用"))
 
+    checks.append(_check_profile_availability(request))
     checks.append(await _check_database(request))
     checks.append(await _check_database_privilege(request))
 
@@ -162,6 +163,35 @@ async def readyz(request: Request) -> ApiResponse[ReadyData]:
     if all_ready:
         return ApiResponse[ReadyData].ok(data)
     raise ApiError(ErrorCode.CONFIG_ERROR, message=data.status, data=data)
+
+
+def _check_profile_availability(request: Request) -> ReadyCheck:
+    """能力档位可用性检查项（阶段四 T4-04.1，B-3）。
+
+    口径与 M3 目录完全一致（同一个 `ProfileRouter`）：该档能否解析出密钥。
+    只输出**档位展示名**，不出现模型名与应用密钥（技术黑盒化红线）。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        ReadyCheck: `name="profiles"` 的检查项（`checks` 是数组，新增项只能追加）。
+    """
+    from app.services.profile_routing import ProfileRouter
+
+    settings = get_request_settings(request)
+    router = ProfileRouter(settings)
+    available = [
+        route.display_name for route in router.routes.routes if router.is_available(route.profile)
+    ]
+    total = len(router.routes.routes)
+    if available:
+        return ReadyCheck(
+            name="profiles",
+            ready=True,
+            detail=f"可用档位 {len(available)}/{total}：{'、'.join(available)}",
+        )
+    return ReadyCheck(name="profiles", ready=False, detail=f"可用档位 0/{total}：暂不可用")
 
 
 def _effective_engine(request: Request) -> Any:

@@ -69,6 +69,8 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
         "plugin_task",
         "plugin_task_step",
         "plugin_artifact",
+        # 阶段四 0011（T4-04.3）：租户月度预算
+        "tenant_budget",
     }
 )
 
@@ -84,6 +86,8 @@ STRICT_TENANT_TABLES: frozenset[str] = frozenset(
         "memory_embedding",
         "user_memory_setting",
         "background_job",
+        # 阶段四 0011：预算表同样 strict（租户边界）
+        "tenant_budget",
         "knowledge_base_meta",
         "knowledge_base_grant",
         "document_meta",

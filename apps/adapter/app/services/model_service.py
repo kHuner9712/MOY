@@ -65,11 +65,15 @@ from app.schemas.model import (
     UsageData,
 )
 from app.schemas.rag import SegmentPosition
+from app.services.profile_routing import ProfileRouter
 
 logger = get_logger(__name__)
 
 #: 底座原生路径（仅本文件与 `clients/dify_client.py` 可出现）
 _DIFY_CHAT_PATH: Final[str] = "/v1/chat-messages"
+
+#: 计量维度里的生成方标识（内部值，只进 usage_event，不进任何响应）
+GENERATION_PROVIDER: Final[str] = "downstream"
 
 #: ULID 风格 ID 前缀（架构文档 9.1 资源 ID 规范）
 _GENERATION_PREFIX: Final[str] = "gen_"
@@ -319,7 +323,13 @@ class ModelService:
         """
         self._settings = settings or get_settings()
         self._routes = routes or get_profile_routes()
-        self._dify = dify or get_dify_client()
+        # 阶段四 T4-04.1（F-8）：档位 → 密钥的唯一判定处（Settings 驱动，不读 os.environ）
+        self._profile_router = ProfileRouter(self._settings, self._routes)
+        # 注入了客户端就用它（测试/Agent 复用同一连接池）；否则**按档位**建客户端。
+        # 注意不能无条件 `dify or get_dify_client()`：那会把"未注入"和"注入"抹平，
+        # 于是四档又全跑回同一个默认应用——正是 F-8 的行径。
+        self._dify_injected = dify is not None
+        self._dify = dify if dify is not None else get_dify_client()
         self._policy: PolicyService = policy or get_policy_service(self._settings)
         self._segments: SegmentService = segments or SegmentService(self._settings)
         self._bases: KnowledgeBaseStore = bases or get_knowledge_base_store(self._settings)
@@ -485,12 +495,15 @@ class ModelService:
         Raises:
             ApiError: 档位未注册或不可用（10004）。
         """
-        route = self._routes.get(profile.value)
+        route = self._profile_router.route(profile.value)
         if route is None:
             raise ApiError(
                 ErrorCode.MODEL_PROFILE_UNAVAILABLE,
                 internal_detail=f"profile not registered: {profile.value}",
             )
+        # 静态声明（yaml）在这里拦；**密钥级可用性**由 `_dify_for()` 在真正发请求前拦
+        # ——那里才知道客户端是否被注入（测试注入客户端时不应再要求密钥）。
+        # 目录与 `/readyz` 用的是同一个 `ProfileRouter.is_available()`，口径一致。
         if route.status != "available":
             raise ApiError(
                 ErrorCode.MODEL_PROFILE_UNAVAILABLE,
@@ -510,8 +523,33 @@ class ModelService:
         Raises:
             ApiError: 档位不可用（10004）。
         """
-        route = self.resolve_route(profile)
-        return str(route.resolve_app_key())
+        self.resolve_route(profile)
+        return self._profile_router.app_key(profile.value)
+
+    def _dify_for(self, profile: ModelProfile) -> DifyClient:
+        """取该档位对应的底座客户端（**按档位隔离**，F-8）。
+
+        注入了客户端（测试）时沿用注入实例；否则按档位密钥新建
+        ——`DifyClient.for_app_key` 是"底座地址唯一出口"的既有约定（OA-AUDIT-001）。
+
+        Args:
+            profile: 能力档位。
+
+        Returns:
+            DifyClient: 该档位的客户端。
+
+        Raises:
+            ApiError: 档位不可用或未配置密钥（10004）。
+        """
+        if self._dify_injected:
+            return self._dify
+        key = self.resolve_app_key(profile)
+        if not key:
+            raise ApiError(
+                ErrorCode.MODEL_PROFILE_UNAVAILABLE,
+                internal_detail=f"profile app key missing: {profile.value}",
+            )
+        return DifyClient.for_app_key(key, self._settings)
 
     # ------------------------------------------------------------------
     # M1 非流式生成
@@ -533,6 +571,8 @@ class ModelService:
             ApiError: 档位不可用（10004）、上下文超窗（10002）、生成失败（10001）。
         """
         self.resolve_route(request.profile)
+        # 阶段四 T4-04.2：成本硬止损是**唯一判定点**，且必须在任何上游调用之前
+        await self._enforce_generation_budget(auth)
         authorized = await self._authorized_base_ids(request, auth)
         logger.info(
             "model_generate_requested",
@@ -574,6 +614,10 @@ class ModelService:
                 has_authorized_bases=bool(authorized),
                 auth=auth,
                 source="settled",
+                profile=request.profile.value,
+                prompt_tokens=len(assembled.query_text),
+                completion_tokens=len(stub.content),
+                estimated=True,
             )
             await self._finalize_assistant(
                 tenant_id, started, content=stub.content, status="settled"
@@ -581,7 +625,7 @@ class ModelService:
             return _with_notice(_with_conversation(stub, started, assembled), notice)
 
         try:
-            response = await self._dify.post(
+            response = await self._dify_for(request.profile).post(
                 _DIFY_CHAT_PATH,
                 self._build_downstream_payload(
                     request, user_id, query_override=assembled.query_text
@@ -604,12 +648,19 @@ class ModelService:
         )
         # 结算时点：下游已返回 message_end（blocking 模式即响应体），
         # 用下游 usage.total_units 结算，source='settled'（D-12 第 3 条）
+        prompt_tokens, completion_tokens, tokens_estimated = self._token_usage(
+            payload, assembled.query_text, settled.content
+        )
         await self._settle_generation(
             generation_id=settled.generation_id,
             units=settled.usage.total_units,
             has_authorized_bases=bool(authorized),
             auth=auth,
             source="settled",
+            profile=request.profile.value,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            estimated=tokens_estimated,
         )
         await self._finalize_assistant(
             tenant_id, started, content=settled.content, status="settled"
@@ -687,6 +738,63 @@ class ModelService:
                 detail=type(exc).__name__,
             )
 
+    async def _enforce_generation_budget(self, auth: AuthContext | None) -> None:
+        """成本硬止损（阶段四 T4-04.2）：额度/预算用尽 → `15006`（HTTP 402）。
+
+        两条纪律：
+
+        1. **在上游之前**：调用方必须在任何下游请求之前 await 本方法；
+        2. **只拦"确定用尽"**：判定本身出错（计量库抖动）时**放行并记 WARN**——
+           护栏是为了控成本，不是为了把可用性押在计量库上（与配额提示同口径）。
+
+        Args:
+            auth: 鉴权上下文（无用户时跳过判定：内部/桩调用不计入个人额度）。
+
+        Raises:
+            ApiError: 额度或租户预算已用尽（15006）。
+        """
+        user_id = auth.user_id if auth is not None else ""
+        if not user_id:
+            return
+        try:
+            await self._usage.check_generation_allowed(
+                tenant_id=self._tenant_of(auth), user_id=user_id
+            )
+        except ApiError:
+            raise
+        except Exception as exc:  # 判定失败不阻断（与 `_quota_notice` 同口径）
+            logger.warning(
+                "generation_budget_check_failed",
+                user_id=user_id,
+                detail=type(exc).__name__,
+            )
+
+    @staticmethod
+    def _token_usage(
+        payload: dict[str, Any], prompt_text: str, completion_text: str
+    ) -> tuple[int, int, bool]:
+        """从下游响应里取 token 用量；取不到时按字符数估算。
+
+        为什么允许估算：`usage_event` 的 4 个维度是**看板口径**，不是账单口径
+        （账单用 `units`）。真实 token 缺失时写估算值并把 `source` 置 `estimated`，
+        看板就能把"实测"与"折算"分开统计，而不是整列为空。
+
+        Args:
+            payload: 下游响应体。
+            prompt_text: 本轮完整 query（含历史与记忆）。
+            completion_text: 助手回答正文。
+
+        Returns:
+            tuple[int, int, bool]: `(prompt_tokens, completion_tokens, 是否估算)`。
+        """
+        metadata = payload.get("metadata")
+        usage = metadata.get("usage") if isinstance(metadata, dict) else None
+        prompt = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        completion = usage.get("completion_tokens") if isinstance(usage, dict) else None
+        if isinstance(prompt, int) and isinstance(completion, int) and (prompt or completion):
+            return prompt, completion, False
+        return len(prompt_text), len(completion_text), True
+
     async def _settle_generation(
         self,
         *,
@@ -695,6 +803,10 @@ class ModelService:
         has_authorized_bases: bool,
         auth: AuthContext | None,
         source: str,
+        profile: str = "",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        estimated: bool = False,
     ) -> bool:
         """结算一次生成（D-12 唯一写入口的调用点）。
 
@@ -707,6 +819,10 @@ class ModelService:
             has_authorized_bases: 本次是否使用知识库（决定 `chat` / `doc_qa`）。
             auth: 鉴权上下文。
             source: 结算来源（`settled` / `estimated`）。
+            profile: 能力档位（M11 计量维度）。
+            prompt_tokens: 输入 token（真实或估算）。
+            completion_tokens: 输出 token（真实或估算）。
+            estimated: token 是否为估算值（true 时事件 `source` 置 `estimated`）。
 
         Returns:
             bool: 首次写入返回 True。
@@ -722,6 +838,11 @@ class ModelService:
                 units=units,
                 source=source,
                 has_authorized_bases=has_authorized_bases,
+                profile=profile,
+                provider=GENERATION_PROVIDER,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                estimated=estimated,
             )
         except Exception as exc:  # 计量失败不得中断用户请求（对账脚本负责发现偏差）
             logger.warning(
@@ -959,6 +1080,15 @@ class ModelService:
             yield sse_frame("error", {"code": int(exc.code), "message": exc.message})
             return
 
+        # 阶段四 T4-04.2：流式与 M1 同口径——先判额度再开流。
+        # 额度用尽按 `error` 帧下发（**不是**抛异常）：流已经建立，抛异常会让前端
+        # 拿到一条断掉的连接而不是可读的业务提示。
+        try:
+            await self._enforce_generation_budget(auth)
+        except ApiError as exc:
+            yield sse_frame("error", {"code": int(exc.code), "message": exc.message})
+            return
+
         authorized = await self._authorized_base_ids(request, auth)
         tenant_id = self._tenant_of(auth)
         citation_ctx = CitationContext(
@@ -1046,7 +1176,9 @@ class ModelService:
                 request, user_id, query_override=assembled.query_text
             ) | {"response_mode": "streaming"}
             reasoning_filter = _ReasoningFilter()
-            async for event in self._dify.post_stream(_DIFY_CHAT_PATH, streaming_payload):
+            async for event in self._dify_for(request.profile).post_stream(
+                _DIFY_CHAT_PATH, streaming_payload
+            ):
                 native = str(event.get("event", ""))
                 if native in {"message", "agent_message"}:
                     # 推理模型（DeepSeek V4 等）会把思考过程混在 answer 中下发，
@@ -1081,6 +1213,10 @@ class ModelService:
                     has_authorized_bases=bool(authorized),
                     auth=auth,
                     source="settled",
+                    profile=request.profile.value,
+                    prompt_tokens=len(assembled.query_text),
+                    completion_tokens=produced_chars,
+                    estimated=True,
                 )
                 settled = True
             if not settled:
@@ -1093,6 +1229,10 @@ class ModelService:
                         has_authorized_bases=bool(authorized),
                         auth=auth,
                         source="estimated",
+                        profile=request.profile.value,
+                        prompt_tokens=len(assembled.query_text),
+                        completion_tokens=produced_chars,
+                        estimated=True,
                     )
             # 落库终态：完整走完 → settled；中断/断开 → aborted + truncated=true，
             # **已收到的部分内容保留**（用户看到的与历史里存的必须一致）
@@ -1282,9 +1422,11 @@ class ModelService:
                     display_name=route.display_name,
                     description=route.description,
                     max_context_turns=route.max_context_turns,
+                    # B-3：目录 `status` 取**运行期**可用性（该档能否解析出密钥），
+                    # 不再是 yaml 里的静态值——否则会出现"目录写着可用、一调就 10004"。
                     status=(
                         ProfileStatus.AVAILABLE
-                        if route.status == "available"
+                        if self._profile_router.is_available(route.profile)
                         else ProfileStatus.UNAVAILABLE
                     ),
                 )

@@ -263,3 +263,41 @@ BEGIN
     END IF;
     RAISE NOTICE 'phase4: 记忆三表与 background_job 已启用 FORCE RLS 并授权';
 END $rls_mem$;
+
+-- ---------------------------------------------------------------------------
+-- 10. 租户月度预算（阶段四 0011 / T4-04.3，架构 §3.4 / §7.5）
+--
+-- 为什么新建而不是改计费表：PRD 说的 `tenant_quota` **不存在**（额度来自
+-- `billing_subscription`），而计费域在阶段二已冻结 → 新开一张三列小表，
+-- 由运营后台写入、由成本护栏读取，计费表零改动。
+-- `monthly_budget_units = 0` 表示**没设额度**，`enabled = false` 表示**明确关掉**：
+-- 两者都不拦，但排障时必须能区分，所以两个字段都留。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_budget (
+    tenant_id            TEXT        NOT NULL,
+    monthly_budget_units BIGINT      NOT NULL DEFAULT 0
+                         CHECK (monthly_budget_units >= 0),
+    warn_ratio           NUMERIC(3,2) NOT NULL DEFAULT 0.80
+                         CHECK (warn_ratio > 0 AND warn_ratio <= 1),
+    enabled              BOOLEAN     NOT NULL DEFAULT TRUE,
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id)
+);
+
+DO $rls_budget$
+BEGIN
+    EXECUTE 'ALTER TABLE tenant_budget ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'ALTER TABLE tenant_budget FORCE ROW LEVEL SECURITY';
+    EXECUTE 'DROP POLICY IF EXISTS p_tenant_isolation ON tenant_budget';
+    EXECUTE $policy$
+        CREATE POLICY p_tenant_isolation ON tenant_budget
+            USING (tenant_id = current_setting('app.tenant_id', TRUE)
+                OR current_setting('app.tenant_id', TRUE) = '__platform__')
+            WITH CHECK (tenant_id = current_setting('app.tenant_id', TRUE)
+                OR current_setting('app.tenant_id', TRUE) = '__platform__')
+    $policy$;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'officeai_app') THEN
+        EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON tenant_budget TO officeai_app';
+    END IF;
+    RAISE NOTICE 'phase4: tenant_budget 已启用 FORCE RLS 并授权';
+END $rls_budget$;
