@@ -22,7 +22,7 @@
 
 ## 汇总
 
-- 合计 **119** 行：**已建 57** / **待建 62** / **不适用 0**
+- 合计 **119** 行：**已建 82** / **待建 37** / **不适用 0**
 - 按批次：W1 30 / W2 21 / W3 37 / W4 31
 
 ## 清单
@@ -46,7 +46,7 @@
 | `T4-01.4` | `apps/adapter/app/db/migrate.py` | T4-01.4 | W1 | 代码 | 已建 | b96ba7d |
 | `T4-01.4` | `apps/adapter/tests/integration/test_migration_lock.py` | T4-01.4 | W1 | 测试 | 已建 | 2699897 |
 | `T4-01.4` | `deploy/init-schema-phase3.sql` | T4-01.4 | W1 | 代码 | 已建 | 010db32 |
-| `T4-01.4` | `deploy/migrations/rollback/` | T4-01.4 | W1 | 迁移 | 已建 | 4726264 |
+| `T4-01.4` | `deploy/migrations/rollback/` | T4-01.4 | W1 | 迁移 | 已建 | 8e9f43f |
 | `T4-01.5` | `apps/adapter/app/db/repositories/artifact_repo.py` | T4-01.5 | W1 | 代码 | 已建 | b6effcf |
 | `T4-01.5` | `apps/adapter/app/db/repositories/usage_repo.py` | T4-01.5 | W1 | 代码 | 已建 | 6eca802 |
 | `T4-01.5` | `deploy/migrations/0006_*.sql` | T4-01.5 | W1 | 迁移 | 已建 | 2699897 |
@@ -77,52 +77,52 @@
 | `T4-03.1` | `deploy/migrations/0010_background_job.sql` | T4-03.1 | W2 | 迁移 | 已建 | 4726264 |
 | `T4-03.1` | `deploy/migrations/rollback/0009_*.down.sql` | T4-03.1 | W2 | 迁移 | 已建 | 4726264 |
 | `T4-03.1` | `deploy/migrations/rollback/0010_*.down.sql` | T4-03.1 | W2 | 迁移 | 已建 | 4726264 |
-| `T4-03.2` | `apps/adapter/app/db/repositories/job_repo.py` | T4-03.2 | W2 | 代码 | 待建 | — |
-| `T4-03.2` | `apps/adapter/app/workers/job_runner.py` | T4-03.2 | W2 | 代码 | 待建 | — |
-| `T4-03.2` | `apps/adapter/tests/unit/test_job_runner.py` | T4-03.2 | W2 | 测试 | 待建 | — |
-| `T4-03.3` | `apps/adapter/app/business/memory_service.py` | T4-03.3 | W3 | 代码 | 待建 | — |
-| `T4-03.3` | `apps/adapter/app/db/repositories/memory_repo.py` | T4-03.3 | W3 | 代码 | 待建 | — |
-| `T4-03.3` | `apps/adapter/app/services/memory_extractor.py` | T4-03.3 | W3 | 代码 | 待建 | — |
+| `T4-03.2` | `apps/adapter/app/db/repositories/job_repo.py` | T4-03.2 | W2 | 代码 | 已建 | 79250db |
+| `T4-03.2` | `apps/adapter/app/workers/job_runner.py` | T4-03.2 | W2 | 代码 | 已建 | 79250db |
+| `T4-03.2` | `apps/adapter/tests/unit/test_job_runner.py` | T4-03.2 | W2 | 测试 | 已建 | 79250db |
+| `T4-03.3` | `apps/adapter/app/business/memory_service.py` | T4-03.3 | W3 | 代码 | 已建 | 79250db |
+| `T4-03.3` | `apps/adapter/app/db/repositories/memory_repo.py` | T4-03.3 | W3 | 代码 | 已建 | 79250db |
+| `T4-03.3` | `apps/adapter/app/services/memory_extractor.py` | T4-03.3 | W3 | 代码 | 已建 | 79250db |
 | `T4-03.3` | `apps/adapter/tests/e2e/test_memory_recall.py` | T4-03.3 | W3 | 测试 | 待建 | — |
-| `T4-03.3` | `apps/adapter/tests/unit/test_memory_extract.py` | T4-03.3 | W3 | 测试 | 待建 | — |
-| `T4-03.4` | `apps/adapter/tests/unit/test_memory_recall_degrade.py` | T4-03.4 | W3 | 测试 | 待建 | — |
-| `T4-03.5` | `apps/adapter/app/api/v1/memory.py` | T4-03.5 | W3 | 代码 | 待建 | — |
-| `T4-03.5` | `apps/adapter/tests/integration/test_memory_endpoints.py` | T4-03.5 | W3 | 测试 | 待建 | — |
-| `T4-03.6` | `apps/web/src/app/(main)/profile/memories/page.tsx` | T4-03.6 | W3 | 代码 | 待建 | — |
-| `T4-03.6` | `apps/web/src/components/memory/*` | T4-03.6 | W3 | 代码 | 待建 | — |
+| `T4-03.3` | `apps/adapter/tests/unit/test_memory_extract.py` | T4-03.3 | W3 | 测试 | 已建 | 79250db |
+| `T4-03.4` | `apps/adapter/tests/unit/test_memory_recall_degrade.py` | T4-03.4 | W3 | 测试 | 已建 | 98d726d |
+| `T4-03.5` | `apps/adapter/app/api/v1/memory.py` | T4-03.5 | W3 | 代码 | 已建 | 98d726d |
+| `T4-03.5` | `apps/adapter/tests/integration/test_memory_endpoints.py` | T4-03.5 | W3 | 测试 | 已建 | 98d726d |
+| `T4-03.6` | `apps/web/src/app/(main)/profile/memories/page.tsx` | T4-03.6 | W3 | 代码 | 已建 | 3f234fb |
+| `T4-03.6` | `apps/web/src/components/memory/*` | T4-03.6 | W3 | 代码 | 已建 | 3f234fb |
 | `T4-03.7` | `apps/web/package.json` | T4-03.7 | W3 | 代码 | 已建 | f46544f |
 | `T4-03.7` | `apps/web/scripts/check-banned-terms.mjs` | T4-03.7 | W3 | 代码 | 已建 | 45f9d3a |
 | `T4-03.7` | `docs/prd-phase2-increment.md` | T4-03.7 | W3 | 文档 | 已建 | c0dc7ee |
 | `T4-04.1` | `apps/adapter/app/registry/loader.py` | T4-04.1 | W3 | 代码 | 已建 | f46544f |
-| `T4-04.1` | `apps/adapter/tests/unit/test_profile_routing_contract.py` | T4-04.1 | W3 | 测试 | 待建 | — |
+| `T4-04.1` | `apps/adapter/tests/unit/test_profile_routing_contract.py` | T4-04.1 | W3 | 测试 | 已建 | 8e9f43f |
 | `T4-04.2` | `apps/adapter/app/business/usage_service.py` | T4-04.2 | W3 | 代码 | 已建 | 6eca802 |
-| `T4-04.2` | `apps/adapter/app/db/schema_guard.py` | T4-04.2 | W3 | 代码 | 待建 | — |
+| `T4-04.2` | `apps/adapter/app/db/schema_guard.py` | T4-04.2 | W3 | 代码 | 已建 | 8e9f43f |
 | `T4-04.2` | `apps/adapter/tests/integration/test_quota_hardstop.py` | T4-04.2 | W3 | 测试 | 待建 | — |
-| `T4-04.3` | `apps/adapter/app/db/repositories/budget_repo.py` | T4-04.3 | W3 | 代码 | 待建 | — |
+| `T4-04.3` | `apps/adapter/app/db/repositories/budget_repo.py` | T4-04.3 | W3 | 代码 | 已建 | 8e9f43f |
 | `T4-04.3` | `apps/adapter/tests/integration/test_tenant_budget.py` | T4-04.3 | W3 | 测试 | 待建 | — |
-| `T4-04.3` | `deploy/migrations/0011_tenant_budget.sql` | T4-04.3 | W3 | 迁移 | 待建 | — |
-| `T4-04.3` | `deploy/migrations/rollback/0011_*.down.sql` | T4-04.3 | W3 | 迁移 | 待建 | — |
+| `T4-04.3` | `deploy/migrations/0011_tenant_budget.sql` | T4-04.3 | W3 | 迁移 | 已建 | 8e9f43f |
+| `T4-04.3` | `deploy/migrations/rollback/0011_*.down.sql` | T4-04.3 | W3 | 迁移 | 已建 | 8e9f43f |
 | `T4-04.4` | `apps/adapter/app/business/task_service.py` | T4-04.4 | W3 | 代码 | 已建 | b6effcf |
 | `T4-04.4` | `apps/adapter/tests/integration/test_task_timeout_lock.py` | T4-04.4 | W3 | 测试 | 待建 | — |
 | `T4-04.5` | `apps/adapter/app/core/permission_whitelist.py` | T4-04.5 | W3 | 代码 | 待建 | — |
 | `T4-04.5` | `apps/adapter/tests/unit/test_permission_whitelist.py` | T4-04.5 | W3 | 测试 | 待建 | — |
-| `T4-04.5` | `docs/security/permission-whitelist.lock` | T4-04.5 | W3 | 代码 | 待建 | — |
+| `T4-04.5` | `docs/security/permission-whitelist.lock` | T4-04.5 | W3 | 代码 | 已建 | 2c85efb |
 | `T4-04.6` | `apps/adapter/tests/security/test_authn_bypass.py` | T4-04.6 | W3 | 测试 | 待建 | — |
 | `T4-04.6` | `apps/adapter/tests/unit/test_cross_tenant.py` | T4-04.6 | W3 | 测试 | 待建 | — |
 | `T4-04.6` | `apps/adapter/tests/unit/test_info_leak.py` | T4-04.6 | W3 | 测试 | 待建 | — |
 | `T4-04.6` | `apps/adapter/tests/unit/test_object_privilege.py` | T4-04.6 | W3 | 测试 | 待建 | — |
 | `T4-04.6` | `apps/adapter/tests/unit/test_quota_abuse.py` | T4-04.6 | W3 | 测试 | 待建 | — |
-| `T4-05.1` | `apps/adapter/app/core/metrics.py` | T4-05.1 | W3 | 代码 | 待建 | — |
+| `T4-05.1` | `apps/adapter/app/core/metrics.py` | T4-05.1 | W3 | 代码 | 已建 | 98d726d |
 | `T4-05.1` | `apps/adapter/tests/unit/test_metrics_labels.py` | T4-05.1 | W3 | 测试 | 待建 | — |
-| `T4-05.2` | `deploy/alert.rules.yml` | T4-05.2 | W3 | 代码 | 待建 | — |
+| `T4-05.2` | `deploy/alert.rules.yml` | T4-05.2 | W3 | 代码 | 已建 | 2a3a4fc |
 | `T4-05.2` | `deploy/docker-compose.yml` | T4-05.2 | W3 | 代码 | 已建 | f46544f |
 | `T4-05.2` | `deploy/prometheus.yml` | T4-05.2 | W3 | 代码 | 已建 | f46544f |
-| `T4-05.3` | `apps/adapter/app/api/v1/tenant_data.py` | T4-05.3 | W4 | 代码 | 待建 | — |
-| `T4-05.3` | `apps/adapter/app/business/tenant_data_service.py` | T4-05.3 | W4 | 代码 | 待建 | — |
-| `T4-05.3` | `apps/adapter/app/workers/tasks/retention_cleanup.py` | T4-05.3 | W4 | 代码 | 待建 | — |
+| `T4-05.3` | `apps/adapter/app/api/v1/tenant_data.py` | T4-05.3 | W4 | 代码 | 已建 | f30c95e |
+| `T4-05.3` | `apps/adapter/app/business/tenant_data_service.py` | T4-05.3 | W4 | 代码 | 已建 | f30c95e |
+| `T4-05.3` | `apps/adapter/app/workers/tasks/retention_cleanup.py` | T4-05.3 | W4 | 代码 | 已建 | f30c95e |
 | `T4-05.3` | `apps/adapter/app/workers/tasks/tenant_export.py` | T4-05.3 | W4 | 代码 | 待建 | — |
-| `T4-05.3` | `apps/adapter/tests/integration/test_retention_export_delete.py` | T4-05.3 | W4 | 测试 | 待建 | — |
-| `T4-05.3` | `sql/retention-audit.sql` | T4-05.3 | W4 | 代码 | 待建 | — |
+| `T4-05.3` | `apps/adapter/tests/integration/test_retention_export_delete.py` | T4-05.3 | W4 | 测试 | 已建 | f30c95e |
+| `T4-05.3` | `sql/retention-audit.sql` | T4-05.3 | W4 | 代码 | 已建 | f30c95e |
 | `T4-05.4` | `deploy/.env.lite.example` | T4-05.4 | W4 | 代码 | 待建 | — |
 | `T4-05.4` | `deploy/docker-compose.lite.yml` | T4-05.4 | W4 | 代码 | 待建 | — |
 | `T4-05.4` | `deploy/nginx/lite.conf` | T4-05.4 | W4 | 代码 | 待建 | — |

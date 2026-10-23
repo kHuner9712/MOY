@@ -60,6 +60,7 @@ DOCUMENTED_PACKAGES = {
     "python-multipart",
     "pyyaml",
     "python-docx",
+    "prometheus-client",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
@@ -204,8 +205,11 @@ def check_documented(deps: list[str]) -> list[str]:
     for spec in deps:
         name, _ = split_package(spec)
         if name not in DOCUMENTED_PACKAGES:
+            # 提示要把两道校验都说出来：只写"补文档"会误导（文档补完了仍然红，
+            # 因为还有本脚本的这个集合），上一批排查就卡在这里。
             failures.append(
-                f"{name}：未登记进架构文档 §8.1 清单（须先补文档再引入依赖）"
+                f"{name}：未登记进 §8.1 清单或未加入 DOCUMENTED_PACKAGES"
+                "（须先补架构文档，再加进本脚本白名单）"
             )
             continue
         if f"| {name}" not in section and f"{name} /" not in section:

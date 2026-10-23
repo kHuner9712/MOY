@@ -1386,6 +1386,7 @@ graph LR
 | python-multipart | ^0.0.9 | Apache-2.0 | multipart 文件上传 |
 | pyyaml | ^6.0 | MIT | 注册表/路由表 YAML 解析 |
 | python-docx | ^1.1 | MIT | 公文/Offer docx 导出（D-20，平台 render_file 专用） |
+| prometheus-client | ^0.20（**阶段四 T4-05.1 引入**） | Apache-2.0 | `/metrics` exposition（Prometheus 官方客户端库；**不手写直方图与文本格式**） |
 | pytest / pytest-asyncio / pytest-cov | ^8.0 / ^0.23 / ^4.1 | MIT | 测试框架 |
 | ruff / mypy | ^0.5 / ^1.10 | MIT | Lint 与类型检查 |
 

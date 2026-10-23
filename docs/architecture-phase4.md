@@ -404,6 +404,17 @@ END $$;
 | 保留期字段 | `conversation.deleted_at`（软删 30 天）、`created_at`（365 天硬删）；`user_memory` 无 TTL 字段（永久，用户删）；`usage_event.occurred_at`（13 个月）；`audit_log.created_at`（180 天，**DBA 执行**，见 F-9）；`plugin_task/artifact`（180 天，沿用 `plugin_artifact_retention_days`） |
 | 全部可配 | `Settings` 新增：`retention_audit_days=180`、`retention_usage_months=13`、`retention_task_days=180`、`retention_conversation_days=365`、`conversation_soft_delete_recover_days=30`、`memory_max_per_user=200`、`memory_extract_every_turns=10` |
 
+**租户删除与保留（TD2 的三条实现事实，与 `tenant_data_service.py` 一致）**
+
+| # | 事实 | 口径与理由 |
+| --- | --- | --- |
+| D-1 | **`tenant` 表没有 `deleted_at` 列** | 实测建表脚本（`init-schema-phase2.sql:52-63`）：只有 `status TEXT CHECK (status IN ('active','suspended'))` 与 `suspended_reason`。删除 = `status='suspended'` + 写 `suspended_reason`（"先停用"），**不是**软删时间戳。V1.1 再加 `deleted_at`（见 §13 A-11 技术债） |
+| D-2 | **删完 `plugin_task` / `plugin_artifact` 各留 1 行** | 这 1 行就是**删除证明的宿主**（导出包挂在任务产物上，复用 `/files/artifacts/{token}` 下载）。证明本身是"已删除"的唯一载体，连它删掉客户就再也拿不到证据。该行**业务字段须清空**（只留行数与时间戳），否则等于"删了又留了数据" |
+| D-3 | **知识库四表不在在线删除范围** | `document_meta` / `knowledge_base_meta` / `knowledge_base_grant` / `segment_map` 列在 `RETAINED_TABLES` 常量里，响应与证明文件回显 `retained_tables` + `retained_note`。理由：正文与索引在 Dify 侧（对象存储/向量库），**跨系统删除风险高于收益**；退租要全量清空时由 DBA 执行 `sql/full-purge.sql`（离线包 `sql/` 内） |
+
+> 审计表同理：应用角色无 `DELETE` 权限（`init-app-role.sql:69`），删除与保留都需 DBA 执行，
+> 响应里单列 `audit_pending_dba: N`，日志必须出现 `audit_log=skipped(no privilege)`（§10.4 硬判据）。
+
 ### 3.6 既有表的两处**加性**变更
 
 | 迁移 | 表 | 变更 | 兼容性 |
@@ -450,7 +461,11 @@ tenant(1) ─┬─ conversation(N) ── message(N)          ← 新（个人�
 | MM2 | `DELETE /api/v1/model/memories/{memory_id}` | — | `memory_id, deleted=true` | 本人 | 是 |
 | MM3 | `DELETE /api/v1/model/memories` | `category?`（缺省=全部） | `deleted_count` | 本人 | 是 |
 | MM4 | `PUT /api/v1/model/memories/settings` | `enabled`, `category_switches{}` | `enabled, category_switches, updated_at` | 本人 | 是 |
-| TD1 | `POST /api/v1/ops/tenant-data/export` | `scope[]{audit,usage,chat,memory,artifact}` | `export_id, status="preparing", estimated_rows` | `team:role:manage`（owner/org_admin） | 是 |
+| TD1 | `POST /api/v1/ops/tenant-data/export` | `scope[]{audit,usage,chat,memory,artifact}` | `export_id, status="ready", download_url, expires_at, rows{各表行数+total}` | `team:role:manage`（owner/org_admin） | 是 |
+
+> **TD1 实现口径（同步，不是异步）**：最终实现是**同步生成**，`status` 恒为 `ready` 并直接给出 `download_url / expires_at / rows`；**上限 20 万行**，超限返回 `20001` + 文案「数据量较大，请联系管理员分批导出」。下载**复用 `/files/artifacts/{token}`**（短期令牌），**不新增端点**。
+>
+> 为什么不按原设计做 `preparing` + `estimated_rows` 异步：**端点预算里没有「查进度」的位置**（10 个新端点已排满，再加就要动 baseline 与门禁）；异步而无法轮询，等于「排了队但取不到」，对客户是更差的体验。同步 + 明确上限，是「要么立刻给你、要么明确告诉你太大」的确定性行为。
 | TD2 | `DELETE /api/v1/ops/tenant-data` | `confirm_text`（企业名称逐字）, `scope[]` | `deletion_id, deleted_tables[], scheduled_at` | owner 专用 + 二次确认 | 是 |
 
 **错误码分配**（复用优先；新增码落在**未占用区段 18xxx**）
@@ -852,7 +867,7 @@ scrape_configs:
 ```
 - `postgres-exporter`：`prometheuscommunity/postgres-exporter`（Apache-2.0），`DATA_SOURCE_NAME` 用 **`officeai_app`**（只读指标，不需要超级用户）。
 - `valkey-exporter`：`oliver006/redis_exporter`（MIT），`REDIS_ADDR=redis://valkey:6379`。
-- **适配层指标实现 = `prometheus_client`（Apache-2.0）**，由 T4-05.1 加进 `apps/adapter/pyproject.toml`；**不手写直方图 / 不手写 exposition 文本**（手写分位数桶必然与 Prometheus 语义漂移，`_bucket`/`_sum`/`_count` 的命名与累积语义也极易写错）。阶段四前「`grep prometheus_client` 零命中」是**缺陷证据（S5）**，不是「不需要」。
+- **适配层指标实现 = `prometheus_client`（Apache-2.0）**，已登记进 `docs/architecture-v1.0.md` §8.1 依赖清单（`deploy/validate_deps.py` 的门禁解析源），并由 T4-05.1 加进 `apps/adapter/pyproject.toml`；**不手写直方图 / 不手写 exposition 文本**（手写分位数桶必然与 Prometheus 语义漂移，`_bucket`/`_sum`/`_count` 的命名与累积语义也极易写错）。阶段四前「`grep prometheus_client` 零命中」是**缺陷证据（S5）**，不是「不需要」。
 - **待验证（登记前必做）**：两者与 §9.1 的 `nginx` 的**精确 tag 尚未核验**（本轮无外网拉取）。执行 `docker manifest inspect <image>:<tag>` 通过后，再写进 `images.lock`（含 `license` 与 `digest`）。**不允许先写编排再补登记**——`validate_images.py` 会红。
 
 ### 8.3 `/healthz` / `/readyz` / `/metrics` 边界
@@ -1208,7 +1223,7 @@ async def apply_one(self, m: Migration) -> None:
 | --- | --- | --- | --- | --- | --- |
 | **T4-05.1** | `/metrics` + 指标埋点 + 标签白名单断言 | `app/core/metrics.py`、`app/main.py`、`app/core/security.py`（中间件挂载）、`apps/adapter/tests/unit/test_metrics_labels.py` | T4-01.2 | `curl -s localhost:8000/metrics \| head` 含 `# HELP http_requests_total`；`pytest tests/unit/test_metrics_labels.py -q` | M |
 | **T4-05.2** | exporter + 4 job 抓取 + 5 条告警规则 | `deploy/docker-compose.yml`、`deploy/prometheus.yml`、`deploy/alert.rules.yml`、`deploy/images.lock` | T4-05.1 | `docker compose config -q`；Prometheus `/targets` 4 job `UP`；`/rules` 5 条 `ok` | M |
-| **T4-05.3** | 数据保留 + 清理任务 + 租户导出/删除 + DBA 审计 SQL | `app/workers/tasks/retention_cleanup.py`、`app/workers/tasks/tenant_export.py`、`app/business/tenant_data_service.py`、`app/api/v1/tenant_data.py`、`app/api/v1/router.py`、`sql/retention-audit.sql`、`apps/adapter/tests/integration/test_retention_export_delete.py` | T4-03.2 | `pytest tests/integration/test_retention_export_delete.py -q`；保留期 1 天 → 目标表 `count=0` + 日志有行数；导出包 `manifest.json` 行数一致；删除后逐表 0 | L |
+| **T4-05.3** | 数据保留 + 清理任务 + 租户导出/删除 + DBA 审计 SQL；**TD1 同步导出（`status=ready` + `rows`，上限 20 万行）+ TD2 停用式删除（`status=suspended`）** | `app/workers/tasks/retention_cleanup.py`、`app/workers/tasks/tenant_export.py`、`app/business/tenant_data_service.py`、`app/api/v1/tenant_data.py`、`app/api/v1/router.py`、`sql/retention-audit.sql`、`apps/adapter/tests/integration/test_retention_export_delete.py` | T4-03.2 | `pytest tests/integration/test_retention_export_delete.py -q`；保留期 1 天 → 目标表 `count=0` + 日志有行数；导出包 `manifest.json` 行数一致；**TD1**：造 20 万零 1 行 → `20001` + 「数据量较大，请联系管理员分批导出」；正常量 → `status="ready"` 且 `rows.total` 与包内一致、`download_url` 可直接下载（复用 `/files/artifacts/{token}`）；**TD2**：删除后逐表 0，但 `plugin_task`/`plugin_artifact` **各留 1 行**且其业务字段为空；响应含 `retained_tables`（四张知识库表）与 `audit_pending_dba`；`tenant.status=suspended` 且 `suspended_reason` 非空 | L |
 | **T4-05.4** | 轻量版编排（9 容器）+ nginx + 资源限制 + healthcheck + `validate_lite_up.sh` | `deploy/docker-compose.lite.yml`、`deploy/nginx/nginx.conf`、`deploy/nginx/lite.conf`、`deploy/validate_lite_up.sh`、`deploy/.env.lite.example` | T4-05.2、T4-03.1 | `bash deploy/validate_lite_up.sh` → `ready in <180s` + `status=ok`；`docker stats` 总内存 < 6GB；`grep -c healthcheck deploy/docker-compose.lite.yml` ≥ 有状态服务数 | L |
 | **T4-05.5** | 离线包 + 升级/回滚脚本 + `images.lock` 增 `digest`；**升级预检含 `vector` 扩展**（§9.3.1） | `deploy/install.sh`、`upgrade.sh`、`rollback.sh`、`backup.sh`、`restore.sh`、**`sql/enable-vector-extension.sql`（新建）**、`deploy/images.lock`、`deploy/validate_packaging.py` | T4-05.4、T4-01.4 | 断网全新环境 `bash install.sh` 一次成功；`sha256sum -c checksums.txt` 全通过；`upgrade→rollback→upgrade` 三轮数据一致；**`vector` 预检**：① 全新装库（initdb 超级用户建过扩展）→ `upgrade.sh` 预检通过、不进中止分支；② 手工 `DROP EXTENSION vector` 后跑 `upgrade.sh` → **退出码 4、未执行任何迁移**、打印 §9.3.1 的逐字文案、`sql/enable-vector-extension.sql` 内容随之输出 | L |
 | **T4-05.6** | SBOM + `.difypkg` 扫描 + 合规三件套 + About 页；**DBA runbook 顶部单列 `vector` 扩展步骤**（§9.3.1） | `deploy/sbom/generate.py`、`deploy/validate_offline_pkgs.py`、`.github/workflows/sbom.yml`、`docs/compliance/privacy-policy.md`、`dpa-template.md`、`security-whitepaper.md`、`apps/web/src/app/(main)/about/page.tsx` | T4-05.5 | `jq '.components\|length' sbom.cdx.json` >0 且 4 前缀各 ≥1；`python deploy/validate_offline_pkgs.py --self-test` 正样本 0 / 负样本非 0；CI `license-scan` success | L |
@@ -1269,6 +1284,8 @@ async def apply_one(self, m: Migration) -> None:
 | A-7 | `[待架构确认]` `dify_conversation_id` 是否要回填 | **不回填**（恒 `NULL`）。理由：`conversation_id=null` 让 Dify 每次新建会话，回填反而会让底座侧上下文重新生效，与"自研组装"冲突。字段保留以便 V1.1 换策略 | Dify 侧会话表会增长（见 A-8） |
 | A-8 | `[待架构确认]` Dify 侧会话堆积清理 | 季度手工 SQL（`DELETE FROM conversations WHERE created_at < ...`）+ 运维手册说明；不进自动化（跨系统删除风险高于收益） | Dify DB 体积 |
 | A-9 | **技术债（本轮不修）** `apps/web/scripts/check-banned-terms.mjs` 从 **`docs/prd-phase2-increment.md` §7** 取词（`PRD_PATH`，脚本第 41 行），阶段四新增术语只能写进那份历史 PRD 的术语表 | 现在**不动**（交付前改取词源＝重生成整张词表，风险大于收益）。V1.1 改为从**主 PRD 或独立术语表文件**取词，并把 phase2/3 词条一次性迁过去 | 阶段四施工须知：加记忆域词必须改 **phase2 PRD §7** 再 `--update-words`；写进 phase4 PRD 会静默无效（`scan:words` 仍绿＝假绿） |
+| A-10 | **技术债** `ruff` 未钉版本（`pyproject.toml` 写 `>=0.5`） | V1.1 钉到 `==<当前版本>`；阶段四不动 | 新版 ruff（如 0.17.1）会重排整个文件，交付前升级会让 diff 变成噪音、掩盖真实改动 |
+| A-11 | **技术债** `tenant` 表缺 `deleted_at` | V1.1 加列（`0001x` 迁移，可空 TIMESTAMPTZ）+ 删除流程改用软删时间戳；阶段四沿用 `status='suspended'` + `suspended_reason` | 现阶段无法回答「何时删的」，只能回答「已停用」；合规问「删除时间」时需要额外说明 |
 
 ---
 
