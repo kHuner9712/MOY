@@ -438,3 +438,180 @@ FAILED test_denials_are_audited
 | 2 | `schema_guard` 探测成功分支的覆盖归属不稳定 | 把「列能力探测」做成可注入的 `CapabilityProbe` 端口，便于单测直接覆盖两条分支 |
 | 3 | 白名单的"路由级"约束 | 见 §20 第 4 条 |
 | 4 | `get_model_service()` 无参构造（T4-03 遗留） | 仍是 V1.1 第一批 |
+
+---
+
+# T4-05 第二批：数据权利（保留清理 + TD1 导出 + TD2 删除）
+
+## 22. 提交
+
+| SHA | 说明 |
+| --- | --- |
+| `76f7794` | `test(obs): 告警规则自证` —— `deploy/alert.rules.test.yml`，promtool 合成序列钉住 5 条规则的时间语义 |
+| `f30c95e` | `feat(ops): 数据保留清理与租户导出/删除（TD1/TD2）` —— `phase4_present` 8→10，端点预算清零 |
+
+## 23. 告警规则自证（promtool，`76f7794`）
+
+不用"打 30 次 5xx 再等 4 分钟"（慢且不可复现）：`promtool test rules` 用合成序列把
+5 条规则的时间语义钉成离线可复跑的断言。跑法（Windows/Git-Bash **必须**
+`MSYS_NO_PATHCONV=1`，镜像入口是 `prometheus`，须 `--entrypoint promtool`）：
+
+```
+MSYS_NO_PATHCONV=1 docker run --rm --entrypoint promtool \
+  -v "$PWD/deploy:/etc/prometheus" prom/prometheus:v3.15.0 \
+  test rules /etc/prometheus/alert.rules.test.yml
+→ SUCCESS
+```
+
+三条**实测踩出来**的语义写进了文件头（都是"写错了会假绿"的类型）：
+
+| # | 语义 | 症状 |
+| --- | --- | --- |
+| 1 | `rate()` 只需窗口内 **2 个样本**，不等窗口填满 | 序列从第 0 分钟就有流量时，`rate(x[2m])` 第 1 分钟就算得出来 → pending 比真实场景早 1 分钟。故序列**前 2 分钟置 0**，才能验证"约 4 分钟 firing" |
+| 2 | 常量计数器的 `rate()` **恒为 0** | `values: '80+0x8'` 得到全 0 分布，`histogram_quantile` 返回 NaN，`NaN > 3` 为假——"永不告警"的用例会**假装通过**。故延迟桶一律用递增序列 |
+| 3 | `for` 边界（恰好满 `for`）**算 firing** | 用例刻意避开边界时刻（用 +1m 断言），只钉"之前不响、之后响" |
+
+覆盖：`ApiErrorRateHigh`（10% 第 2/3 分钟不响应、第 5 分钟 firing；1% 永不）、
+`TaskQueueBacklog`（51 第 4 分钟 pending、第 6 分钟 firing；50 不告警）、
+`TenantBudgetNearlyLimit`（0.85 第 9 分钟 pending、第 12 分钟 firing；0.8 不告警）、
+`TargetDown`（up=0 第 1 分钟 pending、第 3 分钟 firing）、
+`ApiLatencyP95High`（非流式 P95≈4.7s 第 5 分钟 pending、第 7 分钟 firing；
+只有流式路由慢时因 `route!~".*stream.*"` 保持 inactive）。
+
+## 24. 保留期清理（`kind=retention_cleanup`）
+
+| 类别 | 表 | 保留期（配置项） | 判据 |
+| --- | --- | --- | --- |
+| 审计 | `audit_log` | 180 天 `retention_audit_days` | **应用角色无 DELETE 权限** → 交 DBA（`sql/retention-audit.sql`） |
+| 用量 | `usage_event` / `usage_monthly` | 13 个月 `retention_usage_months` | 按**自然月**回退（不是 30×N 天） |
+| 任务与产物 | `plugin_artifact` → `plugin_task` | 180 天 `retention_task_days` | 产物先删（FK 是 `ON DELETE CASCADE`，先删任务会让"产物删了几行"变成 0） |
+| 会话与消息 | `message` → `conversation` | 365 天 `retention_conversation_days`；软删 30 天后提前硬删 | `conversation_soft_delete_recover_days` |
+| 记忆 | `user_memory` / `memory_embedding` / `user_memory_setting` | **永久** | 规则标记 `skip_permanent`，只由用户本人在「我的记忆」里删 |
+| 运维流水 | `integration_outbox` / `payment_callback_log` | 前者 180 天、后者 13 个月 | 与任务 / 账单同口径 |
+
+**三条设计决策**（写进代码注释，这里记结论）：
+
+1. **每租户一个任务，而不是一个平台级任务**。平台级任务必须走 `platform_scope()` 的
+   **写**路径，而那条通道的契约写的是"仅供运营后台"；每租户一个任务让每次删除都落在
+   `tenant_scope(job.tenant_id)` 里，**RLS 天然兜底**（就算 `tenant_id` 传错也删不到别人的行）。
+   代价是要枚举租户——枚举用一次**只读**的 `platform_scope()`（只 `SELECT tenant_id`），
+   发生在 `schedule_all_tenants()`，与删除路径完全分离。
+2. **`dedupe_key` 是固定串 `retention-daily`（不带日期）**。带日期会在"当天任务已跑完 +
+   进程重启"时再排一个，于是同一时刻躺着两个待执行任务；固定键表达"该租户已有一次清理
+   在排队"，重启多少次都只有一次。真实执行时刻记在 `payload.scheduled_for`。
+3. **`audit_log` 仍然尝试删一次**，把权限判定交给数据库而不是在代码里写死"这表删不了"。
+   这样一旦运维真的授予了权限（例如将来的 `officeai_maint` 角色），清理会自动生效，
+   代码不用跟着改；失败即按预期记 `audit_log=skipped(no privilege)`。
+
+日志与告警：每表一行 `retention_table_cleaned`（`table` / `deleted` / `duration_ms`），
+失败一行 `retention_table_failed`（含 `error`）。**权限跳过不计失败**；
+`job.attempts >= 2` 时把失败日志升到 ERROR（`job.attempts` 就是连续失败序号）。
+
+## 25. TD1 导出：**同步生成**（本批的核心决策）
+
+> **PRD P4-05 ③ 写的是"异步任务产出压缩包"。本批改为同步生成。**
+
+| # | 理由 |
+| --- | --- |
+| 1 | **端点预算里没有"查导出进度"的位置**。阶段四只允许 10 个新端点，10 条已被 MC1-MC4 / MM1-MM4 / TD1 / TD2 占满。异步导出必须配 `GET /ops/tenant-data/export/{id}` 才能拿到结果，加它就是第 11 条，门禁 G1/G3 当场判红 |
+| 2 | **没有进度端点时，异步比同步更糟**：任务排进 `background_job`、包也生成了，但用户没有任何合法手段拿到 `download_url`（下载令牌是短期凭证，不能靠"通知"送达）。那就是"排了队但取不到"，等于数据权利没兑现 |
+| 3 | **量级可接受**：中小企业/私有化场景 ≤200,000 行，内存里拼 zip 是秒级操作 |
+| 4 | **超限明确报错，不静默截断**：`数据量较大，请联系管理员分批导出`（复用 `20001`，不新造码）。截断的导出包会让客户以为"我的数据只有这些"，在合规场景里比报错严重得多 |
+
+实现要点：5 类 JSONL（`audit` / `usage` / `chat` / `memory` / `artifact`）+
+`manifest.json`（每文件行数 + sha256 + 字节数）。取数用**键集分页**
+（`(ts, id) > (cursor_ts, cursor_id)`），不用 `OFFSET`——页数越多 `OFFSET` 越慢。
+写 zip 用 `ZipFile.open(name, "w")` **流式**写，不把整包先拼进内存。
+包落产物库（`application/zip`，`expires_at = now + 令牌 TTL`），
+`download_url` 复用既有 `/files/artifacts/{token}`（S9 短期令牌）——
+**不新增端点、不新增基线条目**。
+
+`kind=tenant_export` 仍留在迁移 `0010` 的 CHECK 里，但**没有注册处理器**：
+枚举是冻结的，删一个取值等于改契约；队列里不会出现该类任务，将来若要转回异步，
+处理器位置现成。已在此处披露。
+
+## 26. TD2 删除：先停用 → 分批硬删 → 出证明
+
+1. **逐字确认**企业名称（`18003`）。**不 strip、不忽略大小写、全半角括号不同都拒绝**——
+   二次确认的意义是"你必须真的知道自己在删哪家企业"，容错会让误删变成可能；
+2. **先置 `tenant.status='suspended'`** 阻断后续写入。不先阻断就会"边删边写"，
+   删完还剩新数据，客户拿到的"已删除"结论是假的；
+3. 分批（每批 ≤1000）硬删 8 类：审计 / 用量 / outbox / 回调流水 / 凭据 / 会话消息 /
+   记忆 / 产物（含「始终删除」的 `background_job` 与 `credential_store`：
+   前者是纯运行态，留着会让处理器去处理已删除的会话；后者是密钥材料，留着既无用又是风险）；
+4. **删除证明**（各表删除行数 + 时间戳 + 请求人 + 两段式 pending）作为产物落库，
+   `proof_download_url` 同样复用 `/files/artifacts/{token}`；
+5. **审计行删不掉，且不许合并进总数**：响应与证明里单列 `audit_pending_dba: N`
+   + DBA SQL 提示（PRD P4-05 ④"分两段呈现、不得合并成一个数字"）。
+   顺序上**先写审计动作、再数审计行**——反了会把"删除动作本身"漏在统计之外。
+
+幂等：第二次删除不报错，业务数据仍为 0；**上一次的证明会被本次替换**
+（证明表达"当前状态"，历史动作留在审计里，审计永不被应用侧删除）。
+用例断言"二次 `deleted_rows` 不全为 0"，这是真实的：证明要重新落一份。
+
+## 27. 五处口径偏离（下游必须知道）
+
+| # | 项 | 架构 / PRD 原文 | 实际 | 理由 |
+| --- | --- | --- | --- | --- |
+| 1 | TD1 状态 | `status="preparing"` + `estimated_rows` | `status="ready"` + `rows`（实测行数）+ `download_url` / `expires_at` | 同步生成完毕；返回 `preparing` 会让前端去轮询一个**不存在**的端点。包已经生成了，报估计值没有意义 |
+| 2 | TD2 时间字段 | `scheduled_at` | `deleted_at` | 同步删除没有"计划执行时间"；返回未来时间戳会让客户以为"还没删" |
+| 3 | `tenant` 的"标记删除" | 置 `deleted_at` | 置 `status='suspended'` + `suspended_reason='数据删除请求处理中'` | `tenant` 表**没有** `deleted_at` 列（阶段一定义的列集：tenant_id/name/status/deploy_mode/plan_code/suspended_reason/created_at/updated_at）。新增该列需要一次迁移 + 基线脚本同步，超出本批范围；`status='suspended'` 是既有的"阻断使用"机制，语义等价。**V1.1 若要 `deleted_at`，须走迁移** |
+| 4 | TD2 删完的表残留 | "删除后逐表 count=0" | `plugin_task` / `plugin_artifact` **各剩 1 行**（删除证明本身） | `plugin_artifact.task_id` 是 **NOT NULL + 外键**（`fk_artifact_task`），产物必须挂在一条真实任务下才能落库。证明是"已删除"这一事实的唯一载体，连它一起删掉客户就再也拿不到证据了。用例对这两张表单独断言"只剩证明" |
+| 5 | 删除范围外的表 | "8 类数据" | `document_meta` / `knowledge_base_meta` / `knowledge_base_grant` / `segment_map` **不纳入在线删除**，在响应 `retained_tables` 里显式列出 | 知识与文档正文属大对象，在线清空的风险远高于收益（一次误删就是整库知识资产）。退租需全量清空时由 DBA 执行 `sql/full-purge.sql`。**不静默跳过**：响应与证明都写明 |
+
+## 28. 门禁与用例结果
+
+| 组 | 命令 | 结果 |
+| --- | --- | --- |
+| 端点基线 | `python deploy/validate_openapi.py --strict` | `core=30 phase2=38 phase3=16 phase4_present=10`，**EXIT 0** |
+| 全量 | `OA_BATCH=B21 pytest tests --run-pg -q` | **1993 passed / 0 failed**（511s） |
+| 数据权利 | `pytest tests/integration/test_retention_export_delete.py --run-pg -q` | **15 passed** |
+| 静态 | `ruff check .` / `ruff format --check .` / `mypy app` | 全绿（144 source files） |
+| 告警自证 | `promtool test rules` | **SUCCESS** |
+| 部署门禁 | `validate_deploy` / `validate_migrations` / `validate_schema_retention` / `validate_images` / `validate_packaging` / `validate_plugins` / `validate_secrets` | 全部 EXIT 0 |
+| 交付 SQL | `sql/retention-audit.sql`（`-v days=36500`）、`sql/tenant-export-manual.sql`、`sql/full-export.sql`（41 表全导出）、`sql/full-purge.sql`（守卫 + `BEGIN/ROLLBACK` 验 TRUNCATE） | 均在测试库实跑通过；`full-purge` 的 TRUNCATE 已回滚、库内 342 个企业行完好 |
+
+15 条用例逐条对应判据：
+
+| 判据 | 用例 |
+| --- | --- |
+| ① 过期行清零 + 日志含行数 + `audit_log=skipped(no privilege)` | `test_expired_rows_are_purged_and_audit_is_skipped` |
+| ② 记忆永久不动 | 同上（`user_memory` 仍 2 行 + `retention_table_skipped(reason=permanent)`） |
+| 自续期 + 总行数日志 | `test_cleanup_job_reschedules_and_reports` |
+| ③ 5 个文件都在 + manifest 行数/sha256 一致 + 可下载解压 | `test_export_zip_has_five_files_and_matching_manifest` |
+| ④ 超限报业务错误、不截断 | `test_export_over_limit_returns_business_error` |
+| ⑤ 逐表归零 + `audit_pending_dba>0` + 证明可解析 + 行数一致 | `test_delete_wipes_tables_and_proves_it` |
+| ⑤ 二次删除幂等 | `test_delete_is_idempotent_on_second_call` |
+| 逐字确认（多空格/少字/全半角） | `test_delete_requires_exact_tenant_name` |
+| owner 专用 | `test_delete_requires_owner_role` |
+| ⑥ 私有化不可用 | `test_private_mode_rejects_export_and_delete` |
+| 守卫方向（成员 / 平台令牌都拒） | `test_export_requires_tenant_admin` / `test_export_rejects_platform_token` |
+
+**日志断言为什么用 LoggerSpy 而不是 `capsys`**：`structlog.PrintLoggerFactory(file=sys.stdout)`
+在 `configure()` 时就把当时的 `sys.stdout` 对象绑死了，而 `capsys` 替换的是**之后**的
+`sys.stdout`——两者可能不是同一个对象，抓不到就是"假绿"。替换模块级 `logger` 才能确定性
+断言"代码确实发出了这句话"，同时顺带断言了事件里的 `deleted` 行数。
+
+## 29. 复现踩到的坑（留给下一个人）
+
+| # | 坑 | 正确做法 |
+| --- | --- | --- |
+| 1 | `promtool` 在 Git-Bash 下报 `path 'D:/.../etc/prometheus/...' does not exist` | `MSYS_NO_PATHCONV=1`；镜像入口是 `prometheus`，要 `--entrypoint promtool` |
+| 2 | `psql` 的 `\copy` **不展开 `:变量`** | 先用 `SELECT set_config('moy.tenant', :'tenant', false)` 把变量搬进会话参数，`\copy` 的查询读 `current_setting(...)` |
+| 3 | 服务端 `COPY ... TO '<路径>'` 在 QA 容器里打不开目录 | 用客户端 `\copy`（`\cd :out` 可以正常展开变量） |
+| 4 | `all docker exec` 的参数都会被 MSYS 改写（`/tmp` → Windows 路径） | 容器内路径一律 `MSYS_NO_PATHCONV=1`；`docker cp` 的**主机侧**要给 Windows 绝对路径 |
+| 5 | 清库时用应用角色删 `audit_log` → `permission denied` | 夹具里的**清理**用超级用户（口令相同、只换用户名），**断言**一律走应用角色 |
+| 6 | `plugin_task.status` / `tool_execution.status` / `usage_event.source` / `integration_outbox.kind` 都有 CHECK | 造数据前先查约束：`completed` / `success` / `settled` / `kc_group_upsert` |
+| 7 | `message.seq` 是 `GENERATED ALWAYS` 标识列 | 插入时**不要**写它 |
+| 8 | `plugin_artifact.task_id` 是 NOT NULL **外键** | 数据权利产物也要建一条宿主 `plugin_task`（`plg_system_data_rights`） |
+| 9 | `get_artifact_store()` 是**进程级单例**，首次调用时按当时配置定型 | 用例前后 `reset_artifact_store()`，否则"单独跑绿、全量跑红" |
+| 10 | `ruff` 未固定版本（`ruff>=0.5`，本地 0.17.1） | 本批把 `tests/unit/test_metrics_contract.py` 按新版本重排（纯格式）+ 修一处 `RUF012`；**建议把 ruff 钉版本**，否则每次升级都会带出无关重排 |
+
+## 30. 本批发现的遗留问题（不属本批，交 QA / 架构）
+
+| # | 问题 | 证据 | 建议 |
+| --- | --- | --- | --- |
+| 1 | `deploy/validate_deps.py` **不通过**：`prometheus-client` 未登记进架构文档 §8.1 清单 | `python deploy/validate_deps.py` → `[FAIL] prometheus-client：未登记进架构文档 §8.1 清单` | 由 T4-05.1 的交付方补文档登记（本批零新增依赖，是**继承**的失败） |
+| 2 | `tests/unit/test_metrics_contract.py` 里有一句**假断言** | `assert "/metrics" in MetricsMiddleware.__module__ or True` —— `or True` 让它恒真 | 同用例下一行 `assert "/metrics" in EXCLUDED_PATHS` 才是真判据；建议删掉前半句（本批未改动，避免掩盖问题） |
+| 3 | `tenant` 表缺 `deleted_at` | 见 §27 第 3 条 | V1.1 若要"标记删除 + 冷静期"，需一次加列迁移 |
+| 4 | `kind=tenant_export` 无处理器 | 见 §25 末段 | 若转异步，同时要新增"查导出进度"端点 → 必须走端点预算审批（第 11 条） |
