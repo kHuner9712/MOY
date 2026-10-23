@@ -103,6 +103,14 @@ ARTIFACT_DOWNLOAD_PREFIX: Final[str] = "/files/artifacts"
 HOST_PLUGIN_ID: Final[str] = "plg_system_data_rights"
 HOST_PLUGIN_VERSION: Final[str] = "1.0.0"
 
+#: 产物用途标记（同时写进产物 `output_key` 与宿主任务的 `result_summary`）。
+#:
+#: 为什么需要它：宿主任务行与产物行都是"系统为了满足外键而留下的最小记录"，
+#: 光看 `plugin_id` 分不出这次是导出还是删除证明；有了用途标记，
+#: 运维查库时能一眼看出"这条行是证明，不是残留业务数据"。
+PURPOSE_EXPORT: Final[str] = "tenant_data_export"
+PURPOSE_DELETION_PROOF: Final[str] = "proof_of_deletion"
+
 #: 删除范围 → 表清单（顺序即删除顺序：先删"子"，再删"父"）
 DELETE_SCOPE_TABLES: Final[dict[str, tuple[str, ...]]] = {
     "audit": ("audit_log",),
@@ -564,6 +572,9 @@ class TenantDataService:
             name=f"tenants-{export_id}.zip",
             content=payload,
             content_type="application/zip",
+            purpose=PURPOSE_EXPORT,
+            # 导出包是"短期凭证"：与下载令牌同 TTL，过期即失效
+            expires_in_days=None,
         )
         download_url, expires_at = self._download_url(tenant_id, artifact)
         rows = {scope: int(manifest["rows"].get(EXPORT_FILE_NAMES[scope], 0)) for scope in selected}
@@ -881,6 +892,8 @@ class TenantDataService:
         deleted_at = iso()
 
         proof = {
+            # 自证标记：这份文件"是什么"，与"谁的数据"无关
+            "proof_of_deletion": True,
             "deletion_id": deletion_id,
             "tenant_id": tenant_id,
             "tenant_name": name,
@@ -909,6 +922,10 @@ class TenantDataService:
             "retained_note": (
                 "知识库与文档正文不纳入在线删除；退租需要全量清空时由 DBA 执行 sql/full-purge.sql。"
             ),
+            "content_policy": (
+                "本证明只含各表行数与时间戳，不含任何被删数据的内容或摘要；"
+                "它自身是删除后唯一保留的产物，留存期取 plugin_artifact_retention_days。"
+            ),
         }
         proof_bytes = json.dumps(
             proof, ensure_ascii=False, indent=2, sort_keys=True, default=_json_default
@@ -919,6 +936,10 @@ class TenantDataService:
             name=f"deletion-proof-{deletion_id}.json",
             content=proof_bytes,
             content_type="application/json",
+            purpose=PURPOSE_DELETION_PROOF,
+            # 证明要**活得比下载链接久**：链接 15 分钟就失效，而"我已经删了"这件事
+            # 客户可能要过几个月才来核查。按产物留存期（默认 180 天）保存。
+            expires_in_days=int(self._settings.plugin_artifact_retention_days),
         )
         proof_url, _expires = self._download_url(tenant_id, artifact)
         logger.info(
@@ -1100,23 +1121,36 @@ class TenantDataService:
     # ------------------------------------------------------------------
     # 产物与下载地址
     # ------------------------------------------------------------------
-    async def _ensure_host_task(self, tenant_id: str, task_id: str) -> None:
+    async def _ensure_host_task(self, tenant_id: str, task_id: str, purpose: str) -> None:
         """为数据权利产物建一条宿主任务（`plugin_artifact.task_id` 是 NOT NULL 外键）。
 
         幂等：`ON CONFLICT (tenant_id, task_id) DO NOTHING`，重放/重试都不会重复建。
 
+        **这条任务行里不允许有任何客户数据**（合规要求，不是洁癖）：宿主任务只是
+        为了满足外键而存在，因此除最小标识外**显式置空**——`conversation_id=''`、
+        `inputs='{}'`、`checklist='[]'`、`warnings='[]'`、`error_message=NULL`。
+        不用"靠列默认值兜住"：默认值某天被改（比如 `inputs` 加个模板初值），
+        这里就会悄悄带上数据，而没人会想到去看一眼宿主任务。
+        `result_summary` 只放一个用途标记（`proof_of_deletion` / `tenant_data_export`），
+        它是"这条任务是什么"，不是"谁的数据"。
+
         Args:
             tenant_id: 企业 ID。
             task_id: 宿主任务 ID（与导出/删除 ID 相同，便于反查）。
+            purpose: 用途标记（写进 `result_summary`，也是产物的 `output_key`）。
         """
         async with tenant_scope(tenant_id, settings=self._settings) as uow:
             await uow.execute(
                 "INSERT INTO plugin_task ("
                 " tenant_id, task_id, plugin_id, plugin_version, initiator_id,"
-                " trigger_type, status, progress, idem_key, started_at, finished_at"
+                " conversation_id, trigger_type, status, progress, idem_key,"
+                " inputs, result_summary, checklist, warnings, error_message,"
+                " started_at, finished_at"
                 ") VALUES ("
                 " :tenant_id, :task_id, :plugin_id, :plugin_version, '',"
-                " 'manual', 'completed', 100, :idem_key, now(), now()"
+                " '', 'manual', 'completed', 100, :idem_key,"
+                " '{}'::jsonb, :result_summary, '[]'::jsonb, '[]'::jsonb, NULL,"
+                " now(), now()"
                 ") ON CONFLICT (tenant_id, task_id) DO NOTHING",
                 {
                     "tenant_id": tenant_id,
@@ -1125,6 +1159,7 @@ class TenantDataService:
                     "plugin_version": HOST_PLUGIN_VERSION,
                     # `idem_key` 是 NOT NULL：用任务 ID 本身，天然唯一且可反查
                     "idem_key": task_id,
+                    "result_summary": purpose,
                 },
             )
 
@@ -1136,11 +1171,22 @@ class TenantDataService:
         name: str,
         content: bytes,
         content_type: str,
+        purpose: str,
+        expires_in_days: int | None = None,
     ) -> ArtifactRecord:
         """把包写入产物库（复用 B19 的产物代理，**不新增下载端点**）。
 
-        `expires_at` 与下载令牌同 TTL：产物过期后 `/files/artifacts/{token}`
-        返回 404，链接与产物同时失效，不会出现"链接还有效但文件已清"的错位。
+        **有效期分两种，不能混**：
+
+        - 导出包：`expires_at = now + 下载令牌 TTL`（默认 15 分钟）。它是"短期凭证"，
+          客户要的是"现在取走"，过期即失效最安全；
+        - 删除证明：`expires_at = now + plugin_artifact_retention_days`（默认 180 天）。
+          证明要用来说"我已经删了"，只在 15 分钟内可取等于没给。**下载链接本身仍是
+          短期令牌**（15 分钟），需要新链接时重新调一次 TD2 之外的路径即可——
+          链接短、证据长，这两件事本来就不该共用一个期限。
+
+        产物行里**只有证明 JSON 本身**：`inline_text` / `preview_text` 一律空，
+        二进制只走 `content`。不允许把被删数据的任何内容或摘要塞进来。
 
         Args:
             tenant_id: 企业 ID。
@@ -1148,13 +1194,18 @@ class TenantDataService:
             name: 文件名（扩展名决定 MIME 归一化结果）。
             content: 字节。
             content_type: MIME。
+            purpose: 用途标记（同时作为 `output_key` 与宿主任务的 `result_summary`）。
+            expires_in_days: 留存天数；`None` 表示按下载令牌 TTL 过期。
 
         Returns:
             ArtifactRecord: 落库后的产物行。
         """
-        ttl = int(self._settings.artifact_token_ttl_seconds)
-        expires_at = iso(datetime.now(UTC) + timedelta(seconds=ttl))
-        await self._ensure_host_task(tenant_id, artifact_id)
+        if expires_in_days is None:
+            ttl = int(self._settings.artifact_token_ttl_seconds)
+            expires_at = iso(datetime.now(UTC) + timedelta(seconds=ttl))
+        else:
+            expires_at = iso(datetime.now(UTC) + timedelta(days=max(1, expires_in_days)))
+        await self._ensure_host_task(tenant_id, artifact_id, purpose)
         created = await self._store().add_artifacts(
             [
                 ArtifactRecord(
@@ -1164,9 +1215,13 @@ class TenantDataService:
                     # ID：一条数据权利产物 = 一条宿主任务 + 一条产物，反查也最直接。
                     task_id=artifact_id,
                     step_id="",
-                    output_key=artifact_id,
+                    output_key=purpose,
                     type="file",
                     name=name,
+                    # 正文摘要字段一律空：产物里**只有** content 这一份字节，
+                    # 没有第二处副本，也就没有"忘了脱敏"的第二个入口
+                    inline_text="",
+                    preview_text="",
                     content=content,
                     content_type=content_type,
                     content_sha256=hashlib.sha256(content).hexdigest(),
@@ -1251,6 +1306,8 @@ __all__: list[str] = [
     "MAX_EXPORT_ROWS",
     "PAGE_SIZE",
     "PRIVATE_MODE_MESSAGE",
+    "PURPOSE_DELETION_PROOF",
+    "PURPOSE_EXPORT",
     "RETAINED_TABLES",
     "TABLE_LABELS",
     "DeletionResult",

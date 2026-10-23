@@ -615,3 +615,51 @@ MSYS_NO_PATHCONV=1 docker run --rm --entrypoint promtool \
 | 2 | `tests/unit/test_metrics_contract.py` 里有一句**假断言** | `assert "/metrics" in MetricsMiddleware.__module__ or True` —— `or True` 让它恒真 | 同用例下一行 `assert "/metrics" in EXCLUDED_PATHS` 才是真判据；建议删掉前半句（本批未改动，避免掩盖问题） |
 | 3 | `tenant` 表缺 `deleted_at` | 见 §27 第 3 条 | V1.1 若要"标记删除 + 冷静期"，需一次加列迁移 |
 | 4 | `kind=tenant_export` 无处理器 | 见 §25 末段 | 若转异步，同时要新增"查导出进度"端点 → 必须走端点预算审批（第 11 条） |
+
+## 31. 终验前收口（主理人指令，两处，本次提交）
+
+### 31.1 移除恒真假断言（`tests/unit/test_metrics_contract.py`）
+
+原 `assert "/metrics" in MetricsMiddleware.__module__ or True` —— `or True` 让它**恒真**，
+是一句"挂上去永远绿"的断言，比没有断言更危险（有人会以为这条已被覆盖）。
+
+- 删掉 `or True` 后**真实判据仍然通过**（11 passed）——说明前面的实现没问题，
+  这也正是必须删的理由：它掩盖了"这条到底测没测"；
+- 顺手加固一条**反向**断言：`EXCLUDED_PATHS` 里不得出现 `/api/v1` 开头的业务路径。
+  防的是另一种自伤——为了让曲线干净，把业务路径也排除掉；
+- 因此 `MetricsMiddleware` 变为未使用导入，一并移除（不留"为了用而用"的假引用）。
+
+### 31.2 删除证明不得留下业务数据（**合规问题**）
+
+**问题**：TD2 删完 `plugin_task` / `plugin_artifact` 各留 1 行承载证明
+（`plugin_artifact.task_id` 是 NOT NULL 外键）。若这 1 行带任何业务字段，
+等于"删了又留了一份数据"，这份"已删除"的结论不成立。
+
+**处理**（`tenant_data_service.py`）：
+
+| # | 改动 | 说明 |
+| --- | --- | --- |
+| 1 | 宿主任务**显式置空**，不靠列默认值 | `conversation_id=''`、`inputs='{}'`、`checklist='[]'`、`warnings='[]'`、`error_message=NULL`、`retry_of=NULL`。默认值某天被改（比如 `inputs` 加了模板初值），这里就会悄悄带数据，而没人会想到去看宿主任务 |
+| 2 | 只留用途标记 | `result_summary` = `proof_of_deletion` / `tenant_data_export`（新增常量 `PURPOSE_*`），同时作为产物 `output_key`。它表达"这条行是什么"，不是"谁的数据" |
+| 3 | 产物正文类字段一律空 | `inline_text=''`、`preview_text=''`、`external_url/storage_key=NULL`；只有 `content` 一份字节。**没有第二处副本，也就没有"忘了脱敏"的第二个入口** |
+| 4 | 证明 JSON 自证 + 声明内容边界 | 新增 `proof_of_deletion: true` 与 `content_policy`（"只含行数与时间戳，不含任何被删数据的内容或摘要"） |
+
+**顺带修掉一个会让证明失效的问题**：证明原先的 `expires_at = now + 下载令牌 TTL`（**15 分钟**），
+也就是"客户 15 分钟后再也拿不到自己的删除证明"，而且下一次 `retention_cleanup`
+会把这一行当作过期产物删掉。现在**两种产物分两种期限**：
+
+| 产物 | 下载链接 | 产物留存 | 理由 |
+| --- | --- | --- | --- |
+| 导出包 | 15 分钟短期令牌 | `now + TTL`（15 分钟） | 它是**凭证**：客户要的是"现在取走"，过期即失效最安全 |
+| 删除证明 | 15 分钟短期令牌 | `now + plugin_artifact_retention_days`（180 天） | 它是**证据**：客户可能几个月后才来核查"你到底删没删"。链接短、证据长，这两件事本来就不该共用一个期限 |
+
+**用例新增断言**（挑 3 个不同来源的原值：消息正文 / 记忆正文 / 产物文件名）：
+
+- 删除后宿主任务 `inputs` 为空对象、`checklist`/`warnings` 为空数组、`conversation_id=''`、
+  `error_message`/`retry_of` 为 NULL、`result_summary == 'proof_of_deletion'`；
+- 产物行整行（含 `content` 的 JSON）与**下载到的证明字节**里，3 个原值任意一个都 `not in`；
+- 证明留存期 > 1 天（防退化成 15 分钟）；导出侧对称断言 `output_key=tenant_data_export`
+  且留存期 < 1 天（防导出包被误设成长期留存）。
+
+结果：`test_retention_export_delete.py` **15 passed**；全量 `pytest tests --run-pg`
+**1993 passed / 0 failed**（519s）；`ruff check` / `format --check` / `mypy app` 全绿。

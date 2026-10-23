@@ -42,7 +42,7 @@ from app.core.metrics import (
     status_class,
 )
 from app.main import create_app
-from app.middleware.metrics import MetricsMiddleware, route_template
+from app.middleware.metrics import route_template
 
 pytestmark = pytest.mark.unit
 
@@ -225,8 +225,17 @@ class TestMetricsEndpoint:
         assert route_template(_Request()) == "/api/v1/model/conversations/{conversation_id}"  # type: ignore[arg-type]
 
     def test_metrics_middleware_skips_self(self) -> None:
-        """`/metrics` 自身的抓取不计入指标（否则曲线被自己的噪声主导）。"""
-        assert "/metrics" in MetricsMiddleware.__module__ or True
+        """`/metrics` 自身的抓取不计入指标（否则曲线被自己的噪声主导）。
+
+        ⚠ 这里原来还有一句 `assert "/metrics" in MetricsMiddleware.__module__ or True`——
+        `or True` 让它**恒为真**，是"挂上一个永远绿的断言"，比没有断言更危险
+        （有人会以为这条已被覆盖）。已删除：真正的判据是下面的 `EXCLUDED_PATHS`，
+        且顺手把"必须含 `/metrics`、且**不得**把业务路径也排除掉"一起钉住
+        （后者是反向风险：有人为了让曲线干净，把 `/api/v1/**` 也塞进排除集）。
+        """
         from app.middleware.metrics import EXCLUDED_PATHS
 
         assert "/metrics" in EXCLUDED_PATHS
+        assert not [path for path in EXCLUDED_PATHS if path.startswith("/api/v1")], (
+            "业务路径不得被排除在指标之外"
+        )

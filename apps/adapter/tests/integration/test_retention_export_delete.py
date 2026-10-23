@@ -29,7 +29,7 @@ import json
 import uuid
 import zipfile
 from collections.abc import AsyncIterator, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import asyncpg
@@ -42,6 +42,8 @@ from app.business.tenant_data_service import (
     ALWAYS_DELETE_TABLES,
     EXPORT_FILE_NAMES,
     MANIFEST_NAME,
+    PURPOSE_DELETION_PROOF,
+    PURPOSE_EXPORT,
 )
 from app.core.config import Settings, reset_settings_cache
 from app.db.engine import dispose_engine
@@ -76,6 +78,20 @@ ORG_ADMIN = "usr_td_org_admin"
 
 #: 32 字节密钥的 base64（凭据加密用，本文件只需要构造合法配置）
 _CRED_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+
+#: 三个"原业务值"（**删除后必须一处都搜不到**，见 TEST-2 的合规断言）。
+#:
+#: 挑三类不同来源的数据：消息正文、记忆正文、产物文件名。删除后如果在证明、
+#: 宿主任务行、产物行里还能 grep 到其中任意一个，就说明"证明带走了业务数据"，
+#: 那这份"已删除"的结论是不成立的。
+SEED_MESSAGE_TEXT = "帮我整理季度汇报"
+SEED_MEMORY_TEXT = "汇报要表格式"
+SEED_ARTIFACT_NAME = "季度汇报.md"
+SEED_BUSINESS_VALUES: tuple[str, ...] = (
+    SEED_MESSAGE_TEXT,
+    SEED_MEMORY_TEXT,
+    SEED_ARTIFACT_NAME,
+)
 
 #: 本文件会写入/清理的表
 TABLES: tuple[str, ...] = (
@@ -272,6 +288,25 @@ async def _scalar(pg_dsn: str, sql: str, *, tenant: str = TENANT) -> Any:
         await connection.close()
 
 
+async def _fetchrow(pg_dsn: str, sql: str, *, tenant: str = TENANT) -> Any:
+    """以指定租户上下文读取单行（断言行内字段用）。
+
+    Args:
+        pg_dsn: 连接串。
+        sql: 查询。
+        tenant: 会话租户。
+
+    Returns:
+        Any: asyncpg Record；无行时返回 None。
+    """
+    connection = await asyncpg.connect(pg_dsn)
+    try:
+        await connection.execute("SELECT set_config('app.tenant_id', $1, FALSE)", tenant)
+        return await connection.fetchrow(sql)
+    finally:
+        await connection.close()
+
+
 async def _count(pg_dsn: str, table: str) -> int:
     """数本用例企业在该表的行数（断言真值用）。
 
@@ -364,13 +399,13 @@ async def _seed_rows(pg_dsn: str, *, age_days: int) -> None:
         pg_dsn,
         "INSERT INTO message (tenant_id, message_id, conversation_id, user_id, role, content,"
         f" created_at, updated_at) VALUES ('{TENANT}', 'msg_td_{age_days}',"
-        f" 'conv_td_{age_days}', '{OWNER}', 'user', '帮我整理季度汇报', {offset}, {offset})",
+        f" 'conv_td_{age_days}', '{OWNER}', 'user', {SEED_MESSAGE_TEXT!r}, {offset}, {offset})",
     )
     await _execute(
         pg_dsn,
         "INSERT INTO user_memory (tenant_id, memory_id, user_id, category, content, confidence,"
         f" created_at, updated_at) VALUES ('{TENANT}', 'mem_td_{age_days}', '{OWNER}',"
-        f" 'preference', '汇报要表格式', 'high', {offset}, {offset})",
+        f" 'preference', {SEED_MEMORY_TEXT!r}, 'high', {offset}, {offset})",
     )
     await _execute(
         pg_dsn,
@@ -392,7 +427,7 @@ async def _seed_rows(pg_dsn: str, *, age_days: int) -> None:
         pg_dsn,
         "INSERT INTO plugin_artifact (tenant_id, artifact_id, task_id, step_id, output_key, type,"
         f" name, inline_text, expires_at, created_at) VALUES ('{TENANT}', 'art_td_{age_days}',"
-        f" 'task_td_{age_days}', '', 'report', 'text', '季度汇报.md', '正文',"
+        f" 'task_td_{age_days}', '', 'report', 'text', {SEED_ARTIFACT_NAME!r}, '正文',"
         f" now() + interval '180 days', {offset})",
     )
     await _execute(
@@ -632,6 +667,25 @@ class TestTenantExport:
         download = await api.get(data["download_url"])
         assert download.status_code == 200
         assert download.headers["content-type"].startswith("application/zip")
+
+        # 导出包也是"短期凭证"：产物留存期与下载令牌同 TTL（**不是** 180 天）
+        export_row = await _fetchrow(
+            pg_dsn,
+            "SELECT * FROM plugin_artifact"
+            f" WHERE tenant_id = '{TENANT}' AND artifact_id = '{data['export_id']}'",
+        )
+        assert export_row is not None
+        assert export_row["output_key"] == PURPOSE_EXPORT
+        assert export_row["expires_at"] < datetime.now(UTC) + timedelta(days=1)
+        # 宿主任务同样不带业务数据（与删除证明走同一段代码，这里顺带钉住）
+        export_task = await _fetchrow(
+            pg_dsn,
+            "SELECT * FROM plugin_task"
+            f" WHERE tenant_id = '{TENANT}' AND task_id = '{data['export_id']}'",
+        )
+        assert export_task is not None
+        assert json.loads(export_task["inputs"]) == {}
+        assert export_task["result_summary"] == PURPOSE_EXPORT
         archive = zipfile.ZipFile(io.BytesIO(download.content))
         names = set(archive.namelist())
         assert names == {*EXPORT_FILE_NAMES.values(), MANIFEST_NAME}
@@ -655,7 +709,7 @@ class TestTenantExport:
         memory_lines = [
             json.loads(line) for line in archive.read("memory.jsonl").decode("utf-8").splitlines()
         ]
-        assert memory_lines[0]["content"] == "汇报要表格式"
+        assert memory_lines[0]["content"] == SEED_MEMORY_TEXT
         assert "embedding" not in memory_lines[0]
 
     async def test_export_over_limit_returns_business_error(
@@ -759,6 +813,51 @@ class TestTenantDelete:
         # 企业被停用以阻断后续写入
         status = await _scalar(pg_dsn, f"SELECT status FROM tenant WHERE tenant_id = '{TENANT}'")
         assert status == "suspended"
+
+        # ------------------------------------------------------------------
+        # 合规断言：**证明不得带走任何业务数据**
+        #
+        # 删除后 `plugin_task` / `plugin_artifact` 各留 1 行是为了承载证明
+        # （`plugin_artifact.task_id` 是 NOT NULL 外键），但这 1 行必须是"空壳"：
+        # 只允许最小标识 + 用途标记。任何一处能 grep 到原业务值，这份"已删除"
+        # 的结论就不成立。
+        # ------------------------------------------------------------------
+        task = await _fetchrow(pg_dsn, f"SELECT * FROM plugin_task WHERE tenant_id = '{TENANT}'")
+        assert task is not None
+        # jsonb 经 asyncpg 读回来是字符串，按 JSON 解析后比较
+        assert json.loads(task["inputs"]) == {}, "宿主任务的 inputs 必须是空对象"
+        assert json.loads(task["checklist"]) == []
+        assert json.loads(task["warnings"]) == []
+        assert task["conversation_id"] == ""
+        assert task["error_message"] is None
+        assert task["retry_of"] is None
+        # 只有用途标记，没有业务摘要
+        assert task["result_summary"] == PURPOSE_DELETION_PROOF
+
+        artifact = await _fetchrow(
+            pg_dsn, f"SELECT * FROM plugin_artifact WHERE tenant_id = '{TENANT}'"
+        )
+        assert artifact is not None
+        assert artifact["output_key"] == PURPOSE_DELETION_PROOF
+        # 正文类字段一律空：产物里只有 content 这一份字节
+        assert artifact["inline_text"] == ""
+        assert artifact["preview_text"] == ""
+        assert artifact["external_url"] is None
+        assert artifact["storage_key"] is None
+        # 转成文本后整行搜索（含 content 的 JSON）都不许出现原业务值
+        row_text = json.dumps({k: str(v) for k, v in dict(artifact).items()}, ensure_ascii=False)
+        for value in SEED_BUSINESS_VALUES:
+            assert value not in row_text, f"产物行里残留了业务数据：{value}"
+
+        # 证明文件（下载到的字节）里同样一处都不许有
+        proof_text = proof_response.content.decode("utf-8")
+        for value in SEED_BUSINESS_VALUES:
+            assert value not in proof_text, f"删除证明里残留了业务数据：{value}"
+        assert proof["proof_of_deletion"] is True
+        assert "content_policy" in proof
+
+        # 证明的**留存期**不能只是下载令牌的 15 分钟：链接短、证据长
+        assert artifact["expires_at"] > datetime.now(UTC) + timedelta(days=1)
 
     async def test_delete_is_idempotent_on_second_call(self, pg_dsn: str, api: AsyncClient) -> None:
         """判据 ⑤：二次删除不报错、业务数据仍为 0（幂等）。
