@@ -17,6 +17,7 @@ V1.0 单副本、步骤全是平台内置调用（毫秒级），因此 `_advanc
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from dataclasses import replace
 from typing import Any, Final
@@ -37,6 +38,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
+from app.db.advisory_lock import task_advance_lock
 from app.db.repositories.artifact_repo import (
     ArtifactRecord,
     ArtifactStore,
@@ -65,6 +67,7 @@ from app.plugins.engine import (
     TASK_RUNNING,
     TASK_WAITING_CONFIRM,
     PluginEngine,
+    StepOutcome,
 )
 from app.plugins.loader import PluginRegistry, get_registry
 from app.plugins.sanitizer import ArtifactSanitizer
@@ -140,6 +143,7 @@ class TaskService:
         audit: AuditService | None = None,
         usage: UsageService | None = None,
         sanitizer: ArtifactSanitizer | None = None,
+        step_timeout_seconds: float | None = None,
     ) -> None:
         """初始化服务。
 
@@ -154,6 +158,8 @@ class TaskService:
             audit: 审计服务。
             usage: 计量服务。
             sanitizer: 产物脱敏器。
+            step_timeout_seconds: 单步超时覆盖值（测试用小值；缺省取
+                `plugin_task_timeout_seconds`，生产默认 900s）。
         """
         self._settings = settings or get_settings()
         self._tasks = tasks or get_task_store(self._settings)
@@ -165,6 +171,11 @@ class TaskService:
         self._usage = usage or get_usage_service(self._settings)
         self._sanitizer = sanitizer or ArtifactSanitizer()
         self._engine = engine or self._build_engine()
+        self._step_timeout_seconds = float(
+            step_timeout_seconds
+            if step_timeout_seconds is not None
+            else self._settings.plugin_task_timeout_seconds
+        )
 
     def _build_engine(self) -> PluginEngine:
         """装配步骤引擎（延迟到真正需要时才构造门面实现）。
@@ -387,7 +398,23 @@ class TaskService:
     # 推进（唯一状态机入口）
     # ------------------------------------------------------------------
     async def _advance_record(self, record: TaskRecord) -> None:
-        """按记录推进任务（内部主流程）。
+        """按记录推进任务（**带推进锁**，阶段四 T4-04.4）。
+
+        两个进程/两个请求同时推进同一任务时，只有拿到锁的那个继续；另一个**立刻返回**
+        （不排队、不等待）——否则"读步骤 → 跑一步 → 写结果"会被执行两遍：
+        产物重复、额度重复扣、步骤序号跳变。
+
+        Args:
+            record: 任务行（会被就地更新）。
+        """
+        async with task_advance_lock(record.task_id, self._settings) as acquired:
+            if not acquired:
+                logger.info("task_advance_skipped_locked", task_id=record.task_id)
+                return
+            await self._advance_locked(record)
+
+    async def _advance_locked(self, record: TaskRecord) -> None:
+        """真正的推进主流程（调用方已持有推进锁）。
 
         Args:
             record: 任务行（会被就地更新）。
@@ -456,7 +483,7 @@ class TaskService:
             )
             record.current_step_seq = spec.seq
             step_ctx = replace(ctx, step_seq=spec.seq, outputs=dict(outputs))
-            outcome = await self._engine.run_step(step_ctx, plan, record.inputs)
+            outcome = await self._run_step_with_timeout(step_ctx, plan, record.inputs)
             await self._persist_step(record, step, outcome)
             new_artifacts = await self._save_artifacts(record, step, outcome)
             artifacts.extend(new_artifacts)
@@ -494,6 +521,46 @@ class TaskService:
             await self._release_slot(record)
             return
         await self._finish(record, steps, TASK_COMPLETED, artifacts)
+
+    async def _run_step_with_timeout(
+        self, step_ctx: RunContext, plan: Any, inputs: dict[str, Any]
+    ) -> StepOutcome:
+        """单步执行，**每步**都有独立超时（阶段四 T4-04.4，架构 §2.6）。
+
+        为什么必须按**步**限时而不是按任务：一个任务可能有 8 步、每步各自等下游，
+        整任务外层 `wait_for(600s)` 等于"8 步共享 600s"或"每步都没限"——用户看到的
+        仍然是"卡住不动"。按步限时才能保证单步异常不会拖垮整个任务。
+
+        超时按**失败**处理（`STEP_FAILED` + 业务语言原因），已产出的产物保留：
+        已落库的 artifact 不因后续步骤超时被删。
+
+        Args:
+            step_ctx: 本步上下文。
+            plan: 本步计划（`StepPlan`）。
+            inputs: 任务入参。
+
+        Returns:
+            StepOutcome: 步骤结果（超时也返回一个 outcome，不抛异常）。
+        """
+        timeout = float(self._step_timeout_seconds)
+        try:
+            return await asyncio.wait_for(
+                self._engine.run_step(step_ctx, plan, inputs), timeout=timeout
+            )
+        except TimeoutError:
+            logger.warning(
+                "task_step_timeout",
+                task_id=step_ctx.task_id,
+                step_seq=step_ctx.step_seq,
+                timeout_seconds=timeout,
+            )
+            return StepOutcome(
+                status=STEP_FAILED,
+                error_code=0,
+                reason_text=f"这一步执行超过 {int(timeout)} 秒，已停止等待",
+                operator_action="可稍后重试；若反复超时请联系管理员",
+                retryable=True,
+            )
 
     async def _pause_for_confirm(
         self, record: TaskRecord, step_seq: int, reason: str, outputs: dict[str, Any]

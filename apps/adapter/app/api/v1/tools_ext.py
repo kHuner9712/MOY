@@ -16,7 +16,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.security import RequestContext, get_request_context, require_permission
+from app.core.security import (
+    RequestContext,
+    get_request_context,
+    guard_permission,
+)
 from app.schemas.common import ApiResponse, PageResult
 from app.schemas.tool_ext import ListExecutionsQuery, ToolExecutionItem
 from app.services.tool_service import get_tool_service
@@ -57,7 +61,7 @@ async def list_executions(
     Raises:
         ApiError: 权限不足（20003）。
     """
-    require_permission(context.auth, TOOL_MANAGE_PERMISSION)
+    await guard_permission(context.auth, TOOL_MANAGE_PERMISSION, method="GET")
     query = ListExecutionsQuery(page=page, page_size=page_size, tool_type=tool_type)
     result = await get_tool_service().list_executions(query, context.auth)
     return ApiResponse[PageResult[ToolExecutionItem]].ok(result)

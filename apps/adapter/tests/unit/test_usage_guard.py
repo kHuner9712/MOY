@@ -431,3 +431,28 @@ def _request(profile: ModelProfile = ModelProfile.GENERAL) -> GenerateRequest:
         profile=profile,
         messages=[ChatMessage(role=MessageRole.USER, content="你好")],
     )
+
+
+class TestSchemaGuardFailure:
+    """探测失败必须降级为"不支持"，不能把异常抛给调用方。"""
+
+    async def test_probe_failure_returns_false(self) -> None:
+        """连不上库（端口不可达）→ 返回 False，且不抛异常。"""
+        from app.db import schema_guard
+
+        schema_guard.reset_schema_guard()
+        unreachable = _settings(
+            business_store="postgres",
+            database_url="postgresql://u:p@127.0.0.1:1/db",
+            db_pool_timeout_seconds=0.5,
+        )
+
+        assert await schema_guard.usage_dimension_supported(unreachable) is False
+        schema_guard.reset_schema_guard()
+
+    async def test_memory_mode_is_always_supported(self) -> None:
+        """内存模式恒支持（进程内事件对象天然有字段）。"""
+        from app.db import schema_guard
+
+        schema_guard.reset_schema_guard()
+        assert await schema_guard.usage_dimension_supported(_settings()) is True

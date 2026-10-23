@@ -171,6 +171,9 @@ ACTION_MEMORY_DELETE_CATEGORY: Final[str] = "memory.delete_category"
 ACTION_MEMORY_DELETE_ALL: Final[str] = "memory.delete_all"
 ACTION_MEMORY_SETTINGS: Final[str] = "memory.settings_update"
 
+# 安全域（阶段四 T4-04.5）：权限被拒也要留痕（拒绝本身已生效，审计失败不影响）
+ACTION_PERMISSION_DENIED: Final[str] = "security.permission_denied"
+
 #: 操作：支付回调被拒绝（签名/金额/订单状态校验未通过，B09 安全加固）
 #:
 #: 拒绝事件**必须**进审计：`payment_callback_log` 只记「已接受并处理」的回调，
@@ -216,6 +219,7 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_MEMORY_DELETE_CATEGORY: "按类别删除记忆",
     ACTION_MEMORY_DELETE_ALL: "清空记忆",
     ACTION_MEMORY_SETTINGS: "修改记忆设置",
+    ACTION_PERMISSION_DENIED: "权限校验未通过",
 }
 
 
@@ -662,6 +666,7 @@ __all__: list[str] = [
     "ACTION_ORDER_CREATED",
     "ACTION_ORDER_PAID",
     "ACTION_PAYMENT_CALLBACK_REJECTED",
+    "ACTION_PERMISSION_DENIED",
     "ACTION_PLUGIN_CAPABILITY_GRANT",
     "ACTION_PLUGIN_CAPABILITY_POLICY",
     "ACTION_PLUGIN_INSTALL",

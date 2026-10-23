@@ -227,21 +227,46 @@ def resolve_tenant_id(request: Request, auth: AuthContext, settings: Settings | 
     return _default_tenant(conf)
 
 
-def require_permission(auth: AuthContext, permission: str) -> None:
-    """校验权限点（统一校验出口，架构文档 3.5.1 设计原则）。
+#: 延迟判权白名单（**恰好 2 条**，架构 §2.5.2）。
+#:
+#: 只有这两处允许"无角色令牌"通过 `require_permission` 进入业务能力层做对象级判定；
+#: 其余一律 fail-closed。集合由 `docs/security/permission-whitelist.lock` 快照锁定，
+#: `tests/security/test_permission_whitelist.py` 断言其**未扩张**。
+#:
+#: 键是 `(权限点, HTTP 方法)`，值是"为什么必须委派"的理由。
+PERMISSION_WHITELIST: Final[dict[tuple[str, str], str]] = {
+    ("knowledge:base:read", "GET"): (
+        "W-1：知识库可见性是**对象级**判定的（按 kb 授权与可见范围逐库过滤），"
+        "角色矩阵无法表达；通用角色（member）本就没有该权限点，"
+        "在这里拒绝会让所有普通成员连自己的库都看不见。"
+    ),
+    ("tool:connection:manage", "GET"): (
+        "W-2：TL1 调用记录要求「连接管理者」视角，但「能不能看这条记录」取决于"
+        "该连接是否属于调用者本人（对象级），角色矩阵同样表达不了；"
+        "只放开 GET 这一个方法，写操作仍走矩阵。"
+    ),
+}
 
-    B08 起接入**权限点矩阵**（架构文档 §4.8，唯一实现在
-    `business/policy_service.py` 的 `BUILTIN_ROLE_PERMISSIONS`）：
 
-    - 通配角色 `*`（平台运维令牌）放行全部；
-    - 令牌角色本身就是权限点时放行（阶段一存量的「权限点即角色」形态）；
-    - 否则按内置角色矩阵展开后判定；
-    - **无角色声明**时交给业务能力层（对象级判定 fail-closed），
-      保持既有语义不误伤匿名/受限令牌。
+def require_permission(auth: AuthContext, permission: str, *, method: str = "") -> None:
+    """校验权限点（统一校验出口，架构文档 3.5.1 / 阶段四 §2.5 fail-closed）。
+
+    判定顺序：
+
+    1. 通配角色 `*`（平台运维令牌）放行；
+    2. 令牌角色本身就是权限点时放行（阶段一"权限点即角色"形态）；
+    3. 按内置角色矩阵展开后判定；
+    4. **无角色声明 → 拒绝（fail-closed）**，白名单里那两条除外。
+
+    第 4 条是阶段四的**行为变更**（F-1）：此前"无角色"会被静默放行到业务层，
+    等于"令牌里不带角色声明 = 绕过全部端点级权限"。现在只有白名单允许委派，
+    且拒绝时由 `guard_permission` 写一条操作记录。
 
     Args:
         auth: 鉴权上下文。
         permission: 权限点，形如 `resource:action`。
+        method: HTTP 方法（大写）。白名单按"权限点 + 方法"精确匹配，
+            因此同一个权限点的写操作不会被顺带放开。
 
     Raises:
         ApiError: 权限不足（20003）。
@@ -259,14 +284,97 @@ def require_permission(auth: AuthContext, permission: str) -> None:
 
     if permission in permissions_for_roles(roles):
         return
-    # 无角色声明：由业务能力层做最终判权（对象级 fail-closed，架构文档 3.5.1）
+    # 无角色声明：只有白名单允许进入业务层做对象级判定，其余一律拒绝（fail-closed）
     if not roles:
-        logger.debug("permission_check_deferred", permission=permission, user_id=auth.user_id)
-        return
+        if (permission, method.upper()) in PERMISSION_WHITELIST:
+            # 全仓**唯一**允许出现 `permission_check_deferred` 的位置
+            logger.info(
+                "permission_check_deferred",
+                permission=permission,
+                method=method.upper(),
+                user_id=auth.user_id,
+                reason="whitelisted",
+            )
+            return
+        logger.warning(
+            "permission_denied_no_roles",
+            permission=permission,
+            method=method.upper(),
+            user_id=auth.user_id,
+            tenant_id=auth.tenant_id,
+        )
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            internal_detail=f"no roles declared; permission={permission} method={method or '-'}",
+        )
     raise ApiError(
         ErrorCode.FORBIDDEN,
         internal_detail=f"permission={permission} roles={auth.roles}",
     )
+
+
+async def guard_permission(
+    auth: AuthContext, permission: str, *, method: str = "", audit: Any | None = None
+) -> None:
+    """权限校验 + **拒绝时写操作记录**（端点统一入口）。
+
+    为什么单独包一层而不是把审计塞进 `require_permission`：后者是**同步**函数，
+    被 11 处端点与 `identity_service` 共用；改成异步会波及全部调用点与既有用例。
+    审计只在"拒绝"这一条路径上需要，因此用异步包装收口。
+
+    Args:
+        auth: 鉴权上下文。
+        permission: 权限点。
+        method: HTTP 方法（大写）。
+        audit: 可选审计服务（缺省取全局单例）。
+
+    Raises:
+        ApiError: 权限不足（20003）。
+    """
+    try:
+        require_permission(auth, permission, method=method)
+    except ApiError as exc:
+        if exc.code == ErrorCode.FORBIDDEN:
+            await _record_permission_denied(auth, permission, method, audit)
+        raise
+
+
+async def _record_permission_denied(
+    auth: AuthContext, permission: str, method: str, audit: Any | None
+) -> None:
+    """写一条"权限被拒"的操作记录（失败不阻断，拒绝本身已经生效）。
+
+    Args:
+        auth: 鉴权上下文。
+        permission: 权限点。
+        method: HTTP 方法。
+        audit: 可选审计服务。
+    """
+    from app.business.audit_service import ACTION_PERMISSION_DENIED, AuditService
+
+    service: Any = audit
+    if service is None:
+        try:
+            from app.business.audit_service import get_audit_service
+
+            service = get_audit_service()
+        except Exception as exc:  # pragma: no cover - 配置异常时不影响拒绝结果
+            logger.warning("permission_audit_unavailable", detail=type(exc).__name__)
+            return
+    if not isinstance(service, AuditService):
+        return
+    try:
+        await service.record(
+            tenant_id=auth.tenant_id or "",
+            actor_id=auth.user_id or "",
+            action=ACTION_PERMISSION_DENIED,
+            resource_type="permission",
+            resource_id=permission,
+            result="failure",
+            change_summary={"method": method.upper(), "roles": list(auth.roles)},
+        )
+    except Exception as exc:  # 审计失败不改变"已拒绝"这个事实
+        logger.warning("permission_audit_failed", detail=type(exc).__name__)
 
 
 # ===========================================================================

@@ -150,9 +150,31 @@ def test_resolve_tenant_requires_identifier_in_saas(settings: Settings) -> None:
     assert exc_info.value.code == ErrorCode.PARAM_INVALID
 
 
-def test_require_permission_defers_when_no_roles() -> None:
-    """无角色声明时放行，由业务能力层最终判权。"""
-    require_permission(AuthContext(user_id="u", tenant_id="t"), "knowledge:document:upload")
+def test_require_permission_denies_when_no_roles() -> None:
+    """无角色声明 → **拒绝**（阶段四 §2.5 fail-closed，F-1 的行为变更）。
+
+    此前这里是"放行、交给业务层"：等于「令牌不带角色声明 = 绕过全部端点级权限」。
+    现在只有白名单那两条允许委派，其余一律 20003。
+    """
+    with pytest.raises(ApiError) as exc_info:
+        require_permission(
+            AuthContext(user_id="u", tenant_id="t"), "knowledge:document:upload", method="POST"
+        )
+    assert exc_info.value.code == ErrorCode.FORBIDDEN
+
+
+def test_require_permission_defers_only_on_whitelisted_get() -> None:
+    """白名单内（权限点 + 方法精确匹配）仍然委派给业务层。"""
+    require_permission(AuthContext(user_id="u", tenant_id="t"), "knowledge:base:read", method="GET")
+
+
+def test_require_permission_whitelist_is_method_scoped() -> None:
+    """同一个权限点的**写方法**不在白名单内 → 依然拒绝（防顺手放开写）。"""
+    with pytest.raises(ApiError) as exc_info:
+        require_permission(
+            AuthContext(user_id="u", tenant_id="t"), "knowledge:base:read", method="DELETE"
+        )
+    assert exc_info.value.code == ErrorCode.FORBIDDEN
 
 
 def test_require_permission_allows_wildcard_role() -> None:

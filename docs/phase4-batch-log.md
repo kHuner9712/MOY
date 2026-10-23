@@ -354,3 +354,87 @@ DDL 与台账退回两步——正好是 T4-01.4 要修的缺陷本身。处置�
 | 2 | 覆盖率口径未配置化（默认 thread） | 后续批次会继续读到"PG 路径未覆盖"的假象，误判为测试缺口 | 见 §13，`concurrency = ["greenlet","thread"]` 单独提交 |
 | 3 | `app/workers/tasks/memory_extract.py` 覆盖 85% | 余 2 行为"任务参数缺失直接判失败"的防御分支 | 下一批补 1 条用例即可 |
 | 4 | MM1 只返回当前值 | 历史值只在 `superseded_by` 字段上体现，无法列出"历史条目" | V1.1 随"记忆详情"一起做 |
+
+---
+
+# 阶段四 T4-04 档位路由、成本护栏与安全红线
+
+## 17. 提交（按合入顺序）
+
+| SHA | 主题 | 文件数 | 内容 |
+| --- | --- | --- | --- |
+| `3699589` | `test(cov): 修正 async 覆盖率口径（greenlet+thread）` | 2 | `[tool.coverage.run] concurrency = ["greenlet","thread"]` + 注释说明两种口径各自的漏追踪机理；batch-log 标注旧口径不可比 |
+| `8e9f43f` | `feat(cost): 档位路由隔离、成本硬止损与租户预算` | 17 | T4-04.1 ~ .3：`ProfileRouter`（4 档 4 密钥 / fallback / 运行期 status / `/readyz`）、`check_generation_allowed`（402 + 上游 0 次）、`usage_event` 四列 + `schema_guard`、`0011_tenant_budget` + `budget_repo`（80% 提示 / 100% 拒绝） |
+| （本次） | `feat(security): 单步超时、权限 fail-closed 与五类攻击用例` | 12 | T4-04.4 ~ .6：单步超时 + 推进锁、`require_permission` fail-closed + 2 条白名单 + 锁文件、`tests/security/` 五类攻击用例 |
+
+## 18. 全量与覆盖率（greenlet+thread 口径）
+
+| 项 | 值 |
+| --- | --- |
+| 命令 | `OA_TEST_DATABASE_URL='postgresql://officeai_app:***@127.0.0.1:55434/officeai' OA_BATCH=B21 pytest tests --run-pg -q --cov=app --cov-branch` |
+| 结果 | **1962 passed / 0 failed / 0 skipped** |
+| 耗时 | **1111.26s（18m31s）** |
+| 含 PG | **是**（`moy-qa-pg-vec` 55434，41 表：0011 已应用） |
+| 终验（跑后又补 5 条诊断/探测用例，不带 cov） | **1967 passed / 0 failed / 0 skipped，483.05s** |
+
+| 维度 | 实测 | 门槛（阶段三旧口径） | 判定 |
+| --- | --- | --- | --- |
+| 合并 | **91.40%** | ≥90.78% | 通过（口径不同，见 §13） |
+| `business+db` | **92.74%**（8875/9570，54 文件） | ≥90.26% | 通过 |
+| 分支 | **86.62%**（2992/3454） | ≥80.89% | 通过 |
+
+### 本轮新增文件的 diff 覆盖
+
+| 文件 | 覆盖 | 说明 |
+| --- | --- | --- |
+| `app/business/usage_service.py` | **98.94%** | 预算判定 / 提示 / 维度透传 |
+| `app/business/task_service.py` | **91.25%** | 单步超时 + 推进锁 |
+| `app/core/security.py` | **93.80%** | fail-closed + 白名单 + 审计 |
+| `app/db/repositories/budget_repo.py` | **94.34%** | 内存/PG 双实现 |
+| `app/db/repositories/usage_repo.py` | **94.26%** | 静态双 SQL（带/不带四列） |
+| `app/api/v1/router.py` | **92.08%** | `/readyz` 档位检查项 |
+| `app/db/advisory_lock.py` | **92.00%** | 进程内锁 + `pg_try_advisory_lock` |
+| `app/services/profile_routing.py` | **95.31%**（补诊断用例后） | 4 档密钥 / fallback / 可用性 |
+| `app/db/schema_guard.py` | **86.11%** | 未覆盖 3 行为 PG **探测成功**分支（真库用例 `test_schema_guard_detects_columns` 覆盖，合并口径下归属不稳定） |
+
+## 19. T4-04 后半的五组结果
+
+| 组 | 命令 | 结果 |
+| --- | --- | --- |
+| 单步超时 | `pytest tests/unit/test_task_step_lock.py -q` | **6 passed**：慢步骤 → `failed` + 「超过 0.2 秒，已停止等待」，耗时 < 3s；第 1 步产物在后续步骤超时后仍可取 |
+| 防重复推进 | 同上 | 并发两次推进 → **同一步只执行一次**（`calls` 无重复）、步骤序号不跳变；锁用完可重入获取；占用时第二次**立刻** False |
+| fail-closed + 白名单 | `pytest tests/security/test_permission_fail_closed.py -q` | **9 passed**：3 个写端点全 403 + 每次拒绝 1 条 `security.permission_denied`；白名单恰好 2 条、仅 GET、锁文件一致、`permission_check_deferred` 全仓仅 1 处 |
+| 五类攻击 | `pytest -m security -q --run-pg` | **21 passed**（伪造/过期令牌、跨租户读、越权对象、额度滥用 + 泄漏扫描） |
+| 迁移 | `validate_migrations.py --run-pg` | 三路径通过（**10** 个迁移，含 0011 往返） |
+
+### 19.1 反向验证（故意放开一处 → 只对应用例红）
+
+把 `require_permission` 的无角色分支临时改成**恒放行**（复现 F-1 的缺陷形态），跑 `-m security`：
+
+```
+mutated → 4 failed, 16 passed, 1 skipped
+FAILED test_write_endpoint_denied[PATCH kb] / [DELETE kb] / [DELETE grant]
+FAILED test_denials_are_audited
+恢复后 → 20 passed, 1 skipped
+```
+
+**只有** fail-closed 那 4 条红，其余安全用例（伪造令牌 / 跨租户 / 越权对象 / 额度）**全绿**——
+说明这组用例彼此独立、定位精确，不会"一改就整片红"从而逼人放宽断言。
+
+## 20. 两处口径与偏离（需要下游知道）
+
+| # | 项 | 处理 | 理由 |
+| --- | --- | --- | --- |
+| 1 | token 估算**不**置 `source='estimated'` | 只写四列 + `usage_tokens_estimated` 日志 | `source` 表达**额度**来源（D-12）；复用它标 token 会把"中断折算"与"token 估算"混为一谈，直接打破 `test_b07_4`。**V1.1 成本分析债**：要区分就加独立列 `tokens_estimated` |
+| 2 | 越权对象：任务 403，**会话/记忆 404** | 保持现状并在用例里写明 | 个人数据不能靠 `403 vs 404` 泄漏"ID 是否存在"（否则可枚举别人的会话数与记忆条目）。两者都**拒绝访问**，对外表现不同是**防探测**的既有决策 |
+| 3 | `test_quota_notice` 两条用例改写 | 超额从"200 + 提示"→"**402 + 15006 + `data is None`**"；流式从"提示挂 `done`"→"**仅 `error` 帧**" | 阶段四 E-3/E-4 的产品变更（软限制→硬止损）；新断言更严，80% 预警提示由新增用例覆盖 |
+| 4 | 白名单 `W-2` 以"权限点 + GET"表达"仅 TL1" | 该权限点全仓只用于 TL1 一个调用点（`tools_ext.py`） | 方法级收窄已足够；若将来 `tool:connection:manage` 被别处复用，必须回来加"路由级"约束（已在白名单注释里写明） |
+
+## 21. 技术债（T4-04 新增）
+
+| # | 项 | 建议 |
+| --- | --- | --- |
+| 1 | `tokens_estimated` 独立列 | V1.1 与 usage 维度一起做（需再动 `0007` 列集，须评审） |
+| 2 | `schema_guard` 探测成功分支的覆盖归属不稳定 | 把「列能力探测」做成可注入的 `CapabilityProbe` 端口，便于单测直接覆盖两条分支 |
+| 3 | 白名单的"路由级"约束 | 见 §20 第 4 条 |
+| 4 | `get_model_service()` 无参构造（T4-03 遗留） | 仍是 V1.1 第一批 |

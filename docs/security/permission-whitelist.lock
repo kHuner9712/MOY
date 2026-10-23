@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "generated_from": "apps/adapter/app/core/security.py::PERMISSION_WHITELIST",
+  "policy": "延迟判权白名单：只有下列 (权限点, 方法) 允许无角色令牌进入业务层做对象级判定，其余一律 fail-closed（20003）",
+  "entries": [
+    {
+      "id": "W-1",
+      "permission": "knowledge:base:read",
+      "methods": ["GET"],
+      "reason": "知识库可见性是对象级判定（按 kb 授权与可见范围逐库过滤），角色矩阵无法表达；member 角色本就没有该权限点，在此拒绝会让普通成员连自己的库都看不见。"
+    },
+    {
+      "id": "W-2",
+      "permission": "tool:connection:manage",
+      "methods": ["GET"],
+      "reason": "TL1 调用记录要「连接管理者」视角，但单条记录能否可见取决于该连接是否属于调用者本人（对象级）；只放开 GET，写操作仍走矩阵。"
+    }
+  ]
+}

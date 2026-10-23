@@ -14,6 +14,9 @@ F-8 的行径是"四个档位共用同一个默认应用密钥"，现象很隐�
 
 from __future__ import annotations
 
+import io
+import logging
+
 import pytest
 
 from app.clients.dify_client import DifyClient, DifyResponse
@@ -287,3 +290,46 @@ class TestCatalogAndReady:
         assert "档位" in detail
         for leaked in KEYS.values():
             assert leaked not in detail
+
+
+class TestRouterDiagnostics:
+    """诊断输出：`/readyz` 与启动日志用的两个方法。"""
+
+    def test_unavailable_profiles_lists_missing_keys(self) -> None:
+        """缺 key 的档位出现在"不可用"清单里（启动告警据此打印）。"""
+        router = ProfileRouter(
+            _settings(dify_code_app_key="", dify_fallback_app_key="", dify_default_app_key="")
+        )
+
+        unavailable = router.unavailable_profiles()
+
+        assert "code" in unavailable
+        assert "reasoning" not in unavailable  # 它有自己的 key
+
+    def test_log_routing_does_not_leak_keys(self) -> None:
+        """诊断日志只记"有没有配/是否降级"，**绝不打印密钥值**。"""
+        router = ProfileRouter(_settings(dify_code_app_key=""))
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logging.getLogger().addHandler(handler)
+        try:
+            router.log_routing()
+        finally:
+            logging.getLogger().removeHandler(handler)
+
+        text = stream.getvalue()
+        for secret in KEYS.values():
+            assert secret not in text
+
+    def test_router_settings_and_routes_exposed(self) -> None:
+        """`settings` / `routes` 属性可读（`/readyz` 与目录都靠它们取数据）。"""
+        conf = _settings()
+        router = ProfileRouter(conf)
+
+        assert router.settings is conf
+        assert len(router.routes.routes) == 4
+        assert router.route("not_a_profile") is None
+        assert router.app_key("not_a_profile") == ""
+        assert router.uses_fallback("not_a_profile") is False
+        assert router.is_available("not_a_profile") is False

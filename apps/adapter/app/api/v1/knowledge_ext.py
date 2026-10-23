@@ -40,7 +40,7 @@ from app.core.logging import get_logger
 from app.core.security import (
     RequestContext,
     get_request_context,
-    require_permission,
+    guard_permission,
     run_idempotent,
 )
 from app.schemas.common import ApiResponse, PageResult
@@ -161,7 +161,7 @@ async def update_base(
     Raises:
         ApiError: 权限不足（20003）、知识库不存在（11001）、参数非法（20001）。
     """
-    require_permission(context.auth, KB_UPDATE_PERMISSION)
+    await guard_permission(context.auth, KB_UPDATE_PERMISSION, method="PATCH")
     service = _knowledge_base_service(request)
 
     async def factory() -> UpdateBaseData:
@@ -209,7 +209,7 @@ async def delete_base(
     Raises:
         ApiError: 权限不足（20003）、知识库不存在（11001）、重复删除（20005）。
     """
-    require_permission(context.auth, KB_DELETE_PERMISSION)
+    await guard_permission(context.auth, KB_DELETE_PERMISSION, method="DELETE")
     service = _knowledge_base_service(request)
 
     async def factory() -> DeleteBaseData:
@@ -264,7 +264,7 @@ async def list_documents(
     Raises:
         ApiError: 权限不足（20003）、知识库不存在（11001）。
     """
-    require_permission(context.auth, KB_READ_PERMISSION)
+    await guard_permission(context.auth, KB_READ_PERMISSION, method="GET")
     query = ListDocumentsQuery(
         page=page, page_size=page_size, keyword=keyword, stage=stage, sort=sort
     )
@@ -304,7 +304,7 @@ async def update_credential_binding(
     Raises:
         ApiError: 权限不足（20003）、凭据不可用（11007）、知识库不存在（11001）。
     """
-    require_permission(context.auth, KB_UPDATE_PERMISSION)
+    await guard_permission(context.auth, KB_UPDATE_PERMISSION, method="PATCH")
     settings = get_request_settings(request)
     resolver = get_credential_resolver(settings)
     credential_ref = body.credential_ref.strip()
@@ -366,7 +366,7 @@ async def get_segment_detail(
     Raises:
         ApiError: 权限不足（20003）、库不存在（11001）、文档不可定位（11004）。
     """
-    require_permission(context.auth, KB_READ_PERMISSION)
+    await guard_permission(context.auth, KB_READ_PERMISSION, method="GET")
     data = await _segment_service(request).get_detail(
         base_id=base_id,
         document_id=doc_id,
@@ -408,7 +408,7 @@ async def list_grants(
     Raises:
         ApiError: 权限不足（20003）、库不存在（11001）。
     """
-    require_permission(context.auth, KB_GRANT_PERMISSION)
+    await guard_permission(context.auth, KB_GRANT_PERMISSION, method="POST")
     result = await _grant_service(request).list_grants(base_id, page, page_size, context.auth)
     return ApiResponse[PageResult[GrantItem]].ok(result)
 
@@ -445,7 +445,7 @@ async def create_grants(
     Raises:
         ApiError: 权限不足（20003）、库不存在（11001）、参数非法（20001）。
     """
-    require_permission(context.auth, KB_GRANT_PERMISSION)
+    await guard_permission(context.auth, KB_GRANT_PERMISSION, method="POST")
     service = _grant_service(request)
 
     async def factory() -> CreateGrantData:
@@ -494,7 +494,7 @@ async def revoke_grant(
     Raises:
         ApiError: 权限不足（20003）、库不存在（11001）、授权不存在（20004）。
     """
-    require_permission(context.auth, KB_GRANT_PERMISSION)
+    await guard_permission(context.auth, KB_GRANT_PERMISSION, method="POST")
     service = _grant_service(request)
 
     async def factory() -> DeleteGrantData:
