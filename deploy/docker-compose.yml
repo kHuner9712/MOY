@@ -529,12 +529,47 @@ services:
   # 指标采集 + 告警规则足以支撑可用率度量。看板列 V1.1
   # （候选：Perses，Apache-2.0）。
   # ---------------------------------------------------------------------
+  # 阶段四 T4-05.2：数据库与缓存指标由**独立 exporter** 采集（只读、单连接）。
+  #
+  # 两条纪律：
+  #   1. **不映射宿主机端口**：exporter 无鉴权，暴露到公网等于把库的结构与负载画像
+  #      白送；Prometheus 通过 compose 内网直连即可。
+  #   2. **用应用角色连库**（`OA_DB_APP_USER`，NOSUPERUSER/NOBYPASSRLS）：
+  #      采集读 `pg_stat_*` 视图，不需要超级用户；用超级用户会在监控侧开一个绕过
+  #      RLS 的口子（S6 的教训）。
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: oa-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${OA_DB_APP_USER:-officeai_app}:${OA_DB_APP_PASSWORD:?必须在 .env 中设置}@postgres:5432/${OA_POSTGRES_DB:-officeai}?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [officeai]
+    logging: *default-logging
+
+  valkey-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    container_name: oa-valkey-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://valkey:6379"
+      REDIS_PASSWORD: ${OA_VALKEY_PASSWORD:?必须在 .env 中设置}
+    depends_on:
+      valkey:
+        condition: service_healthy
+    networks: [officeai]
+    logging: *default-logging
+
   prometheus:
     image: prom/prometheus:v3.15.0
     container_name: oa-prometheus
     restart: unless-stopped
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # 阶段四 T4-05.2：5 条告警规则（§8.4 表达式原样）
+      - ./alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "${OA_PROMETHEUS_PORT:-9090}:9090"

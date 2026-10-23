@@ -27,6 +27,11 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ERROR_REGISTRY, ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
+from app.core.metrics import (
+    QUOTA_EXHAUSTED_EVENTS_TOTAL,
+    TENANT_BUDGET_USED_RATIO,
+    USAGE_UNITS_TOTAL,
+)
 from app.db.repositories.budget_repo import (
     BudgetStore,
     get_budget_store,
@@ -316,6 +321,9 @@ class UsageService:
             occurred_at=event.occurred_at or datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
         inserted = await self._store.append(record)
+        if inserted:
+            # 阶段四 T4-05.1：额度累计（capability 是有限枚举，可安全作标签）
+            USAGE_UNITS_TOTAL.labels(capability=record.capability).inc(max(record.units, 0))
         logger.info(
             "usage_recorded",
             capability=record.capability,
@@ -577,6 +585,12 @@ class UsageService:
 
         plan_exhausted = snapshot.total_units > 0 and snapshot.remaining_units <= 0
         budget_exhausted = budget.exhausted(used)
+        # 阶段四 T4-05.1：私有化模式才有的 gauge（SaaS 下未注册 → 这里自动跳过）
+        if TENANT_BUDGET_USED_RATIO is not None and budget.effective:
+            TENANT_BUDGET_USED_RATIO.set(budget.usage_ratio(used))
+        # 阶段四 T4-05.1：私有化模式才有的 gauge（SaaS 下未注册 → 这里自动跳过）
+        if TENANT_BUDGET_USED_RATIO is not None and budget.effective:
+            TENANT_BUDGET_USED_RATIO.set(budget.usage_ratio(used))
         plan_warn = (
             snapshot.total_units > 0
             and not plan_exhausted
@@ -624,6 +638,14 @@ class UsageService:
                 budget_units=status.budget_units,
                 budget_used=status.budget_used_units,
             )
+            # 阶段四 T4-05.1：拒绝数按作用域计数（plan=个人套餐 / budget=租户预算）
+            QUOTA_EXHAUSTED_EVENTS_TOTAL.labels(
+                scope="budget"
+                if status.budget_enabled
+                and status.budget_units > 0
+                and status.budget_used_units >= status.budget_units
+                else "plan"
+            ).inc()
             raise ApiError(
                 ErrorCode.QUOTA_EXHAUSTED,
                 internal_detail=(

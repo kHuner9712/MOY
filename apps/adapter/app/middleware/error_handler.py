@@ -24,6 +24,7 @@ from app.core.errors import (
     http_status_of,
 )
 from app.core.logging import get_logger
+from app.core.metrics import BUSINESS_ERRORS_TOTAL
 from app.schemas.common import ApiResponse
 
 logger = get_logger(__name__)
@@ -48,6 +49,9 @@ AUTH_EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
     {
         "/healthz",
         "/readyz",
+        # 阶段四 T4-05.1：`/metrics` 不鉴权（Prometheus 抓取无令牌），
+        # 且**不映射到宿主机公网端口**（compose 仅内网暴露）。
+        "/metrics",
         "/api/v1/billing/payments/callback",
     }
 )
@@ -96,6 +100,8 @@ async def api_error_handler(_request: Request, exc: Exception) -> JSONResponse:
         JSONResponse: 统一失败响应。
     """
     assert isinstance(exc, ApiError)
+    # 阶段四 T4-05.1：业务错误按码计数（码是有限枚举，可安全作标签）
+    BUSINESS_ERRORS_TOTAL.labels(code=str(int(exc.code))).inc()
     if exc.code in {ErrorCode.INTERNAL_ERROR, ErrorCode.CONFIG_ERROR}:
         logger.error("api_error", error_code=int(exc.code), detail=exc.log_message)
     else:

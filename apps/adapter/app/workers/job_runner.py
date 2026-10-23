@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -26,6 +27,7 @@ from typing import Final
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.core.metrics import BACKGROUND_JOB_DURATION_SECONDS, BACKGROUND_JOBS_TOTAL
 from app.db.repositories.job_repo import (
     JobRecord,
     JobStore,
@@ -244,14 +246,19 @@ class JobRunner:
         effective = replace(
             job, max_attempts=min(max(1, job.max_attempts), registration.max_attempts)
         )
+        started = time.perf_counter()
         try:
             await asyncio.wait_for(registration.handler(job), timeout=self._timeout)
         except asyncio.CancelledError:
             # 停机中断：不标记失败（任务仍是 running，租约到期后由下一次认领回收）
             raise
         except Exception as exc:
+            BACKGROUND_JOB_DURATION_SECONDS.labels(kind=job.kind).observe(
+                max(time.perf_counter() - started, 0.0)
+            )
             error = f"{type(exc).__name__}"
             status = await self._store.mark_failed(effective, error=error)
+            BACKGROUND_JOBS_TOTAL.labels(kind=job.kind, status=status).inc()
             logger.warning(
                 "job_failed",
                 job_id=job.job_id,
@@ -264,6 +271,10 @@ class JobRunner:
             )
             return
         await self._store.mark_succeeded(job)
+        BACKGROUND_JOBS_TOTAL.labels(kind=job.kind, status="succeeded").inc()
+        BACKGROUND_JOB_DURATION_SECONDS.labels(kind=job.kind).observe(
+            max(time.perf_counter() - started, 0.0)
+        )
         logger.info(
             "job_succeeded",
             job_id=job.job_id,

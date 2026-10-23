@@ -143,6 +143,29 @@ images:
     distribution: independent-container
     note: 灰名单，仅独立进程调用；2026-10-21 由 5.2-22.04_beta 升至 6.13-25.04_beta（最新）
 
+  # 阶段四 T4-05.2：两个 exporter（均 Apache-2.0 / MIT，无 GPL 传染）
+  #
+  # 为什么必须用 exporter 而不是让 adapter 去查库再暴露指标：
+  # 数据库的内部指标（连接数 / 慢查询 / 缓存命中）不在应用视野里，应用轮询数据库
+  # 反而会把连接池占满。exporter 是"只读、单连接、按需抓取"的标准做法。
+  #
+  # ⚠ postgres-exporter 用 **officeai_app**（NOSUPERUSER/NOBYPASSRLS）连库：
+  # 它的采集语句是 `pg_stat_*` 视图，不需要超级用户；用超级用户会把 RLS 双保险
+  # 在监控侧打开一个洞（S6 的教训）。
+  - name: prometheuscommunity/postgres-exporter
+    tag: "v0.17.1"
+    license: Apache-2.0
+    role: PostgreSQL 指标采集（只读，应用角色连库）
+    source: docker-hub
+    note: 2026-10-23 新增（T4-05.2）；`docker manifest inspect` 已核验上游存在
+
+  - name: oliver006/redis_exporter
+    tag: "v1.67.0"
+    license: MIT
+    role: Valkey/Redis 指标采集
+    source: docker-hub
+    note: 2026-10-23 新增（T4-05.2）；Redis 协议兼容 Valkey，无需定制镜像
+
   - name: prom/prometheus
     tag: "v3.15.0"
     license: Apache-2.0

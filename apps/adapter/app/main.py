@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -32,14 +33,18 @@ from app.core.config import Settings, get_settings
 from app.core.crypto import validate_startup as validate_credential_startup
 from app.core.errors import ApiError
 from app.core.logging import configure_logging, get_logger
+from app.core.metrics import configure_deploy_mode_metrics
 from app.core.ratelimit import RateLimiter
 from app.core.security import validate_auth_startup
 from app.db.engine import dispose_engine, get_engine
 from app.db.migrate import run_startup_migrations
+from app.db.repositories.job_repo import get_job_store
 from app.middleware.error_handler import register_exception_handlers
+from app.middleware.metrics import MetricsMiddleware
 from app.middleware.trace import AccessLogMiddleware, TraceMiddleware
 from app.services.memory_extractor import warn_missing_memory_app_key_once
 from app.workers.job_runner import JobRunner, get_job_runner, should_start_runner
+from app.workers.queue_depth import refresh_loop
 
 logger = get_logger(__name__)
 
@@ -139,13 +144,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # **只在 `OA_BACKGROUND_JOBS_ENABLED=true` 且 `env != test` 且确有数据库时启动**：
     # 测试环境起一个永不结束的协程会污染 pytest 事件循环（"Task was destroyed"），
     # 而 `business_store=memory` 下没有队列可消费，起来只是空转。
+    # 阶段四 T4-05.1：私有化模式才注册 `tenant_budget_used_ratio`（SaaS 下语义不明）
+    configure_deploy_mode_metrics(settings)
+
     runner: JobRunner | None = None
+    queue_depth_task: asyncio.Task[None] | None = None
     if should_start_runner(settings, has_engine=engine is not None):
         runner = get_job_runner(settings)
         runner.start()
         # 抽取专用应用没配 → 整条抽取链路不启动（刻意不回落默认对话应用）。
         # 只在启动时告警一次，避免每 10 轮刷一条同名 WARNING。
         warn_missing_memory_app_key_once(settings)
+        # 队列深度每 10s 刷新一次：`/metrics` 渲染时不查库（见 app/workers/queue_depth.py）
+        queue_depth_task = asyncio.create_task(
+            refresh_loop(get_job_store(settings)), name="oa-task-queue-depth"
+        )
     app.state.job_runner = runner
 
     try:
@@ -154,6 +167,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 先停轮询再释放连接池：反序会让 in-flight 任务拿到已 dispose 的引擎
         if runner is not None:
             await runner.stop()
+        if queue_depth_task is not None:
+            queue_depth_task.cancel()
+            try:
+                await queue_depth_task
+            except asyncio.CancelledError:
+                pass
         await dispose_engine()
         logger.info("adapter_stopping")
 
@@ -189,6 +208,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 中间件：trace_id 注入在最外层，保证全链路（含错误响应）均带 trace_id
     app.add_middleware(TraceMiddleware)
     app.add_middleware(AccessLogMiddleware)
+    # 指标在最内层：路由已匹配（能拿到模板）且耗时包含鉴权与业务处理
+    app.add_middleware(MetricsMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if conf.env == "development" else [],

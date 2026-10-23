@@ -18,6 +18,7 @@ V1.0 单副本、步骤全是平台内置调用（毫秒级），因此 `_advanc
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Iterable
 from dataclasses import replace
 from typing import Any, Final
@@ -37,6 +38,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
+from app.core.metrics import TASK_STEP_DURATION_SECONDS
 from app.core.security import AuthContext
 from app.db.advisory_lock import task_advance_lock
 from app.db.repositories.artifact_repo import (
@@ -543,6 +545,7 @@ class TaskService:
             StepOutcome: 步骤结果（超时也返回一个 outcome，不抛异常）。
         """
         timeout = float(self._step_timeout_seconds)
+        started = time.perf_counter()
         try:
             return await asyncio.wait_for(
                 self._engine.run_step(step_ctx, plan, inputs), timeout=timeout
@@ -561,6 +564,11 @@ class TaskService:
                 operator_action="可稍后重试；若反复超时请联系管理员",
                 retryable=True,
             )
+        finally:
+            # 阶段四 T4-05.1：单步耗时按插件统计（超时那一步也记，便于看分位）
+            TASK_STEP_DURATION_SECONDS.labels(
+                plugin_id=getattr(plan, "plugin_id", "") or "unknown"
+            ).observe(max(time.perf_counter() - started, 0.0))
 
     async def _pause_for_confirm(
         self, record: TaskRecord, step_seq: int, reason: str, outputs: dict[str, Any]

@@ -16,6 +16,7 @@ T01 阶段说明：`Settings.downstream_enabled=false` 时返回业务化 mock �
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Final
@@ -38,6 +39,11 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
+from app.core.metrics import (
+    MODEL_FIRST_TOKEN_SECONDS,
+    MODEL_UPSTREAM_CALLS_TOTAL,
+    MODEL_UPSTREAM_DURATION_SECONDS,
+)
 from app.core.security import AuthContext
 from app.db.repositories.knowledge_base_repo import (
     KnowledgeBaseStore,
@@ -624,6 +630,10 @@ class ModelService:
             )
             return _with_notice(_with_conversation(stub, started, assembled), notice)
 
+        # 阶段四 T4-05.1：上游调用计数与耗时（`outcome` 在 except 里置 error，
+        # 计数放在 finally 里，成功与失败两条路径都能覆盖且不重复）
+        upstream_started = time.perf_counter()
+        upstream_outcome = "ok"
         try:
             response = await self._dify_for(request.profile).post(
                 _DIFY_CHAT_PATH,
@@ -632,11 +642,19 @@ class ModelService:
                 ),
             )
         except Exception:
+            upstream_outcome = "error"
             # 上游失败：把助手行收口为 failed（**不给用户看码与堆栈**），再原样抛出
             await self._finalize_assistant(
                 tenant_id, started, content="", status="failed", error_reason="回答生成失败，请重试"
             )
             raise
+        finally:
+            MODEL_UPSTREAM_CALLS_TOTAL.labels(
+                profile=request.profile.value, outcome=upstream_outcome
+            ).inc()
+            MODEL_UPSTREAM_DURATION_SECONDS.labels(profile=request.profile.value).observe(
+                max(time.perf_counter() - upstream_started, 0.0)
+            )
         # 非流式同样剥离推理标记（INT-06）
         payload = response.payload
         if isinstance(payload.get("answer"), str):
@@ -1176,11 +1194,18 @@ class ModelService:
                 request, user_id, query_override=assembled.query_text
             ) | {"response_mode": "streaming"}
             reasoning_filter = _ReasoningFilter()
+            first_token_at: float | None = None
+            stream_started = time.perf_counter()
             async for event in self._dify_for(request.profile).post_stream(
                 _DIFY_CHAT_PATH, streaming_payload
             ):
                 native = str(event.get("event", ""))
                 if native in {"message", "agent_message"}:
+                    if first_token_at is None:
+                        first_token_at = time.perf_counter()
+                        MODEL_FIRST_TOKEN_SECONDS.labels(profile=request.profile.value).observe(
+                            max(first_token_at - stream_started, 0.0)
+                        )
                     # 推理模型（DeepSeek V4 等）会把思考过程混在 answer 中下发，
                     # 由状态机剥离后再发 delta（INT-06，技术黑盒化红线）
                     visible = reasoning_filter.feed(str(event.get("answer", "")))

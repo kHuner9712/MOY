@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 
 from app.api.v1 import (
     agent,
@@ -102,6 +102,28 @@ async def healthz(request: Request) -> ApiResponse[HealthData]:
             downstream_enabled=settings.downstream_enabled,
         )
     )
+
+
+@health_router.get(
+    "/metrics",
+    summary="Prometheus 指标抓取（免鉴权）",
+    description=(
+        "标准 Prometheus 文本格式。**只读内存**：渲染时不查库、不调上游。"
+        "不映射到宿主机公网端口（compose 仅内网暴露）。"
+    ),
+    include_in_schema=False,
+)
+async def metrics_endpoint() -> Response:
+    """Prometheus 指标抓取端点。
+
+    Returns:
+        Response: `text/plain; version=0.0.4` 的 exposition 文本。
+    """
+    from prometheus_client import CONTENT_TYPE_LATEST
+
+    from app.core.metrics import render
+
+    return Response(content=render(), media_type=CONTENT_TYPE_LATEST)
 
 
 @health_router.get(
@@ -322,5 +344,6 @@ __all__ = [
     "health_router",
     "healthz",
     "include_all_routers",
+    "metrics_endpoint",
     "readyz",
 ]

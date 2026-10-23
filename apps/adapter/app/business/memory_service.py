@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,7 +38,12 @@ from app.business.audit_service import (
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
-from app.core.metrics import MEMORY_INJECTED_TOTAL, MEMORY_RECALL_DEGRADED_TOTAL
+from app.core.metrics import (
+    MEMORY_EXTRACT_TOTAL,
+    MEMORY_INJECTED_TOTAL,
+    MEMORY_RECALL_DEGRADED_TOTAL,
+    MEMORY_RECALL_DURATION_SECONDS,
+)
 from app.db.repositories.conversation_repo import (
     MessageStore,
     get_message_store,
@@ -397,6 +403,23 @@ class MemoryService:
         Returns:
             list[MemoryRecord]: 可注入的当前值（**低置信度已被剔除**）；不可注入时为空。
         """
+        recall_started = time.perf_counter()
+        try:
+            return await self._recall_impl(tenant_id, user_id, query, top_k=top_k, timeout=timeout)
+        finally:
+            # 阶段四 T4-05.1：召回耗时（超时那一次也记，便于看 300ms 预算打满的比例）
+            MEMORY_RECALL_DURATION_SECONDS.observe(max(time.perf_counter() - recall_started, 0.0))
+
+    async def _recall_impl(
+        self,
+        tenant_id: str,
+        user_id: str,
+        query: str,
+        *,
+        top_k: int | None,
+        timeout: float | None,  # noqa: ASYNC109 - 预算由架构 §4.5 固定为入参名
+    ) -> list[MemoryRecord]:
+        """召回实现（`recall` 负责计时，这里只管逻辑）。"""
         limit = int(top_k if top_k is not None else self._settings.memory_recall_top_k)
         budget = float(
             timeout if timeout is not None else self._settings.memory_recall_timeout_seconds
@@ -663,6 +686,8 @@ class MemoryService:
                 result.write_failed = True
                 break
 
+        # 阶段四 T4-05.1：抽取次数按结果计数（ok / degraded；skipped 在上面已提前返回）
+        MEMORY_EXTRACT_TOTAL.labels(result="degraded" if result.write_failed else "ok").inc()
         if not result.write_failed:
             try:
                 result.evicted = await self._evict_overflow(tenant_id, user_id)

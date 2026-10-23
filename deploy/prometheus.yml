@@ -1,9 +1,16 @@
 # ===========================================================================
-# 监控指标采集配置
+# Prometheus 抓取配置（阶段四 T4-05.2，架构 §8.2）
 #
-# 采集目标（仅自研层与基础设施；底座指标由底座自身端点提供）：
-#   - adapter：/healthz、/readyz（免鉴权探针）
-#   - postgres / valkey / milvus：官方 exporter
+# 4 个 job，与 P4-13 的判据一一对应：
+#   adapter    —— 自研层：`/metrics`（**不再抓 /healthz**：探针不是指标端点）
+#   postgres   —— 关系库：连接数 / 慢查询 / 事务率（postgres-exporter）
+#   valkey     —— 缓存：内存 / 命中率 / 连接（redis_exporter，Valkey 协议兼容）
+#   prometheus —— 自监控：抓取自身健康度（否则"监控挂了没人知道"）
+#
+# 三条口径：
+#   1. 抓取间隔 15s；`/metrics` **只读内存**，不会因为抓取把库打醒；
+#   2. exporter 一律走 compose 内网，**不暴露宿主机端口**（它们无鉴权）；
+#   3. `deploy_mode` 作为 external_label 注入，便于同一套看板区分交付形态。
 # ===========================================================================
 
 global:
@@ -13,28 +20,44 @@ global:
     cluster: officeai
     deploy_mode: ${OA_DEPLOY_MODE}
 
+# 告警规则（5 条，表达式逐字取自架构 §8.4）
+rule_files:
+  - /etc/prometheus/alert.rules.yml
+
 scrape_configs:
+  # ---------------------------------------------------------------------
+  # 1. 自研适配层：15 条业务 / 性能指标（架构 §8.1）
+  # ---------------------------------------------------------------------
   - job_name: adapter
-    metrics_path: /healthz
+    metrics_path: /metrics
     static_configs:
       - targets: ['adapter:8000']
         labels:
           service: self-built-adapter-layer
 
-  - job_name: valkey
-    static_configs:
-      - targets: ['valkey-exporter:9121']
-        labels:
-          service: cache
-
+  # ---------------------------------------------------------------------
+  # 2. 关系库（pgvector 扩展所在库）
+  # ---------------------------------------------------------------------
   - job_name: postgres
     static_configs:
       - targets: ['postgres-exporter:9187']
         labels:
           service: relational-db
 
-  - job_name: milvus
+  # ---------------------------------------------------------------------
+  # 3. 缓存（幂等键 / 限流计数）
+  # ---------------------------------------------------------------------
+  - job_name: valkey
     static_configs:
-      - targets: ['milvus:9091']
+      - targets: ['valkey-exporter:9121']
         labels:
-          service: vector-db
+          service: cache
+
+  # ---------------------------------------------------------------------
+  # 4. Prometheus 自监控
+  # ---------------------------------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: monitoring

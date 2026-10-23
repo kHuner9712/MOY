@@ -1,0 +1,72 @@
+# ===========================================================================
+# 告警规则（阶段四 T4-05.2，架构 §8.4）
+#
+# 5 条，表达式**逐字取自架构 §8.4**（不改写、不"优化"）：
+#   ApiErrorRateHigh      —— 5xx 占比 > 5%（2m 窗口 + for 2m ≈ 4 分钟才 firing）
+#   ApiLatencyP95High     —— P95 > 3s（**排除流式路由**：流式时长取决于回答长度，
+#                            把它算进 P95 会让告警永远在响）
+#   TaskQueueBacklog      —— 排队深度 > 50
+#   TenantBudgetNearlyLimit —— 租户预算使用比例 > 0.8（仅私有化模式注册该指标）
+#   TargetDown            —— 任一抓取目标失联
+#
+# ⚠ **`ApiErrorRateHigh` 的"2 分钟"是 PRD 的笔误**：2m 窗口 + `for 2m` 实际约 4 分钟
+#   才 firing。判据以"4 分钟内 firing"或"注入 30 次 5xx"为准——**不要为了对齐 2 分钟
+#   去改表达式**：改窗口会让偶发抖动频繁误报，改 `for` 会让真故障晚发现。
+# ===========================================================================
+
+groups:
+  - name: officeai-api
+    rules:
+      - alert: ApiErrorRateHigh
+        expr: >-
+          sum(rate(http_requests_total{status=~"5.."}[2m]))
+          / clamp_min(sum(rate(http_requests_total[2m])), 0.001) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "接口 5xx 占比超过 5%"
+          description: "近 2 分钟 5xx 占比 > 5%（含 1 分钟评价窗口，实际约 4 分钟触发）。"
+
+      - alert: ApiLatencyP95High
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{route!~".*stream.*"}[5m]))
+          ) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "接口 P95 延迟超过 3 秒"
+          description: "已排除流式路由（流式耗时取决于回答长度，纳入会长期误报）。"
+
+  - name: officeai-capacity
+    rules:
+      - alert: TaskQueueBacklog
+        expr: task_queue_depth > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "后台任务积压超过 50"
+          description: "队列深度持续 5 分钟 > 50：检查 JobRunner 是否在跑、是否有任务卡住租约。"
+
+      - alert: TenantBudgetNearlyLimit
+        expr: tenant_budget_used_ratio > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "租户月度预算已用超 80%"
+          description: "仅私有化模式注册该指标；SaaS 下按租户预算看板人工跟进。"
+
+  - name: officeai-availability
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "抓取目标失联"
+          description: "{{ $labels.job }} / {{ $labels.instance }} 连续 2 分钟抓取失败。"

@@ -29,7 +29,7 @@ class TestCounter:
 
     def test_increment_and_read(self) -> None:
         """按标签组合分别累加。"""
-        item = Counter("demo_total", ("result",))
+        item = Counter("demo_inc_total", ("result",))
 
         item.inc()
         item.inc(result="ok")
@@ -41,7 +41,7 @@ class TestCounter:
 
     def test_rejects_unknown_labels(self) -> None:
         """未登记的标签被拒绝并计数（高基数标签是埋点最常见的自伤方式）。"""
-        item = Counter("demo_total", ("result",))
+        item = Counter("demo_labels_total", ("result",))
 
         item.inc(result="ok", user_id="usr_1")
 
@@ -51,28 +51,28 @@ class TestCounter:
 
     def test_non_positive_amount_is_ignored(self) -> None:
         """计数单调：0/负数不改变数值。"""
-        item = Counter("demo_total", ("result",))
+        item = Counter("demo_zero_total", ("result",))
         item.inc(0, result="ok")
         item.inc(-5, result="ok")
         assert item.total() == 0
 
     def test_snapshot_renders_prometheus_shape(self) -> None:
         """快照形如 `name{label="value"}`，供 T4-05 的 exporter 直接输出。"""
-        item = Counter("demo_total", ("result",))
+        item = Counter("demo_snap_total", ("result",))
         item.inc(result="ok")
 
-        assert item.snapshot() == {'demo_total{result="ok"}': 1}
+        assert item.snapshot() == {'demo_snap_total{result="ok"}': 1}
 
     def test_snapshot_without_labels(self) -> None:
         """无标签计数器的快照就是指标名本身。"""
-        item = Counter("plain_total")
+        item = Counter("demo_plain_total")
         item.inc()
         item.inc()
-        assert item.snapshot() == {"plain_total": 2}
+        assert item.snapshot() == {"demo_plain_total": 2}
 
     def test_reset_clears_values(self) -> None:
         """清零（测试隔离用）。"""
-        item = Counter("demo_total", ("result",))
+        item = Counter("demo_reset_total", ("result",))
         item.inc(result="ok")
         item.reset()
         assert item.total() == 0
@@ -84,7 +84,7 @@ class TestRegistry:
 
     def test_counter_registration_is_idempotent(self) -> None:
         """同名重复登记返回同一实例（否则指标会分裂成两条）。"""
-        assert counter("demo_total", ("result",)) is counter("demo_total", ("result",))
+        assert counter("demo_idem_total", ("result",)) is counter("demo_idem_total", ("result",))
 
     def test_memory_metric_contract(self) -> None:
         """指标名与标签集必须与架构 §8.1 逐字一致（T4-05 只做 exposition）。"""

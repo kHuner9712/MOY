@@ -36,6 +36,9 @@ dependencies = [
     "slowapi>=0.1.9",
     "python-multipart>=0.0.9",
     "pyyaml>=6.0",
+    # 指标 exposition（阶段四 T4-05.1）：`/metrics` 的标准文本格式。
+    # Apache-2.0；直方图分桶与累积由库保证，手写必然出现"抓了算不出来"的偏差。
+    "prometheus-client>=0.20,<1.0",
     # 公文/Offer 导出（D-20）：`render_file` 必须交付**真 docx**（可解压出
     # `word/document.xml`），不能退成 md/csv。只认 `python-docx`（MIT），
     # 禁 `docxtpl`/`python-docx-template`（会拖入 Jinja2）。

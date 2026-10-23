@@ -34,6 +34,7 @@ from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.db.repositories.base import BaseRepository, as_datetime
 from app.db.session import platform_scope, tenant_scope
+from app.db.tenant import PLATFORM_TENANT
 
 logger = get_logger(__name__)
 
@@ -256,6 +257,10 @@ class JobStore(Protocol):
         """列出某状态的任务（排障与测试用）。"""
         ...
 
+    async def count_open(self) -> int:
+        """统计全平台未终结（queued/running）的任务数（`task_queue_depth` 用）。"""
+        ...
+
 
 class InMemoryJobStore:
     """进程内任务存储（development / test）。
@@ -436,6 +441,14 @@ class InMemoryJobStore:
         ]
         rows.sort(key=lambda job: (job.created_at, job.job_id))
         return rows[:limit]
+
+    async def count_open(self) -> int:
+        """统计未终结任务数（内存实现：直接数内存行）。
+
+        Returns:
+            int: 条数。
+        """
+        return len([item for item in self._items.values() if item.status in OPEN_STATUSES])
 
     def clear(self) -> None:
         """清空存储（测试隔离）。"""
@@ -678,6 +691,20 @@ class PostgresJobStore:
                 repo.params(status=status, limit=limit),
             )
         return [_to_job(row) for row in rows]
+
+    async def count_open(self) -> int:
+        """统计未终结任务数（平台作用域跨租户）。
+
+        Returns:
+            int: 条数。
+        """
+        async with platform_scope(settings=self._settings) as uow:
+            repo = _JobTableRepository(uow)
+            total = await repo.fetch_scalar(
+                f"SELECT count(*) FROM {JOB_TABLE} WHERE status IN ('queued','running')",
+                {"tenant_id": PLATFORM_TENANT},
+            )
+        return int(total or 0)
 
 
 #: 任务存储单例（按配置选中实现）
