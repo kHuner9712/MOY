@@ -1001,4 +1001,9 @@ main() {
   summary "${first_install}"
 }
 
-main "$@"
+# 只在**直接执行**时跑主流程。
+# 作为库被 source（deploy/backup.sh、deploy/restore.sh 复用 env_get / compose /
+# die / abort_env 等）时必须什么都不做——否则一次 source 就会真的开始装一套栈。
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
