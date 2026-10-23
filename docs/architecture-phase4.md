@@ -94,7 +94,7 @@ D1 拍板 + 技术事实：`model_service.py` 已完成"单条 `query` + `conver
 | --- | --- | --- |
 | `ContextAssembler`（business） | 从 `message` 表取最近 N 轮 + 从 `user_memory` 取 top-k，拼成单条 `query` | 现有拼接逻辑在 `model_service._build_downstream_payload` 内、数据来源是客户端；需要"数据源换成自研库 + 加入记忆块 + 可被单测注入" |
 | `BackgroundJobRunner`（workers） | PG 队列 + 进程内调度：记忆抽取、记忆合并、租户导出、保留期清理 | 全仓无 celery/arq（`pyproject.toml` 依赖清单已核对），且阶段四**同时**有三个异步需求，必须有一个统一载体（§2.3） |
-| `MetricsRegistry`（core） | 标准 `/metrics` 文本输出 + 低基数标签约定 | `grep prometheus_client` 零命中；`/metrics` 实测 404 |
+| `MetricsRegistry`（core） | 标准 `/metrics` 文本输出 + 低基数标签约定 | 现状 `grep prometheus_client` 零命中、`/metrics` 实测 404（S5 缺陷证据）；**阶段四由 T4-05.1 引入 `prometheus_client`（Apache-2.0）**，见 §8.2 |
 | `MemoryExtractor`（services） | 结构化抽取 6 类事实 + 敏感信息丢弃 + 去重合并 | 复用底座 LLM 但走**独立应用密钥**（`OA_DIFY_MEMORY_APP_KEY`），避免与对话档位抢配额与串味 |
 
 ### 2.3 选型：事实抽取的执行载体（PRD §三.5 的三种方案评估）
@@ -151,7 +151,7 @@ if not roles:
 | # | 权限点 | 为什么必须委派 | 收窄条件（缺一不可） |
 | --- | --- | --- | --- |
 | W-1 | `knowledge:base:read` | 只读；`MEMBER`/`GUEST` 均持有，令牌缺 roles 属身份侧异常但**不应连"看自己被授权的库"都拒**；真隔离由 `is_visible()` 承担 | **仅限 GET**；写路径同一权限点不存在（create/update/delete 分属别的点） |
-| W-2 | `tool:connection:manage` | TL1 只读调用记录；`MEMBER`/`GUEST` 均持有，返回集已按 `initiator_id` 收敛到本人 | **仅限 TL1（GET /tools/executions）**；连接/断开走 `tool.py` 服务层，不受此点保护 |
+| W-2 | `tool:connection:manage` | TL1 只读调用记录；`MEMBER`/`GUEST` 均持有，返回集已按 `initiator_id` 收敛到本人 | 收窄条件是**权限点 + 方法级（仅 GET）**，**不是路由白名单**。该权限点当前在全仓**唯一使用点 = TL1**（`tools_ext.py:60`）；**将来若有其他端点复用它，必须回来补路由级约束**——不要以为白名单已经管住了路由。连接/断开走 `tool.py` 服务层，不受此点保护 |
 
 白名单实现形态：`app/core/permission_whitelist.py` 常量 `DEFERRED_PERMISSIONS: Final[frozenset[str]] = frozenset({"knowledge:base:read", "tool:connection:manage"})`，**按 `(permission, method)` 双键判定**，`security.py` 改为：
 ```python
@@ -170,7 +170,12 @@ CI 断言：`len(DEFERRED_PERMISSIONS) <= 5` 且集合内容 `== ` 快照文件 
 | 无 roles 令牌 → `PUT /knowledge/bases/{id}` | 403 + `audit_log` 1 条 + 目标表 `count` 不变 |
 | 无 roles 令牌 → `GET /knowledge/bases/{id}/documents` | 200（白名单 W-1）+ 日志 `permission_check_deferred_whitelisted` |
 | 无 roles 令牌 → `POST /plugins/{id}/install` | 403（本来就走对象级，本条防回退） |
+| 他人**任务/产物**（同租户不同用户） | **403** + 不返回任何 `data` |
+| 他人**会话**（同租户不同用户） | **404** + `code=18001` + 文案「该对话已不存在」+ `data` 为空 |
+| 他人**记忆** | **404** + `code=18002` + 文案「这条信息已不存在」+ `data` 为空 |
 | 白名单扩张 | `len>5` 或集合漂移 → `test_whitelist_lock.py` 红 |
+
+> **为什么任务/产物用 403、会话/记忆用 404**：403 与 404 的差异本身就是一个**存在性预言机**——攻击者用这两者的区别可以把 `task_xxx` / `conv_xxx` / `mem_xxx` 空间枚举一遍，从而知道某个 ID 是否存在。任务与产物是**协作对象**（同租户内本就多人可见，判权失败必须明确告知），而会话与记忆是**个人数据**（除本人外不应有人知道其存在），所以后者一律回 404，且**与「真的不存在」同码同文案**。两者都**不得返回 `data`**。
 
 ### 2.6 任务单步超时（F-4 修正）
 
@@ -456,7 +461,8 @@ tenant(1) ─┬─ conversation(N) ── message(N)          ← 新（个人�
 | 记忆不存在 | **18002** | 404 | 这条信息已不存在 | — |
 | 删除确认文本不匹配 | **18003** | 400 | 请输入完整的企业名称以确认 | 需独立文案，不能复用 20001 的通用文案 |
 | 额度/预算已用尽 | **15006**（复用） | **402**（由 200 改） | 本月可用量已用完，请联系管理员调整 | E-3/E-4 **同码**；见 §7.3 的兼容处理 |
-| 无权限访问他人会话/记忆 | 20003（复用） | 403 | 你没有权限查看该内容 | — |
+| 无权限访问他人**任务/产物** | 20003（复用） | **403** | 你没有权限查看该内容 | 沿用既有契约 |
+| 访问他人**会话/记忆** | **18001 / 18002**（与「不存在」同码） | **404** | 该对话已不存在 / 这条信息已不存在 | **防枚举**：返回 403 会泄漏「这个 ID 存在」，个人数据可枚举比文案不统一严重得多 |
 | 记忆已关闭 | **不新增** | 200 | 静默不写 | 状态表达，不打错误码 |
 | 导出进行中 | **不新增** | 200 | 正在准备导出，完成后会通知你 | 用 `background_job` 状态表达 |
 
@@ -846,6 +852,7 @@ scrape_configs:
 ```
 - `postgres-exporter`：`prometheuscommunity/postgres-exporter`（Apache-2.0），`DATA_SOURCE_NAME` 用 **`officeai_app`**（只读指标，不需要超级用户）。
 - `valkey-exporter`：`oliver006/redis_exporter`（MIT），`REDIS_ADDR=redis://valkey:6379`。
+- **适配层指标实现 = `prometheus_client`（Apache-2.0）**，由 T4-05.1 加进 `apps/adapter/pyproject.toml`；**不手写直方图 / 不手写 exposition 文本**（手写分位数桶必然与 Prometheus 语义漂移，`_bucket`/`_sum`/`_count` 的命名与累积语义也极易写错）。阶段四前「`grep prometheus_client` 零命中」是**缺陷证据（S5）**，不是「不需要」。
 - **待验证（登记前必做）**：两者与 §9.1 的 `nginx` 的**精确 tag 尚未核验**（本轮无外网拉取）。执行 `docker manifest inspect <image>:<tag>` 通过后，再写进 `images.lock`（含 `license` 与 `digest`）。**不允许先写编排再补登记**——`validate_images.py` 会红。
 
 ### 8.3 `/healthz` / `/readyz` / `/metrics` 边界
@@ -856,6 +863,8 @@ scrape_configs:
 | `/readyz` | 依赖可用（5 项检查：config / profile_routes / tool_registry / db / db_privilege） | 是 | 无 | 容器 readiness、`validate_lite_up.sh` |
 | `/metrics` | 指标文本 | **否**（定时采集，抓取路径零 DB 访问） | 无（仅内网，端口不对外映射到宿主机公网） | Prometheus |
 
+> **`/metrics` 不在 `/api/v1` 下，不计入端点基线**：`validate_openapi.py` 统计的是 OpenAPI 业务端点，`phase4` 仍为 10、`core` 仍为 30，**不需要为它登记 `baseline-phase4-10.json`**。`/healthz`、`/readyz` 同理。
+>
 > 硬规则：`/metrics` 抓取路径**不得**执行数据库查询——Prometheus 每 15s 抓一次，若每次查 DB 会变成自伤（这条写进代码注释与 review checklist）。
 
 ### 8.4 告警规则（`deploy/alert.rules.yml`，5 条）
