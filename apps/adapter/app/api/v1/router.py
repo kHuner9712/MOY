@@ -41,6 +41,7 @@ from app.api.v1 import (
     ops,
     plugins,
     rag,
+    tenant_data,
     tool,
     tools_ext,
 )
@@ -327,6 +328,9 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     api_router.include_router(billing.public_router, prefix=prefix)
     # 阶段二运营后台（B10，OPS1-OPS8）：平台模式守卫在端点内做，不依赖路由级依赖
     api_router.include_router(ops.router, prefix=prefix, dependencies=business_dependencies)
+    # 阶段四 TD1/TD2 数据权利（T4-05.3）：**与 OPS1-OPS8 守卫方向相反**——
+    # 这里要求"企业管理员"、拒绝平台令牌，理由见 `api/v1/tenant_data.py` 文档串
+    api_router.include_router(tenant_data.router, prefix=prefix, dependencies=business_dependencies)
     # 阶段三插件域（B17 起 PL1-PL5/PL13；B18 追加 PL6-PL12；B19 追加 WF1）
     api_router.include_router(plugins.router, prefix=prefix, dependencies=business_dependencies)
     # 健康检查不挂 API 版本前缀，路径固定为 /healthz 与 /readyz

@@ -45,6 +45,7 @@ from app.middleware.trace import AccessLogMiddleware, TraceMiddleware
 from app.services.memory_extractor import warn_missing_memory_app_key_once
 from app.workers.job_runner import JobRunner, get_job_runner, should_start_runner
 from app.workers.queue_depth import refresh_loop
+from app.workers.tasks.retention_cleanup import schedule_all_tenants
 
 logger = get_logger(__name__)
 
@@ -159,6 +160,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         queue_depth_task = asyncio.create_task(
             refresh_loop(get_job_store(settings)), name="oa-task-queue-depth"
         )
+        # 阶段四 T4-05.3：保留期清理**每日一次**。入队放在启动流程里而不是依赖
+        # cron：私有化现场没有 cron 是常态，而"清理任务靠人记得配"等于没有。
+        # 去重键固定（`retention-daily`），重启多少次都只会有一次在排。
+        # 失败只告警不阻断启动——清理排不上不该让整个服务起不来。
+        try:
+            await schedule_all_tenants(settings)
+        except Exception as exc:
+            logger.warning("retention_schedule_failed", detail=type(exc).__name__)
     app.state.job_runner = runner
 
     try:

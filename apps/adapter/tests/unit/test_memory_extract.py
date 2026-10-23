@@ -695,9 +695,16 @@ class TestWiring:
     """装配：注册表里必须有 `memory_extract`，否则任务会被反复判失败。"""
 
     def test_default_runner_registers_memory_extract(self) -> None:
-        """`build_default_runner` 注册了唯一一个抽取处理器。"""
+        """`build_default_runner` 注册的两个处理器（抽取 + 保留期清理）。
+
+        **为什么把期望写死成完整列表**：注册表是"新增任务类型的唯一入口"，
+        少注册会让任务被反复判失败，多注册会让没人负责的 kind 躺在队列里。
+        因此这里断言**精确集合**而不是"包含 memory_extract"——
+        阶段四 T4-05.3 加 `retention_cleanup` 时这条用例就该红一次，改的人必须
+        知道自己动了装配点（顺带确认 Runner 的重试上限是 3）。
+        """
         runner = build_default_runner(Settings(env="test", business_store="memory"))
-        assert runner.registered_kinds() == ["memory_extract"]
+        assert runner.registered_kinds() == ["memory_extract", "retention_cleanup"]
 
     async def test_runner_executes_extraction_end_to_end(self) -> None:
         """任务经 Runner 跑通：事实落库、任务 succeeded。"""

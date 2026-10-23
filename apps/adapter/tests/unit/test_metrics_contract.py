@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,8 +25,8 @@ from app.core.metrics import (
     BACKGROUND_JOBS_TOTAL,
     BUSINESS_ERRORS_TOTAL,
     FORBIDDEN_LABELS,
-    HTTP_REQUESTS_TOTAL,
     HTTP_REQUEST_DURATION_SECONDS,
+    HTTP_REQUESTS_TOTAL,
     MEMORY_EXTRACT_TOTAL,
     MEMORY_RECALL_DURATION_SECONDS,
     MODEL_FIRST_TOKEN_SECONDS,
@@ -150,8 +150,13 @@ class TestMetricsEndpoint:
     def test_endpoint_returns_prometheus_text_without_auth(self) -> None:
         """免鉴权、返回标准文本、含 `# HELP`。"""
         app = create_app(
-            Settings(env="test", business_store="memory", auth_mode="stub", jwt_secret="x",
-                     ratelimit_enabled=False)
+            Settings(
+                env="test",
+                business_store="memory",
+                auth_mode="stub",
+                jwt_secret="x",
+                ratelimit_enabled=False,
+            )
         )
         with TestClient(app) as client:
             response = client.get("/metrics")
@@ -168,8 +173,13 @@ class TestMetricsEndpoint:
         直接遍历顶层 `routes` 看不到（也看不到它是否误挂到 `/api/v1`）。
         """
         app = create_app(
-            Settings(env="test", business_store="memory", auth_mode="stub", jwt_secret="x",
-                     ratelimit_enabled=False)
+            Settings(
+                env="test",
+                business_store="memory",
+                auth_mode="stub",
+                jwt_secret="x",
+                ratelimit_enabled=False,
+            )
         )
         with TestClient(app) as client:
             assert client.get("/metrics").status_code == 200
@@ -190,8 +200,13 @@ class TestMetricsEndpoint:
         monkeypatch.setattr("app.db.session.get_session_factory", _boom)
 
         app = create_app(
-            Settings(env="test", business_store="memory", auth_mode="stub", jwt_secret="x",
-                     ratelimit_enabled=False)
+            Settings(
+                env="test",
+                business_store="memory",
+                auth_mode="stub",
+                jwt_secret="x",
+                ratelimit_enabled=False,
+            )
         )
         with TestClient(app) as client:
             assert client.get("/metrics").status_code == 200
@@ -205,7 +220,7 @@ class TestMetricsEndpoint:
             path = "/api/v1/model/conversations/{conversation_id}"
 
         class _Request:
-            scope = {"route": _Route()}
+            scope: ClassVar[dict[str, Any]] = {"route": _Route()}
 
         assert route_template(_Request()) == "/api/v1/model/conversations/{conversation_id}"  # type: ignore[arg-type]
 

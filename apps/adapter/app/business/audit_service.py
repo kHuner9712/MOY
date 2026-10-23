@@ -174,6 +174,14 @@ ACTION_MEMORY_SETTINGS: Final[str] = "memory.settings_update"
 # 安全域（阶段四 T4-04.5）：权限被拒也要留痕（拒绝本身已生效，审计失败不影响）
 ACTION_PERMISSION_DENIED: Final[str] = "security.permission_denied"
 
+#: 数据权利域（阶段四 T4-05.3，PRD P4-05 ③④）
+#:
+#: 导出/删除是**企业管理员代表企业行使数据权利**，动作必须留痕：客户退租时
+#: "谁在什么时候导出过、删过"要和删除证明一起成为可核查的事实。
+#: `change_summary` 只放条数与范围，**不放任何正文**。
+ACTION_TENANT_DATA_EXPORT: Final[str] = "tenant_data.export"
+ACTION_TENANT_DATA_DELETE: Final[str] = "tenant_data.delete"
+
 #: 操作：支付回调被拒绝（签名/金额/订单状态校验未通过，B09 安全加固）
 #:
 #: 拒绝事件**必须**进审计：`payment_callback_log` 只记「已接受并处理」的回调，
@@ -220,6 +228,8 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_MEMORY_DELETE_ALL: "清空记忆",
     ACTION_MEMORY_SETTINGS: "修改记忆设置",
     ACTION_PERMISSION_DENIED: "权限校验未通过",
+    ACTION_TENANT_DATA_EXPORT: "导出企业数据",
+    ACTION_TENANT_DATA_DELETE: "删除企业数据",
 }
 
 
