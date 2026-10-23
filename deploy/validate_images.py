@@ -552,6 +552,55 @@ def run_self_test() -> list[str]:
     return failures
 
 
+#: 合法 digest 形态：`sha256:` + 64 位小写十六进制
+DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def check_digests(locked: dict[str, dict[str, str]]) -> list[str]:
+    """校验每个镜像都登记了**可核验的 digest**（T4-05 第三批 3b 新增）。
+
+    为什么必须进 CI 门禁：
+      离线包用 `docker save` 出 tar，落地后 `docker load` 只按 `name:tag` 打标。
+      **tag 可被覆盖**（上游重推同名 tag、本地重建自研镜像），digest 不能。
+      `manifest.json` 与 `images.list` 都要按 digest 交付，锁文件里缺 digest
+      等于"离线包与验收单无法对账"，出问题时无法证明现场跑的是哪一份镜像。
+
+    规则：
+      - `source != local`：**必须**有 digest 且形态合法（上游镜像 digest 稳定，
+        重新 pull 仍是同一个）；
+      - `source: local`：缺失只告警——自研镜像的 digest 由构建/推送生成，
+        每次重建都会变，强制要求会让每次构建都改锁文件（噪声大于收益）。
+
+    Args:
+        locked: 锁文件映射。
+
+    Returns:
+        list[str]: 失败项描述；空列表表示通过。
+    """
+    failures: list[str] = []
+    for name, entry in sorted(locked.items()):
+        tag = str(entry.get("tag", ""))
+        source = str(entry.get("source", "docker-hub"))
+        digest = str(entry.get("digest", "") or "").strip()
+        if not digest:
+            if source == "local":
+                print(f"[WARN] {name}:{tag} 未登记 digest（自研镜像，允许缺失）")
+            else:
+                failures.append(
+                    f"{name}:{tag} 未在 images.lock 登记 digest"
+                    "（离线包无法与现场镜像对账；用 `docker manifest inspect` 补）"
+                )
+            continue
+        if not DIGEST_PATTERN.match(digest):
+            failures.append(
+                f"{name}:{tag} 的 digest 形态非法：{digest!r}"
+                "（要求 `sha256:` + 64 位小写十六进制）"
+            )
+            continue
+        print(f"[OK]   {name}:{tag} digest 已登记（{digest[:19]}…）")
+    return failures
+
+
 def main() -> int:
     """执行校验。
 
@@ -581,6 +630,7 @@ def main() -> int:
 
     failures = check_consistency(locked, references)
     failures += check_exact_versions(locked)
+    failures += check_digests(locked)
     if args.check_remote:
         failures += check_remote_existence(locked)
     if args.self_test:

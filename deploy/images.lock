@@ -39,18 +39,25 @@ images:
   # ---------------------------------------------------------------------
   - name: langgenius/dify-api
     tag: "1.17.1"
+    # digest = RepoDigest（manifest list 顶层 sha256），本机 `docker images --digests` 实测
+    digest: "sha256:ceede5b903afaa20348f7ad80ebf847379dc56d886a99b9ec6a08913dacd7732"
     license: Apache-2.0（修改版：多租户与商标限制，见上方说明）
     role: 底座 API / Worker / Beat
     source: docker-hub
 
+  # digest 由 `docker buildx imagetools inspect langgenius/dify-web:1.17.1` 取得
+  # （manifest list 顶层 Digest；未拉取整镜像，只取索引，2 s 内完成）。
+  # 本机**未**保存该镜像：只在 `--profile admin` 首次配 model provider 时用到（baseline §1.2）。
   - name: langgenius/dify-web
     tag: "1.17.1"
+    digest: "sha256:6353fe8e04481aaef873ef7317507bfa9ac862572118fd037563a71bff9f4d08"
     license: Apache-2.0（修改版：多租户与商标限制，见上方说明）
     role: 底座控制台
     source: docker-hub
 
   - name: langgenius/dify-sandbox
     tag: "0.2.15"
+    digest: "sha256:750e1111426ef31a9217b81c98cccfb750f17b182af3221102e420afa9f0928e"
     license: Apache-2.0（修改版：同 Dify，见上方说明）
     role: 代码沙箱
     source: docker-hub
@@ -58,6 +65,7 @@ images:
   # 插件守护进程：Dify 1.0 模型提供方管理的必需组件（与 api 版本联动）
   - name: langgenius/dify-plugin-daemon
     tag: "0.6.10-local"
+    digest: "sha256:34412a22d1e1d1a6c73727fef88cffbcdd9be7a21bf9ad3076b4bf5c1b88fd9b"
     license: Apache-2.0（修改版：同 Dify，见上方说明）
     role: 插件守护进程（模型提供方管理）
     source: docker-hub
@@ -67,6 +75,7 @@ images:
   # ---------------------------------------------------------------------
   - name: quay.io/keycloak/keycloak
     tag: "26.8.1"
+    digest: "sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244"
     license: Apache-2.0
     role: 身份与权限
     source: quay
@@ -90,6 +99,7 @@ images:
   # ✅ D-06 已于 2026-10-21 由创始人授权主理人正式批准（docs/decisions/0004）
   - name: valkey/valkey
     tag: "9.2-alpine"
+    digest: "sha256:cdcb7b1c7b6f1c9cb9442c71ac6275e78184657448407b2c1fdde7ee8024f4fb"
     license: BSD-3-Clause
     role: 缓存与幂等键
     source: docker-hub
@@ -97,6 +107,7 @@ images:
 
   - name: milvusdb/milvus
     tag: "v3.0.3"
+    digest: "sha256:08747249b27c64f158db79a53ba008f89314ee240c731e585a7ec4fb7140731e"
     license: Apache-2.0
     role: 向量库
     source: docker-hub
@@ -104,6 +115,7 @@ images:
 
   - name: quay.io/coreos/etcd
     tag: "v3.7.2"
+    digest: "sha256:e9afa62b1e914f02db62e5c46a7a140d8cdf026f2ed888cab4e5a142ec4d06fd"
     license: Apache-2.0
     role: 分布式 KV（Milvus 依赖）
     source: quay
@@ -122,6 +134,7 @@ images:
   # ✅ D-06 已于 2026-10-21 由创始人授权主理人正式批准（docs/decisions/0004）
   - name: chrislusf/seaweedfs
     tag: "4.48"
+    digest: "sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
     license: Apache-2.0
     role: S3 兼容对象存储（Milvus 依赖 + 业务对象存储）
     source: docker-hub
@@ -138,6 +151,7 @@ images:
   # 选 alpine 而非 mainline：体积 93.5 MB（vs 200+ MB），单机内存占用 ~29 MiB。
   - name: nginx
     tag: "1.29-alpine"
+    digest: "sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de"
     license: BSD-2-Clause
     role: 反向代理（轻量版唯一入口：TLS 终止点、SSE 关缓冲、/api 与 /metrics 分流）
     source: docker-hub
@@ -148,6 +162,7 @@ images:
   # 已更换为 Canonical 官方维护的 ubuntu/squid
   - name: ubuntu/squid
     tag: "6.13-25.04_beta"
+    digest: "sha256:3de2e64f0ca6efdac3e98557607dc0f23050037f3885016d5d5bfcf9950501b8"
     license: GPL-2.0
     role: 出站代理（SSRF 防护）
     source: docker-hub
@@ -167,6 +182,7 @@ images:
   # 在监控侧打开一个洞（S6 的教训）。
   - name: prometheuscommunity/postgres-exporter
     tag: "v0.17.1"
+    digest: "sha256:38606faa38c54787525fb0ff2fd6b41b4cfb75d455c1df294927c5f611699b17"
     license: Apache-2.0
     role: PostgreSQL 指标采集（只读，应用角色连库）
     source: docker-hub
@@ -174,6 +190,7 @@ images:
 
   - name: oliver006/redis_exporter
     tag: "v1.67.0"
+    digest: "sha256:120f7ec77293459ccfdad66bb1db75ab72e8bfeab99f58b1cc2564cadcd7a9e7"
     license: MIT
     role: Valkey/Redis 指标采集
     source: docker-hub
@@ -181,6 +198,7 @@ images:
 
   - name: prom/prometheus
     tag: "v3.15.0"
+    digest: "sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
     license: Apache-2.0
     role: 指标采集
     source: docker-hub
@@ -200,6 +218,9 @@ images:
   # ---------------------------------------------------------------------
   - name: officeai/adapter
     tag: "1.0.0"
+    # 自研镜像：digest 是本机 RepoDigest（推送/构建后由 registry 生成，重建即变）。
+    # 离线包必须用**同一份 tar** 分发，不能指望"重新构建得到同一个 digest"。
+    digest: "sha256:969f696da3869d28f70622eff0a7e88eb6b440c4f944026f1e04d42d98a983aa"
     license: UNLICENSED
     role: 自研统一适配层
     source: local
@@ -207,6 +228,7 @@ images:
 
   - name: officeai/web
     tag: "1.0.0"
+    digest: "sha256:f638b96573608c97142b78230f304e9f37195da87793e0bb4647b17b945aa130"
     license: UNLICENSED
     role: 自研前端交互层
     source: local
