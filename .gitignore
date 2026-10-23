@@ -54,6 +54,8 @@ junit.xml
 .env
 .env.*
 !.env.example
+# 轻量版的样例文件必须入库（`.env.*` 会连它一起忽略）；真实 `.env.lite` 仍不入库
+!.env.lite.example
 *.pem
 *.key
 secrets/
