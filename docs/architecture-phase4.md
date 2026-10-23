@@ -969,6 +969,15 @@ STORAGE_LOCAL_PATH: /app/api/storage
 - `healthcheck` 覆盖：postgres（`pg_isready`）、valkey（`valkey-cli ping`）、keycloak（`/health/ready`，`--health-enabled=true` 需加参数）、dify-api（`python -c urlopen /health`）、adapter（现有 `/readyz` 探针）、proxy（`nginx -t` 无法周期跑 → 用 `wget -q -O- http://127.0.0.1/healthz`）。**有状态服务 100% 有 healthcheck**。
 - 资源限制（`deploy.resources.limits`）4 个关键容器：`postgres` 1G、`keycloak` 768M、`dify-api` 1G、`adapter` 768M；其余不设（留弹性）。
 
+**已知限制（部署前必须知道；QA 并行验收必须排队）**
+
+- **单机只能跑一套轻量版**：`deploy/docker-compose.lite.yml` 的服务全部写死 `container_name: oal-*`
+  （`oal-postgres` / `oal-dify-api` / `oal-adapter` …）。用 `-p <project>` 换项目名**仍会撞名**——
+  compose 的 `container_name` 优先于项目前缀。
+- 后果：① 同一台机器不能并行跑「旧版本 + 新版本」做升级对比；② QA **并行验收必须排队**，
+  否则第二套起不来（`Bind for 0.0.0.0:xxx failed` 或 `container name already in use`）。
+- 需要并行时的临时手段：改端口 + 去掉 `container_name` 另存一份编排——**不进交付物**。
+
 ### 9.2 离线包目录结构
 
 ```
@@ -1009,7 +1018,10 @@ stateDiagram-v2
   Migrate --> Rollback: 迁移失败
   Smoke --> Done: /readyz ready + 3 项业务探针通过
   Smoke --> Rollback: 任一探针失败
-  Rollback --> Restore: 跑 rollback/NNNN.down.sql + 切回 N 镜像
+  Rollback --> Guard0006: 目标版本判定
+  Guard0006 --> Restore: 目标 ≥ 0006（有 down SQL）
+  Guard0006 --> Exit7: 目标 < 0006（无 down SQL，见 §9.3.2）
+  Exit7 --> [*]
   Restore --> DoneN: 数据一致性校验（行数不丢）
   Done --> [*]
   DoneN --> [*]
@@ -1058,6 +1070,26 @@ psql "$OA_DATABASE_URL" -tAc \
 > 每个**数据库**仍需单独 `CREATE EXTENSION`。新装（`install.sh`）由 initdb 超级用户自动完成；
 > 存量库的升级必须 DBA 手动执行一次。这条写在 **DBA runbook 顶部第一段**，不得埋在附录。
 
+#### 9.3.2 回滚范围：只对 `0006+` 成立（`0002–0005` 没有 down SQL）
+
+`deploy/migrations/rollback/` 实测只有 **6 个** down 文件：
+
+```
+0006_plugin_artifact_content_type.down.sql   0009_user_memory.down.sql
+0007_usage_event_dimensions.down.sql         0010_background_job.down.sql
+0008_conversation_message.down.sql           0011_tenant_budget.down.sql
+```
+
+**`0002–0005` 没有 down SQL，且不补**。原因：那 4 条是阶段二/三的基线 DDL（建表 + RLS + 产物列），
+补写反向 SQL 等于给已在客户库里的 34 张表准备一套「删除脚本」，一旦被误跑就是灾难性数据丢失；
+而它换来的能力（退到阶段二/三）在 V1.0 交付里没有任何客户会用到——风险与收益不成比例。
+阶段四的升级场景是「从阶段三升到阶段四」，回滚目标天然落在 `0006+`。
+
+| 目标版本 | `rollback.sh` 行为 |
+| --- | --- |
+| `>= 0006` | 调 `migrate.py --rollback <version…>`（倒序执行对应 down + 删台账行，**不自动级联**） |
+| `< 0006`（含 `0002–0005`、空版本） | **`exit 7`** + 打印「该版本无自动回滚脚本，请 DBA 按 runbook 手工处理」+ 指向 `docs/deployment-guide.md` 的「降级到阶段三及更早」章节 |
+
 - **N-1 兼容三约束**（PRD §5.4）落地校验：① 迁移只加（`0006-0011` 全部 `ADD COLUMN`/`CREATE TABLE`/`CREATE INDEX`，无 `DROP`/`ALTER TYPE`）；② 新列全部 `NOT NULL DEFAULT`；③ 应用层对"列是否存在"用守卫：读取 `0007` 的 4 列前先 `SELECT to_regclass/attnum` 或用 `try/except UndefinedColumn`（一次性 helper `db/schema_guard.py`）。
 
 ### 9.4 三个脚本的硬要求
@@ -1066,7 +1098,24 @@ psql "$OA_DATABASE_URL" -tAc \
 | --- | --- |
 | `install.sh` | ⓿ `vector` 扩展由 initdb 以**超级用户**执行 `init-schema-phase4.sql:153` 自动建（新装无此手工步骤）；① 前置检查（docker/compose 版本、8G 内存、端口、`CHANGE_ME_*` 归零）**任一不满足提前退出**；② 缺任一分包 → 立刻报"缺 X"，**不装到一半**；③ 加载镜像 → 建库（3 库：officeai/keycloak/dify）→ initdb → `migrate.py --apply` → 起服务 → 轮询 `/readyz`（≤180s）→ 打印**一次性随机管理员口令** → 写 `install.log` |
 | `upgrade.sh` | **预检（`vector` 扩展，§9.3.1，缺失即退出 4 且不碰数据库）** → 备份 → 迁移 → 冒烟 → 失败自动 `rollback.sh`；全程写 `upgrade.log`，末尾打印 `DONE/ROLLED_BACK` 供脚本断言。**预检必须排在迁移之前**——`0009` 用到 `vector` 类型，缺扩展会在 DDL 中途报 `type "vector" does not exist` |
-| `rollback.sh` | 仅执行 `deploy/migrations/rollback/NNNN_*.sql`（倒序）+ 切镜像 + 数据一致性校验；**生产必须停写**（脚本检测 `OA_MAINTENANCE=1`，否则拒绝执行并提示） |
+| `rollback.sh` | **薄封装，不是 DDL 执行器**：① 维护闸门（见下）；② 目标版本判定（`<0006` → `exit 7`，§9.3.2）；③ 调 `python -m app.db.migrate --rollback <version…>` —— down 的**执行、倒序、删台账、回滚前强制备份全在 `migrate.py` 内**（`rollback_requires_backup()` 判据、`_backup_before_rollback()` 用 `pg_dump --no-owner -Fc`，缺 `pg_dump` 直接拒绝回滚）；④ 切镜像 + 行数核对。文件名约定 `NNNN_<name>.down.sql`（**不是** `NNNN_*.sql`） |
+| `restore.sh` | 从 `backup.sh` 的 dump 恢复整库；**同维护闸门**（先 `docker compose stop proxy web`，恢复后 `start`）；恢复前先做一次当前库的 dump（防止恢复错文件后无退路）；恢复后跑 `/readyz` + 行数核对 |
+
+**维护闸门（`OA_MAINTENANCE` 的真实语义，别误解成应用级开关）**
+
+`OA_MAINTENANCE=1` 在**全仓没有任何消费点**（`grep -rn OA_MAINTENANCE` 只命中本文档），
+它**拦不住任何流量**——把它当「应用会返回 503」是错的。真实做法是**在编排层停入口**：
+
+```bash
+[ "${OA_MAINTENANCE:-}" = "1" ] || { echo "回滚/恢复属维护操作，请显式设置 OA_MAINTENANCE=1"; exit 3; }
+docker compose stop proxy web        # 停流量的唯一有效手段
+...                                  # 回滚 / 恢复
+docker compose start proxy web
+```
+
+- 顺序：**先停 `proxy`（入口）再停 `web`**；恢复时反过来（先 `web` 后 `proxy`）。
+- `OA_MAINTENANCE=1` 的唯一作用是**意图声明 + 误操作防护**（防止半夜手滑直接跑回滚），**不是功能开关**。
+- 为什么不复用应用 `/readyz`：编排层停入口不依赖应用健康状态，应用已经挂了也照样能停流量。
 
 ### 9.5 合规与文档
 
@@ -1116,7 +1165,7 @@ psql "$OA_DATABASE_URL" -tAc \
 
 - 目录 `deploy/migrations/rollback/`，命名 `0006_plugin_artifact_content_type.down.sql`…`0011_tenant_budget.down.sql`。
 - **`0008`/`0009` 的 down 只删表不删数据副本**：`down` 前脚本强制 `pg_dump -t conversation -t message ...` 到 `rollback/<ts>/`，否则拒绝执行（`R-4`：down 把数据改坏比不能回滚更糟）。
-- `migrate.py` 增 `--rollback <version>`：倒序执行 `rollback/NNNN_*.sql`，并在 `schema_migration` 删对应行；**不自动级联**（必须显式给到版本）。
+- `migrate.py` 增 `--rollback <version…>`：倒序执行 `rollback/NNNN_<name>.down.sql`，并在 `schema_migration` 删对应行；**不自动级联**（必须显式给到版本）。回滚前强制整库备份（`pg_dump --no-owner -Fc`），缺 `pg_dump` 直接拒绝。
 - `validate_migrations.py --run-pg` 增三轮用例：`up → down → up` 后行数与关键列值一致（P4-14 ①）。
 - **连带约束（产物 TTL 必须在写入时定对）**：`plugin_artifact.expires_at` 在**写入那一刻**确定，`retention_cleanup` 只按它判过期、升级与回滚**都不会重算**。所以导出包（凭证，15 分钟）与删除证明（证据，`plugin_artifact_retention_days`=180 天）的 TTL 必须在**创建产物时**就分开（§3.5 D-4）；写错了没法用升级/回滚补救——只能等客户发现下载 404，而那时合规承诺已经失效。
 - 校验方式：`select purpose, extract(epoch from (expires_at - created_at))/86400 as days from plugin_artifact;` → `proof_of_deletion` 的 `days` 必须 >1；导出包（`purpose` 为导出）必须 <1。
@@ -1230,7 +1279,7 @@ async def apply_one(self, m: Migration) -> None:
 | **T4-05.2** | exporter + 4 job 抓取 + 5 条告警规则 | `deploy/docker-compose.yml`、`deploy/prometheus.yml`、`deploy/alert.rules.yml`、`deploy/images.lock` | T4-05.1 | `docker compose config -q`；Prometheus `/targets` 4 job `UP`；`/rules` 5 条 `ok` | M |
 | **T4-05.3** | 数据保留 + 清理任务 + 租户导出/删除 + DBA 审计 SQL；**TD1 同步导出（`status=ready` + `rows`，上限 20 万行）+ TD2 停用式删除（`status=suspended`）** | `app/workers/tasks/retention_cleanup.py`、`app/workers/tasks/tenant_export.py`、`app/business/tenant_data_service.py`、`app/api/v1/tenant_data.py`、`app/api/v1/router.py`、`sql/retention-audit.sql`、`apps/adapter/tests/integration/test_retention_export_delete.py` | T4-03.2 | `pytest tests/integration/test_retention_export_delete.py -q`；保留期 1 天 → 目标表 `count=0` + 日志有行数；导出包 `manifest.json` 行数一致；**TD1**：造 20 万零 1 行 → `20001` + 「数据量较大，请联系管理员分批导出」；正常量 → `status="ready"` 且 `rows.total` 与包内一致、`download_url` 可直接下载（复用 `/files/artifacts/{token}`）；**TD2**：删除后逐表 0，但 `plugin_task`/`plugin_artifact` **各留 1 行**且其业务字段为空；响应含 `retained_tables`（四张知识库表）与 `audit_pending_dba`；`tenant.status=suspended` 且 `suspended_reason` 非空；**TTL 分开**：查 `plugin_artifact` 的 `expires_at - created_at`，`purpose=proof_of_deletion` **>1 天**、导出包 **<1 天**（现状实现 15 分钟）；并验证证明在 `retention_cleanup` 跑过一轮后**仍可下载** | L |
 | **T4-05.4** | 轻量版编排（9 容器）+ nginx + 资源限制 + healthcheck + `validate_lite_up.sh` | `deploy/docker-compose.lite.yml`、`deploy/nginx/nginx.conf`、`deploy/nginx/lite.conf`、`deploy/validate_lite_up.sh`、`deploy/.env.lite.example` | T4-05.2、T4-03.1 | `bash deploy/validate_lite_up.sh` → `ready in <180s` + `status=ok`；`docker stats` 总内存 < 6GB；`grep -c healthcheck deploy/docker-compose.lite.yml` ≥ 有状态服务数 | L |
-| **T4-05.5** | 离线包 + 升级/回滚脚本 + `images.lock` 增 `digest`；**升级预检含 `vector` 扩展**（§9.3.1） | `deploy/install.sh`、`upgrade.sh`、`rollback.sh`、`backup.sh`、`restore.sh`、**`sql/enable-vector-extension.sql`（新建）**、`deploy/images.lock`、`deploy/validate_packaging.py` | T4-05.4、T4-01.4 | 断网全新环境 `bash install.sh` 一次成功；`sha256sum -c checksums.txt` 全通过；`upgrade→rollback→upgrade` 三轮数据一致；**`vector` 预检**：① 全新装库（initdb 超级用户建过扩展）→ `upgrade.sh` 预检通过、不进中止分支；② 手工 `DROP EXTENSION vector` 后跑 `upgrade.sh` → **退出码 4、未执行任何迁移**、打印 §9.3.1 的逐字文案、`sql/enable-vector-extension.sql` 内容随之输出 | L |
+| **T4-05.5** | 离线包 + 升级/回滚脚本 + `images.lock` 增 `digest`；**升级预检含 `vector` 扩展**（§9.3.1） | `deploy/install.sh`、`upgrade.sh`、`rollback.sh`、`backup.sh`、`restore.sh`、**`sql/enable-vector-extension.sql`（新建）**、`deploy/images.lock`、`deploy/validate_packaging.py` | T4-05.4、T4-01.4 | 断网全新环境 `bash install.sh` 一次成功；`sha256sum -c checksums.txt` 全通过；`upgrade→rollback→upgrade` 三轮数据一致；**`vector` 预检**：① 全新装库（initdb 超级用户建过扩展）→ `upgrade.sh` 预检通过、不进中止分支；② 手工 `DROP EXTENSION vector` 后跑 `upgrade.sh` → **退出码 4、未执行任何迁移**、打印 §9.3.1 的逐字文案、`sql/enable-vector-extension.sql` 内容随之输出；**回滚范围**：`bash rollback.sh 0005` → **`exit 7`** + 打印「该版本无自动回滚脚本，请 DBA 按 runbook 手工处理」且**未执行任何 down SQL**；`bash rollback.sh 0008` → 调 `migrate.py --rollback 0008` 成功、`schema_migration` 少一行、`plugin_artifact` 的 `content_type` 列仍在（0008 与 0006 不互相关联，只退 0008）；**薄封装**：`grep -cE "psql|DROP TABLE" deploy/rollback.sh` = 0（脚本内不得出现 DDL，全部走 CLI）；**维护闸门**：不设 `OA_MAINTENANCE=1` → `exit 3`；设了之后 `docker ps` 中 `oal-proxy`/`oal-web` 已停止，结束后恢复 | L |
 | **T4-05.6** | SBOM + `.difypkg` 扫描 + 合规三件套 + About 页；**DBA runbook 顶部单列 `vector` 扩展步骤**（§9.3.1） | `deploy/sbom/generate.py`、`deploy/validate_offline_pkgs.py`、`.github/workflows/sbom.yml`、`docs/compliance/privacy-policy.md`、`dpa-template.md`、`security-whitepaper.md`、`apps/web/src/app/(main)/about/page.tsx` | T4-05.5 | `jq '.components\|length' sbom.cdx.json` >0 且 4 前缀各 ≥1；`python deploy/validate_offline_pkgs.py --self-test` 正样本 0 / 负样本非 0；CI `license-scan` success | L |
 | **T4-05.7** | 性能基线 + 金标集执行 + 交付文档；**部署手册单列「postgres 需安装 vector 扩展（超级用户执行）」** | `scripts/bench/*.py`、`docs/perf-disclosure.md`、`qa/goldset/*`、`docs/deployment-guide.md`、`docs/user-guide.md`、`docs/key-rotation-checklist.md` | T4-05.4 | 文档反引号路径全部 `ls` 到（脚本断言）；`docs/perf-disclosure.md` 每个数字可回溯到 `results/`；**`grep -c "CREATE EXTENSION IF NOT EXISTS vector" docs/deployment-guide.md` ≥1** 且该段落在**「升级已有环境」章节之内**（不是附录）；runbook 中出现「镜像换了不等于扩展装了」这句原话 | L |
 
