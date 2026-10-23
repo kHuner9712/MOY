@@ -56,6 +56,11 @@ junit.xml
 !.env.example
 # 轻量版的样例文件必须入库（`.env.*` 会连它一起忽略）；真实 `.env.lite` 仍不入库
 !.env.lite.example
+
+# install.sh 的安装台账（9 个镜像 digest + 5 份 init 脚本指纹 + 安装时间）：
+# 属**现场状态**，不入库。它一旦入库，upgrade 就会拿"别人机器的基线"去比对
+# 本机，结论必然是"基线被人改过"。
+deploy/.installed-manifest.json*
 *.pem
 *.key
 secrets/

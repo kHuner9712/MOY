@@ -865,4 +865,10 @@ main() {
   echo "=================================================================="
 }
 
-main "$@"
+# 只在**直接执行**时跑主流程。
+# 作为库被 source（deploy/install.sh 复用 wait_service_healthy / wait_readyz /
+# align_app_role_password / assert_containers / assert_all_healthy / abort_env）时
+# 必须什么都不做——否则一个 `source` 就会把整个起栈校验连带跑一遍。
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
