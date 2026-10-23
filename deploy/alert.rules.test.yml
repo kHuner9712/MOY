@@ -1,0 +1,220 @@
+# ===========================================================================
+# 告警规则的**确定性**回归（阶段四 T4-05.2，交付物 + 回归资产）
+#
+# 为什么要有这个文件：`ApiErrorRateHigh` 的判据是"2m 窗口 + for 2m ≈ 4 分钟 firing"，
+# 靠"打 30 次 5xx 再等 4 分钟"既慢又不可复现（真实 5xx 只能来自未捕获异常，
+# 硬造要么加测试端点破端点预算、要么 pause 数据库污染环境）。
+# `promtool test rules` 用**合成序列**把 5 条规则的时间语义钉死：
+# 输入什么序列、在第几分钟、应该 firing 还是 inactive，全部可离线复跑。
+#
+# 跑法（不需要起任何服务）：
+#   docker run --rm --entrypoint promtool \
+#     -v "$PWD/deploy:/etc/prometheus" \
+#     prom/prometheus:v3.15.0 test rules /etc/prometheus/alert.rules.test.yml
+# 期望输出：`SUCCESS`
+#   - Windows/Git-Bash 需加 `MSYS_NO_PATHCONV=1`，否则 `/etc/prometheus/...`
+#     会被 MSYS 改写成 `<git-root>/etc/prometheus/...` 而报 "path does not exist"。
+#   - `prom/prometheus` 镜像入口是 `prometheus`，必须 `--entrypoint promtool`。
+#
+# ⚠ 三条容易写错的时间语义（本文件已按真实行为钉死，改动前先读）：
+#
+# 1. **`rate()` 只需要窗口内 2 个样本**，不等窗口"填满"。所以"序列从第 0 分钟
+#    就有流量"的合成数据会让 `rate(x[2m])` 在第 1 分钟就算得出来——比真实场景
+#    （cold start 后才开始有 5xx）早 1 分钟 pending。因此下面的序列**前 2 分钟
+#    是 0**，模拟"窗口内还没有数据"，才能验证"约 4 分钟 firing"这个判据。
+# 2. **计数器的 `rate()` 在常量序列上恒为 0**。写 `values: '80+0x8'` 得到的
+#    rate 全是 0，`histogram_quantile` 拿到全 0 分布返回 NaN，`NaN > 3` 为假——
+#    这样一个"永远不告警"的用例会**假装通过**。因此延迟桶一律用递增序列。
+# 3. **`for` 是"持续满足"而不是"满足过"**，且边界（恰好满 `for`）算 firing；
+#    下面的用例刻意避开边界时刻（用 +1m 断言），只钉"之前不响、之后响"。
+# ===========================================================================
+
+rule_files:
+  - /etc/prometheus/alert.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # -------------------------------------------------------------------------
+  # 1. ApiErrorRateHigh：5xx 占比 > 5% 且持续 2 分钟才 firing（≈4 分钟）
+  # -------------------------------------------------------------------------
+  - name: 5xx 占比超 5% 约 4 分钟 firing
+    interval: 1m
+    input_series:
+      # 前 2 分钟无流量（t=0、t=1 为 0），第 2 分钟起每秒 500 请求是 5xx，
+      # 与 4500 成功请求合计 → 5xx 占比 10%
+      - series: 'http_requests_total{method="POST",route="/api/v1/model/generate",status="500"}'
+        values: '0 0 500+500x6'
+      - series: 'http_requests_total{method="POST",route="/api/v1/model/generate",status="200"}'
+        values: '0 0 4500+4500x6'
+    alert_rule_test:
+      # 第 2 分钟：ratio 刚算出 10%，但 `for: 2m` 还没满 → 不 firing
+      - eval_time: 2m
+        alertname: ApiErrorRateHigh
+        exp_alerts: []
+      # 第 3 分钟：仍在 pending 期内 → 不 firing
+      - eval_time: 3m
+        alertname: ApiErrorRateHigh
+        exp_alerts: []
+      # 第 5 分钟：`for: 2m` 早满 → firing（第 4 分钟边界起即 firing）
+      - eval_time: 5m
+        alertname: ApiErrorRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "接口 5xx 占比超过 5%"
+              description: "近 2 分钟 5xx 占比 > 5%（含 1 分钟评价窗口，实际约 4 分钟触发）。"
+
+  - name: 5xx 占比低于 5% 不 firing
+    interval: 1m
+    input_series:
+      # 100/min 的 5xx + 9900/min 的成功 → 1%
+      - series: 'http_requests_total{method="GET",route="/api/v1/model/catalog",status="502"}'
+        values: '100+100x8'
+      - series: 'http_requests_total{method="GET",route="/api/v1/model/catalog",status="200"}'
+        values: '9900+9900x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ApiErrorRateHigh
+        exp_alerts: []
+
+  # -------------------------------------------------------------------------
+  # 2. TaskQueueBacklog：> 50 持续 5 分钟
+  # -------------------------------------------------------------------------
+  - name: 队列深度 51 持续 5 分钟 firing
+    interval: 1m
+    input_series:
+      - series: 'task_queue_depth'
+        values: '51x10'
+    alert_rule_test:
+      # 第 4 分钟：pending 中（`for: 5m` 未满）
+      - eval_time: 4m
+        alertname: TaskQueueBacklog
+        exp_alerts: []
+      # 第 6 分钟：越过 5 分钟 → firing
+      - eval_time: 6m
+        alertname: TaskQueueBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "后台任务积压超过 50"
+              description: "队列深度持续 5 分钟 > 50：检查 JobRunner 是否在跑、是否有任务卡住租约。"
+
+  - name: 队列深度 50 不告警（阈值是严格大于）
+    interval: 1m
+    input_series:
+      - series: 'task_queue_depth'
+        values: '50x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: TaskQueueBacklog
+        exp_alerts: []
+
+  # -------------------------------------------------------------------------
+  # 3. TenantBudgetNearlyLimit：预算比例 > 0.8 持续 10 分钟
+  # -------------------------------------------------------------------------
+  - name: 预算用超 80% 持续 10 分钟 firing
+    interval: 1m
+    input_series:
+      - series: 'tenant_budget_used_ratio'
+        values: '0.85x20'
+    alert_rule_test:
+      # 第 9 分钟：pending 中
+      - eval_time: 9m
+        alertname: TenantBudgetNearlyLimit
+        exp_alerts: []
+      # 第 12 分钟：越过 10 分钟 → firing
+      - eval_time: 12m
+        alertname: TenantBudgetNearlyLimit
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "租户月度预算已用超 80%"
+              description: "仅私有化模式注册该指标；SaaS 下按租户预算看板人工跟进。"
+
+  - name: 预算用 80% 不告警（阈值是严格大于）
+    interval: 1m
+    input_series:
+      - series: 'tenant_budget_used_ratio'
+        values: '0.8x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: TenantBudgetNearlyLimit
+        exp_alerts: []
+
+  # -------------------------------------------------------------------------
+  # 4. TargetDown：up == 0 持续 2 分钟
+  # -------------------------------------------------------------------------
+  - name: 抓取目标失联 2 分钟后 firing
+    interval: 1m
+    input_series:
+      - series: 'up{job="adapter",instance="adapter:8000"}'
+        values: '0x8'
+      - series: 'up{job="postgres",instance="postgres-exporter:9187"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: TargetDown
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: TargetDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: adapter
+              instance: adapter:8000
+            exp_annotations:
+              summary: "抓取目标失联"
+              description: "adapter / adapter:8000 连续 2 分钟抓取失败。"
+
+  # -------------------------------------------------------------------------
+  # 5. ApiLatencyP95High：P95 > 3s 且**排除流式路由**
+  # -------------------------------------------------------------------------
+  - name: 非流式路由 P95 超 3 秒 firing
+    interval: 1m
+    input_series:
+      # 递增计数器（常量序列的 rate 恒为 0，P95 会算成 NaN —— 那种用例是假通过）。
+      # 5 分钟窗口内的速率：le=1 为 0.4/s，le=5 为 1.0/s，le=+Inf 共 1.0/s
+      # → P95 落在 (1, 5] 桶，插值 ≈ 4.7s > 3s。
+      - series: 'http_request_duration_seconds_bucket{route="/api/v1/model/generate",le="1"}'
+        values: '100+24x8'
+      - series: 'http_request_duration_seconds_bucket{route="/api/v1/model/generate",le="5"}'
+        values: '1000+60x8'
+      - series: 'http_request_duration_seconds_bucket{route="/api/v1/model/generate",le="10"}'
+        values: '1100+60x8'
+      - series: 'http_request_duration_seconds_bucket{route="/api/v1/model/generate",le="+Inf"}'
+        values: '1200+60x8'
+    alert_rule_test:
+      # 第 5 分钟：pending 中（`for: 5m` 未满）
+      - eval_time: 5m
+        alertname: ApiLatencyP95High
+        exp_alerts: []
+      # 第 7 分钟：越过 5 分钟 → firing
+      - eval_time: 7m
+        alertname: ApiLatencyP95High
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "接口 P95 延迟超过 3 秒"
+              description: "已排除流式路由（流式耗时取决于回答长度，纳入会长期误报）。"
+
+  - name: 流式路由再慢也不计入 P95（route!~".*stream.*"）
+    interval: 1m
+    input_series:
+      # 只喂流式路由，且 P95 落在 10s 附近（插值 ≈ 9.75s）：若正则没排除它会立刻告警
+      - series: 'http_request_duration_seconds_bucket{route="/api/v1/model/generate/stream",le="1"}'
+        values: '100+0x8'
+      - series: 'http_request_duration_seconds_bucket{route="/api/v1/model/generate/stream",le="5"}'
+        values: '100+0x8'
+      - series: 'http_request_duration_seconds_bucket{route="/api/v1/model/generate/stream",le="10"}'
+        values: '100+60x8'
+      - series: 'http_request_duration_seconds_bucket{route="/api/v1/model/generate/stream",le="+Inf"}'
+        values: '100+60x8'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ApiLatencyP95High
+        exp_alerts: []
