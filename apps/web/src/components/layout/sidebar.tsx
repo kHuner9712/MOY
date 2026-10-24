@@ -56,10 +56,12 @@ const PLUGIN_NAV_HREF = '/plugins';
  * 不在侧栏出现、但需要独立标题的路由前缀。
  *
  * 说明：插件详情与工作台不进一级菜单（它们从市场 / 已添加到进入），
- * 但页面顶部标题必须稳定，否则用户从卡片跳进来会看到上一个页面的标题。
+ * 运营后台同理（由 URL 直达，且移动端刻意不给入口——企业账号点进去必然被拒），
+ * 但页面顶部标题必须稳定，否则用户跳进来会看到上一个页面的标题。
  */
 const EXTRA_TITLES: ReadonlyArray<{ prefix: string; label: string }> = [
   { prefix: '/workbench', label: '工作台' },
+  { prefix: '/ops', label: '运营后台' },
 ];
 
 /**

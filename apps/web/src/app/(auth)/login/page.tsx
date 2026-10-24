@@ -262,7 +262,14 @@ export default function LoginPage(): React.JSX.Element {
           </div>
         )}
 
-        <p className="text-center text-xs text-muted-foreground">服务状态：{getAdapterBaseUrl()}</p>
+        {/* 服务状态只在开发构建显示：联调时必须一眼看到连的是哪个适配层，
+            但它的取值是后端地址，属于「用户可见文案不得出现后端地址」的红线内容。
+            写成门控而不是删掉，是为了不把「生产不暴露」做成「开发者看不见」。 */}
+        {IS_PRODUCTION_BUILD ? null : (
+          <p className="text-center text-xs text-muted-foreground">
+            服务状态：{getAdapterBaseUrl()}
+          </p>
+        )}
       </CardContent>
     </Card>
   );

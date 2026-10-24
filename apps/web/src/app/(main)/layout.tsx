@@ -63,7 +63,7 @@ export default function MainLayout({
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="flex h-16 items-center justify-between gap-3 border-b px-4 md:px-6">
               <h1 className="min-w-0 flex-1 truncate whitespace-nowrap text-base font-semibold">
-                {current?.label ?? '办公 AI 平台'}
+                {current?.label ?? ''}
               </h1>
               <MobileNav />
             </header>
