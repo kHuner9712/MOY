@@ -1,0 +1,25 @@
+sequenceDiagram
+    actor U as 用户
+    participant W as WorkflowsPage
+    participant C as api-client(statsApi)
+    participant API as GET /api/v1/stats/tasks
+    participant S as TaskStore.task_stats
+    participant DB as plugin_task（PG）/ 内存存储
+
+    U->>W: 打开工作流页
+    W->>C: statsApi.tasks("7d")
+    C->>API: GET /api/v1/stats/tasks?range=7d
+    API->>API: get_request_context（登录 + 租户解析 + 限流）
+    API->>S: task_stats(tenant_id, since, until)
+    alt PG 后端（business_store=postgres）
+        S->>DB: 一条聚合 SQL（COUNT FILTER / percentile_cont / COUNT DISTINCT）
+    else 内存后端
+        S->>DB: 同公式遍历计算（as_datetime 解析窗口）
+    end
+    DB-->>S: 原始聚合值
+    S-->>API: TaskStats（计数/合计/分位）
+    API->>API: 计算比率并 round（全系统唯一取整点）
+    API-->>C: {code:0, data:TaskStatsData}
+    C-->>W: stats（QUERY_KEYS.taskStats）
+    W-->>U: 4 张指标卡（统计期 + 样本量 + 小样本提示）
+    Note over W,U: 错误态：ErrorState + onRetry 重取；<br/>加载态：Skeleton 卡；total<10：「样本还少，仅供参考」

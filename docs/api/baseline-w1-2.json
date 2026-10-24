@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "frozen_target": 2,
+  "note": "W1 增量登记 2 个只读端点（架构 §2.3 门禁基础设施：W1-A1 任务统计 / W1-B1 能力推荐）。口径照 baseline-phase4-10.json 先例：present 由门禁按实际 OpenAPI 文档算出，missing 以 [PENDING] 打印但默认不判红；--strict 下 missing>0 即红。任何未登记的新端点一律立即判红（算进 core → G1 多出端点），这条没有放宽开关。路径必须与实现逐字对齐（GET /api/v1/stats/tasks、GET /api/v1/capabilities/recommend），否则门禁会把同一个端点算成两条。",
+  "endpoints": [
+    {
+      "id": "W1-A1",
+      "method": "GET",
+      "path": "/api/v1/stats/tasks"
+    },
+    {
+      "id": "W1-B1",
+      "method": "GET",
+      "path": "/api/v1/capabilities/recommend"
+    }
+  ]
+}

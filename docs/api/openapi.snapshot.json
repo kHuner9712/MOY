@@ -246,6 +246,32 @@
         "title": "ApiResponse[CapabilityPolicyData]",
         "type": "object"
       },
+      "ApiResponse_CapabilityRecommendData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CapabilityRecommendData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[CapabilityRecommendData]",
+        "type": "object"
+      },
       "ApiResponse_CatalogData_": {
         "properties": {
           "code": {
@@ -348,6 +374,84 @@
           }
         },
         "title": "ApiResponse[ConnectionData]",
+        "type": "object"
+      },
+      "ApiResponse_ConversationDeleteData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationDeleteData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[ConversationDeleteData]",
+        "type": "object"
+      },
+      "ApiResponse_ConversationPageData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationPageData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[ConversationPageData]",
+        "type": "object"
+      },
+      "ApiResponse_ConversationUpdateData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationUpdateData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[ConversationUpdateData]",
         "type": "object"
       },
       "ApiResponse_CreateBaseData_": {
@@ -920,6 +1024,136 @@
           }
         },
         "title": "ApiResponse[MarketDetailData]",
+        "type": "object"
+      },
+      "ApiResponse_MemoryBatchDeleteData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryBatchDeleteData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[MemoryBatchDeleteData]",
+        "type": "object"
+      },
+      "ApiResponse_MemoryDeleteData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryDeleteData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[MemoryDeleteData]",
+        "type": "object"
+      },
+      "ApiResponse_MemoryPageData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryPageData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[MemoryPageData]",
+        "type": "object"
+      },
+      "ApiResponse_MemorySettingsData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemorySettingsData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[MemorySettingsData]",
+        "type": "object"
+      },
+      "ApiResponse_MessagePageData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MessagePageData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[MessagePageData]",
         "type": "object"
       },
       "ApiResponse_OpsMetricsData_": {
@@ -1832,6 +2066,84 @@
         "title": "ApiResponse[TaskDetailData]",
         "type": "object"
       },
+      "ApiResponse_TaskStatsData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskStatsData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[TaskStatsData]",
+        "type": "object"
+      },
+      "ApiResponse_TenantDataDeleteData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TenantDataDeleteData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[TenantDataDeleteData]",
+        "type": "object"
+      },
+      "ApiResponse_TenantDataExportData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TenantDataExportData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[TenantDataExportData]",
+        "type": "object"
+      },
       "ApiResponse_TenantDetailData_": {
         "properties": {
           "code": {
@@ -2171,8 +2483,14 @@
         "type": "object"
       },
       "Artifact": {
-        "description": "任务产物。\n\nAttributes:\n    type: 产物类型。\n    name: 产物名称。\n    download_url: 下载地址（`file` 类型）。\n    url: 外部链接（`link` 类型）。",
+        "description": "任务产物。\n\nAttributes:\n    type: 产物类型。\n    name: 产物名称。\n    download_url: 下载地址（`file` 类型）。\n    url: 外部链接（`link` 类型）。\n    output_key: 产物键（与插件声明 `outputs[].key` 对齐，阶段三加性字段）。\n    content_sha256: 内容摘要（前端据此判断\"文件到底换没换\"，阶段三加性字段）。",
         "properties": {
+          "content_sha256": {
+            "default": "",
+            "description": "内容摘要（阶段三加性字段）",
+            "title": "Content Sha256",
+            "type": "string"
+          },
           "download_url": {
             "anyOf": [
               {
@@ -2189,6 +2507,12 @@
             "default": "",
             "description": "产物名称",
             "title": "Name",
+            "type": "string"
+          },
+          "output_key": {
+            "default": "",
+            "description": "产物键（阶段三加性字段）",
+            "title": "Output Key",
             "type": "string"
           },
           "type": {
@@ -2719,6 +3043,108 @@
         "title": "CancelTaskData",
         "type": "object"
       },
+      "CapabilityCard": {
+        "description": "一张能力推荐卡（插件或工具；实时组装，不落库）。\n\nAttributes:\n    id: 能力标识（插件为 `plugin_id`；工具为 `tool:{tool_type}`）。\n    kind: 能力类型（`plugin` 可发起任务；`tool` 落地到插件市场）。\n    name: 能力名称（插件声明 / 工具注册表原值）。\n    summary: 一句话说明（插件摘要；工具为操作展示名拼接）。\n    category: 业务分类（声明原值）。\n    score: 命中得分（兜底与空目标场景为 0）。\n    matched_terms: 命中词（去重；兜底/空目标为空列表）。\n    matched_fields: 命中字段（契约字段名；兜底/空目标为空列表）。\n    inputs: 所需输入提示（工具恒为空列表）。",
+        "properties": {
+          "category": {
+            "default": "",
+            "description": "业务分类",
+            "title": "Category",
+            "type": "string"
+          },
+          "id": {
+            "default": "",
+            "description": "能力标识",
+            "title": "Id",
+            "type": "string"
+          },
+          "inputs": {
+            "description": "所需输入提示",
+            "items": {
+              "$ref": "#/components/schemas/CapabilityInputBrief"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "kind": {
+            "default": "plugin",
+            "description": "能力类型",
+            "enum": [
+              "plugin",
+              "tool"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "matched_fields": {
+            "description": "命中字段",
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Fields",
+            "type": "array"
+          },
+          "matched_terms": {
+            "description": "命中词",
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Terms",
+            "type": "array"
+          },
+          "name": {
+            "default": "",
+            "description": "能力名称",
+            "title": "Name",
+            "type": "string"
+          },
+          "score": {
+            "default": 0,
+            "description": "命中得分",
+            "title": "Score",
+            "type": "integer"
+          },
+          "summary": {
+            "default": "",
+            "description": "一句话说明",
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "title": "CapabilityCard",
+        "type": "object"
+      },
+      "CapabilityInputBrief": {
+        "description": "所需输入提示（D-17「所需输入提示」的契约形态）。\n\nAttributes:\n    key: 输入键（插件声明 `inputs[].key`）。\n    label: 用户可见名称（插件声明 `inputs[].label`）。\n    type: 控件类型（`text` / `textarea` / `select` / `email` / `file` 等）。\n    required: 是否必填。",
+        "properties": {
+          "key": {
+            "default": "",
+            "description": "输入键",
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "default": "",
+            "description": "输入项名称",
+            "title": "Label",
+            "type": "string"
+          },
+          "required": {
+            "default": false,
+            "description": "是否必填",
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "default": "",
+            "description": "控件类型",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "CapabilityInputBrief",
+        "type": "object"
+      },
       "CapabilityListData": {
         "description": "能力清单（PL4）。\n\nAttributes:\n    items: 能力清单（含 `org_switch_enabled`）。\n    granted_capabilities: 当前成员已授权的能力键。\n    org_switch_updated_at: 企业开关最近更新时间。\n    installable: 是否可安装。\n    install_block_reason: 不可安装原因。",
         "properties": {
@@ -2849,6 +3275,51 @@
           "enabled"
         ],
         "title": "CapabilityPolicyRequestItem",
+        "type": "object"
+      },
+      "CapabilityRecommendData": {
+        "description": "目标式能力推荐结果。\n\nAttributes:\n    goal: 用户目标回显（请求原值）。\n    matched: 是否有 ≥1 条能力得分 > 0。\n    fallback: 是否走了「无命中兜底」（目录兜底 + 引导文案）。\n    fallback_hint: 兜底引导文案（无兜底时为空串；禁占位词）。\n    total_catalog: 目录总条数（6 插件 + 5 工具，实时组装）。\n    items: 推荐卡列表（无命中兜底/空目标时为目录前 `limit` 条，不得为空）。",
+        "properties": {
+          "fallback": {
+            "default": false,
+            "description": "是否无命中兜底",
+            "title": "Fallback",
+            "type": "boolean"
+          },
+          "fallback_hint": {
+            "default": "",
+            "description": "兜底引导文案",
+            "title": "Fallback Hint",
+            "type": "string"
+          },
+          "goal": {
+            "default": "",
+            "description": "用户目标回显",
+            "title": "Goal",
+            "type": "string"
+          },
+          "items": {
+            "description": "推荐卡列表",
+            "items": {
+              "$ref": "#/components/schemas/CapabilityCard"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "matched": {
+            "default": false,
+            "description": "是否有命中",
+            "title": "Matched",
+            "type": "boolean"
+          },
+          "total_catalog": {
+            "default": 0,
+            "description": "目录总条数",
+            "title": "Total Catalog",
+            "type": "integer"
+          }
+        },
+        "title": "CapabilityRecommendData",
         "type": "object"
       },
       "CatalogData": {
@@ -3213,6 +3684,152 @@
         ],
         "title": "ConnectionStatus",
         "type": "string"
+      },
+      "ConversationDeleteData": {
+        "description": "会话删除结果（MC3）。\n\nAttributes:\n    conversation_id: 会话 ID。\n    deleted_at: 删除时间。\n    recoverable_until: 可恢复截止时间（默认 30 天后，`conversation_soft_delete_recover_days`）。",
+        "properties": {
+          "conversation_id": {
+            "default": "",
+            "description": "会话 ID",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "deleted_at": {
+            "default": "",
+            "description": "删除时间（ISO 8601，UTC）",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "recoverable_until": {
+            "default": "",
+            "description": "可恢复截止时间（ISO 8601，UTC）；超过后将被清理任务物理删除",
+            "title": "Recoverable Until",
+            "type": "string"
+          }
+        },
+        "title": "ConversationDeleteData",
+        "type": "object"
+      },
+      "ConversationItem": {
+        "description": "会话列表项（MC1）。\n\nAttributes:\n    conversation_id: 会话 ID。\n    title: 标题（首条用户消息前 20 字，决策 A-6）。\n    last_message_at: 最近消息时间；无消息时为空串。\n    message_count: 消息条数。\n    archived: 是否归档。",
+        "properties": {
+          "archived": {
+            "default": false,
+            "description": "是否归档",
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "conversation_id": {
+            "default": "",
+            "description": "会话 ID",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "last_message_at": {
+            "default": "",
+            "description": "最近一条消息时间（ISO 8601，UTC）",
+            "title": "Last Message At",
+            "type": "string"
+          },
+          "message_count": {
+            "default": 0,
+            "description": "消息条数",
+            "minimum": 0.0,
+            "title": "Message Count",
+            "type": "integer"
+          },
+          "title": {
+            "default": "",
+            "description": "会话标题",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "title": "ConversationItem",
+        "type": "object"
+      },
+      "ConversationPageData": {
+        "description": "会话列表（MC1 的 `data`）。",
+        "properties": {
+          "items": {
+            "description": "当前页数据",
+            "items": {
+              "$ref": "#/components/schemas/ConversationItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "分页元信息"
+          }
+        },
+        "title": "ConversationPageData",
+        "type": "object"
+      },
+      "ConversationUpdateData": {
+        "description": "会话更新结果（MC4）。\n\nAttributes:\n    conversation_id: 会话 ID。\n    title: 当前标题。\n    archived: 当前归档状态。\n    updated_at: 更新时间。",
+        "properties": {
+          "archived": {
+            "default": false,
+            "description": "是否归档",
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "conversation_id": {
+            "default": "",
+            "description": "会话 ID",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "description": "会话标题",
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "default": "",
+            "description": "更新时间（ISO 8601，UTC）",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "title": "ConversationUpdateData",
+        "type": "object"
+      },
+      "ConversationUpdateRequest": {
+        "additionalProperties": false,
+        "description": "会话更新请求（MC4）。\n\n两个字段都可选：只改标题、只改归档、或同时改，都合法。\n**不接受**其他字段（`extra=\"forbid\"`——多传一个 `user_id` 会被 20001 拒绝，\n而不是被静默忽略）。\n\nAttributes:\n    title: 新标题（≤120 字）。\n    archived: 是否归档。",
+        "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "是否归档",
+            "title": "Archived"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "会话标题",
+            "title": "Title"
+          }
+        },
+        "title": "ConversationUpdateRequest",
+        "type": "object"
       },
       "CreateBaseData": {
         "description": "R1 响应数据。\n\nAttributes:\n    base_id: 知识库 ID。\n    name: 知识库名称。\n    chunk_policy: 内容切分精细度。\n    created_at: 创建时间。",
@@ -4169,6 +4786,12 @@
             "title": "Content",
             "type": "string"
           },
+          "conversation_id": {
+            "default": "",
+            "description": "会话 ID（服务端生成时回填）",
+            "title": "Conversation Id",
+            "type": "string"
+          },
           "finish_reason": {
             "$ref": "#/components/schemas/FinishReason",
             "default": "stop",
@@ -4178,6 +4801,19 @@
             "description": "生成记录 ID，形如 gen_01HF8...",
             "title": "Generation Id",
             "type": "string"
+          },
+          "history_source": {
+            "default": "",
+            "description": "历史来源",
+            "title": "History Source",
+            "type": "string"
+          },
+          "ignored_client_history": {
+            "default": 0,
+            "description": "被忽略的客户端历史条数",
+            "minimum": 0.0,
+            "title": "Ignored Client History",
+            "type": "integer"
           },
           "notice_code": {
             "default": 0,
@@ -4211,9 +4847,9 @@
             "description": "上下文配置"
           },
           "conversation_id": {
-            "description": "会话 ID，形如 conv_01HF8...",
+            "default": "",
+            "description": "会话 ID（缺省由服务端生成，形如 conv_01HF8...）",
             "maxLength": 128,
-            "minLength": 1,
             "title": "Conversation Id",
             "type": "string"
           },
@@ -4244,7 +4880,6 @@
           }
         },
         "required": [
-          "conversation_id",
           "profile",
           "messages"
         ],
@@ -4254,6 +4889,16 @@
       "GenerationContext": {
         "description": "生成上下文配置。\n\nAttributes:\n    history_window: 携带的历史轮数，默认 20。\n    memory_hints: 上层记忆注入（P0-02，边界见 Q6）。",
         "properties": {
+          "assemble_from": {
+            "default": "server",
+            "description": "历史来源：server=服务端库，client=入参",
+            "enum": [
+              "server",
+              "client"
+            ],
+            "title": "Assemble From",
+            "type": "string"
+          },
           "history_window": {
             "default": 20,
             "description": "携带的历史轮数",
@@ -4709,6 +5354,15 @@
         },
         "title": "InstalledItem",
         "type": "object"
+      },
+      "IntegrationStatus": {
+        "description": "工具集成状态枚举（D-19：诚实标注「演示实现」）。\n\n区分「能力已登记、界面能看到」与「真的连上了第三方服务」：\n\n- `DEMO`：演示实现——连接器为桩实现，不产生任何真实第三方调用；\n- `LIVE`：已接入——连接器完成真实对接，可承载真实业务数据。\n\n默认取 `DEMO`（fail-honest）：新连接器在真正对接前无需声明即按演示标注，\n避免\"看起来能用、实际是空壳\"的误导。",
+        "enum": [
+          "demo",
+          "live"
+        ],
+        "title": "IntegrationStatus",
+        "type": "string"
       },
       "InvitationData": {
         "description": "U4 邀请响应数据。\n\nAttributes:\n    invitation_id: 邀请记录 ID。\n    org_id: 组织 ID。\n    email: 被邀请人邮箱。\n    role: 分配角色。\n    status: 邀请状态。\n    expires_at: 过期时间。",
@@ -5238,6 +5892,253 @@
         ],
         "title": "MemberStatus",
         "type": "string"
+      },
+      "MemoryBatchDeleteData": {
+        "description": "按类/全删结果（MM3）。\n\nAttributes:\n    deleted_count: 实际删除条数。\n    category: 本次删除的类别；空串表示全部。",
+        "properties": {
+          "category": {
+            "default": "",
+            "description": "类别（空表示全部）",
+            "title": "Category",
+            "type": "string"
+          },
+          "deleted_count": {
+            "default": 0,
+            "description": "删除条数",
+            "minimum": 0.0,
+            "title": "Deleted Count",
+            "type": "integer"
+          }
+        },
+        "title": "MemoryBatchDeleteData",
+        "type": "object"
+      },
+      "MemoryDeleteData": {
+        "description": "单条删除结果（MM2）。\n\nAttributes:\n    memory_id: 被删除的记忆 ID。\n    deleted: 恒为 True（删除是**硬删**，不存在\"标记为已删\"）。",
+        "properties": {
+          "deleted": {
+            "default": true,
+            "description": "是否已删除",
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "memory_id": {
+            "default": "",
+            "description": "记忆 ID",
+            "title": "Memory Id",
+            "type": "string"
+          }
+        },
+        "title": "MemoryDeleteData",
+        "type": "object"
+      },
+      "MemoryItem": {
+        "description": "记忆列表项（MM1）。\n\nAttributes:\n    memory_id: 记忆 ID。\n    category: 类别（`identity|org|preference|convention|constraint|project`）。\n    content: 事实正文（≤60 字）。\n    confidence: `high`（明确陈述）/ `low`（推测，不参与回答）。\n    source_conversation_id: 来源会话 ID。\n    updated_at: 更新时间。\n    superseded_by: 被哪条新说法取代；非空表示这是历史值。",
+        "properties": {
+          "category": {
+            "default": "identity",
+            "description": "类别",
+            "title": "Category",
+            "type": "string"
+          },
+          "confidence": {
+            "default": "high",
+            "description": "置信度",
+            "title": "Confidence",
+            "type": "string"
+          },
+          "content": {
+            "default": "",
+            "description": "正文",
+            "title": "Content",
+            "type": "string"
+          },
+          "memory_id": {
+            "default": "",
+            "description": "记忆 ID",
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "source_conversation_id": {
+            "default": "",
+            "description": "来源会话",
+            "title": "Source Conversation Id",
+            "type": "string"
+          },
+          "superseded_by": {
+            "default": "",
+            "description": "被哪条新说法取代（空=当前值）",
+            "title": "Superseded By",
+            "type": "string"
+          },
+          "updated_at": {
+            "default": "",
+            "description": "更新时间（ISO 8601，UTC）",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "title": "MemoryItem",
+        "type": "object"
+      },
+      "MemoryPageData": {
+        "description": "记忆列表（MM1 的 `data`）。\n\nAttributes:\n    enabled: 记忆功能的全局开关。与列表**同包**下发：前端才能区分\n        \"已关闭\"与\"还没记到东西\"两种空态（PRD §6.1 的三态要求）。\n    category_switches: 分类开关（只含被显式改过的类别，缺省视为开启）。\n        与 `enabled` 同理，**必须同包下发**：否则\"我的记忆\"页的分类开关\n        在首次渲染时只能全显示为开，用户会看到与真实状态不一致的界面。",
+        "properties": {
+          "category_switches": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "分类开关（缺省视为开启）",
+            "title": "Category Switches",
+            "type": "object"
+          },
+          "enabled": {
+            "default": true,
+            "description": "记忆功能是否开启",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "items": {
+            "description": "当前页数据",
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "分页元信息"
+          }
+        },
+        "title": "MemoryPageData",
+        "type": "object"
+      },
+      "MemorySettingsData": {
+        "description": "开关状态（MM4 的 `data`）。\n\nAttributes:\n    enabled: 全局开关。\n    category_switches: 分类开关（只包含被显式改过的类别；缺省视为开启）。\n    updated_at: 更新时间。",
+        "properties": {
+          "category_switches": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "分类开关（缺省视为开启）",
+            "title": "Category Switches",
+            "type": "object"
+          },
+          "enabled": {
+            "default": true,
+            "description": "记忆功能总开关",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "default": "",
+            "description": "更新时间（ISO 8601，UTC）",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "title": "MemorySettingsData",
+        "type": "object"
+      },
+      "MemorySettingsRequest": {
+        "additionalProperties": false,
+        "description": "开关更新请求（MM4）。\n\n两项都可选，但**至少传一项**；`category_switches` 只覆盖传入的键\n（没传的类别保持原样，否则\"只关一类\"会把其它类一起重置）。\n\nAttributes:\n    enabled: 全局开关。\n    category_switches: 分类开关增量。",
+        "properties": {
+          "category_switches": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "分类开关（只覆盖传入的类别）",
+            "title": "Category Switches"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "记忆功能总开关",
+            "title": "Enabled"
+          }
+        },
+        "title": "MemorySettingsRequest",
+        "type": "object"
+      },
+      "MessageItem": {
+        "description": "消息项（MC2）。\n\nAttributes:\n    message_id: 消息 ID。\n    role: `user|assistant|system`。\n    content: 正文。\n    status: `pending|streaming|settled|aborted|failed`。\n    created_at: 创建时间。\n    truncated: 是否因中断截断。",
+        "properties": {
+          "content": {
+            "default": "",
+            "description": "消息正文",
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "default": "",
+            "description": "创建时间（ISO 8601，UTC）",
+            "title": "Created At",
+            "type": "string"
+          },
+          "message_id": {
+            "default": "",
+            "description": "消息 ID",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "role": {
+            "default": "user",
+            "description": "消息角色",
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "default": "settled",
+            "description": "消息状态",
+            "title": "Status",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "description": "是否因中断而截断",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "MessageItem",
+        "type": "object"
+      },
+      "MessagePageData": {
+        "description": "消息分页（MC2 的 `data`）。\n\nAttributes:\n    items: 本页消息（**时间正序**返回，便于直接渲染）。\n    next_cursor: 继续往前翻的游标；为空表示已到最早一条。",
+        "properties": {
+          "items": {
+            "description": "本页消息（时间正序）",
+            "items": {
+              "$ref": "#/components/schemas/MessageItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "default": "",
+            "description": "下一页游标；空表示没有更早的消息",
+            "title": "Next Cursor",
+            "type": "string"
+          }
+        },
+        "title": "MessagePageData",
+        "type": "object"
       },
       "MessageRole": {
         "description": "消息角色枚举。",
@@ -7218,9 +8119,141 @@
         "title": "StateRequest",
         "type": "object"
       },
-      "StepItem": {
-        "description": "任务步骤条目（`title` / `output_summary` 为业务语言，底座节点类型名不暴露）。\n\nAttributes:\n    step_id: 步骤 ID。\n    sequence: 步骤序号。\n    title: 步骤业务名称。\n    status: 步骤状态。\n    started_at: 开始时间。\n    finished_at: 完成时间。\n    output_summary: 输出摘要。",
+      "StepArtifact": {
+        "description": "步骤产物（A4 `steps[].artifacts[]`）。\n\nAttributes:\n    artifact_id: 产物 ID。\n    output_key: 产物键。\n    type: 产物类型。\n    name: 产物名称。\n    version: 当前版本。\n    download_url: 下载地址（平台代理）。\n    url: 外链（`link` 类型）。\n    preview_text: 预览文本（表格前 5 行）。\n    content_sha256: 内容摘要。\n    editable: 是否可编辑（`link` / `file` 为 false）。\n    version_history: 历史版本（可回看、可下载）。",
         "properties": {
+          "artifact_id": {
+            "default": "",
+            "description": "产物 ID",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "content_sha256": {
+            "default": "",
+            "description": "内容摘要",
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "下载地址",
+            "title": "Download Url"
+          },
+          "editable": {
+            "default": false,
+            "description": "是否可编辑",
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "name": {
+            "default": "",
+            "description": "产物名称",
+            "title": "Name",
+            "type": "string"
+          },
+          "output_key": {
+            "default": "",
+            "description": "产物键",
+            "title": "Output Key",
+            "type": "string"
+          },
+          "preview_text": {
+            "default": "",
+            "description": "预览文本",
+            "title": "Preview Text",
+            "type": "string"
+          },
+          "type": {
+            "default": "text",
+            "description": "产物类型",
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "外部链接",
+            "title": "Url"
+          },
+          "version": {
+            "default": 1,
+            "description": "当前版本",
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "version_history": {
+            "description": "历史版本",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactVersionItem"
+            },
+            "title": "Version History",
+            "type": "array"
+          }
+        },
+        "title": "StepArtifact",
+        "type": "object"
+      },
+      "StepFailure": {
+        "description": "步骤失败信息（A4 `steps[].failure`，PRD E-9：就地展示、不弹错）。\n\nAttributes:\n    reason_text: 失败原因（业务语言）。\n    retryable: 是否可重试。\n    operator_action: 建议动作（业务语言）。",
+        "properties": {
+          "operator_action": {
+            "default": "",
+            "description": "建议动作，业务语言",
+            "title": "Operator Action",
+            "type": "string"
+          },
+          "reason_text": {
+            "default": "",
+            "description": "失败原因，业务语言",
+            "title": "Reason Text",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "description": "是否可重试",
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "title": "StepFailure",
+        "type": "object"
+      },
+      "StepItem": {
+        "description": "任务步骤条目（`title` / `output_summary` 为业务语言，底座节点类型名不暴露）。\n\nAttributes:\n    step_id: 步骤 ID。\n    sequence: 步骤序号。\n    title: 步骤业务名称。\n    status: 步骤状态。\n    started_at: 开始时间。\n    finished_at: 完成时间。\n    output_summary: 输出摘要。\n    artifacts: 该步产物（阶段三加性字段，A3/A4 工作流可视化要用）。\n    failure: 该步失败信息（阶段三加性字段，PRD E-9：就地展示、不弹错）。",
+        "properties": {
+          "artifacts": {
+            "description": "该步产物（阶段三加性字段）",
+            "items": {
+              "$ref": "#/components/schemas/StepArtifact"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepFailure"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "该步失败信息（阶段三加性字段）"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -7791,6 +8824,79 @@
         "title": "TaskResult",
         "type": "object"
       },
+      "TaskStatsData": {
+        "description": "工作流任务统计数据（M1/M3/M4/M5 + 辅助字段 + 统计期回显）。\n\nAttributes:\n    range: 统计期回显（与请求一致，`7d` / `30d`）。\n    total: 窗口内发起任务数（含期末未终态）。\n    completed: `status='completed'` 的任务数。\n    failed: `status='failed'` 的任务数。\n    cancelled: 用户主动取消数（`status='cancelled'` 且 `cancel_requested=true`；\n        系统取消留在完成率分母）。\n    active_users: 发起 ≥1 次的去重用户数（剔 `trigger_type='retry'`）。\n    completion_rate: M1 完成率，`completed/(total−cancelled)×100`，两位小数；\n        分母 0 时为 0.0。\n    avg_duration_seconds: M3 已完成任务平均总时长（秒，一位小数）；\n        **口径注记：含人工确认等待**（零迁移条件下该停留无落点，见设计 §9-Q1）。\n    p50_duration_seconds: M3 同口径 P50（线性插值，一位小数）。\n    repeat_user_rate: M4 重复使用率，同插件发起 ≥2 次用户/发起 ≥1 次用户×100，\n        两位小数；分母 0 时为 0.0。\n    units_per_success: M5 单位成功用量，已完成任务用量合计/已完成数，\n        两位小数；分母 0 时为 0.0。",
+        "properties": {
+          "active_users": {
+            "default": 0,
+            "description": "发起过的去重用户数（剔重试）",
+            "title": "Active Users",
+            "type": "integer"
+          },
+          "avg_duration_seconds": {
+            "default": 0.0,
+            "description": "已完成任务平均总时长（秒，一位小数）",
+            "title": "Avg Duration Seconds",
+            "type": "number"
+          },
+          "cancelled": {
+            "default": 0,
+            "description": "用户主动取消任务数",
+            "title": "Cancelled",
+            "type": "integer"
+          },
+          "completed": {
+            "default": 0,
+            "description": "已完成任务数",
+            "title": "Completed",
+            "type": "integer"
+          },
+          "completion_rate": {
+            "default": 0.0,
+            "description": "工作流任务完成率（百分比，两位小数）",
+            "title": "Completion Rate",
+            "type": "number"
+          },
+          "failed": {
+            "default": 0,
+            "description": "失败任务数",
+            "title": "Failed",
+            "type": "integer"
+          },
+          "p50_duration_seconds": {
+            "default": 0.0,
+            "description": "已完成任务时长中位数（秒，一位小数）",
+            "title": "P50 Duration Seconds",
+            "type": "number"
+          },
+          "range": {
+            "default": "7d",
+            "description": "统计期回显（7d / 30d）",
+            "title": "Range",
+            "type": "string"
+          },
+          "repeat_user_rate": {
+            "default": 0.0,
+            "description": "工作流任务重复使用率（百分比，两位小数）",
+            "title": "Repeat User Rate",
+            "type": "number"
+          },
+          "total": {
+            "default": 0,
+            "description": "窗口内发起任务数（含期末未终态）",
+            "title": "Total",
+            "type": "integer"
+          },
+          "units_per_success": {
+            "default": 0.0,
+            "description": "单位成功任务用量（两位小数）",
+            "title": "Units Per Success",
+            "type": "number"
+          }
+        },
+        "title": "TaskStatsData",
+        "type": "object"
+      },
       "TaskStatus": {
         "description": "任务状态枚举（底座原生状态已映射为自研状态）。\n\n阶段三 B19 **加性新增**两个值（不改既有五值的语义）：\n\n- `queued`：同租户同插件并发超限时的排队态（返回 200 + `queue_position`，\n  **不是** 429/20006——4xx 会被前端渲染成报错页，用户以为没创建成功）；\n- `waiting_confirm`：人工接管点（`confirm` 步骤未确认），**永不自动推进**。",
         "enum": [
@@ -7804,6 +8910,149 @@
         ],
         "title": "TaskStatus",
         "type": "string"
+      },
+      "TenantDataDeleteData": {
+        "description": "TD2 删除结果（**两段式**：应用侧已删 / 待 DBA 执行）。\n\nAttributes:\n    deletion_id: 删除 ID（同时也是删除证明产物 ID）。\n    deleted_at: 删除完成时间（ISO 8601）。\n    deleted_tables: 应用侧实际执行删除的表（0 行也算，表达\"查过且确认没了\"）。\n    deleted_rows: 表名 → 删除行数。\n    skipped_tables: 因无权限被跳过的表（当前只有 `audit_log`，且这是预期行为）。\n    retained_tables: 不纳入在线删除、需 DBA 全库脚本的表。\n    audit_pending_dba: 审计表剩余行数（**不与上面的行数合并**）。\n    audit_sql_hint: 交给 DBA 执行的 SQL。\n    proof_download_url: 删除证明下载地址（短期令牌）。",
+        "properties": {
+          "audit_pending_dba": {
+            "default": 0,
+            "title": "Audit Pending Dba",
+            "type": "integer"
+          },
+          "audit_sql_hint": {
+            "default": "",
+            "title": "Audit Sql Hint",
+            "type": "string"
+          },
+          "deleted_at": {
+            "default": "",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "deleted_rows": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Deleted Rows",
+            "type": "object"
+          },
+          "deleted_tables": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Deleted Tables",
+            "type": "array"
+          },
+          "deletion_id": {
+            "title": "Deletion Id",
+            "type": "string"
+          },
+          "proof_download_url": {
+            "default": "",
+            "title": "Proof Download Url",
+            "type": "string"
+          },
+          "retained_tables": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retained Tables",
+            "type": "array"
+          },
+          "skipped_tables": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skipped Tables",
+            "type": "array"
+          }
+        },
+        "required": [
+          "deletion_id"
+        ],
+        "title": "TenantDataDeleteData",
+        "type": "object"
+      },
+      "TenantDataDeleteRequest": {
+        "description": "TD2 删除请求（二次确认）。\n\nAttributes:\n    confirm_text: 用户逐字输入的企业名称；与库内名称不一致返回 18003。\n    scope: 删除范围；缺省 = 全部 5 类。",
+        "properties": {
+          "confirm_text": {
+            "description": "请输入完整的企业名称以确认（须与库内名称逐字一致）",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Confirm Text",
+            "type": "string"
+          },
+          "scope": {
+            "description": "删除范围：audit / usage / chat / memory / artifact",
+            "items": {
+              "type": "string"
+            },
+            "title": "Scope",
+            "type": "array"
+          }
+        },
+        "required": [
+          "confirm_text"
+        ],
+        "title": "TenantDataDeleteRequest",
+        "type": "object"
+      },
+      "TenantDataExportData": {
+        "description": "TD1 导出结果（同步完成，包已落产物库）。\n\nAttributes:\n    export_id: 导出 ID（同时也是产物 ID，可按此反查产物）。\n    status: 恒为 `ready`（同步生成完毕，无需轮询）。\n    download_url: 下载地址（短期令牌，复用 `/files/artifacts/{token}`）。\n    expires_at: 链接与包的过期时间（ISO 8601）。\n    rows: 各类别实测行数 + `total`。\n    size_bytes: 压缩包大小（字节）。",
+        "properties": {
+          "download_url": {
+            "default": "",
+            "title": "Download Url",
+            "type": "string"
+          },
+          "expires_at": {
+            "default": "",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "export_id": {
+            "title": "Export Id",
+            "type": "string"
+          },
+          "rows": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Rows",
+            "type": "object"
+          },
+          "size_bytes": {
+            "default": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "export_id"
+        ],
+        "title": "TenantDataExportData",
+        "type": "object"
+      },
+      "TenantDataExportRequest": {
+        "description": "TD1 导出请求。\n\nAttributes:\n    scope: 导出类别；缺省 = 全部 5 类。顺序不敏感，服务端按固定顺序输出。",
+        "properties": {
+          "scope": {
+            "description": "导出范围：audit / usage / chat / memory / artifact",
+            "items": {
+              "type": "string"
+            },
+            "title": "Scope",
+            "type": "array"
+          }
+        },
+        "title": "TenantDataExportRequest",
+        "type": "object"
       },
       "TenantDetailData": {
         "description": "OPS2 企业详情。\n\nAttributes:\n    tenant: 企业基本信息。\n    subscription: 订阅摘要。\n    usage: 用量摘要。\n    recent_orders: 近期订单（最多 10 条）。",
@@ -8190,7 +9439,7 @@
         "type": "object"
       },
       "ToolItem": {
-        "description": "工具类型条目（T1 注册表元素）。\n\nAttributes:\n    tool_type: 工具类型标识。\n    display_name: 业务化名称。\n    category: 业务化分类。\n    auth_type: 授权方式。\n    status: 可用状态。\n    operations: 能力清单。\n    timeout_ms: 超时声明（架构文档 3.0.4）。",
+        "description": "工具类型条目（T1 注册表元素）。\n\nAttributes:\n    tool_type: 工具类型标识。\n    display_name: 业务化名称。\n    category: 业务化分类。\n    auth_type: 授权方式。\n    status: 可用状态。\n    integration_status: 集成状态（`demo` 演示实现 / `live` 已接入真实服务）。\n    operations: 能力清单。\n    timeout_ms: 超时声明（架构文档 3.0.4）。",
         "properties": {
           "auth_type": {
             "$ref": "#/components/schemas/ToolAuthType",
@@ -8207,6 +9456,11 @@
             "description": "业务化名称",
             "title": "Display Name",
             "type": "string"
+          },
+          "integration_status": {
+            "$ref": "#/components/schemas/IntegrationStatus",
+            "default": "demo",
+            "description": "集成状态：demo 为演示实现（未连接真实第三方服务），live 为已接入"
           },
           "operations": {
             "description": "能力清单",
@@ -9237,11 +10491,19 @@
         "title": "Visibility",
         "type": "string"
       }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "bearerFormat": "JWT",
+        "description": "登录后获得的访问令牌，放在 `Authorization: Bearer <token>`",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
-    "description": "企业级跨生态办公 AI 平台 · 自研统一适配层标准接口 v1.0。\n\n## 统一约定\n\n- 所有接口返回 `{code, message, data}`；`code=0` 表示成功。\n- `message` 为面向用户的业务语言提示，前端直接展示；\n  技术细节（错误码、堆栈、下游原始错误）不会出现在响应中。\n- 除 `/healthz`、`/readyz` 外，均需携带 `Authorization: Bearer <access_token>`。\n- 所有写接口需携带 `Idempotency-Key` 请求头（UUID v4，24 小时内有效）。\n\n## 能力档位\n\n模型服务仅暴露能力档位（通用 / 编程 / 长文档 / 深度推理），\n真实模型名称与路由策略由平台内部维护，不对终端用户暴露。",
-    "title": "企业级跨生态办公 AI 平台 · 统一适配层",
+    "description": "Moy（麦子）· 自研统一适配层标准接口 v1.0。\n\n## 统一约定\n\n- 所有接口返回 `{code, message, data}`；`code=0` 表示成功。\n- `message` 为面向用户的业务语言提示，前端直接展示；\n  技术细节（错误码、堆栈、下游原始错误）不会出现在响应中。\n- 除 `/healthz`、`/readyz` 外，均需携带 `Authorization: Bearer <access_token>`。\n- 所有写接口需携带 `Idempotency-Key` 请求头（UUID v4，24 小时内有效）。\n\n## 能力档位\n\n模型服务仅暴露能力档位（通用 / 编程 / 长文档 / 深度推理），\n真实模型名称与路由策略由平台内部维护，不对终端用户暴露。",
+    "title": "Moy（麦子）· 统一适配层",
     "version": "1.0.0"
   },
   "openapi": "3.1.0",
@@ -9360,6 +10622,15 @@
               "title": "Created To",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -9384,6 +10655,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "A2 任务列表",
         "tags": [
           "Agent 服务"
@@ -9392,6 +10668,17 @@
       "post": {
         "description": "创建 Agent 任务（异步执行）。写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "create_task_api_v1_agent_tasks_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -9424,6 +10711,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "A1 创建任务",
         "tags": [
           "Agent 服务"
@@ -9445,6 +10737,15 @@
               "maxLength": 128,
               "minLength": 6,
               "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -9471,6 +10772,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "A3 任务状态查询",
         "tags": [
           "Agent 服务"
@@ -9507,6 +10813,15 @@
               "title": "Artifact Id",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -9541,6 +10856,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "WF2 编辑产物并重新导出",
         "tags": [
           "Agent 服务"
@@ -9562,6 +10882,15 @@
               "maxLength": 128,
               "minLength": 6,
               "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -9588,6 +10917,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "A5 取消任务",
         "tags": [
           "Agent 服务"
@@ -9611,6 +10945,15 @@
               "title": "Task Id",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -9628,6 +10971,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "A6 任务事件推送（SSE）",
         "tags": [
           "Agent 服务"
@@ -9649,6 +10997,15 @@
               "maxLength": 128,
               "minLength": 6,
               "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -9685,6 +11042,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "WF1 重试或继续任务",
         "tags": [
           "Agent 服务"
@@ -9706,6 +11068,15 @@
               "maxLength": 128,
               "minLength": 6,
               "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -9732,6 +11103,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "A4 步骤详情",
         "tags": [
           "Agent 服务"
@@ -9754,6 +11130,15 @@
               "maxLength": 7,
               "pattern": "^$|^\\d{4}-(0[1-9]|1[0-2])$",
               "title": "Period",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -9780,6 +11165,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "BL9 账单列表",
         "tags": [
           "计费"
@@ -9830,6 +11220,15 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -9854,6 +11253,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "BL7 订单列表",
         "tags": [
           "计费"
@@ -9862,6 +11266,17 @@
       "post": {
         "description": "创建套餐订单。同一企业存在未支付订单时返回 15004（不会产生第二个订单）。在线支付返回跳转地址，对公转账返回收款信息。订单 30 分钟未支付自动关闭。写接口，需携带 Idempotency-Key 请求头；需 billing:subscription:manage 权限。",
         "operationId": "create_order_api_v1_billing_orders_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -9894,6 +11309,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "BL6 创建订单",
         "tags": [
           "计费"
@@ -9915,6 +11335,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -9941,6 +11370,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "BL8 订单详情",
         "tags": [
           "计费"
@@ -9951,6 +11385,17 @@
       "post": {
         "description": "支付渠道的服务端回调入口：**免 Bearer 鉴权**（唯一免鉴权的业务端点），改用验签 + 回调流水号唯一约束保证安全与幂等。同一笔回调重复发送只生效一次，不会重复开通套餐或重复开票。",
         "operationId": "payment_callback_api_v1_billing_payments_callback_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -9993,6 +11438,17 @@
       "get": {
         "description": "查询全部可购套餐（免费版 / 专业版 / 企业版）与功能开关。价格单位为分，展示层除以 100 即为元。登录即可查看。",
         "operationId": "list_plans_api_v1_billing_plans_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -10005,6 +11461,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "BL1 套餐目录",
         "tags": [
           "计费"
@@ -10015,6 +11476,17 @@
       "get": {
         "description": "查询当前套餐、席位与额度。未开通任何套餐时返回免费版视图（`plan_code=free`、`status=active`、`seats_total=3`），不会返回 404。需 billing:subscription:read 权限。",
         "operationId": "get_subscription_api_v1_billing_subscription_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -10027,6 +11499,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "BL2 订阅详情",
         "tags": [
           "计费"
@@ -10035,6 +11512,17 @@
       "post": {
         "description": "开通、升级、降级或关闭自动续费。升级立即生效并刷新功能开关；降级在当前周期结束后生效（`notice_code=15005`，属提示不属错误）。写接口，需携带 Idempotency-Key 请求头；需 billing:subscription:manage 权限。",
         "operationId": "change_subscription_api_v1_billing_subscription_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -10067,6 +11555,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "BL3 变更套餐",
         "tags": [
           "计费"
@@ -10077,6 +11570,17 @@
       "patch": {
         "description": "增减成员席位。席位数低于已用席位时返回 15003（请先移出成员）；免费版席位固定，调整请先升级。写接口，需携带 Idempotency-Key 请求头；需 billing:subscription:manage 权限。",
         "operationId": "update_seats_api_v1_billing_subscription_seats_patch",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -10109,6 +11613,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "BL4 调整席位",
         "tags": [
           "计费"
@@ -10156,6 +11665,15 @@
               "description": "分组维度（管理视图）",
               "title": "Group By"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10180,9 +11698,89 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "BL5 用量明细",
         "tags": [
           "计费"
+        ]
+      }
+    },
+    "/api/v1/capabilities/recommend": {
+      "get": {
+        "description": "输入一句想完成的事，按规则推荐最相关的能力（插件 / 工具）并给出命中理由与所需输入。空目标返回能力目录；没有命中时给目录兜底与引导。",
+        "operationId": "recommend_capabilities_api_v1_capabilities_recommend_get",
+        "parameters": [
+          {
+            "description": "用户目标（业务语言）",
+            "in": "query",
+            "name": "goal",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "用户目标（业务语言）",
+              "maxLength": 4000,
+              "title": "Goal",
+              "type": "string"
+            }
+          },
+          {
+            "description": "返回条数",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 3,
+              "description": "返回条数",
+              "maximum": 10,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CapabilityRecommendData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "目标式能力推荐",
+        "tags": [
+          "能力推荐"
         ]
       }
     },
@@ -10190,6 +11788,17 @@
       "post": {
         "description": "审计日志查询（适配层不持有审计逻辑，仅提供查询出口）。写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "query_audit_logs_api_v1_identity_audit_logs_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -10222,6 +11831,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "U6 审计日志查询",
         "tags": [
           "用户权限服务"
@@ -10232,6 +11846,17 @@
       "get": {
         "description": "查询操作记录页可筛选的动作清单（按分组）。登录即可查看。",
         "operationId": "list_audit_actions_api_v1_identity_audit_logs_actions_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -10244,6 +11869,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID11 操作动作目录",
         "tags": [
           "用户权限服务"
@@ -10265,6 +11895,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Department Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -10291,6 +11930,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID4 删除部门",
         "tags": [
           "用户权限服务"
@@ -10310,6 +11954,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Department Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -10346,6 +11999,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID3 修改或移动部门",
         "tags": [
           "用户权限服务"
@@ -10381,6 +12039,15 @@
               "title": "Flat",
               "type": "boolean"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10405,6 +12072,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID1 部门层级",
         "tags": [
           "用户权限服务"
@@ -10424,6 +12096,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -10460,6 +12141,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID2 新建部门",
         "tags": [
           "用户权限服务"
@@ -10481,6 +12167,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -10517,6 +12212,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "U4 邀请成员",
         "tags": [
           "用户权限服务"
@@ -10624,6 +12324,15 @@
               "title": "Status",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10648,6 +12357,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "U3 组织成员列表",
         "tags": [
           "用户权限服务"
@@ -10669,6 +12383,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -10705,6 +12428,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID10 批量变更成员",
         "tags": [
           "用户权限服务"
@@ -10741,6 +12469,15 @@
               "title": "Member Id",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10765,6 +12502,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID9 移出成员",
         "tags": [
           "用户权限服务"
@@ -10797,6 +12539,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Member Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -10833,6 +12584,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID8 修改成员",
         "tags": [
           "用户权限服务"
@@ -10854,6 +12610,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -10880,6 +12645,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID6 角色列表",
         "tags": [
           "用户权限服务"
@@ -10899,6 +12669,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -10935,6 +12714,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "U5 创建/分配角色",
         "tags": [
           "用户权限服务"
@@ -10971,6 +12755,15 @@
               "title": "Role Id",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10995,6 +12788,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID7 删除角色",
         "tags": [
           "用户权限服务"
@@ -11005,6 +12803,17 @@
       "get": {
         "description": "查询全部权限点（按分组），用于角色权限配置界面。登录即可查看。",
         "operationId": "list_permissions_api_v1_identity_permissions_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -11017,6 +12826,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "ID5 权限点目录",
         "tags": [
           "用户权限服务"
@@ -11027,6 +12841,17 @@
       "get": {
         "description": "查询当前登录用户信息（含租户与组织）。",
         "operationId": "get_profile_api_v1_identity_profile_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -11039,6 +12864,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "U2 当前用户信息",
         "tags": [
           "用户权限服务"
@@ -11049,6 +12879,17 @@
       "post": {
         "description": "令牌与权限点校验（内部高频调用）。权限点命名规范为 resource:action；未注册的权限点返回 14004。写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "verify_api_v1_identity_verify_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -11081,6 +12922,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "U1 令牌与权限点校验",
         "tags": [
           "用户权限服务"
@@ -11144,6 +12990,15 @@
               "title": "Base Id",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11168,6 +13023,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "R2 知识库列表",
         "tags": [
           "RAG 服务"
@@ -11176,6 +13036,17 @@
       "post": {
         "description": "创建知识库。写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "create_base_api_v1_knowledge_bases_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -11208,6 +13079,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "R1 创建知识库",
         "tags": [
           "RAG 服务"
@@ -11229,6 +13105,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -11255,6 +13140,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "KB2 删除知识库",
         "tags": [
           "RAG 服务"
@@ -11274,6 +13164,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -11310,6 +13209,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "KB1 修改知识库设置",
         "tags": [
           "RAG 服务"
@@ -11331,6 +13235,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -11367,6 +13280,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "KB8 更新知识库凭据绑定",
         "tags": [
           "RAG 服务"
@@ -11461,6 +13379,15 @@
               "title": "Sort",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11485,6 +13412,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "KB3 文档清单",
         "tags": [
           "RAG 服务"
@@ -11504,6 +13436,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -11540,6 +13481,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "R3 上传文档",
         "tags": [
           "RAG 服务"
@@ -11576,6 +13522,15 @@
               "title": "Doc Id",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11600,6 +13555,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "R6 删除文档",
         "tags": [
           "RAG 服务"
@@ -11634,6 +13594,15 @@
               "title": "Doc Id",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11658,6 +13627,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "R4 文档处理进度查询",
         "tags": [
           "RAG 服务"
@@ -11694,6 +13668,15 @@
               "title": "Doc Id",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11718,6 +13701,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "R5 重新处理文档",
         "tags": [
           "RAG 服务"
@@ -11779,6 +13767,15 @@
               "title": "With Context",
               "type": "boolean"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11803,6 +13800,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "KB4 引用片段详情（回链）",
         "tags": [
           "RAG 服务"
@@ -11853,6 +13855,15 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11877,6 +13888,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "KB5 知识库授权清单",
         "tags": [
           "RAG 服务"
@@ -11896,6 +13912,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -11932,6 +13957,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "KB6 批量添加成员授权",
         "tags": [
           "RAG 服务"
@@ -11968,6 +13998,15 @@
               "title": "Grant Id",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11992,6 +14031,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "KB7 撤销成员授权",
         "tags": [
           "RAG 服务"
@@ -12002,6 +14046,17 @@
       "post": {
         "description": "独立知识库检索（带引用）。对话内增强由 M1 触发。写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "search_api_v1_knowledge_search_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -12034,6 +14089,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "R7 独立检索",
         "tags": [
           "RAG 服务"
@@ -12044,6 +14104,17 @@
       "get": {
         "description": "查询可用能力档位目录。内容由适配层配置驱动，不暴露真实模型名称。",
         "operationId": "get_catalog_api_v1_model_catalog_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -12056,9 +14127,324 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "M3 能力档位目录",
         "tags": [
           "模型服务"
+        ]
+      }
+    },
+    "/api/v1/model/conversations": {
+      "get": {
+        "description": "按最近消息时间倒序列出本人在当前企业的会话。`archived` 切换归档视图，`include_deleted` 用于回收站（软删 30 天内可恢复）。",
+        "operationId": "list_conversations_api_v1_model_conversations_get",
+        "parameters": [
+          {
+            "description": "页码，从 1 开始",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码，从 1 开始",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数",
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "只看归档会话",
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "只看归档会话",
+              "title": "Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "包含已软删（回收站视图）",
+            "in": "query",
+            "name": "include_deleted",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "包含已软删（回收站视图）",
+              "title": "Include Deleted",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ConversationPageData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MC1 会话列表",
+        "tags": [
+          "会话与历史"
+        ]
+      }
+    },
+    "/api/v1/model/conversations/{conversation_id}": {
+      "delete": {
+        "description": "软删：行保留 30 天（`conversation_soft_delete_recover_days`），响应回 `recoverable_until`。幂等：重复删除返回同一个截止时间。",
+        "operationId": "delete_conversation_api_v1_model_conversations__conversation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ConversationDeleteData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MC3 删除会话（软删）",
+        "tags": [
+          "会话与历史"
+        ]
+      },
+      "patch": {
+        "description": "只改标题或归档状态；两个字段都可选，至少传一个。",
+        "operationId": "update_conversation_api_v1_model_conversations__conversation_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ConversationUpdateData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MC4 更新会话（标题 / 归档）",
+        "tags": [
+          "会话与历史"
+        ]
+      }
+    },
+    "/api/v1/model/conversations/{conversation_id}/messages": {
+      "get": {
+        "description": "按 `seq` 游标取更早的消息（**不用 offset**：删行会重复或漏行）。`before` 传上一页返回的 `next_cursor`，返回按时间正序，便于直接渲染。",
+        "operationId": "list_messages_api_v1_model_conversations__conversation_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "游标（上一页的 next_cursor）",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "游标（上一页的 next_cursor）",
+              "title": "Before",
+              "type": "string"
+            }
+          },
+          {
+            "description": "本页条数",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "本页条数",
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MessagePageData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MC2 历史消息",
+        "tags": [
+          "会话与历史"
         ]
       }
     },
@@ -12066,6 +14452,17 @@
       "post": {
         "description": "单轮/多轮非流式生成。写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "generate_api_v1_model_generate_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -12098,6 +14495,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "M1 非流式生成",
         "tags": [
           "模型服务"
@@ -12108,6 +14510,17 @@
       "post": {
         "description": "流式生成，响应 Content-Type 为 text/event-stream。自研事件类型：start / delta / citation / done / error。流式接口不重试、不参与幂等回放。",
         "operationId": "generate_stream_api_v1_model_generate_stream_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -12133,9 +14546,276 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "M2 流式生成（SSE）",
         "tags": [
           "模型服务"
+        ]
+      }
+    },
+    "/api/v1/model/memories": {
+      "delete": {
+        "description": "传 `category` 删除该类别下全部信息；不传则清空我的全部记忆。对话记录不受影响。删除后这些信息不再被使用。",
+        "operationId": "delete_memories_api_v1_model_memories_delete",
+        "parameters": [
+          {
+            "description": "类别（空=全部）",
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "类别（空=全部）",
+              "title": "Category",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MemoryBatchDeleteData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MM3 按类别删除 / 清空记忆",
+        "tags": [
+          "我的记忆"
+        ]
+      },
+      "get": {
+        "description": "按更新时间倒序列出「我在对话中了解到的关于你的信息」。`category` 可按类别筛选；响应同包返回 `enabled`，便于前端区分「已关闭」与「还没记到东西」两种空态。",
+        "operationId": "list_memories_api_v1_model_memories_get",
+        "parameters": [
+          {
+            "description": "类别筛选（空=全部）",
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "类别筛选（空=全部）",
+              "title": "Category",
+              "type": "string"
+            }
+          },
+          {
+            "description": "页码，从 1 开始",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码，从 1 开始",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数",
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MemoryPageData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MM1 我的记忆列表",
+        "tags": [
+          "我的记忆"
+        ]
+      }
+    },
+    "/api/v1/model/memories/settings": {
+      "put": {
+        "description": "关闭后我不再从新对话里记东西；已记住的仍可在这里删除。分类开关只影响该类别（关闭后该类不再被记录、也不再被使用，已有条目保留）。",
+        "operationId": "update_memory_settings_api_v1_model_memories_settings_put",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemorySettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MemorySettingsData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MM4 记忆开关",
+        "tags": [
+          "我的记忆"
+        ]
+      }
+    },
+    "/api/v1/model/memories/{memory_id}": {
+      "delete": {
+        "description": "硬删除该条信息（含其派生数据）；删除后我不再在任何回答里使用它。",
+        "operationId": "delete_memory_api_v1_model_memories__memory_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Memory Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MemoryDeleteData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MM2 删除单条记忆",
+        "tags": [
+          "我的记忆"
         ]
       }
     },
@@ -12153,6 +14833,15 @@
               "default": "month",
               "description": "统计周期：day / month",
               "title": "Period",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -12179,6 +14868,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "M4 用量统计",
         "tags": [
           "模型服务"
@@ -12205,6 +14899,15 @@
               "title": "Range",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -12229,6 +14932,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "OPS6 平台统计",
         "tags": [
           "运营管理"
@@ -12292,6 +15000,15 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -12316,6 +15033,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "OPS4 订单列表",
         "tags": [
           "运营管理"
@@ -12337,6 +15059,15 @@
               "maxLength": 128,
               "minLength": 3,
               "title": "Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -12373,6 +15104,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "OPS5 订单核销",
         "tags": [
           "运营管理"
@@ -12383,6 +15119,17 @@
       "get": {
         "description": "读取额度告警阈值、试用天数、额度单位文案、平台公告与套餐上下架状态。需 ops:console:access 权限（仅运营账号）。",
         "operationId": "get_settings_api_v1_ops_settings_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -12395,6 +15142,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "OPS7 读取系统配置",
         "tags": [
           "运营管理"
@@ -12403,6 +15155,17 @@
       "patch": {
         "description": "按需修改配置项（只改传入字段），返回更新后的全量配置；变更写入操作记录（含运营人）。需 ops:settings:manage 权限。",
         "operationId": "update_settings_api_v1_ops_settings_patch",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -12435,9 +15198,137 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "OPS8 修改系统配置",
         "tags": [
           "运营管理"
+        ]
+      }
+    },
+    "/api/v1/ops/tenant-data": {
+      "delete": {
+        "description": "二次确认后硬删除企业数据（操作记录 / 用量 / 会话与消息 / 记忆 / 产物）。需逐字输入企业名称；删除会先停用企业以阻断后续写入，并生成删除证明。操作记录受「只增不改」保护，需由运维按证明里的说明单独清理。仅企业所有者可用。",
+        "operationId": "delete_tenant_data_api_v1_ops_tenant_data_delete",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantDataDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantDataDeleteData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "TD2 删除企业数据",
+        "tags": [
+          "数据权利"
+        ]
+      }
+    },
+    "/api/v1/ops/tenant-data/export": {
+      "post": {
+        "description": "生成企业数据导出包（操作记录 / 用量 / 会话与消息 / 记忆 / 产物清单，JSON Lines）。包内附 manifest.json（每个文件的行数与摘要），生成完成后直接返回短期下载地址。数据量超过上限时提示分批导出，不会静默截断。需 team:role:manage 权限。",
+        "operationId": "export_tenant_data_api_v1_ops_tenant_data_export_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TenantDataExportRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantDataExportData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "TD1 导出企业数据",
+        "tags": [
+          "数据权利"
         ]
       }
     },
@@ -12498,6 +15389,15 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -12522,6 +15422,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "OPS1 企业列表",
         "tags": [
           "运营管理"
@@ -12543,6 +15448,15 @@
               "maxLength": 128,
               "minLength": 2,
               "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -12569,6 +15483,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "OPS2 企业详情",
         "tags": [
           "运营管理"
@@ -12588,6 +15507,15 @@
               "maxLength": 128,
               "minLength": 2,
               "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -12624,6 +15552,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "OPS3 启用或停用企业",
         "tags": [
           "运营管理"
@@ -12634,6 +15567,17 @@
       "put": {
         "description": "管理员开启或关闭企业级能力（读取通讯录、写入代码仓库、对外发布内容）。个人能力始终开启，不受此处影响。写后返回全量开关。需团队角色配置权限；写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "set_capability_policy_api_v1_plugins_capability_policy_put",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -12666,6 +15610,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL13 企业能力开关",
         "tags": [
           "插件"
@@ -12716,6 +15665,15 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -12740,6 +15698,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL3 已添加的插件",
         "tags": [
           "插件"
@@ -12820,6 +15783,15 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -12844,6 +15816,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL1 插件市场",
         "tags": [
           "插件"
@@ -12865,6 +15842,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -12891,6 +15877,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL2 插件详情",
         "tags": [
           "插件"
@@ -12912,6 +15903,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -12938,6 +15938,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL7 移除插件",
         "tags": [
           "插件"
@@ -12959,6 +15964,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -12985,6 +15999,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL4 插件能力清单",
         "tags": [
           "插件"
@@ -13006,6 +16025,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13042,6 +16070,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL14 调整该插件的能力授权",
         "tags": [
           "插件"
@@ -13063,6 +16096,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13099,6 +16141,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL5 添加插件",
         "tags": [
           "插件"
@@ -13149,6 +16196,15 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -13173,6 +16229,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL11 插件评价列表",
         "tags": [
           "插件"
@@ -13192,6 +16253,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13228,6 +16298,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL12 提交评价",
         "tags": [
           "插件"
@@ -13249,6 +16324,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13275,6 +16359,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL9 恢复上一版本",
         "tags": [
           "插件"
@@ -13296,6 +16385,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13332,6 +16430,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL10 保存插件配置",
         "tags": [
           "插件"
@@ -13353,6 +16456,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13389,6 +16501,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL6 停用或启用插件",
         "tags": [
           "插件"
@@ -13410,6 +16527,15 @@
               "maxLength": 44,
               "minLength": 6,
               "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13446,9 +16572,78 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "PL8 更新插件版本",
         "tags": [
           "插件"
+        ]
+      }
+    },
+    "/api/v1/stats/tasks": {
+      "get": {
+        "description": "工作流任务域统计（近 7 天 / 近 30 天）：完成率、平均完成时长与中位数、重复使用率、单位成功任务用量。只读聚合，无分页；样本少时数值仅供参考。",
+        "operationId": "get_task_stats_api_v1_stats_tasks_get",
+        "parameters": [
+          {
+            "description": "统计窗口：7d 近 7 天 / 30d 近 30 天",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "7d",
+              "description": "统计窗口：7d 近 7 天 / 30d 近 30 天",
+              "enum": [
+                "7d",
+                "30d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TaskStatsData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "工作流任务统计",
+        "tags": [
+          "统计"
         ]
       }
     },
@@ -13496,6 +16691,15 @@
               "title": "Tool Type",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -13520,6 +16724,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "T3 已连接工具列表",
         "tags": [
           "工具服务"
@@ -13528,6 +16737,17 @@
       "post": {
         "description": "发起工具授权连接（OAuth/令牌）。写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "create_connection_api_v1_tools_connections_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -13560,6 +16780,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "T2 发起工具授权连接",
         "tags": [
           "工具服务"
@@ -13581,6 +16806,15 @@
               "maxLength": 128,
               "minLength": 6,
               "title": "Conn Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13607,6 +16841,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "T4 断开工具连接",
         "tags": [
           "工具服务"
@@ -13617,6 +16856,17 @@
       "post": {
         "description": "执行工具操作。操作必须在注册表能力清单内，否则返回 13005；工具未连接返回 13002。写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "execute_tool_api_v1_tools_execute_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -13649,6 +16899,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "T5 执行工具操作",
         "tags": [
           "工具服务"
@@ -13699,6 +16954,15 @@
               "title": "Tool Type",
               "type": "string"
             }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -13723,6 +16987,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "TL1 工具调用记录",
         "tags": [
           "工具服务"
@@ -13733,6 +17002,17 @@
       "get": {
         "description": "查询工具类型注册表（可用工具与能力清单）。前端按本返回动态渲染工具卡片，不硬编码工具列表；新增工具不改本接口契约。",
         "operationId": "get_registry_api_v1_tools_registry_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -13745,6 +17025,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "T1 工具类型注册表",
         "tags": [
           "工具服务"
@@ -13755,6 +17040,17 @@
       "post": {
         "description": "创建数据同步任务（如邮件收件箱同步）。写接口，需携带 Idempotency-Key 请求头。",
         "operationId": "create_sync_job_api_v1_tools_sync_jobs_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -13787,6 +17083,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "T6 创建数据同步任务",
         "tags": [
           "工具服务"
@@ -13808,6 +17109,15 @@
               "maxLength": 128,
               "minLength": 6,
               "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13834,6 +17144,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "T7 查询同步任务进度",
         "tags": [
           "工具服务"
@@ -13842,7 +17157,7 @@
     },
     "/files/artifacts/{token}": {
       "get": {
-        "description": "按下载令牌返回产物内容。令牌自带租户、产物与版本，过期的产物返回 404。",
+        "description": "按下载令牌返回产物内容。令牌自带租户、产物、版本与过期时间，过期后返回 404。",
         "operationId": "download_artifact_files_artifacts__token__get",
         "parameters": [
           {
@@ -13852,9 +17167,18 @@
             "required": true,
             "schema": {
               "description": "下载令牌",
-              "maxLength": 256,
+              "maxLength": 512,
               "minLength": 8,
               "title": "Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13884,6 +17208,17 @@
       "get": {
         "description": "进程存活检查，不校验任何依赖。",
         "operationId": "healthz_healthz_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -13906,6 +17241,17 @@
       "get": {
         "description": "就绪检查：配置加载与注册表解析是否可用。",
         "operationId": "readyz_readyz_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -13925,6 +17271,12 @@
       }
     }
   },
+  "servers": [
+    {
+      "description": "同源部署（由编排层反向代理）",
+      "url": "/"
+    }
+  ],
   "tags": [
     {
       "description": "对话生成、流式输出、能力档位目录与用量统计",

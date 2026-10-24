@@ -1,0 +1,128 @@
+classDiagram
+    class TaskRecord {
+        +str tenant_id
+        +str task_id
+        +str plugin_id
+        +str initiator_id
+        +str trigger_type
+        +str status
+        +bool cancel_requested
+        +int usage_units
+        +str started_at
+        +str finished_at
+    }
+    class TaskStats {
+        +int total
+        +int completed
+        +int failed
+        +int cancelled
+        +int active_users
+        +int repeat_users
+        +float duration_sum_seconds
+        +float duration_p50_seconds
+        +int units_sum
+    }
+    class TaskStore {
+        <<protocol>>
+        +task_stats(tenant_id, since, until) TaskStats
+    }
+    class InMemoryTaskStore {
+        +task_stats(tenant_id, since, until) TaskStats
+    }
+    class PostgresTaskStore {
+        +task_stats(tenant_id, since, until) TaskStats
+    }
+    class TaskStatsData {
+        +str range
+        +int total
+        +int completed
+        +int failed
+        +int cancelled
+        +int active_users
+        +float completion_rate
+        +float avg_duration_seconds
+        +float p50_duration_seconds
+        +float repeat_user_rate
+        +float units_per_success
+    }
+    class StatsEndpoint {
+        <<FastAPI>>
+        +GET /api/v1/stats/tasks
+    }
+    class CapabilityInputBrief {
+        +str key
+        +str label
+        +str type
+        +bool required
+    }
+    class CapabilityEntry {
+        +str id
+        +str kind
+        +str name
+        +str summary
+        +str category
+        +tuple~CapabilityInputBrief~ inputs
+        +dict~str,str~ match_texts
+        +tuple sort_key
+    }
+    class CapabilityCatalogService {
+        +build_catalog(registry, tool_registry) list~CapabilityEntry~
+    }
+    class GoalRouter {
+        +tokenize(goal) list~str~
+        +recommend(goal, limit, catalog) GoalMatchResult
+    }
+    class ScoredCapability {
+        +CapabilityEntry entry
+        +int score
+        +tuple~str~ matched_terms
+        +tuple~str~ matched_fields
+    }
+    class GoalMatchResult {
+        +tuple~ScoredCapability~ items
+        +bool matched
+        +bool fallback
+        +str fallback_hint
+    }
+    class CapabilityCard {
+        +str id
+        +str kind
+        +str name
+        +str summary
+        +str category
+        +int score
+        +list~str~ matched_terms
+        +list~str~ matched_fields
+        +list~CapabilityInputBrief~ inputs
+    }
+    class CapabilityRecommendData {
+        +str goal
+        +bool matched
+        +bool fallback
+        +str fallback_hint
+        +int total_catalog
+        +list~CapabilityCard~ items
+    }
+    class CapabilityEndpoint {
+        <<FastAPI>>
+        +GET /api/v1/capabilities/recommend
+    }
+
+    TaskStore <|.. InMemoryTaskStore : 实现
+    TaskStore <|.. PostgresTaskStore : 实现
+    InMemoryTaskStore ..> TaskStats : 返回
+    PostgresTaskStore ..> TaskStats : 返回
+    TaskStats ..> TaskStatsData : 端点层比率+取整
+    StatsEndpoint ..> TaskStore : get_task_store()
+    StatsEndpoint ..> TaskStatsData : 响应
+    CapabilityCatalogService ..> CapabilityEntry : 组装
+    CapabilityCatalogService ..> PluginRegistry : get_registry()
+    CapabilityCatalogService ..> ToolRegistry : get_tool_registry()
+    GoalRouter ..> ScoredCapability : 打分
+    GoalRouter ..> GoalMatchResult : 返回
+    ScoredCapability *-- CapabilityEntry
+    GoalMatchResult *-- ScoredCapability
+    GoalMatchResult ..> CapabilityCard : 端点层映射
+    CapabilityRecommendData *-- CapabilityCard
+    CapabilityEndpoint ..> GoalRouter : 调用
+    CapabilityEndpoint ..> CapabilityRecommendData : 响应

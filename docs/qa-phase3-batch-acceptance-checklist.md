@@ -28,7 +28,12 @@ REPO="C:/Users/15864/Desktop/麦子"
 PY="$REPO/apps/adapter/.venv/Scripts/python.exe"
 TREE="$REPO/_qa/p3/<SHA>"          # 导出目录：git archive <SHA> | tar -x -C "$TREE"
 LOG="$REPO/_qa/p3/logs/<SHA>"       # 日志目录，先 mkdir -p
-DSN="postgresql://officeai_app:CHANGE_ME_APP_PASSWORD@127.0.0.1:55433/officeai"
+DSN="postgresql://officeai_app:CHANGE_ME_APP_PASSWORD@127.0.0.1:55434/officeai"   # 标准 PG 口径库 = moy-qa-pg-vec（pgvector/pgvector:pg18；台账 0001-0011 全应用 + vector 0.8.7）
+# ⚠️ 不要用 moy-qa-pg:55433 跑 memory 内核 PG 用例：该容器镜像 postgres:18.6-alpine 不带 pgvector，
+#   `CREATE EXTENSION vector` 直接报 "extension vector is not available"——0009 迁移无法应用，
+#   user_memory/memory_embedding/user_memory_setting 三表缺失，memory 相关用例 setup 即 ERROR。
+#   55433 只能跑不含 memory 内核的 PG 口径（阶段三插件域）；标准库一律用 vec 库（与
+#   .github/workflows/ci-adapter.yml、deploy/docker-compose.yml 的镜像口径一致）。
 export OA_BATCH="B19"          # 当前批次（台账到期检查用；**缺失即红**，故意不给默认值）
 mkdir -p "$LOG"
 
