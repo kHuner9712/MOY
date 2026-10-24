@@ -8,8 +8,9 @@ const eslintConfig = [
       ".next/**",
       // 构建残留目录（Windows 上 .next 被占住时改名保留的副本）。
       // 与仓库根 `.gitignore` 保持**同一组显式模式**：
-      // 刻意不用 `.next*` 通配——收得太宽会顺带忽略将来合法的源码目录。
-      ".next-bak-*/**",
+      // 刻意不用 `.next*` 通配——收得太宽会顺带忽略将来合法的源码目录；
+      // 但 `.next-bak` 之后用前缀通配（`-` 可选），因为历史副本有带横线与不带横线两种命名。
+      ".next-bak*/**",
       ".next.stale-*/**",
       "node_modules/**",
       "next-env.d.ts",
