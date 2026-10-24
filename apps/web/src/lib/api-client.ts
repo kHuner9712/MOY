@@ -17,8 +17,11 @@
 // ---------------------------------------------------------------------------
 
 import type {
+  CapabilityCard,
+  CapabilityInputBrief,
   CapabilityPolicyItem,
   CapabilityPolicyRequest,
+  CapabilityRecommendData,
   InstalledPluginItem,
   PluginCapabilitiesData,
   PluginDetail,
@@ -43,6 +46,8 @@ import type {
   TaskQueueInfo,
   TaskRetryRequest,
   TaskRetryResult,
+  TaskStatsData,
+  TaskStatsRange,
   TaskStatus,
   ActionGroup,
   AuditLogItem,
@@ -1320,6 +1325,45 @@ export const pluginsApi = {
     body: PluginGrantsUpdateRequest,
   ): Promise<PluginGrantsUpdateResult> {
     return request('PUT', `/plugins/${pluginId}/grants`, { body });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// W1 增量：工作流任务统计（切片 A）
+// ---------------------------------------------------------------------------
+
+/** 任务统计接口（只读聚合，无分页无幂等键） */
+export const statsApi = {
+  /**
+   * 工作流任务统计（M1 完成率 / M3 时长 / M4 重复使用率 / M5 单位成功用量）。
+   *
+   * 口径：仅工作流任务域；空数据全 0；百分比 0~100 浮点。
+   *
+   * @param range - 统计窗口（`7d` / `30d`，缺省 `7d`）
+   */
+  tasks(range: TaskStatsRange = '7d'): Promise<TaskStatsData> {
+    return request<TaskStatsData>('GET', '/stats/tasks', { query: { range } });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// W1 增量：目标式能力推荐（切片 B）
+// ---------------------------------------------------------------------------
+
+/** 能力推荐接口（规则推荐，实时组装目录，不查库） */
+export const capabilitiesApi = {
+  /**
+   * 目标式能力推荐（Top N + 命中理由 + 所需输入提示）。
+   *
+   * 空目标返回目录不报错；无命中走目录兜底 + 引导文案（不得空列表）。
+   *
+   * @param goal - 用户目标（业务语言，上限 4000 字，与创建任务入参一致）
+   * @param limit - 返回条数（1..10，缺省 3）
+   */
+  recommend(goal: string, limit: number = 3): Promise<CapabilityRecommendData> {
+    return request<CapabilityRecommendData>('GET', '/capabilities/recommend', {
+      query: { goal, limit },
+    });
   },
 };
 

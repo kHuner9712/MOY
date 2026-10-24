@@ -2,7 +2,7 @@
   "name": "@officeai/web",
   "version": "1.0.0",
   "private": true,
-  "description": "企业级跨生态办公 AI 平台 · 前端交互层（Next.js 14 App Router）",
+  "description": "Moy（麦子）V1.0 · 前端交互层（Next.js 16 App Router）",
   "license": "UNLICENSED",
   "scripts": {
     "dev": "next dev -p 3000",
@@ -17,6 +17,7 @@
     "scan:placeholders": "node scripts/check-no-placeholders.mjs",
     "scan:placeholders-self-test": "node scripts/check-no-placeholders.mjs --self-test",
     "scan:pages": "node scripts/check-page-states.mjs",
+    "scan:oidc": "node scripts/check-oidc-auth.mjs",
     "scan:contract": "node scripts/check-plugin-contract.mjs",
     "scan:contract-self-test": "node scripts/check-plugin-contract.mjs --self-test",
     "scan:workbench": "node scripts/check-workbench-host.mjs",

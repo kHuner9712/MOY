@@ -7,7 +7,7 @@
  * 因此 6 个插件共用同一份表单逻辑；新增插件或改声明后表单自动变化，无需改前端代码。
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { PluginInputSpec } from '@/lib/types';
 
@@ -99,13 +99,33 @@ export function validateField(spec: PluginInputSpec, value: DeclarationValue): s
 /**
  * 声明驱动表单 Hook。
  *
+ * 目标预填（W1 切片 B）：`initial` 非空时，在 `inputs` 由空变非空后
+ * **一次性**合入首个文本输入（text / textarea / email），不覆盖用户已填内容——
+ * 从对话页「开始」带 `?goal=` 进入工作台即走这条路径。
+ *
  * @param inputs - 插件声明里的输入项
+ * @param initial - 预填值（目标原文）；为空时不预填
  * @returns 表单状态与操作
  */
-export function useDeclarationForm(inputs: PluginInputSpec[]): UseDeclarationFormResult {
+export function useDeclarationForm(
+  inputs: PluginInputSpec[],
+  initial?: string,
+): UseDeclarationFormResult {
   const initialValues = useMemo(() => buildInitialValues(inputs), [inputs]);
   const [values, setValues] = useState<Record<string, DeclarationValue>>(initialValues);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // 已合入的预填值（去重：同一个 initial 只合入一次，换一个目标才再合入）
+  const mergedInitialRef = useRef<string>('');
+  useEffect(() => {
+    if (!initial || mergedInitialRef.current === initial) return;
+    const target = inputs.find(
+      (spec) => spec.type === 'text' || spec.type === 'textarea' || spec.type === 'email',
+    );
+    if (!target) return;
+    mergedInitialRef.current = initial;
+    setValues((prev) => (prev[target.key] ? prev : { ...prev, [target.key]: initial }));
+  }, [initial, inputs]);
 
   const setValue = useCallback(
     (key: string, value: DeclarationValue): void => {

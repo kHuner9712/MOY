@@ -20,7 +20,7 @@ import { QUERY_KEYS, useApiMutation, useApiQuery } from '@/hooks/use-api';
 import { BusinessError, agentApi, pluginsApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { orPlaceholder } from '@/lib/format';
-import type { PluginDetail, TaskStep } from '@/lib/types';
+import type { PluginDetail, PluginInputSpec, TaskStep } from '@/lib/types';
 
 /** 进行中状态集合（用于决定是否轮询） */
 const ACTIVE_STATUS: readonly string[] = ['queued', 'pending', 'running', 'waiting_confirm'];
@@ -94,6 +94,17 @@ export default function WorkbenchPage(): React.JSX.Element {
   const params = useParams<{ pluginId: string }>();
   const pluginId = params.pluginId;
 
+  // 从对话页「目标式发起」跳转过来时读取 ?goal=：
+  // 地址栏参数在挂载后读取，避免 useSearchParams 在静态渲染阶段要求 Suspense 边界
+  const [goalParam, setGoalParam] = React.useState<string>('');
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const goal = new URLSearchParams(window.location.search).get('goal');
+    if (goal) {
+      setGoalParam(goal);
+    }
+  }, []);
+
   const detailQuery = useApiQuery(QUERY_KEYS.plugin(pluginId), () => pluginsApi.detail(pluginId), {
     enabled: Boolean(pluginId),
   });
@@ -104,7 +115,10 @@ export default function WorkbenchPage(): React.JSX.Element {
   );
 
   const plugin = detailQuery.data;
-  const form = useDeclarationForm(plugin?.inputs ?? []);
+  // 声明输入项稳定引用：详情未到位时保持同一空数组，避免预填合入逻辑被反复触发
+  const formInputs = React.useMemo<PluginInputSpec[]>(() => plugin?.inputs ?? [], [plugin?.inputs]);
+  // goal 由地址栏带入：预填首个文本输入，提交时随 A1 既有 goal 字段下发（契约零改）
+  const form = useDeclarationForm(formInputs, goalParam || undefined);
 
   const [taskId, setTaskId] = React.useState<string>('');
   const [cancelling, setCancelling] = React.useState<boolean>(false);
@@ -146,7 +160,7 @@ export default function WorkbenchPage(): React.JSX.Element {
     (inputs: Record<string, string | string[] | number | boolean>) =>
       agentApi.createTask({
         conversation_id: `conv_${pluginId}`,
-        goal: `${plugin?.name ?? '岗位任务'} · 手动发起`,
+        goal: goalParam || `${plugin?.name ?? '岗位任务'} · 手动发起`,
         plugin_id: pluginId,
         inputs,
       }),

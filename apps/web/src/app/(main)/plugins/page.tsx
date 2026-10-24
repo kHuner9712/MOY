@@ -8,6 +8,7 @@ import { StatusBadge } from '@/components/common/status-badge';
 import { CategoryBar } from '@/components/plugin/category-bar';
 import { InstalledTable } from '@/components/plugin/installed-table';
 import { PluginCard } from '@/components/plugin/plugin-card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -31,6 +32,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { TabPanel, Tabs, useUrlTab } from '@/components/ui/tabs';
+import { Tooltip } from '@/components/ui/tooltip';
 import { toast } from '@/components/ui/toast';
 import { QUERY_KEYS, useApiMutation, useApiQuery } from '@/hooks/use-api';
 import { pluginsApi, toolApi, toolsExtApi } from '@/lib/api-client';
@@ -303,8 +305,19 @@ export default function PluginsPage(): React.JSX.Element {
               {tools.map((tool) => (
                 <Card key={tool.tool_type}>
                   <CardHeader>
-                    <CardTitle className="text-base">{tool.display_name}</CardTitle>
-                    <CardDescription>支持 {tool.operations.length} 项能力</CardDescription>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <CardTitle className="text-base">{tool.display_name}</CardTitle>
+                      {/* D-19：能力已登记但连接器是演示实现，必须如实标注，避免"看起来能用实际是空壳" */}
+                      {tool.integration_status === 'demo' ? (
+                        <Tooltip content="当前为演示实现，未连接真实第三方服务">
+                          <Badge variant="outline">演示</Badge>
+                        </Tooltip>
+                      ) : null}
+                    </div>
+                    <CardDescription>
+                      支持 {tool.operations.length} 项能力
+                      {tool.integration_status === 'demo' ? '（演示实现，暂不能真实执行）' : ''}
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <ul className="space-y-1 text-sm text-muted-foreground">

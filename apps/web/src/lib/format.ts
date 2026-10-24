@@ -206,6 +206,28 @@ export function formatPercent(value: number, fractionDigits = 1): string {
 }
 
 /**
+ * 业务语言时长展示：秒 → 「N 秒」/「N 分 M 秒」（W1 切片 A，M3 口径）。
+ *
+ * 口径：不足 1 分钟只显示秒；满 1 分钟显示「分 + 秒」；0 显示「0 秒」；
+ * 非法值回占位符（界面不出现技术字段名）。
+ *
+ * @param seconds - 时长（秒），如 `183.4`
+ * @returns 形如 `3 分 3 秒` / `45 秒` / `0 秒` 的文本
+ */
+export function formatDurationSeconds(seconds: number): string {
+  if (!isFiniteNumber(seconds) || seconds < 0) {
+    return PLACEHOLDER;
+  }
+  const totalSeconds = Math.floor(seconds);
+  if (totalSeconds < 60) {
+    return `${totalSeconds} 秒`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const restSeconds = totalSeconds % 60;
+  return `${minutes} 分 ${restSeconds} 秒`;
+}
+
+/**
  * 预估剩余时间展示（业务语言，不出现技术口径）。
  *
  * @param seconds - 预估剩余秒数；无法预估时为 null

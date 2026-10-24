@@ -21,6 +21,8 @@ import {
 } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
+import type { TaskStatsRange } from '@/lib/types';
+
 /** 查询键：react-query 内部按键的深度哈希做匹配，这里统一用只读数组表达 */
 export type ApiQueryKey = readonly unknown[];
 
@@ -187,6 +189,10 @@ export const QUERY_KEYS = {
   pluginTask: (taskId: string): ApiQueryKey => ['plugin-tasks', taskId],
   /** 任务步骤（A4） */
   pluginTaskSteps: (taskId: string): ApiQueryKey => ['plugin-tasks', taskId, 'steps'],
+  /** 工作流任务统计（W1 切片 A）；`range` 进键，切换统计期即重新取数 */
+  taskStats: (range: TaskStatsRange): ApiQueryKey => ['stats', 'tasks', range],
+  /** 目标式能力推荐（W1 切片 B）；`goal` 进键，输入变化即重新取数 */
+  capabilityRecommend: (goal: string): ApiQueryKey => ['capabilities', 'recommend', goal],
 } as const;
 
 /**

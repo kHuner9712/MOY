@@ -23,8 +23,22 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
+# NEXT_PUBLIC_* 是**构建期内联**常量（Next 在打包时把值写死进 bundle），
+# 因此必须在构建期传进来，运行期改环境变量无效。
+#
+# ⚠️ 必须先声明 ARG 才能接收 `docker compose` 的 `build.args`：未声明的 ARG
+# 会被 Docker **静默忽略**（只在构建日志里留一行 warning），最终镜像静默用了
+# 下面的默认值——「配了却不生效」的典型形态，排查时会一直怀疑配置写错。
+# 统一登录这两项是公开接入信息（不含任何密钥），留空时登录页只显示
+# 「统一登录尚未配置，请联系管理员」，登录入口不可达，所以部署必须显式传值。
+ARG NEXT_PUBLIC_ADAPTER_BASE_URL=http://adapter:8000
+ARG NEXT_PUBLIC_OIDC_ISSUER=
+ARG NEXT_PUBLIC_OIDC_CLIENT_ID=
+
 ENV NEXT_TELEMETRY_DISABLED=1 \
-    NEXT_PUBLIC_ADAPTER_BASE_URL=http://adapter:8000
+    NEXT_PUBLIC_ADAPTER_BASE_URL=$NEXT_PUBLIC_ADAPTER_BASE_URL \
+    NEXT_PUBLIC_OIDC_ISSUER=$NEXT_PUBLIC_OIDC_ISSUER \
+    NEXT_PUBLIC_OIDC_CLIENT_ID=$NEXT_PUBLIC_OIDC_CLIENT_ID
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

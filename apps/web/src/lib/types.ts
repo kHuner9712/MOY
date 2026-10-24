@@ -296,6 +296,9 @@ export interface ToolOperation {
   params_schema: Record<string, unknown>;
 }
 
+/** 工具集成状态（`demo` = 演示实现，未连接真实第三方服务；`live` = 已接入） */
+export type ToolIntegrationStatus = 'demo' | 'live';
+
 /** 工具类型条目（前端按此动态渲染，不硬编码工具列表） */
 export interface ToolSpec {
   tool_type: string;
@@ -303,6 +306,8 @@ export interface ToolSpec {
   category: ToolCategory;
   auth_type: ToolAuthType;
   status: 'available' | 'unavailable';
+  /** 集成状态：后端缺省返回 `demo`，据此在界面上标注「演示」 */
+  integration_status: ToolIntegrationStatus;
   operations: ToolOperation[];
   timeout_ms: number;
 }
@@ -1598,4 +1603,66 @@ export interface MemorySettings {
 export interface MemorySettingsUpdate {
   enabled?: boolean;
   category_switches?: Record<string, boolean>;
+}
+
+// ---------------------------------------------------------------------------
+// W1 增量：工作流任务统计（切片 A，与后端 TaskStatsData 逐字对应）
+// ---------------------------------------------------------------------------
+
+/** 任务统计窗口 */
+export type TaskStatsRange = '7d' | '30d';
+
+/**
+ * 工作流任务统计数据（M1 完成率 / M3 时长 / M4 重复使用率 / M5 单位成功用量）。
+ *
+ * 口径：仅统计工作流任务域，与对话/文档域不是同一套数字；
+ * 空数据时全部为 0（无 NaN / null）；百分比为 0~100 浮点。
+ */
+export interface TaskStatsData {
+  range: TaskStatsRange;
+  total: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  active_users: number;
+  completion_rate: number;
+  avg_duration_seconds: number;
+  p50_duration_seconds: number;
+  repeat_user_rate: number;
+  units_per_success: number;
+}
+
+// ---------------------------------------------------------------------------
+// W1 增量：目标式能力推荐（切片 B，与后端 CapabilityRecommendData 逐字对应）
+// ---------------------------------------------------------------------------
+
+/** 推荐卡所需输入提示（D-17「所需输入提示」） */
+export interface CapabilityInputBrief {
+  key: string;
+  label: string;
+  type: string;
+  required: boolean;
+}
+
+/** 一张能力推荐卡（插件可发起任务；工具落地到插件市场） */
+export interface CapabilityCard {
+  id: string;
+  kind: 'plugin' | 'tool';
+  name: string;
+  summary: string;
+  category: string;
+  score: number;
+  matched_terms: string[];
+  matched_fields: string[];
+  inputs: CapabilityInputBrief[];
+}
+
+/** 目标式能力推荐结果（无命中走目录兜底 + 引导，不得空列表） */
+export interface CapabilityRecommendData {
+  goal: string;
+  matched: boolean;
+  fallback: boolean;
+  fallback_hint: string;
+  total_catalog: number;
+  items: CapabilityCard[];
 }

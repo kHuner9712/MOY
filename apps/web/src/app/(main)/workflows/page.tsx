@@ -5,6 +5,7 @@ import Link from 'next/link';
 import * as React from 'react';
 
 import { RunStatusBadge } from '@/components/workflow/run-status-badge';
+import { TaskMetricCards } from '@/components/workflow/task-metric-cards';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/feedback';
@@ -97,6 +98,8 @@ export default function WorkflowsPage(): React.JSX.Element {
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
+      <TaskMetricCards />
+
       <div className="flex flex-wrap items-end gap-2">
         <div className="sm:w-48">
           <CompactSelect
