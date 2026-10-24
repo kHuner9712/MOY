@@ -52,7 +52,10 @@ type WorkbenchSectionKind = 'form' | 'steps' | 'outputs';
  */
 export function buildSections(plugin: PluginDetail): WorkbenchSectionKind[] {
   const sections: WorkbenchSectionKind[] = [];
-  if (plugin.inputs.length > 0) sections.push('form');
+  // 契约要求 `inputs` 必填；此处的 `?? []` 只用于「后端版本未同步」的过渡窗口不崩，
+  // 不得据此认为该字段可缺——缺了则工作台退化为「无表单」，与 F-04 的本意相反。
+  const inputs = plugin.inputs ?? [];
+  if (inputs.length > 0) sections.push('form');
   if (plugin.step_titles.length > 0) sections.push('steps');
   if (plugin.outputs.length > 0) sections.push('outputs');
   return sections;
@@ -115,7 +118,9 @@ export default function WorkbenchPage(): React.JSX.Element {
   );
 
   const plugin = detailQuery.data;
-  // 声明输入项稳定引用：详情未到位时保持同一空数组，避免预填合入逻辑被反复触发
+  // 声明输入项稳定引用：详情未到位时保持同一空数组，避免预填合入逻辑被反复触发。
+  // `?? []` 仅为过渡期防崩（后端未下发 `inputs` 时退化为「无表单」而不是整页崩溃）；
+  // 字段本身已由契约声明为必填，见 lib/types.ts 的 PluginDetail.inputs。
   const formInputs = React.useMemo<PluginInputSpec[]>(() => plugin?.inputs ?? [], [plugin?.inputs]);
   // goal 由地址栏带入：预填首个文本输入，提交时随 A1 既有 goal 字段下发（契约零改）
   const form = useDeclarationForm(formInputs, goalParam || undefined);
@@ -351,7 +356,7 @@ export default function WorkbenchPage(): React.JSX.Element {
                   </CardHeader>
                   <CardContent>
                     <DeclarationForm
-                      inputs={plugin.inputs}
+                      inputs={formInputs}
                       values={form.values}
                       errors={form.errors}
                       onChange={form.setValue}
