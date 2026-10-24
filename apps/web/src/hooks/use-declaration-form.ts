@@ -39,6 +39,23 @@ export interface UseDeclarationFormResult {
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
+ * 单个声明项的默认值。
+ *
+ * 口径：多选与文件为 `[]`，下拉取首项（无候选时为空串），其余为空串。
+ * 抽成函数而不是在 `buildInitialValues` 里内联，是因为「异步补默认值」要用同一份规则——
+ * 两处各写一遍，改一处漏一处就会得到「首屏 A 值与补值后的 B 值」两套默认。
+ *
+ * @param spec - 声明项
+ * @returns 默认值
+ */
+function defaultValueOf(spec: PluginInputSpec): DeclarationValue {
+  if (spec.type === 'multi_select') return [];
+  if (spec.type === 'file') return [];
+  if (spec.type === 'select') return spec.options?.[0] ?? '';
+  return '';
+}
+
+/**
  * 生成初始值。
  *
  * @param inputs - 声明输入项
@@ -47,12 +64,47 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function buildInitialValues(inputs: PluginInputSpec[]): Record<string, DeclarationValue> {
   const initial: Record<string, DeclarationValue> = {};
   for (const spec of inputs) {
-    if (spec.type === 'multi_select') initial[spec.key] = [];
-    else if (spec.type === 'file') initial[spec.key] = [];
-    else if (spec.type === 'select') initial[spec.key] = spec.options?.[0] ?? '';
-    else initial[spec.key] = '';
+    initial[spec.key] = defaultValueOf(spec);
   }
   return initial;
+}
+
+/**
+ * 判断一个值是否「等同于没填」。
+ *
+ * @param value - 声明值
+ * @returns 空值返回 true
+ */
+function isBlankValue(value: DeclarationValue | undefined): boolean {
+  if (value === null || value === undefined) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return value.trim() === '';
+}
+
+/**
+ * 声明签名：只由「会影响默认值与校验的字段」拼成。
+ *
+ * 为什么需要它：`inputs` 是数组，父组件每次渲染都可能给出新引用（工作台页在详情
+ * 到达前用的是 `?? []`），用引用当 effect 依赖会让合并逻辑随渲染反复执行。
+ * 签名相同即视为「同一份声明」，合并只在该签名变化时发生。
+ *
+ * 分隔符用不可见控制字符，避免 `['a,b']` 与 `['a','b']` 拼出同一个签名。
+ *
+ * @param inputs - 声明输入项
+ * @returns 稳定签名
+ */
+function declarationSignature(inputs: PluginInputSpec[]): string {
+  return inputs
+    .map((spec) =>
+      [
+        spec.key,
+        spec.type,
+        spec.required ? '1' : '0',
+        typeof spec.max_length === 'number' ? String(spec.max_length) : '',
+        (spec.options ?? []).join('\u0001'),
+      ].join('\u0002'),
+    )
+    .join('\u0003');
 }
 
 /**
@@ -84,8 +136,12 @@ export function validateField(spec: PluginInputSpec, value: DeclarationValue): s
   ) {
     return `${spec.label}最多 ${spec.max_length} 个字`;
   }
-  if (spec.type === 'select' && spec.options && !spec.options.includes(String(value))) {
-    return `请选择有效的${spec.label}`;
+  if (spec.type === 'select' && spec.options && spec.options.length > 0) {
+    // 只在「确实有候选值」时判有效性：候选为空说明声明数据不全，此时界面会降级成
+    // 文本输入（见 declaration-form.tsx），再按空候选表校验就等于任何输入都不合法。
+    if (!spec.options.includes(String(value))) {
+      return `请选择有效的${spec.label}`;
+    }
   }
   if (spec.type === 'multi_select' && spec.options) {
     const picked = Array.isArray(value) ? value : [];
@@ -103,6 +159,11 @@ export function validateField(spec: PluginInputSpec, value: DeclarationValue): s
  * **一次性**合入首个文本输入（text / textarea / email），不覆盖用户已填内容——
  * 从对话页「开始」带 `?goal=` 进入工作台即走这条路径。
  *
+ * 异步补默认值（F-04 收尾）：`useState` 的初值只算一次，而工作台页在插件详情
+ * 到达前是用空 `inputs` 挂载的，于是 `values` 停在 `{}`：下拉在界面上显示首项
+ * （原生 select 在 `value=""` 且没有空选项时的视觉行为），状态却是空串，
+ * 提交时被判「必填未填」。下面的签名 effect 负责在声明到达后补齐默认值。
+ *
  * @param inputs - 插件声明里的输入项
  * @param initial - 预填值（目标原文）；为空时不预填
  * @returns 表单状态与操作
@@ -114,6 +175,37 @@ export function useDeclarationForm(
   const initialValues = useMemo(() => buildInitialValues(inputs), [inputs]);
   const [values, setValues] = useState<Record<string, DeclarationValue>>(initialValues);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const signature = useMemo(() => declarationSignature(inputs), [inputs]);
+
+  // 已补过默认值的声明签名（去重：同一份声明只补一次，声明变了才再补）
+  const mergedSignatureRef = useRef<string>('');
+  useEffect(() => {
+    if (mergedSignatureRef.current === signature) return;
+    mergedSignatureRef.current = signature;
+    setValues((prev) => {
+      const next: Record<string, DeclarationValue> = { ...prev };
+      let changed = false;
+      for (const spec of inputs) {
+        const exists = Object.prototype.hasOwnProperty.call(prev, spec.key);
+        if (!exists) {
+          // 缺失键才补默认值
+          next[spec.key] = defaultValueOf(spec);
+          changed = true;
+          continue;
+        }
+        // 下拉特例：有候选值但当前是空串 → 补首项。
+        // 这是「看着选了却被判未填」的唯一来源，补上后与界面显示一致。
+        // 注意只对「空值」生效，用户选过的任何值都不会被改写。
+        if (spec.type === 'select' && (spec.options?.length ?? 0) > 0 && isBlankValue(prev[spec.key])) {
+          next[spec.key] = defaultValueOf(spec);
+          changed = true;
+        }
+      }
+      // 无变化时返回原对象：React 会跳过一次渲染，避免「补值 → 重渲染 → 再补」的空转
+      return changed ? next : prev;
+    });
+  }, [inputs, signature]);
 
   // 已合入的预填值（去重：同一个 initial 只合入一次，换一个目标才再合入）
   const mergedInitialRef = useRef<string>('');

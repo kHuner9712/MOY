@@ -114,6 +114,34 @@ export function DeclarationForm({
         }
 
         if (spec.type === 'select') {
+          const options = spec.options ?? [];
+          // 过渡降级：声明是 select 但没有任何候选值（`options` 缺失或为空）时，
+          // 下拉里根本没有可选项，用户永远填不完这个必填项——那不是「用户没填」，
+          // 而是宿主给了一个不可能完成的任务。这里退化成文本输入，先把路走通；
+          // 后端/连接器补上 candidates 后自动恢复下拉，前端不需要再改一次。
+          if (options.length === 0) {
+            return (
+              <Field
+                key={spec.key}
+                label={spec.label}
+                htmlFor={fieldId}
+                required={spec.required}
+                error={errors[spec.key]}
+                hint="暂无可选项，请直接填写"
+              >
+                <Input
+                  id={fieldId}
+                  type="text"
+                  value={String(value ?? '')}
+                  maxLength={spec.max_length}
+                  disabled={disabled}
+                  invalid={Boolean(errors[spec.key])}
+                  onChange={(event) => onChange(spec.key, event.target.value)}
+                  placeholder={`填写${spec.label}`}
+                />
+              </Field>
+            );
+          }
           return (
             <Field
               key={spec.key}
@@ -129,7 +157,7 @@ export function DeclarationForm({
                 disabled={disabled}
                 invalid={Boolean(errors[spec.key])}
                 onChange={(event) => onChange(spec.key, event.target.value)}
-                options={(spec.options ?? []).map((option) => ({ value: option, label: option }))}
+                options={options.map((option) => ({ value: option, label: option }))}
               />
             </Field>
           );
