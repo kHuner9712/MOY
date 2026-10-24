@@ -10,6 +10,12 @@ dist/
 build/
 out/
 .next/
+# 构建残留：Windows 上真 `.next` 被进程占住、改名后才能继续时留下的副本。
+# 必须与 `apps/web/eslint.config.mjs` 的 ignores 用**同一组显式模式**——
+# 两边不一致的后果是「git 干净但 eslint 把构建产物当源码扫」（或反之），
+# 2026-10-25 就因此让全仓 lint 假红了 4.2 万条。
+.next-bak-*/
+.next.stale-*/
 .turbo/
 *.tsbuildinfo
 

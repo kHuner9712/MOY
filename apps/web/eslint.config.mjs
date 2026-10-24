@@ -6,8 +6,11 @@ const eslintConfig = [
   {
     ignores: [
       ".next/**",
-      // Windows 上 .next 临时目录无法删除时按约定改名保留，避免把构建产物当源码扫描
-      ".next-bak*/**",
+      // 构建残留目录（Windows 上 .next 被占住时改名保留的副本）。
+      // 与仓库根 `.gitignore` 保持**同一组显式模式**：
+      // 刻意不用 `.next*` 通配——收得太宽会顺带忽略将来合法的源码目录。
+      ".next-bak-*/**",
+      ".next.stale-*/**",
       "node_modules/**",
       "next-env.d.ts",
       "tsconfig.tsbuildinfo",

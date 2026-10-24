@@ -6,7 +6,9 @@ node_modules/
 # next.js
 .next/
 # Windows 构建时 .next 临时目录偶发无法删除，按约定「先改名再构建」
+# 与仓库根 `.gitignore`、`eslint.config.mjs` 保持同一组显式模式（三层任一漏掉都会假红）
 .next-bak-*/
+.next.stale-*/
 build.log
 out/
 next-env.d.ts
