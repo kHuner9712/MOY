@@ -1132,10 +1132,20 @@ export interface PluginCategoryItem {
   count: number;
 }
 
-/** 市场列表响应（PL1） */
+/**
+ * 市场列表响应（PL1）
+ *
+ * 分页字段为**扁平**（后端 `MarketData` 直接返回 `page/page_size/total/total_pages`，
+ * 不包 `meta`）。此处刻意逐行展开、**不写** `extends FlatPageResult<…>`：
+ * 契约门禁 `scripts/check-plugin-contract.mjs` 只识别「两空格缩进的顶层字段行」，
+ * `extends` 会让这 4 个键被判定为缺键。
+ */
 export interface PluginMarketData {
   items: PluginMarketItem[];
-  meta: PageMeta;
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
   categories: PluginCategoryItem[];
   /**
    * 企业能力开关快照（**只含 3 个 org.* 能力**）。
@@ -1186,10 +1196,9 @@ export interface PluginSettingSpec {
 export interface PluginVersionBrief {
   version: string;
   published_at: string;
+  /** 该版本的说明；后端恒有值，声明缺失时为空串 */
+  changelog: string;
 }
-
-/** 版本说明（PL2 `changelog`，架构裁定为字符串数组，每条为一条版本说明） */
-export type PluginChangelog = string[];
 
 /** 插件详情（PL2） */
 export interface PluginDetail {
@@ -1207,15 +1216,14 @@ export interface PluginDetail {
   /**
    * 输入声明（驱动宿主表单：text/textarea/select/multi_select/email/file）。
    *
-   * 注：架构 §5.2 的 PL2 响应表未列 `inputs[]`，但 §2.1 声明必有且宿主必需，
-   * 已纳入契约快照待后端确认（见 B24 回传的契约缺口）。
+   * 后端 PL2 已下发（`MarketDetailData.inputs`，`app/schemas/plugin.py`）；
+   * 声明为本接口必填，页面上的 `?? []` 只用于「后端版本未同步」的过渡期防崩。
    */
   inputs: PluginInputSpec[];
   /** 步骤标题（用户只看到标题；执行原语不进界面） */
   step_titles: string[];
   outputs: PluginOutputSpec[];
   settings_schema: PluginSettingSpec[];
-  changelog: PluginChangelog;
   versions: PluginVersionBrief[];
   installed_status: PluginInstalledStatus;
   /** 已安装版本；未安装时为空串 */
@@ -1329,10 +1337,18 @@ export interface PluginReviewItem {
   created_at: string;
 }
 
-/** 评价列表响应（PL11） */
+/**
+ * 评价列表响应（PL11）
+ *
+ * 与市场列表同口径：分页字段扁平展开（后端 `ReviewListData` 无 `meta`）。
+ * 同样不得改写成 `extends FlatPageResult<…>`，原因见 `PluginMarketData`。
+ */
 export interface PluginReviewsData {
   items: PluginReviewItem[];
-  meta: PageMeta;
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
   rating_avg: number;
   rating_count: number;
 }

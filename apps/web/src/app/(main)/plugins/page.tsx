@@ -140,7 +140,7 @@ export default function PluginsPage(): React.JSX.Element {
 
   const marketItems = marketQuery.data?.items ?? [];
   const categories = marketQuery.data?.categories ?? EMPTY_CATEGORIES;
-  const marketTotal = marketQuery.data?.meta.total ?? 0;
+  const marketTotal = marketQuery.data?.total ?? 0;
   const installedItems = installedQuery.data?.items ?? [];
   const tools = toolsQuery.data?.tools ?? [];
   const executions = executionsQuery.data?.items ?? [];
