@@ -13,6 +13,7 @@ from app.schemas.tool import (
     CreateConnectionRequest,
     CreateSyncJobRequest,
     ExecuteRequest,
+    IntegrationStatus,
     ListConnectionsQuery,
     ToolCategory,
     ToolStatus,
@@ -82,6 +83,33 @@ def test_registry_is_self_describing_for_frontend() -> None:
         for op in tool.operations:
             assert op.display_name
             assert op.params_schema.get("type") == "object"
+
+
+def test_registry_marks_every_tool_as_demo_integration() -> None:
+    """D-19：当前 5 个连接器全是桩实现，注册表必须**逐项**标注为演示。
+
+    这条断言是"诚实标注"的护栏：任何一个工具被改成 `live` 而没有真实对接，
+    都会在这里被拦下（同时提醒同步更新前端「演示」徽标的判据）。
+    """
+    data = _service().list_registry(_AUTH)
+    assert data.tools, "注册表不得为空"
+    for tool in data.tools:
+        assert tool.integration_status == IntegrationStatus.DEMO, (
+            f"工具 {tool.tool_type} 未标注为演示实现"
+        )
+
+
+def test_integration_status_comes_from_connector_declaration() -> None:
+    """集成状态的取值来源是连接器类声明，而不是注册表 YAML。
+
+    校验口径：`ToolConnector.INTEGRATION_STATUS` 的默认值必须是 `demo`
+    （fail-honest：新增连接器在真正对接前不会被误标为已接入）。
+    """
+    assert ToolConnector.INTEGRATION_STATUS == IntegrationStatus.DEMO.value
+    for connector_cls in ConnectorRegistry.all().values():
+        assert getattr(connector_cls, "INTEGRATION_STATUS", "") == IntegrationStatus.DEMO.value, (
+            f"连接器 {connector_cls.__name__} 未声明演示实现"
+        )
 
 
 def test_unknown_tool_type_returns_13001() -> None:

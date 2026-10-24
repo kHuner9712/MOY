@@ -32,6 +32,7 @@ from app.api.v1 import (
     agent,
     artifact_files,
     billing,
+    capability,
     conversation,
     identity,
     identity_ext,
@@ -41,6 +42,7 @@ from app.api.v1 import (
     ops,
     plugins,
     rag,
+    stats,
     tenant_data,
     tool,
     tools_ext,
@@ -333,6 +335,12 @@ def include_all_routers(settings: Settings | None = None) -> APIRouter:
     api_router.include_router(tenant_data.router, prefix=prefix, dependencies=business_dependencies)
     # 阶段三插件域（B17 起 PL1-PL5/PL13；B18 追加 PL6-PL12；B19 追加 WF1）
     api_router.include_router(plugins.router, prefix=prefix, dependencies=business_dependencies)
+    # W1 切片 A：工作流任务统计（W1-A1，只读聚合；零迁移零新表，
+    # 鉴权只用登录上下文 + 租户隔离，不扩权限矩阵）
+    api_router.include_router(stats.router, prefix=prefix, dependencies=business_dependencies)
+    # W1 切片 B：目标式能力推荐（W1-B1，只读；目录实时组装，零 DB 查询，
+    # 规则打分不引模型；`POST /api/v1/agent/tasks` 契约零改）
+    api_router.include_router(capability.router, prefix=prefix, dependencies=business_dependencies)
     # 健康检查不挂 API 版本前缀，路径固定为 /healthz 与 /readyz
     api_router.include_router(health_router)
     # 产物内容代理：**不挂 /api/v1**（阶段三端点表冻结 16 条，见 artifact_files 文档串）

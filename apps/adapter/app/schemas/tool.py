@@ -43,6 +43,22 @@ class ToolStatus(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class IntegrationStatus(StrEnum):
+    """工具集成状态枚举（D-19：诚实标注「演示实现」）。
+
+    区分「能力已登记、界面能看到」与「真的连上了第三方服务」：
+
+    - `DEMO`：演示实现——连接器为桩实现，不产生任何真实第三方调用；
+    - `LIVE`：已接入——连接器完成真实对接，可承载真实业务数据。
+
+    默认取 `DEMO`（fail-honest）：新连接器在真正对接前无需声明即按演示标注，
+    避免"看起来能用、实际是空壳"的误导。
+    """
+
+    DEMO = "demo"
+    LIVE = "live"
+
+
 class ConnectionStatus(StrEnum):
     """工具连接状态枚举。"""
 
@@ -92,6 +108,7 @@ class ToolItem(BaseModel):
         category: 业务化分类。
         auth_type: 授权方式。
         status: 可用状态。
+        integration_status: 集成状态（`demo` 演示实现 / `live` 已接入真实服务）。
         operations: 能力清单。
         timeout_ms: 超时声明（架构文档 3.0.4）。
     """
@@ -101,6 +118,10 @@ class ToolItem(BaseModel):
     category: ToolCategory = Field(default=ToolCategory.DATA, description="业务化分类")
     auth_type: ToolAuthType = Field(default=ToolAuthType.OAUTH2, description="授权方式")
     status: ToolStatus = Field(default=ToolStatus.AVAILABLE, description="可用状态")
+    integration_status: IntegrationStatus = Field(
+        default=IntegrationStatus.DEMO,
+        description="集成状态：demo 为演示实现（未连接真实第三方服务），live 为已接入",
+    )
     operations: list[ToolOperation] = Field(default_factory=list, description="能力清单")
     timeout_ms: int = Field(default=10_000, ge=100, description="超时声明，单位毫秒")
 

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -31,7 +32,11 @@ from app.db.repositories.memory_repo import (
     MemoryRecord,
     get_memory_store,
 )
-from app.db.repositories.task_repo import TaskRecord, get_task_store
+from app.db.repositories.task_repo import (
+    InMemoryTaskStore,
+    TaskRecord,
+    get_task_store,
+)
 from app.db.tenant import PRIVATE_TENANT
 from app.services.memory_extractor import normalized_hash
 
@@ -62,11 +67,19 @@ def _owner_headers() -> dict[str, str]:
 
 
 @pytest.fixture
-async def owned_resources() -> dict[str, str]:
+async def owned_resources() -> AsyncIterator[dict[str, str]]:
     """在 B 租户下造一份"属于别人的"资源。
 
-    Returns:
-        dict[str, str]: 资源 ID。
+    **teardown 必须清理造数**（LED-045）：任务存储是进程级单例且**不随用例
+    重置**，这里造的任务行 `plugin_id='office_doc'` 指向不存在的插件——不清理
+    就会泄漏到后续用例，让别人的 `GET /api/v1/agent/tasks` 列表整体 404。
+    清理只删造数：不改任何断言、不弱化任何判据（阶段四验收红线）。
+
+    Args:
+        无。
+
+    Yields:
+        AsyncIterator[dict[str, str]]: 资源 ID。
     """
     conf = get_settings()
     conversations = get_conversation_store(conf)
@@ -113,7 +126,14 @@ async def owned_resources() -> dict[str, str]:
             status="queued",
         )
     )
-    return {"conversation": CONVERSATION_ID, "memory": MEMORY_ID, "task": TASK_ID}
+    try:
+        yield {"conversation": CONVERSATION_ID, "memory": MEMORY_ID, "task": TASK_ID}
+    finally:
+        # 只删本夹具造的这一行（内存存储无 delete 方法，直卸键；
+        # 与 QA 验证脚本 `seed()` 的直写造数同体例）。会话/记忆行由
+        # `tests/conftest.py` 的用例级单例重置负责，不在这里重复。
+        if isinstance(tasks, InMemoryTaskStore):
+            tasks._tasks.pop((OWNER_TENANT, TASK_ID), None)  # noqa: SLF001 — 测试直卸造数
 
 
 class TestObjectScope:

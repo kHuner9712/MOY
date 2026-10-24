@@ -70,6 +70,14 @@ class ToolConnector(ABC):
     #: 本连接器支持的操作标识（**必须**与注册表 `operations[].operation` 一致）
     SUPPORTED_OPERATIONS: ClassVar[tuple[str, ...]] = ()
 
+    #: 集成状态（D-19）：`demo` = 演示实现（桩实现，**不产生任何真实第三方调用**），
+    #: `live` = 已接入真实第三方服务。
+    #:
+    #: 默认 `demo` 是**fail-honest** 取向：新增连接器在真正对接第三方之前，
+    #: 无需声明即被前端标注为「演示」；只有完成真实对接并验证后才显式改成 `live`。
+    #: 取反（默认 live）会让空壳实现默认伪装成可用能力，属于误导。
+    INTEGRATION_STATUS: ClassVar[str] = "demo"
+
     @classmethod
     def declared_operations(cls) -> tuple[str, ...]:
         """取本连接器声明的能力清单。

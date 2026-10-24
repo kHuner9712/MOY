@@ -216,6 +216,11 @@ class AgentService:
     async def create_task(self, request: CreateTaskRequest, auth: AuthContext) -> CreateTaskData:
         """创建 Agent 任务（异步执行）。
 
+        底座返回原生 `workflow_run_id` 后会改用 `task_{run_id}` 作为任务 ID，
+        此时必须把按本地 ULID 先落下的占位记录一并删除：旧键不清会在进程内存里
+        留下一条永远 `running`、进度 0 的"幽灵任务"，`list_tasks` 会把它返回给
+        前端（"我的任务"里出现永不结束的项），用户因看不到真实进度还可能重复提交。
+
         Args:
             request: 创建请求。
             auth: 鉴权上下文。
@@ -273,6 +278,12 @@ class AgentService:
             )
             native_run_id = str(response.payload.get("workflow_run_id", ""))
             if native_run_id:
+                # 切换 ID 前先清掉按本地 ULID 落下的占位记录（任务 + 步骤必须用同一个
+                # auth 算复合键一起删，租户维度不能丢）：否则内存里会留下一条永远
+                # `running`、进度 0 的"幽灵任务"，`list_tasks` 会把它返回给前端。
+                stale_key = self._key(auth, task_id)
+                self._tasks.pop(stale_key, None)
+                self._steps.pop(stale_key, None)
                 task_id = f"{_TASK_PREFIX}{native_run_id}"
                 # blocking 模式下底座已同步返回终态（data.status），
                 # 直接映射为自研任务状态，而非停留 running（T02 实联调修复）

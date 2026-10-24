@@ -242,6 +242,44 @@ class StepRecord:
     finished_at: str = ""
 
 
+@dataclass(slots=True)
+class TaskStats:
+    """任务域窗口聚合原始值（**不进响应契约**；比率与取整在端点层统一计算）。
+
+    本类是 M1/M3/M4/M5 的唯一计算产物。双后端铁律（AC-A7）：字段口径与
+    `PostgresTaskStore.task_stats` 的聚合 SQL **逐条对应**——
+
+    - 窗口按 `started_at ∈ [since, until)` 归属（含期末未终态任务）；
+    - `cancelled` 只数**用户主动取消**（`status='cancelled'` 且
+      `cancel_requested=true`）；系统取消留在完成率分母；
+    - `active_users` / `repeat_users` 剔 `trigger_type='retry'`
+      （重试不改变"谁发起过"的事实）；
+    - 时长只统计 `completed` 且 `finished_at` 非空的任务；
+    - `duration_p50_seconds` 用线性插值，与 PG `percentile_cont(0.5)` 同口径。
+
+    Attributes:
+        total: 窗口内发起任务数（含期末未终态）。
+        completed: `status='completed'` 数。
+        failed: `status='failed'` 数。
+        cancelled: 用户主动取消数。
+        active_users: 发起 ≥1 次的去重用户数（剔 retry）。
+        repeat_users: 同一插件发起 ≥2 次的去重用户数（剔 retry）。
+        duration_sum_seconds: completed 任务 `(finished_at − started_at)` 合计（秒）。
+        duration_p50_seconds: 同口径 P50（线性插值，秒）。
+        units_sum: completed 任务 `usage_units` 合计。
+    """
+
+    total: int = 0
+    completed: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    active_users: int = 0
+    repeat_users: int = 0
+    duration_sum_seconds: float = 0.0
+    duration_p50_seconds: float = 0.0
+    units_sum: int = 0
+
+
 class TaskStore(Protocol):
     """任务域存储契约（内存 / PostgreSQL 双实现）。"""
 
@@ -308,6 +346,19 @@ class TaskStore(Protocol):
 
     async def reset_steps_from(self, tenant_id: str, task_id: str, seq: int) -> int:
         """把 `seq` 及之后的步骤重置为 `pending`（WF1 `redo` 用）。"""
+        ...
+
+    async def task_stats(self, tenant_id: str, since: str, until: str) -> TaskStats:
+        """窗口内任务聚合（M1/M3/M4/M5 的唯一计算入口，内存/PG 同公式）。
+
+        Args:
+            tenant_id: 企业 ID。
+            since: 窗口起点（ISO 8601，含）。
+            until: 窗口终点（ISO 8601，不含）。
+
+        Returns:
+            TaskStats: 原始聚合值；空窗口全 0。
+        """
         ...
 
 
@@ -583,6 +634,63 @@ class InMemoryTaskStore:
         self._tasks.clear()
         self._steps.clear()
         self._seq.clear()
+
+    async def task_stats(self, tenant_id: str, since: str, until: str) -> TaskStats:
+        """窗口内任务聚合（公式与 PG 聚合 SQL 逐条对应，AC-A7）。
+
+        窗口比较用 `as_datetime()` 解析后比较——**不依赖 ISO 字符串格式**，
+        避免测试造数格式不一致导致静默错算；`started_at` 为空的记录不进窗口。
+        剔 retry 的口径：`active_users` 与 `repeat_users` 都不计
+        `trigger_type == 'retry'` 的任务（`total`/各状态计数照常计）。
+
+        Args:
+            tenant_id: 企业 ID。
+            since: 窗口起点（ISO 8601，含）。
+            until: 窗口终点（ISO 8601，不含）。
+
+        Returns:
+            TaskStats: 原始聚合值；空窗口全 0。
+        """
+        window_start = as_datetime(since)
+        window_end = as_datetime(until)
+        scoped: list[TaskRecord] = []
+        if window_start is not None and window_end is not None:
+            for record in self._tasks.values():
+                if record.tenant_id != tenant_id:
+                    continue
+                started = as_datetime(record.started_at)
+                if started is None:
+                    continue
+                if window_start <= started < window_end:
+                    scoped.append(record)
+
+        stats = TaskStats(total=len(scoped))
+        non_retry = [record for record in scoped if record.trigger_type != "retry"]
+        durations: list[float] = []
+        for record in scoped:
+            if record.status == "completed":
+                stats.completed += 1
+                stats.units_sum += record.usage_units
+                seconds = _elapsed_seconds(record.started_at, record.finished_at)
+                if seconds is not None:
+                    durations.append(seconds)
+                    stats.duration_sum_seconds += seconds
+            elif record.status == "failed":
+                stats.failed += 1
+            elif record.status == "cancelled" and record.cancel_requested:
+                # 只数用户主动取消；系统取消（cancel_requested=false）留在完成率分母
+                stats.cancelled += 1
+
+        stats.active_users = len({record.initiator_id for record in non_retry})
+        per_plugin: dict[tuple[str, str], int] = {}
+        for record in non_retry:
+            key = (record.initiator_id, record.plugin_id)
+            per_plugin[key] = per_plugin.get(key, 0) + 1
+        stats.repeat_users = len(
+            {user for (user, _plugin), count in per_plugin.items() if count >= 2}
+        )
+        stats.duration_p50_seconds = _percentile(sorted(durations), 0.5)
+        return stats
 
 
 class _TaskRepository(BaseRepository):
@@ -1038,6 +1146,67 @@ class PostgresTaskStore:
             )
         return len(rows)
 
+    async def task_stats(self, tenant_id: str, since: str, until: str) -> TaskStats:
+        """窗口内任务聚合（**一条**聚合 SQL；公式与内存实现逐条对应，AC-A7）。
+
+        - 主过滤 `tenant_id + started_at ∈ [since, until)`（借
+          `idx_task_status_time` 的 tenant_id 前缀定位，零新索引）；
+        - `user_plugin` CTE 按 `(initiator_id, plugin_id)` 分组（剔 retry），
+          借 `idx_task_initiator` 前缀；
+        - 时间参数经 `as_datetime()` 转 `datetime`（asyncpg 类型化绑定只收
+          `datetime`，B21c 实测教训）；
+        - `percentile_cont(0.5)` 线性插值，取回后 `float(...)`；
+          空窗口由 `COALESCE(..., 0)` 兜底为 0。
+
+        Args:
+            tenant_id: 企业 ID。
+            since: 窗口起点（ISO 8601，含）。
+            until: 窗口终点（ISO 8601，不含）。
+
+        Returns:
+            TaskStats: 原始聚合值；空窗口全 0。
+        """
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _TaskRepository(uow)
+            row = await repo.fetch_one(
+                f"""
+                WITH scoped AS (
+                    SELECT task_id, initiator_id, plugin_id, status, cancel_requested,
+                           trigger_type, usage_units, started_at, finished_at
+                      FROM {TASK_TABLE}
+                     WHERE tenant_id = :tenant_id
+                       AND started_at >= :since AND started_at < :until
+                ),
+                user_plugin AS (
+                    SELECT initiator_id, plugin_id, count(*) AS cnt
+                      FROM scoped
+                     WHERE trigger_type <> 'retry'
+                     GROUP BY initiator_id, plugin_id
+                )
+                SELECT
+                    (SELECT count(*) FROM scoped) AS total,
+                    (SELECT count(*) FROM scoped WHERE status = 'completed') AS completed,
+                    (SELECT count(*) FROM scoped WHERE status = 'failed') AS failed,
+                    (SELECT count(*) FROM scoped
+                      WHERE status = 'cancelled' AND cancel_requested) AS cancelled,
+                    (SELECT count(DISTINCT initiator_id) FROM scoped
+                      WHERE trigger_type <> 'retry') AS active_users,
+                    (SELECT count(DISTINCT initiator_id) FROM user_plugin
+                      WHERE cnt >= 2) AS repeat_users,
+                    (SELECT COALESCE(sum(EXTRACT(EPOCH FROM (finished_at - started_at))), 0)
+                       FROM scoped
+                      WHERE status = 'completed' AND finished_at IS NOT NULL) AS duration_sum,
+                    (SELECT COALESCE(percentile_cont(0.5) WITHIN GROUP (
+                                ORDER BY EXTRACT(EPOCH FROM (finished_at - started_at)))
+                                FILTER (WHERE status = 'completed' AND finished_at IS NOT NULL), 0)
+                       FROM scoped) AS duration_p50,
+                    (SELECT COALESCE(sum(usage_units), 0) FROM scoped
+                      WHERE status = 'completed') AS units_sum
+                """,
+                repo.params(since=as_datetime(since), until=as_datetime(until)),
+            )
+        return _to_task_stats(row)
+
 
 def _task_filters(
     *,
@@ -1077,6 +1246,75 @@ def _task_filters(
         clause += " AND started_at <= :created_to"
         params["created_to"] = as_datetime(created_to)
     return clause, params
+
+
+def _elapsed_seconds(started_at: str, finished_at: str) -> float | None:
+    """计算任务时长（秒）；任一端时间缺失或无法解析时返回 None。
+
+    与 PG 的 `EXTRACT(EPOCH FROM (finished_at - started_at))` +
+    `finished_at IS NOT NULL` 对应：内存侧同样只统计两端齐全的任务。
+
+    Args:
+        started_at: 开始时间（ISO 8601）。
+        finished_at: 结束时间（ISO 8601）。
+
+    Returns:
+        float | None: 时长（秒）；缺失返回 None。
+    """
+    started = as_datetime(started_at)
+    finished = as_datetime(finished_at)
+    if started is None or finished is None:
+        return None
+    return (finished - started).total_seconds()
+
+
+def _percentile(sorted_values: list[float], fraction: float) -> float:
+    """线性插值分位（与 PG `percentile_cont` 同口径）。
+
+    公式：`position = (n − 1) × fraction`，在 `floor(position)` 与
+    `ceil(position)` 两个相邻值之间按小数部分线性插值。空列表回 0.0
+    （PG 侧由 `COALESCE(..., 0)` 兜底，两端一致）。
+
+    Args:
+        sorted_values: **升序**排列的数值列表（调用方负责排序）。
+        fraction: 分位点（0..1，如 0.5 即 P50）。
+
+    Returns:
+        float: 分位值；空列表返回 0.0。
+    """
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    position = (len(sorted_values) - 1) * fraction
+    lower = int(position)
+    upper = min(lower + 1, len(sorted_values) - 1)
+    weight = position - lower
+    return float(sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight)
+
+
+def _to_task_stats(row: Mapping[str, Any] | None) -> TaskStats:
+    """把聚合行转成 `TaskStats`（空窗口全 0，无 NaN/null）。
+
+    Args:
+        row: 聚合 SQL 的返回行；无行时按空窗口处理。
+
+    Returns:
+        TaskStats: 原始聚合值。
+    """
+    if row is None:  # pragma: no cover - 无 GROUP BY 的聚合恒有一行
+        return TaskStats()
+    return TaskStats(
+        total=int(row.get("total", 0) or 0),
+        completed=int(row.get("completed", 0) or 0),
+        failed=int(row.get("failed", 0) or 0),
+        cancelled=int(row.get("cancelled", 0) or 0),
+        active_users=int(row.get("active_users", 0) or 0),
+        repeat_users=int(row.get("repeat_users", 0) or 0),
+        duration_sum_seconds=float(row.get("duration_sum", 0) or 0),
+        duration_p50_seconds=float(row.get("duration_p50", 0) or 0),
+        units_sum=int(row.get("units_sum", 0) or 0),
+    )
 
 
 def _task_params(record: TaskRecord) -> dict[str, Any]:
@@ -1302,6 +1540,7 @@ __all__: list[str] = [
     "PostgresTaskStore",
     "StepRecord",
     "TaskRecord",
+    "TaskStats",
     "TaskStore",
     "get_memory_task_store",
     "get_task_store",

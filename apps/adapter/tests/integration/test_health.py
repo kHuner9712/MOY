@@ -289,7 +289,15 @@ def test_exactly_30_business_endpoints(client: TestClient) -> None:
             "endpoints"
         ]
     }
-    assert len(operations - phase2 - phase3 - phase4) == 30
+    # W1 增量（stats/tasks + capabilities/recommend 共 2 条登记）同理：
+    # 按基线成员扣除（与是否已实现无关），核心 30 的冻结断言只盯「核心没被改动」。
+    w1 = {
+        (str(item["method"]).upper(), str(item["path"]))
+        for item in json.loads((docs_dir / "baseline-w1-2.json").read_text(encoding="utf-8"))[
+            "endpoints"
+        ]
+    }
+    assert len(operations - phase2 - phase3 - phase4 - w1) == 30
 
 
 @pytest.mark.integration

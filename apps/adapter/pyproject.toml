@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "officeai-adapter"
 version = "1.0.0"
-description = "企业级跨生态办公 AI 平台 · 自研统一适配层"
+description = "Moy（麦子）· 自研统一适配层"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "UNLICENSED" }
@@ -88,7 +88,9 @@ src = ["app", "tests"]
 include = ["*.py", "**/*.py"]
 # `qa_probe/` 是联调期手工探针工具（非交付包、非测试、不进镜像），
 # 其行宽与导入顺序长期未纳入门禁；阶段二 B01 起明确排除，避免噪声掩盖真问题。
-extend-exclude = [".venv", "node_modules", "__pycache__", "qa_probe"]
+# `tests/qa/` 同理：QA 独立验证脚本（不被 pytest 收集、非交付物），
+# 沿用同一口径排除，避免门禁噪声。
+extend-exclude = [".venv", "node_modules", "__pycache__", "qa_probe", "tests/qa"]
 
 [tool.ruff.lint]
 select = [

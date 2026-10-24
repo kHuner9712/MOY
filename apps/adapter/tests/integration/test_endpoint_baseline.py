@@ -7,7 +7,9 @@
 3. 故意改响应字段类型 → G4 报 type changed；
 4. `--allow-missing-phase2` 期间 CI 绿（新域端点按批次补齐，不允许写假端点）；
 5. **B21 收口**：阶段三 `phase3 == 16` 精确相等，且**没有** `--allow-missing-phase3`
-   这类放宽参数——删一个插件域端点必须立刻变红。
+   这类放宽参数——删一个插件域端点必须立刻变红；
+6. **W1 增量**：`baseline-w1-2.json` 精确 2 条，且从 core 扣除（与 phase4 同口径）；
+   W1 端点未实现时按 `[PENDING]` 报告不判红，`--strict` 判红；未登记端点立即红。
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ CORE_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-core-30.json"
 PHASE3_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase3-16.json"
 PHASE2_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase2-38.json"
 PHASE4_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase4-10.json"
+W1_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-w1-2.json"
 SNAPSHOT_PATH = REPO_ROOT / "docs" / "api" / "openapi.snapshot.json"
 
 
@@ -109,7 +112,9 @@ def test_actual_core_endpoints_equal_frozen_baseline() -> None:
     phase3 = validator.load_baseline(PHASE3_BASELINE_PATH)
     # 阶段四登记过的端点必须先扣掉，否则会被算进 core（与 validator 的扣除口径一致）
     phase4 = validator.load_baseline(PHASE4_BASELINE_PATH)
-    core_actual = operations - phase2 - phase3 - phase4
+    # W1 同口径：登记过的 2 条先扣掉，否则会被算进 core
+    w1 = validator.load_baseline(W1_BASELINE_PATH)
+    core_actual = operations - phase2 - phase3 - phase4 - w1
     baseline = validator.load_baseline(CORE_BASELINE_PATH)
     assert core_actual == baseline
 
@@ -137,6 +142,7 @@ def test_repository_passes_gates_with_allow_missing_phase2() -> None:
     """当前仓库状态在 `--allow-missing-phase2` 下 G1-G5 全绿。
 
     阶段三自 B21 起无放宽参数，故这里断言 `phase3 == 16`（精确值）。
+    W1 同 phase4：基线必须一并传入（它是 core 的扣除项之一）。
     """
     failures, stats = validator.collect_failures(
         validator.build_schema(),
@@ -146,6 +152,8 @@ def test_repository_passes_gates_with_allow_missing_phase2() -> None:
         # 阶段四基线必须一并传入：它是 core 的扣除项之一，漏传会把 10 条登记
         # 端点算进 core（G1 报"多出端点"），也会让 G6 判"基线不足 10 条"。
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
+        # W1 基线同口径：漏传会把 2 条登记端点算进 core，且 G7 判"基线不足 2 条"
+        w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         snapshot=_load_snapshot(),
         allow_missing_phase2=True,
         skip_diff=False,
@@ -155,6 +163,8 @@ def test_repository_passes_gates_with_allow_missing_phase2() -> None:
     assert stats["phase2"] == 38
     assert stats["phase3"] == 16, "阶段三端点必须精确 16 条（PL1-PL14 + WF1/WF2）"
     assert stats["phase4_declared"] == 10
+    assert stats["w1_declared"] == 2, "W1 基线必须精确 2 条（stats/tasks + capabilities/recommend）"
+    assert stats["w1_present"] == W1_PRESENT_EXPECTED
 
 
 def _load_snapshot() -> dict[str, Any]:
@@ -320,6 +330,14 @@ def test_unregistered_endpoint_is_red_without_strict_flag(
 #: 改这个数字必须同时改本注释，否则下一个人不知道该不该改。
 PHASE4_PRESENT_EXPECTED = 10
 
+#: 当前批次应已实现的 W1 端点数（**防遗忘轻门禁**，照 phase4 先例）。
+#:
+#: T01 只登记不实现 → **0**（此时 W1 两条按 `[PENDING]` 报告、不判红）；
+#: T02 落地 `GET /api/v1/stats/tasks` → 1；T03 落地
+#: `GET /api/v1/capabilities/recommend` → **2**（W1 端点表清零）。
+#: 改这个数字必须同时改本注释，否则下一个人不知道该不该改。
+W1_PRESENT_EXPECTED = 2
+
 
 def test_phase4_present_matches_current_batch() -> None:
     """`phase4_present` 必须等于**当前批次**的预期值（少做两个端点当批就红）。
@@ -333,6 +351,7 @@ def test_phase4_present_matches_current_batch() -> None:
         phase2_baseline=validator.load_baseline(PHASE2_BASELINE_PATH),
         phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
+        w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         snapshot=_load_snapshot(),
         allow_missing_phase2=False,
         skip_diff=False,
@@ -345,20 +364,94 @@ def test_phase4_present_matches_current_batch() -> None:
     )
 
 
-def test_strict_flag_only_changes_verdict_when_phase4_missing() -> None:
-    """`--strict` 的判定只由「是否有缺失」决定，避免端点补齐后这条用例变成假阳性。"""
+# ===========================================================================
+# 3c. G7：W1 增量「登记先于实现」口径（T01）
+# ===========================================================================
+def test_w1_baseline_declares_exactly_2_endpoints() -> None:
+    """W1 基线必须精确 2 条（W1-A1 任务统计 / W1-B1 能力推荐）。"""
+    declared = validator.load_baseline(W1_BASELINE_PATH)
+    assert len(declared) == validator.W1_BASELINE_COUNT == 2
+
+
+def test_w1_missing_is_pending_but_not_red_by_default() -> None:
+    """`declared - actual` 非空时默认只报 `[PENDING]`，不判红（实现侧宽容）。"""
+    declared = validator.load_baseline(W1_BASELINE_PATH)
+    assert validator.gate_w1_baseline(set(), declared, strict=False) == []
+
+
+def test_w1_missing_is_red_under_strict() -> None:
+    """`--strict` 时同一条件必须判红（W2 起的 CI 口径）。"""
+    declared = validator.load_baseline(W1_BASELINE_PATH)
+    failures = validator.gate_w1_baseline(set(), declared, strict=True)
+    assert failures and failures[0].gate == "G7"
+
+
+def test_w1_baseline_shrink_is_red() -> None:
+    """把基线删成 1 条（"让 missing 变 0"的常见做法）→ G7 立刻红。"""
+    declared = validator.load_baseline(W1_BASELINE_PATH)
+    shrunk = set(sorted(declared, key=validator.operation_sort_key)[:1])
+    failures = validator.gate_w1_baseline(shrunk, shrunk, strict=False)
+    assert failures, "基线少于 2 条必须判红（删基线不算修复）"
+    assert "2" in failures[0].detail
+
+
+def test_w1_unregistered_endpoint_stays_red_without_strict_flag() -> None:
+    """W1 端点若**未登记**，必须留在 core 里被 G1 立即抓出（不享受 G7 宽容）。
+
+    合成一个只含 W1-A1 路径的 schema，且**不从 core 扣它**：
+    扣除项少了它，它就会落进 `core_actual`，G1 精确相等立刻红。
+    这条与 `test_unregistered_endpoint_is_red_without_strict_flag` 的差别在于
+    场景：W1 批次期间同样不许"偷偷加端点"。
+    """
+    victim = ("GET", "/api/v1/stats/tasks")
+    schema = _schema_with({victim[1]: {"get": {"responses": {"200": {"description": "ok"}}}}})
+    core_actual = validator.collect_operations(schema)
+    failures = validator.gate_core_baseline(
+        core_actual, validator.load_baseline(CORE_BASELINE_PATH)
+    )
+    assert failures, "未登记的端点必须被 G1 判红"
+    assert victim[1] in " ".join(item.detail for item in failures)
+
+
+def test_w1_present_matches_current_batch() -> None:
+    """`w1_present` 必须等于**当前批次**的预期值（防遗忘轻门禁，照 phase4 先例）。"""
     _failures, stats = validator.collect_failures(
         validator.build_schema(),
         core_baseline=validator.load_baseline(CORE_BASELINE_PATH),
         phase2_baseline=validator.load_baseline(PHASE2_BASELINE_PATH),
         phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
+        w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         snapshot=_load_snapshot(),
         allow_missing_phase2=False,
         skip_diff=False,
         strict_phase4=False,
     )
-    expected = 1 if stats["phase4_missing"] else 0
+    assert stats["w1_declared"] == 2
+    assert stats["w1_present"] == W1_PRESENT_EXPECTED, (
+        f"本批应已实现 {W1_PRESENT_EXPECTED} 个 W1 端点，"
+        f"实际 {stats['w1_present']}（未实现：{stats['w1_missing']}）"
+    )
+
+
+def test_strict_flag_only_changes_verdict_when_phase4_missing() -> None:
+    """`--strict` 的判定只由「是否有缺失」决定，避免端点补齐后这条用例变成假阳性。
+
+    W1 与 phase4 共用 `--strict`：两边都无缺失时期望 0，任一有缺失时期望 1。
+    """
+    _failures, stats = validator.collect_failures(
+        validator.build_schema(),
+        core_baseline=validator.load_baseline(CORE_BASELINE_PATH),
+        phase2_baseline=validator.load_baseline(PHASE2_BASELINE_PATH),
+        phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
+        phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
+        w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
+        snapshot=_load_snapshot(),
+        allow_missing_phase2=False,
+        skip_diff=False,
+        strict_phase4=False,
+    )
+    expected = 1 if (stats["phase4_missing"] or stats["w1_missing"]) else 0
     assert validator.main(["--no-write-openapi", "--strict"]) == expected
 
 

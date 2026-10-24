@@ -33,13 +33,18 @@ TENANT = "default"
 TOOL_MANAGE = "tool:connection:manage"
 TOOL_EXECUTE = "tool:execute"
 
-#: 工具注册表条目的字段集合（阶段一契约，B06 不得增删）
+#: 工具注册表条目的字段集合。
+#:
+#: 阶段一契约（B06 不得增删）。**2026-10-23 唯一一次加性变更**：
+#: 依 ADR-0005 / D-19 增加 `integration_status`（演示实现诚实标注），
+#: 前端据此显示「演示」徽标；既有字段的语义与类型未变。
 TOOL_ITEM_KEYS = {
     "tool_type",
     "display_name",
     "category",
     "auth_type",
     "status",
+    "integration_status",
     "operations",
     "timeout_ms",
 }
@@ -161,6 +166,8 @@ def test_t1_returns_five_tools_with_unchanged_shape(client: TestClient, settings
     for tool in tools:
         assert set(tool) == TOOL_ITEM_KEYS
         assert tool["display_name"]
+        # D-19：5 个连接器均为桩实现，必须逐项标注为演示（前端据此显示「演示」徽标）
+        assert tool["integration_status"] == "demo"
         for operation in tool["operations"]:
             assert set(operation) == {"operation", "display_name", "params_schema"}
             assert operation["display_name"]

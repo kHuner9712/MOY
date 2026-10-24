@@ -49,6 +49,7 @@ from app.schemas.tool import (
     CreateSyncJobRequest,
     ExecutionData,
     ExecutionStatus,
+    IntegrationStatus,
     ListConnectionsQuery,
     RegistryData,
     SyncJobData,
@@ -250,11 +251,45 @@ class ToolService:
     # ------------------------------------------------------------------
     # T1 工具类型注册表
     # ------------------------------------------------------------------
+    def _integration_status_of(self, spec: ToolSpecModel) -> IntegrationStatus:
+        """读取工具的集成状态（D-19：诚实标注「演示实现」）。
+
+        取值来源是**连接器类声明**（`ToolConnector.INTEGRATION_STATUS`），
+        而不是注册表 YAML：集成状态描述的是"代码里有没有真的对接第三方"，
+        这一事实只有连接器实现自己知道；写进配置容易与实现脱节。
+
+        缺省与异常一律回落 `demo`（fail-honest）：宁可把真实能力标成演示，
+        也不能把桩实现标成已接入。
+
+        Args:
+            spec: 工具注册条目。
+
+        Returns:
+            IntegrationStatus: 集成状态。
+        """
+        connector_cls = ConnectorRegistry.get(spec.connector_impl)
+        if connector_cls is None:
+            return IntegrationStatus.DEMO
+        raw = str(getattr(connector_cls, "INTEGRATION_STATUS", "") or "").strip()
+        try:
+            return IntegrationStatus(raw)
+        except ValueError:
+            logger.warning(
+                "tool_integration_status_invalid",
+                tool_type=spec.tool_type,
+                connector_impl=spec.connector_impl,
+                declared=raw,
+            )
+            return IntegrationStatus.DEMO
+
     def list_registry(self, auth: AuthContext) -> RegistryData:
         """查询工具类型注册表。
 
         前端自描述：插件市场/设置页按本返回动态渲染工具卡片与授权引导，
         不硬编码工具列表（架构文档 4.1）。
+
+        每个条目都带 `integration_status`：当前 5 个连接器全部是桩实现，
+        因此恒为 `demo`，前端据此显示「演示」徽标（D-19）。
 
         Args:
             auth: 鉴权上下文。
@@ -285,6 +320,7 @@ class ToolService:
                         if spec.status == "available"
                         else ToolStatus.UNAVAILABLE
                     ),
+                    integration_status=self._integration_status_of(spec),
                     operations=[
                         ToolOperation(
                             operation=str(op.get("operation", "")),

@@ -58,6 +58,7 @@ from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
 from app.db.repositories.memory_repo import reset_memory_store
 from app.db.repositories.ops_repo import reset_ops_store
 from app.db.repositories.org_repo import reset_org_store
+from app.db.repositories.role_repo import reset_role_store
 from app.db.repositories.plugin_repo import reset_plugin_store
 from app.db.repositories.plugin_review_repo import reset_review_store
 from app.db.repositories.segment_repo import reset_segment_store
@@ -202,6 +203,11 @@ def _reset_all() -> None:
     reset_knowledge_base_store()
     reset_document_store()
     reset_grant_store()
+    # 阶段二 B08 补齐（W2 覆盖率批次暴露的隔离缺口）：角色存储此前**没有**进自动复位，
+    # 只有 `test_org_endpoints.py` / `test_permission_matrix.py` 两个文件手工复位。
+    # 后果是「上一个用例建的角色/改的权限矩阵」会被本用例读到——单独跑绿、整体跑红的
+    # 顺序依赖就是这么产生的。与 `reset_org_store()` 一起复位，保证每个用例从干净矩阵起算。
+    reset_role_store()
     reset_conversation_stores()
     # **会话服务单例也必须重置**（阶段四 T4-03 暴露的隔离缺口）：
     # `reset_conversation_stores()` 只清模块级存储指针，而已构造的

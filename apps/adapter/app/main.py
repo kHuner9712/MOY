@@ -16,6 +16,14 @@
 阶段四新增（T4-03.2）：`lifespan` 按 `OA_BACKGROUND_JOBS_ENABLED` 启停后台任务轮询
 （记忆抽取的载体）。关停顺序是**先停轮询、再释放连接池**——反序会让正在执行的任务
 拿到已 dispose 的引擎，把一次干净的停机变成一堆 `InterfaceError` 日志。
+
+质量收口新增（W2）：`build_openapi` 给对外文档补齐公共层——安全方案 `BearerAuth`、
+逐操作的 `security`、公共头 `X-Tenant-Id` 与 `servers`。
+
+**为什么公共层要在这里补而不是逐个端点声明**：99 个操作里手工声明 `security`
+必然漏，而漏掉的后果是"生成的客户端不带令牌"——联调期表现为 401，排查方向会被
+引向令牌本身。同样的理由适用于 `X-Tenant-Id`：它由 `resolve_tenant_id` 在后台
+从请求头读取，函数签名里看不到，只能靠 OpenAPI 显式标注。
 """
 
 from __future__ import annotations
@@ -23,11 +31,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from functools import partial
+from typing import Any, Final
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 
+from app.api.v1.artifact_files import router as artifact_files_router
 from app.api.v1.router import include_all_routers
 from app.core.config import Settings, get_settings
 from app.core.crypto import validate_startup as validate_credential_startup
@@ -39,7 +50,7 @@ from app.core.security import validate_auth_startup
 from app.db.engine import dispose_engine, get_engine
 from app.db.migrate import run_startup_migrations
 from app.db.repositories.job_repo import get_job_store
-from app.middleware.error_handler import register_exception_handlers
+from app.middleware.error_handler import AUTH_EXEMPT_PATHS, register_exception_handlers
 from app.middleware.metrics import MetricsMiddleware
 from app.middleware.trace import AccessLogMiddleware, TraceMiddleware
 from app.services.memory_extractor import warn_missing_memory_app_key_once
@@ -51,7 +62,7 @@ logger = get_logger(__name__)
 
 #: OpenAPI 契约描述（对外文档中不得出现任何底座术语，架构文档 1.4 第 2 条）
 API_DESCRIPTION = """
-企业级跨生态办公 AI 平台 · 自研统一适配层标准接口 v1.0。
+Moy（麦子）· 自研统一适配层标准接口 v1.0。
 
 ## 统一约定
 
@@ -76,6 +87,154 @@ API_TAGS_METADATA: list[dict[str, Any]] = [
     {"name": "用户权限服务", "description": "令牌校验、用户资料、组织成员、角色与审计"},
     {"name": "健康检查", "description": "存活探针与就绪探针（免鉴权）"},
 ]
+
+#: OpenAPI 安全方案名（`components.securitySchemes` 的键）
+BEARER_SCHEME_NAME: Final[str] = "BearerAuth"
+
+#: 公共请求头：生效租户
+TENANT_HEADER_NAME: Final[str] = "X-Tenant-Id"
+
+#: 公共请求头的描述。**必须说清"可省略"**：私有化单租户部署没有这个头，
+#: 写成 `required: true` 会让生成的客户端在私有化现场强制塞一个无意义的值。
+TENANT_HEADER_DESCRIPTION: Final[str] = (
+    "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致"
+)
+
+#: OpenAPI `servers`。同源部署：对外只有一个入口，由编排层反向代理转发
+OPENAPI_SERVERS: Final[list[dict[str, str]]] = [
+    {"url": "/", "description": "同源部署（由编排层反向代理）"},
+]
+
+#: OpenAPI 路径对象里代表"一个真实操作"的键（其余键如 `parameters` / `summary` 不是操作）
+OPERATION_METHODS: Final[frozenset[str]] = frozenset(
+    {"get", "put", "post", "delete", "patch", "head", "options", "trace"}
+)
+
+
+def artifact_token_paths() -> frozenset[str]:
+    """列出「靠链接令牌自身鉴权」的端点路径（不是免鉴权，是换了一种鉴权）。
+
+    **为什么从路由声明里推导**：这些路径一旦改地址，手写的字符串就会悄悄失配，
+    表现为 OpenAPI 给下载端点标上 Bearer 鉴权——而它实际不认令牌。
+    直接读路由对象，路径只有一个真源。
+
+    Returns:
+        frozenset[str]: 形如 `/files/artifacts/{token}` 的路径模板集合。
+    """
+    return frozenset(
+        str(getattr(route, "path", "") or "")
+        for route in artifact_files_router.routes
+        if getattr(route, "path", "")
+    )
+
+
+def auth_exempt_paths() -> frozenset[str]:
+    """OpenAPI 中**不加** `security` 的路径集合。
+
+    合流点只有这一处：中间件层的免鉴权清单（`AUTH_EXEMPT_PATHS`，探针与支付回调）
+    加上靠链接令牌鉴权的产物下载端点。**不再维护第二份手写清单**——两份清单一旦
+    分叉，文档会要求一个实际不需要的令牌，或者反过来把免鉴权端点写成需要鉴权。
+
+    Returns:
+        frozenset[str]: 免鉴权路径（与 OpenAPI 的 path 模板同形）。
+    """
+    return AUTH_EXEMPT_PATHS | artifact_token_paths()
+
+
+def _has_tenant_header(parameters: list[Any]) -> bool:
+    """判断参数列表里是否已声明 `X-Tenant-Id` 头。
+
+    Args:
+        parameters: 操作级或路径级的参数列表。
+
+    Returns:
+        bool: 已声明返回 True。
+    """
+    for parameter in parameters:
+        if not isinstance(parameter, dict):
+            continue
+        if parameter.get("in") == "header" and parameter.get("name") == TENANT_HEADER_NAME:
+            return True
+    return False
+
+
+def build_openapi(app: FastAPI) -> dict[str, Any]:
+    """生成对外 OpenAPI 文档（在 FastAPI 默认结果上补齐公共层）。
+
+    补齐三件事，缺任何一件都无法据此生成可用客户端：
+
+    1. `components.securitySchemes.BearerAuth` + 逐操作 `security`：默认只有 4 个免鉴权
+       端点，其余全部要求 Bearer；
+    2. 公共头 `X-Tenant-Id`：它由 `resolve_tenant_id` 在后台读请求头，函数签名里看不到；
+    3. `servers: /`：同源部署，客户端不需要（也不应该）拼域名。
+
+    结果写回 `app.openapi_schema` 缓存，重复调用（`/openapi.json`、快照门禁）不会再算一遍。
+
+    Args:
+        app: FastAPI 应用实例。
+
+    Returns:
+        dict[str, Any]: 补齐后的 OpenAPI 文档。
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema: dict[str, Any] = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        tags=app.openapi_tags,
+    )
+    schema["servers"] = [dict(item) for item in OPENAPI_SERVERS]
+
+    components = schema.setdefault("components", {})
+    security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes[BEARER_SCHEME_NAME] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "登录后获得的访问令牌，放在 `Authorization: Bearer <token>`",
+    }
+
+    exempt = auth_exempt_paths()
+    tenant_parameter: dict[str, Any] = {
+        "name": TENANT_HEADER_NAME,
+        "in": "header",
+        "required": False,
+        "schema": {"type": "string"},
+        "description": TENANT_HEADER_DESCRIPTION,
+    }
+
+    paths = schema.get("paths", {})
+    if not isinstance(paths, dict):
+        return schema
+
+    for path, path_item in paths.items():
+        if not isinstance(path_item, dict):
+            continue
+        # 路径级参数对全部方法生效；先看一眼，避免与方法级重复声明同一个头
+        shared_parameters = path_item.get("parameters")
+        has_shared_tenant_header = isinstance(shared_parameters, list) and _has_tenant_header(
+            shared_parameters
+        )
+        for method, operation in path_item.items():
+            if method.lower() not in OPERATION_METHODS or not isinstance(operation, dict):
+                continue
+            if path not in exempt:
+                # 已声明 security 的操作（理论上不存在）保持原样，不覆盖
+                operation.setdefault("security", [{BEARER_SCHEME_NAME: []}])
+
+            if has_shared_tenant_header:
+                continue
+            parameters = operation.setdefault("parameters", [])
+            if not isinstance(parameters, list):
+                continue
+            if not _has_tenant_header(parameters):
+                parameters.append(dict(tenant_parameter))
+
+    app.openapi_schema = schema
+    return schema
 
 
 @asynccontextmanager
@@ -199,7 +358,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(conf)
 
     app = FastAPI(
-        title="企业级跨生态办公 AI 平台 · 统一适配层",
+        title="Moy（麦子）· 统一适配层",
         description=API_DESCRIPTION,
         version=conf.app_version,
         openapi_tags=API_TAGS_METADATA,
@@ -230,6 +389,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(include_all_routers(conf))
+    # 对外文档补齐公共层（安全方案 / 逐操作 security / X-Tenant-Id / servers）。
+    # 用 functools.partial 绑定 app 而不是 lambda：partial 可被 mypy 推导出
+    # 「零参返回 dict」的签名，与 FastAPI 的 `openapi()` 一致，且不会引入闭包延迟绑定。
+    app.openapi = partial(build_openapi, app)  # type: ignore[method-assign]
     return app
 
 

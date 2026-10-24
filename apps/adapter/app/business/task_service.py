@@ -1045,6 +1045,13 @@ class TaskService:
     def _task_item(self, record: TaskRecord, auth: AuthContext) -> TaskItem:
         """把任务行转成列表项。
 
+        列表是**聚合视图**：单条任务的声明缺失不该拖垮整个列表（LED-045——
+        一条 `plugin_id` 指向不存在插件的脏任务曾让 `GET /api/v1/agent/tasks`
+        整体 404）。此处对缺失 manifest 做容忍：`goal` 退化为插件标识这一
+        **中性兜底**（事实信息，不编造名称），其余字段照常返回。
+        详情/执行路径仍走 `_manifest_of` 的显性 16002——那些路径没有声明
+        就无法正确渲染步骤与确认语义，静默兜底会给出错误结果。
+
         Args:
             record: 任务行。
             auth: 鉴权上下文。
@@ -1052,11 +1059,11 @@ class TaskService:
         Returns:
             TaskItem: 列表项。
         """
-        manifest = self._manifest_of(record)
+        manifest = self._find_manifest(record)
         return TaskItem(
             task_id=record.task_id,
             conversation_id=record.conversation_id,
-            goal=manifest.name if manifest is not None else "",
+            goal=manifest.name if manifest is not None else record.plugin_id,
             status=TaskStatus(record.status),
             progress=record.progress,
             created_at=record.started_at,
@@ -1282,8 +1289,29 @@ class TaskService:
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
+    def _find_manifest(self, record: TaskRecord) -> PluginManifest | None:
+        """按任务快照版本取声明（取不到返回 None，**不抛**）。
+
+        历史任务按创建时版本渲染；快照版本不在册时回落最新在册版本。
+
+        Args:
+            record: 任务行。
+
+        Returns:
+            PluginManifest | None: 插件声明；缺失（含回落）返回 None。
+        """
+        manifest = self._registry.get(record.plugin_id, record.plugin_version)
+        if manifest is None:
+            latest = self._registry.latest(record.plugin_id)
+            manifest = self._registry.get(record.plugin_id, latest) if latest else None
+        return manifest
+
     def _manifest_of(self, record: TaskRecord) -> PluginManifest:
         """按任务快照版本取声明（历史任务按创建时版本渲染）。
+
+        详情/执行路径专用：声明缺失是**显性失败**（16002）——这些路径
+        没有声明就无法正确渲染步骤、确认语义与核查清单，静默兜底会给出
+        错误结果，因此这里必须抛而不是回落。
 
         Args:
             record: 任务行。
@@ -1294,10 +1322,7 @@ class TaskService:
         Raises:
             ApiError: 声明缺失（16002）。
         """
-        manifest = self._registry.get(record.plugin_id, record.plugin_version)
-        if manifest is None:
-            latest = self._registry.latest(record.plugin_id)
-            manifest = self._registry.get(record.plugin_id, latest) if latest else None
+        manifest = self._find_manifest(record)
         if manifest is None:
             raise ApiError(
                 ErrorCode.PLUGIN_NOT_FOUND, internal_detail=f"{record.plugin_id} manifest missing"
