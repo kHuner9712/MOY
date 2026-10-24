@@ -1,7 +1,9 @@
-# 企业级跨生态办公 AI 平台（OfficeAI）
+# Moy（麦子）· OfficeAI
 
-> 面向企业与团队用户的跨生态、全场景、可私有化办公 AI 平台。
-> 本仓库为 Monorepo，采用「底座层 + 自研统一适配层 + 业务层 + 插件层 + 前端层」五层解耦架构。
+> Moy（麦子）—— 面向广泛工作需求的模块化 AI 工作平台。本仓库为 V1.0 实现（首批落地场景：企业办公），
+> 采用「底座层 + 自研统一适配层 + 业务层 + 插件层 + 前端层」五层解耦架构。
+> 产品定位与战略以《项目总纲》（`docs/moy-project-charter-v1.0.md`）为准；能力可用性以总纲第十一章状态分级（L1-L5）为准，
+> 详见 `docs/prd-v1.0.md` §5.1 成熟度列与 `docs/decisions/0005-charter-first-alignment.md`。
 
 ---
 
@@ -10,20 +12,19 @@
 平台以成熟开源底座（Dify，Apache-2.0）提供 AI 原子能力，通过**自研统一适配层**屏蔽底座差异，
 向上层（前端交互层、场景插件层、业务能力层）输出自研标准接口，实现「替换底座仅改适配层，上层零改动」。
 
-**当前进度**：已完成第一至第三阶段（第 1-20 周，共 24 周计划中的前 20 周）。
-第三阶段交付插件体系与 3 个标杆场景插件，**84 个端点全部就绪**（core 30 + phase2 38 + phase3 16）。
-第四阶段（商用打磨与交付准备）待启动。
+**当前进度**：第一至第四阶段主体已交付，W1（总纲对齐）切片 A/B 已完成。
+**96 个端点全部就绪**（core 30 + phase2 38 + phase3 16 + phase4 10 + W1 2）。
 
-> **测试数字口径（审计 OA-AUDIT-001 / P1-3 补充，务必连同数字一起读）**
+> **测试数字口径（务必连同数字一起读）**
 > 测试与覆盖率存在**两套口径**，脱离前置条件单独引用数字会误导：
 >
 > | 口径 | 前置条件 | 实测结果 |
 > | --- | --- | --- |
-> | **全量（含 PG）** | 设 `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + `--run-pg` + 设 `OA_BATCH` | **1573 passed / 0 failed / 0 skipped**，合并覆盖率 90.78% |
-> | **CI 子集（无 PG）** | 不设上述变量 | 1456 passed / 1 failed（缺 `OA_BATCH`）/ 141 skipped，覆盖率 84.19% |
+> | **全量（含 PG）** | 设 `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + `--run-pg` + 设 `OA_BATCH` | 待本轮 CI 复测（历史基线：1573 passed / 0 skipped，合并覆盖率 89.81%） |
+> | **本机（无 PG）** | 不设上述变量，`OA_BATCH=B21` | **2030 passed / 203 skipped / 0 failed**，合并覆盖率 **85.51%** |
 >
 > 未设 `OA_BATCH` 时 `tests/expected_xfail.py::current_batch()` **故意抛错**（缺失即红，
-> 不给静默默认）。CI 若不加 Postgres 服务，覆盖率门禁（≥85%）**必然不达标**。
+> 不给静默默认）。无库口径下 203 条 PG 用例按设计 skip，不计入断言有效性。
 
 ## 二、目录结构
 
@@ -35,7 +36,7 @@ officeai/                              # Monorepo 根目录
 │   │   │   ├── main.py                # FastAPI 入口：中间件、异常处理器、路由挂载
 │   │   │   ├── core/                  # 配置、错误码、日志、鉴权、幂等、限流
 │   │   │   ├── middleware/            # trace_id 注入、统一异常兜底
-│   │   │   ├── api/v1/                # 标准接口端点（M/R/A/T/U + 插件域 PL/WF，共 84 个）
+│   │   │   ├── api/v1/                # 标准接口端点（M/R/A/T/U + 插件域 PL/WF + 统计/能力，共 96 个）
 │   │   │   ├── schemas/               # 请求响应模型（契约同步）
 │   │   │   ├── services/              # 协议转换服务（唯一允许写下游调用的位置）
 │   │   │   ├── clients/               # 底座 HTTP 客户端（唯一调用出口）
@@ -50,7 +51,7 @@ officeai/                              # Monorepo 根目录
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   └── README.md
-│   └── web/                           # 前端交互层（Next.js 14 App Router）
+│   └── web/                           # 前端交互层（Next.js 16 App Router）
 │       ├── src/app/                   # 页面（App Router）：含 /plugins、/workbench/{id}、/workflows/{taskId}
 │       ├── src/components/ui/         # 统一组件库（shadcn/ui 风格封装）
 │       ├── src/lib/api-client.ts      # 前端唯一适配层调用出口
@@ -209,11 +210,10 @@ pytest tests -q --cov=app --cov-report=term-missing
 
 | 项 | 值 |
 | --- | --- |
-| 端点契约 | `core=30 / phase2=38/38 / phase3=16/16`，合计 **84**，严格模式 EXIT 0 |
-| 全量测试 | **1573 passed / 0 failed / 0 skipped**（含 PostgreSQL 实跑） |
-| P0 用例 | `pytest -m p0` → **184/184** |
-| 覆盖率 | 总 `app/*` 合并 **90.78%**；`business+db` 合并 **90.26%**；分支 **2315/2862 = 80.89%** |
-| 静态门禁 | `ruff check` / `ruff format` / `mypy`（117 文件）全绿 |
+| 端点契约 | `core=30 / phase2=38/38 / phase3=16/16 / phase4=10/10 / w1=2/2`，合计 **96**，`--strict` EXIT 0 |
+| 本机测试（无 PG） | **2030 passed / 203 skipped / 0 failed**；PG 用例按设计跳过 |
+| 覆盖率（无 PG） | 总 `app/*` 合并 **85.51%**；含 PG 口径待本轮 CI 复测（历史 89.81%） |
+| 静态门禁 | `ruff check` / `ruff format` / `mypy`（150 文件）全绿 |
 | 部署门禁 | 端点基线 / 迁移双路径 / 依赖白名单 / 镜像锁定 / 插件声明 / 错误码三处一致 均 EXIT 0 |
 | 前端门禁 | 禁词 / 占位词 / 页面三态 / 契约快照 / 能力一致性 / 工作台宿主唯一 均 0 命中 |
 
