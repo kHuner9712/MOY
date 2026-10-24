@@ -64,7 +64,8 @@ cd apps/web && npx next start -p 3200
 
 > **重要环境说明（不掩盖差异）**：`/identity/profile` 在桩实现里把 `X-Tenant-Id` **回显**成 `tenant.tenant_id`，
 > 而前端在拿到 profile 之前只能带 `DEFAULT_TENANT_ID='default'`。因此测试数据必须落在 `default` 租户，
-> 否则页面看到的是另一份空数据（首次执行时即因此出现「已添加 0 个」的假象，已定位为**环境/契约问题**，见缺陷 D-2）。
+> 否则页面看到的是另一份空数据（首次出现「已添加 0 个」的假象即因此）。**这是私有化模式的设计行为**
+> ——该模式忽略 `X-Tenant-Id`、恒返回 `default`（`security.py:214-215`，详见 ADR-0007 与缺陷 D-2），**不是异常**。
 > 令牌载荷里的 `tenant_id=tnt_dev` 在桩模式下不参与判定。
 
 ---
@@ -147,13 +148,26 @@ cd apps/web && npx next start -p 3200
   base 因 `plugin.inputs` 为 `undefined` 整页崩溃而**掩盖**了此问题 → 属「F-04 修复后暴露的存量数据缺陷」。
 - **建议**：二选一——① 声明层补 `options`（或改为 text）；② 前端对「`select` 且 `options` 为空」降级为文本框（需产品确认，属新行为）。**本批不建议顺手改**（超出批次范围）。
 
-### D-2【P2 · 待架构确认】租户上下文：`/identity/profile` 回显 `X-Tenant-Id`，前端首轮带 `default`
+### D-2【P2 · 已定性，见 ADR-0007】前端首个 `profile` 预置 `X-Tenant-Id: default` → `saas + oidc` 下的租户自举毒化
 
-- **现象**：会话门拿到 profile 之前只能带 `DEFAULT_TENANT_ID='default'`；桩适配层把 header **回显**成 `tenant.tenant_id`，
-  于是前端把 `X-Tenant-Id` 永久固定为 `default`。表现：明明已安装 6 个插件，侧栏与「已添加」页显示 0（数据落在 `tnt_dev`）。
-- **证据**：`GET /identity/profile` 带 `X-Tenant-Id: default` → 返回 `tenant.tenant_id="default"`；带 `tnt_dev` → 返回 `tnt_dev`。
-- **判定**：这是**桩实现**的租户来源问题，**不是本批 7 个提交引入**（基线行为一致），也未在 R1-R15 判据内。
-  但若真实身份服务同样"按 header 回显"，多租户部署会出现跨租户串数据 —— 建议架构侧确认「租户必须由令牌派生」并加一条门禁。
+> **本段已按架构 ADR-0007 更正（2026-10-25）**。初版把它写成"多租户会串数据""数据放 default 才对齐是异常"，两处都不准确，
+> 保留更正后的口径如下，避免后人误读。
+
+- **私有化模式下"恒为 default"是设计行为，不是缺陷**：全部部署预设都是 `OA_DEPLOY_MODE=private`
+  （`deploy/.env:26`、`.env.example:26`、`.env.lite:31`、`docker-compose.lite.yml:420`），
+  该模式**忽略** `X-Tenant-Id`、恒返回 `default`（`apps/adapter/app/core/security.py:214-215`）。单租户天然隔离。
+  我在第一轮把测试数据放到 `default` 租户，正是为了对齐这一设计行为，**不是"绕过异常"**。
+- **跨租户并非无防护**：AR-017 已修好并有用例锁死——持 A 租户令牌 + `X-Tenant-Id: B` → 403 / 20003 / 业务语言文案
+  （`apps/adapter/tests/security/test_tenant_spoofing.py:195-208`）；生产还叠加启动期防呆（`security.py:905-917`）。
+- **真实问题（触发面更窄，但更隐蔽）**：仅在 `saas + oidc`（真多租户）下成立。前端在拿到 `profile` 之前恒定发
+  `X-Tenant-Id: default`（`api-client.ts` 的 `currentTenantId` 初值 + `session-gate.tsx` 的 reset），
+  而后端让请求头**优先于**令牌声明（`security.py:217-219`），`profile` 又把"生效租户"回显成 `tenant.tenant_id`
+  （`identity_service.py:181,218`）——客户端与服务端互相自举，用户永远学不到真租户。
+  后果：首个 `profile` 直接 **403/20003**（会话门落到 error 态显示「当前账号没有该操作的权限」，**不是**跳登录，
+  排障时极易看错方向），或当用户本身是 `default` 成员时把会话永久钉在 `default`。
+- **定级 P2**（不进 Batch 2；V1.1 上 `saas` 多租户前必须升 P0）。修法是前端 5 行：`currentTenantId` 初值 `null` +
+  `buildHeaders`/`upload()` 非空判断 + 三处 `setTenantId(null)`——已并入 T03b（`20fee16`），复验见
+  `docs/qa-batch1-r2-report-2026-10-25.md` 的 R16。
 
 ### D-3【P3】每页 1 条 `favicon.ico` 404
 
@@ -231,4 +245,4 @@ cd apps/web && npx next start -p 3200
 | V1 | 换账号后的查询缓存隔离（设计 §13.2 R9） | 桩环境只有一套身份，未实测；代码层依赖 `queryClient.clear()`，属**未验证**而非「已验证通过」 |
 | V2 | 评价分页（11+ 条） | 无数据可翻页，`total=0` 只能证明空态正确 |
 | V3 | 门多一次 profile RTT 的首屏影响（设计 K1/U4） | 本次只测「次数=1」，未测耗时 |
-| V4 | 租户来源（D-2） | 若真实身份服务按 header 回显租户，多租户会串数据 |
+| V4 | 租户来源（D-2） | 私有化恒 `default` 是设计行为；真风险是 `saas + oidc` 下的自举毒化（P2，见 ADR-0007，已在 T03b 修复） |
