@@ -5,7 +5,8 @@ import { usePathname } from 'next/navigation';
 import * as React from 'react';
 
 import { SessionGate } from '@/components/layout/session-gate';
-import { AppSidebar, MobileNav, resolveNavItem } from '@/components/layout/sidebar';
+import { MobileNav } from '@/components/layout/mobile-nav';
+import { AppSidebar, resolveNavItem } from '@/components/layout/sidebar';
 import { installErrorGuard } from '@/lib/error-guard';
 import { QueryProvider } from '@/lib/query-client';
 
@@ -60,8 +61,10 @@ export default function MainLayout({
           <AppSidebar />
 
           <div className="flex min-w-0 flex-1 flex-col">
-            <header className="flex h-16 items-center justify-between border-b px-6">
-              <h1 className="text-base font-semibold">{current?.label ?? '办公 AI 平台'}</h1>
+            <header className="flex h-16 items-center justify-between gap-3 border-b px-4 md:px-6">
+              <h1 className="min-w-0 flex-1 truncate whitespace-nowrap text-base font-semibold">
+                {current?.label ?? '办公 AI 平台'}
+              </h1>
               <MobileNav />
             </header>
 
