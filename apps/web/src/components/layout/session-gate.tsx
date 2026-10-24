@@ -16,6 +16,8 @@
  *    它一挂载就发请求，漏在门外等于刷新页面时仍有一次无身份请求。
  * 3. **会话失效只有两个入口**：本门自己请求 `profile` 拿到 20002，或运行期任意请求
  *    由 `api-client` 广播（`session-events`）。页面不参与处置。
+ * 4. **租户头由服务端教**：就绪前 `setTenantId(null)`（请求不带该头），`profile` 回来后
+ *    才写入真租户。反向（先猜一个）会让请求头压过令牌声明，SaaS 下首个 `profile` 即 403。
  *
  * 状态与渲染的映射（这张表就是实现契约）：
  *
@@ -60,9 +62,6 @@ export interface SessionContextValue {
 
 /** 本地会话失效时的提示：与业务错误码 20002 的既有口径保持一致（同码同文案） */
 export const SESSION_EXPIRED_MESSAGE = '登录状态已失效，请重新登录';
-
-/** 无租户信息时的默认租户头（与 `api-client` 的 `DEFAULT_TENANT_ID` 同值） */
-const DEFAULT_TENANT_ID = 'default';
 
 const SessionContext = React.createContext<SessionContextValue | null>(null);
 
@@ -170,7 +169,7 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
       // 过期即视为未登录：别再拿一个必然被拒的令牌去请求
       clearSession();
       setAccessToken(null);
-      setTenantId(DEFAULT_TENANT_ID);
+      setTenantId(null);
       setHandshake('expired');
       return;
     }
@@ -184,7 +183,11 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
       const profile = await identityApi.profile();
       // 关键顺序：租户头必须在 profile **落进缓存之前**写好。
       // 写在 effect 里会晚于子页面挂载（同一 commit 内子页面的首批请求已经发出），
-      // 那样第一批请求的 X-Tenant-Id 仍是 'default'。
+      // 那样第一批请求的 X-Tenant-Id 仍是未知态。
+      //
+      // 注意这一次 `profile` 请求本身**不带** `X-Tenant-Id`（`setTenantId(null)` 的语义），
+      // 后端按令牌声明解析出真租户再回显——这是唯一能让客户端学到租户的顺序。
+      // 若在这里预设一个默认租户，请求头会压过令牌声明，形成自举循环（详见 D-2）。
       setTenantId(profile.tenant.tenant_id);
       return profile;
     },
@@ -212,7 +215,7 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
     if (phase !== 'expired') return;
     clearSession();
     setAccessToken(null);
-    setTenantId(DEFAULT_TENANT_ID);
+    setTenantId(null);
   }, [phase]);
 
   // ④ 跳登录：`anonymous` / `expired` 都继续渲染骨架，只做一次 replace
@@ -253,7 +256,7 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
   const logout = React.useCallback(() => {
     clearSession();
     setAccessToken(null);
-    setTenantId(DEFAULT_TENANT_ID);
+    setTenantId(null);
     setTokenReady(false);
     queryClient.clear();
     setHandshake('anonymous');

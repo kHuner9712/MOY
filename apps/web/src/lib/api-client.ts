@@ -193,9 +193,6 @@ const TENANT_HEADER = 'X-Tenant-Id';
 /** 幂等键请求头 */
 const IDEMPOTENCY_HEADER = 'Idempotency-Key';
 
-/** 默认租户（私有化模式） */
-const DEFAULT_TENANT_ID = 'default';
-
 /**
  * 「登录状态已失效」的业务错误码。
  *
@@ -216,8 +213,19 @@ const STREAM_TIMEOUT_MS = 15_000;
 /** 访问令牌内存缓存（由登录流程写入） */
 let accessToken: string | null = null;
 
-/** 当前租户 */
-let currentTenantId: string = DEFAULT_TENANT_ID;
+/**
+ * 当前租户（`null` = 尚不知道，一律**不带**该请求头）。
+ *
+ * 为什么初值不是 `'default'`：租户只能从服务端学到。若这里预设一个值，
+ * 首个 `profile` 就会带上 `X-Tenant-Id: <猜的租户>`，而后端 `resolve_tenant_id`
+ * 让请求头**优先于**令牌声明 —— 客户端与服务端互相自举，用户永远学不到真租户
+ * （SaaS 下表现为首个 `profile` 直接 403，或把会话永久钉在猜的那个租户上）。
+ *
+ * 正确顺序：先**不带头**问一次 `profile`（后端按令牌声明解析），拿到
+ * `tenant.tenant_id` 后再 `setTenantId(...)`，此后每个请求的头都等于令牌租户。
+ * 私有化模式后端忽略该头，行为不变。
+ */
+let currentTenantId: string | null = null;
 
 /**
  * 设置访问令牌。
@@ -240,9 +248,9 @@ export function getAccessToken(): string | null {
 /**
  * 设置当前租户。
  *
- * @param tenantId - 租户标识
+ * @param tenantId - 租户标识；传 `null` 表示「尚未知」，之后发起的请求不带该头
  */
-export function setTenantId(tenantId: string): void {
+export function setTenantId(tenantId: string | null): void {
   currentTenantId = tenantId;
 }
 
@@ -273,7 +281,9 @@ function buildHeaders(options: {
   if (accessToken) {
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
-  if (!options.tenantId) {
+  // 只有「已经知道租户」时才带该头：未知时留空，让后端按令牌声明解析。
+  // 反过来（预设一个默认值）会让首个 profile 自证租户，形成循环。
+  if (!options.tenantId && currentTenantId !== null) {
     headers.set(TENANT_HEADER, currentTenantId);
   }
 
@@ -420,7 +430,11 @@ async function upload<T>(path: string, form: FormData, options: RequestOptions =
   if (accessToken) {
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
-  headers.set(TENANT_HEADER, options.tenantId ?? currentTenantId);
+  // 与 `buildHeaders` 同一口径：租户未知时不带头（否则会写出字面量 "null"）
+  const tenantHeader = options.tenantId ?? currentTenantId;
+  if (tenantHeader !== null && tenantHeader !== undefined && tenantHeader !== '') {
+    headers.set(TENANT_HEADER, tenantHeader);
+  }
   headers.set(IDEMPOTENCY_HEADER, newIdempotencyKey());
 
   const response = await fetchWithTimeout(
