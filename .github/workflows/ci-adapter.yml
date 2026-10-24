@@ -8,14 +8,25 @@
 name: CI Adapter
 
 on:
+  # paths 必须覆盖**门禁自己要守的目录**，否则"改 deploy 的 PR 不跑守 deploy 的门禁"：
+  # - deploy/**   → validate_config_names（编排注入的键名）/ validate_openapi / validate_*；
+  # - docs/api/** → G4 与快照比对，否则快照可单方面提交而无人校验；
+  # - scripts/**  → gen_delivery_manifest（清单生成器）与 check_error_catalog 的真源。
+  # 这三类 diff 通常是几 KB，不会显著抬升额度。
   push:
     branches: [main, develop, 'feature/**', 'release/**', 'hotfix/**']
     paths:
       - 'apps/adapter/**'
+      - 'deploy/**'
+      - 'docs/api/**'
+      - 'scripts/**'
       - '.github/workflows/ci-adapter.yml'
   pull_request:
     paths:
       - 'apps/adapter/**'
+      - 'deploy/**'
+      - 'docs/api/**'
+      - 'scripts/**'
       - '.github/workflows/ci-adapter.yml'
   workflow_dispatch:
 
@@ -72,11 +83,18 @@ jobs:
       # 缺陷台账的"当前批次"：`tests/expected_xfail.py::current_batch()` 不给默认值，
       # 缺失即抛错（缺失即红）。**批次推进时必须同步上调本值**——一旦调到 B30，
       # 台账中 3 条 `due_batch=B30` 的 open 缺陷会正确地判为「已过期」并报红。
+      # 批次到期时钟由本值决定，升批需与 expected_xfail.py 同步（两处不同步时，
+      # 要么过期缺陷被放过、要么未到期缺陷被误判为过期，两种都比不设时钟更糟）。
       OA_BATCH: B21
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          # **必须全量历史**：交付清单门禁（`scripts/gen_delivery_manifest.py --check`）
+          # 的证据列是「引入该文件的短 SHA」，它用 `git log --diff-filter=A -1` 反查。
+          # 浅克隆（默认 fetch-depth: 1）查不到旧提交 → 证据算成 `待补` → 与清单不一致 → 恒定红。
+          fetch-depth: 0
 
       - name: 安装 Python
         uses: actions/setup-python@v5
@@ -158,6 +176,33 @@ jobs:
       # ------------------------------------------------------------------
       - name: 错误码三处一致（G-13）
         run: python scripts/check_error_catalog.py --strict
+
+      # ------------------------------------------------------------------
+      # 门禁 4a：编排配置名与 Settings 字段一致（G-35，配置名漂移）
+      #
+      # 起因：三套编排注入 `OA_KEYCLOAK_URL`，而字段是 `keycloak_base_url`
+      # （环境变量 `OA_KEYCLOAK_BASE_URL`），pydantic 静默丢弃 → 配了等于没配。
+      # 自检口径与 validate_deploy.py 那类**相反**：本脚本通过 0 / 拦截 1，
+      # 所以直接跑即可，不要套 `-ne 1` 的断言（那会把健康门禁判成红）。
+      # ------------------------------------------------------------------
+      - name: 编排配置名一致性（G-35）
+        working-directory: .
+        run: python deploy/validate_config_names.py
+
+      - name: 编排配置名门禁自检（G-35 可红证明）
+        working-directory: .
+        run: python deploy/validate_config_names.py --self-test
+
+      # ------------------------------------------------------------------
+      # 门禁 4d：交付清单与磁盘/任务表一致（阶段四 D-28 / LED-043）
+      #
+      # 曾出现 9 个已建交付物被标"待建"。清单由脚本从任务表生成，`--check`
+      # 只校验不写盘。**注意脚本输出走 stderr**，CI 里不要用 `2>/dev/null`
+      # 把它吞掉——红的时候那段文字是唯一能定位"哪一行失真"的信息。
+      # ------------------------------------------------------------------
+      - name: 交付清单一致性（--check 不写盘）
+        working-directory: .
+        run: python scripts/gen_delivery_manifest.py --check
 
       # ------------------------------------------------------------------
       # 门禁 4b：插件声明（G-26，阶段三 B16）
@@ -476,16 +521,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
-      - name: 端点基线门禁（G1-G5）
-        # D-09 / D-21：三套基线 —— 核心 30（冻结）+ 阶段二新域 38（冻结）
-        # + 阶段三插件域 16（B21 收口：**严格模式，无放宽参数**）。
-        # `--allow-missing-phase2` 只覆盖阶段二历史批次；
-        # 阶段三自 B21 起刻意**不提供**放宽开关——留一个"允许缺项"的参数，
-        # 等于给"删端点让 CI 变绿"留合法通道（见 deploy/validate_openapi.py 文档头）。
+      - name: 端点基线门禁（G1-G7）
+        # D-09 / D-21：五套基线 —— 核心 30（冻结）+ 阶段二新域 38（冻结）
+        # + 阶段三插件域 16 + 阶段四 10 + W1 2，**全部严格**（无放宽参数）。
+        # `--allow-missing-phase2` 已于 W2 移除：阶段二 38 条早已全部交付，
+        # "已登记但未实现"的中间态不再存在；留一个"允许缺项"的参数，等于给
+        # "删端点让 CI 变绿"留合法通道（见 deploy/validate_openapi.py 文档头）。
         # 不允许为了过门禁而删除参数或改写基线文件（baseline-core-30.json 受保护）。
+        # `--strict`：阶段四/W1 的「已登记未实现」也判红。W2 起这两批全部落地
+        # （本地实测 phase4 10/10、w1 2/2，strict 仍 exit 0），此后回到严格口径，
+        # 避免 PENDING 行长期只打印不判红。
         working-directory: .
         run: |
-          python deploy/validate_openapi.py --allow-missing-phase2
+          python deploy/validate_openapi.py --strict
 
       - name: 对外文档禁止泄露底座术语
         # 保留阶段一既有扫描（G5 已在 validate_openapi.py 内覆盖，

@@ -371,9 +371,12 @@ services:
       OA_ENV: ${OA_ENV:-production}
       OA_AUTH_MODE: ${OA_AUTH_MODE:-oidc}
       OA_DEPLOY_MODE: saas
-      OA_OFFLINE_MODE: "false"
+      # 离线/在线「镜像来源」开关只在宿主机侧（install.sh 读 .env），不注入容器：
+      # 适配层无对应字段，注入会被静默丢弃
       OA_DIFY_BASE_URL: http://dify-api:5001
-      OA_KEYCLOAK_URL: http://keycloak:8080
+      # 键名必须与 `Settings.keycloak_base_url` 对齐（`OA_` + 字段名大写），
+      # 否则 pydantic 静默忽略、回落到默认值（见 deploy/validate_config_names.py）
+      OA_KEYCLOAK_BASE_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
       # SaaS 同样必须使用 officeai_app（NOSUPERUSER + NOBYPASSRLS）：
       # 此前写死 ${OA_POSTGRES_USER}（库属主/超级用户），RLS 对该角色永久失效，
@@ -397,6 +400,11 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_ADAPTER_BASE_URL: ${OA_WEB_ADAPTER_BASE_URL:-http://localhost:8000}
+        # 统一登录：公开接入信息（不含密钥），**构建期内联**进 bundle。
+        # ⚠ 改完必须 `docker compose build web`（重新构建），`restart` 不生效。
+        # 留空 = 登录页只显示「统一登录尚未配置」，登录入口不可达。
+        NEXT_PUBLIC_OIDC_ISSUER: ${OA_WEB_OIDC_ISSUER:-}
+        NEXT_PUBLIC_OIDC_CLIENT_ID: ${OA_WEB_OIDC_CLIENT_ID:-}
     image: officeai/web:${OA_IMAGE_TAG:-1.0.0}
     container_name: oa-saas-web
     restart: unless-stopped

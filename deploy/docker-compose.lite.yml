@@ -419,10 +419,13 @@ services:
       # 私有化单租户下走 private 才是正确口径。
       OA_DEPLOY_MODE: private
       OA_API_PREFIX: /api/v1
-      OA_OFFLINE_MODE: ${OA_OFFLINE_MODE:-true}
+      # 离线/在线「镜像来源」开关只在宿主机侧（install.sh 读 .env），不注入容器：
+      # 适配层无对应字段，注入会被静默丢弃
       # 底座地址：只在本 compose 网络内可达，不经 proxy 出去
       OA_DIFY_BASE_URL: http://dify-api:5001
-      OA_KEYCLOAK_URL: http://keycloak:8080
+      # 键名必须与 `Settings.keycloak_base_url` 对齐（`OA_` + 字段名大写），
+      # 否则 pydantic 静默忽略、回落到默认值（见 deploy/validate_config_names.py）
+      OA_KEYCLOAK_BASE_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
       # 业务库必须用**应用角色**（NOSUPERUSER + NOBYPASSRLS）：
       # 用库属主会绕过行级安全，/readyz 的 db_privilege 自检随即判 not_ready，
@@ -476,6 +479,11 @@ services:
         # 由 proxy 同源转发：这样镜像不绑域名，换 IP/换端口都不用重新构建，
         # 也不会把内网地址漏进前端产物。
         NEXT_PUBLIC_ADAPTER_BASE_URL: ""
+        # 统一登录：公开接入信息（不含密钥），**构建期内联**进 bundle。
+        # ⚠ 改完必须 `docker compose build web`（重新构建），`restart` 不生效。
+        # 轻量版同样不接受空值——留空即登录入口不可达（登录页只显示「未配置」）。
+        NEXT_PUBLIC_OIDC_ISSUER: ${OA_WEB_OIDC_ISSUER:-}
+        NEXT_PUBLIC_OIDC_CLIENT_ID: ${OA_WEB_OIDC_CLIENT_ID:-}
     image: officeai/web:${OA_IMAGE_TAG:-1.0.0}
     container_name: oal-web
     restart: unless-stopped

@@ -17,7 +17,9 @@
 #   - 其余组件协议：PostgreSQL（类 BSD/MIT）、Milvus（Apache-2.0）、
 #     Keycloak（Apache-2.0）、Dify（Apache-2.0）。
 #
-# 离线支持：OA_OFFLINE_MODE=true 时所有镜像从本地离线包加载（deploy/offline/images）。
+# 离线支持：镜像从本地离线包加载（deploy/offline/images）由 `install.sh --offline`
+# 完成——本文件只消费 `images.lock` 里钉住的 tag，不读任何离线开关；
+# 安装脚本会把所选模式记录进 `.env`，供运维核对，**不注入容器**。
 # ===========================================================================
 
 name: officeai-private
@@ -469,11 +471,17 @@ services:
       OA_ENV: ${OA_ENV:-production}
       OA_AUTH_MODE: ${OA_AUTH_MODE:-oidc}
       OA_DEPLOY_MODE: private
-      OA_OFFLINE_MODE: ${OA_OFFLINE_MODE:-true}
+      # 离线/在线「镜像来源」开关不注入容器：它只供 install.sh 在宿主机侧读 .env
+      # 决定从哪里取镜像，适配层没有对应字段，注入等于静默丢弃
+      # （与改名前的 IAM 地址键同一类缺陷，见 deploy/validate_config_names.py）。
       OA_API_PREFIX: /api/v1
       # 底座地址：仅适配层可见，不对外暴露
       OA_DIFY_BASE_URL: http://dify-api:5001
-      OA_KEYCLOAK_URL: http://keycloak:8080
+      # **必须是 `OA_KEYCLOAK_BASE_URL`**：`Settings` 的字段名是 `keycloak_base_url`，
+      # 环境变量 = `OA_` + 字段名大写。此前这里写成 `OA_KEYCLOAK_URL`，无 alias 承接，
+      # pydantic 直接忽略 → 静默回落到默认值（恰好同值，所以一直没炸）。改名前请确认
+      # `deploy/validate_config_names.py` 为绿，它是这条约束的机械防线。
+      OA_KEYCLOAK_BASE_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
       # **业务库连接串必须取 `.env` 的 `OA_DATABASE_URL`**（`.env.example:160` 要求用
       # `officeai_app`：NOSUPERUSER + NOBYPASSRLS）。此前这里写死用 `${OA_POSTGRES_USER}`
@@ -509,6 +517,12 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_ADAPTER_BASE_URL: ${OA_WEB_ADAPTER_BASE_URL:-http://localhost:8000}
+        # 统一登录：公开接入信息（不含密钥），**构建期内联**进 bundle。
+        # ⚠ 改完必须 `docker compose build web`（重新构建），`restart` 不生效——
+        #   运行期改环境变量对 NEXT_PUBLIC_* 无效。
+        # 留空 = 登录页只显示「统一登录尚未配置」，登录入口不可达。
+        NEXT_PUBLIC_OIDC_ISSUER: ${OA_WEB_OIDC_ISSUER:-}
+        NEXT_PUBLIC_OIDC_CLIENT_ID: ${OA_WEB_OIDC_CLIENT_ID:-}
     image: officeai/web:${OA_IMAGE_TAG:-1.0.0}
     container_name: oa-web
     restart: unless-stopped

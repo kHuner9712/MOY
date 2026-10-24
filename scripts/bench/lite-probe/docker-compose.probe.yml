@@ -1,0 +1,316 @@
+# =============================================================================
+# 轻量版最小容器集 —— **测量探针**（非交付编排）
+#
+# 目的：为 docs/lite-container-baseline.md（PRD v1.1 P4-35）提供实测数据。
+# 与 deploy/docker-compose.lite.yml（工程师 T4-05.4 交付物）刻意分离：
+#   - 本文件允许硬编码探针端口/临时口令，交付编排不允许；
+#   - 本文件不含 install/upgrade 逻辑；
+#   - 交付编排以本文件测出的**结论**为准，不复用其内容。
+#
+# 用法（项目名 oalite，与生产栈 oa-* 完全隔离）：
+#   docker compose --env-file ../../../deploy/.env -p oalite -f docker-compose.probe.yml up -d
+#   bash measure.sh
+#   docker compose --env-file ../../../deploy/.env -p oalite -f docker-compose.probe.yml down -v
+#
+# 与标准栈的差异（即"最小集"的减法，逐项理由见报告 §1）：
+#   删 milvus / milvus-etcd / milvus-object-store / etcd → VECTOR_STORE=pgvector
+#   删 object-store(SeaweedFS)                          → STORAGE_TYPE=local
+#   删 dify-sandbox                                     → 无代码执行节点
+#   删 dify-worker-beat                                 → 无定时调度需求
+#   删 ssrf_proxy                                       → 无外网 URL 抓取
+#   删 prometheus                                       → 观测非常驻组件
+#   删 dify-web                                         → 自研前端；首次配模型时用 profile admin
+# =============================================================================
+name: oalite
+
+x-logging: &default-logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${OA_POSTGRES_USER:-officeai}
+      POSTGRES_PASSWORD: ${OA_POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${OA_POSTGRES_DB:-officeai}
+    command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=200"]
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ../../../deploy/init-databases.sql:/docker-entrypoint-initdb.d/00-init-databases.sql:ro
+      - ../../../deploy/init-schema-phase2.sql:/docker-entrypoint-initdb.d/20-init-schema-phase2.sql:ro
+      - ../../../deploy/init-schema-phase3.sql:/docker-entrypoint-initdb.d/22-init-schema-phase3.sql:ro
+      - ../../../deploy/init-app-role.sql:/docker-entrypoint-initdb.d/30-init-app-role.sql:ro
+    healthcheck:
+      # ⚠️ 实测教训（2026-10-24）：只判 pg_isready 不够——docker-entrypoint 会先起
+      # 临时实例跑 initdb.d（此时 pg_isready 为真），随后停掉再起正式实例，
+      # 依赖它的 plugin_daemon 会在窗口内连上又被断开 → panic 退出。
+      # 必须再断言"基线脚本已跑完"（schema_migration 表存在）才算真就绪。
+      test: ["CMD-SHELL", "pg_isready -U ${OA_POSTGRES_USER:-officeai} -d ${OA_POSTGRES_DB:-officeai} && psql -U ${OA_POSTGRES_USER:-officeai} -d ${OA_POSTGRES_DB:-officeai} -tAc \"SELECT to_regclass('public.schema_migration') IS NOT NULL\" | grep -q t"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    ports: ["65432:5432"]
+    networks: [officeai]
+    logging: *default-logging
+
+  valkey:
+    image: valkey/valkey:9.2-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--requirepass", "${OA_VALKEY_PASSWORD:?}", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a '${OA_VALKEY_PASSWORD:?}' ping | grep -q PONG"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    ports: ["65379:6379"]
+    networks: [officeai]
+    logging: *default-logging
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    restart: unless-stopped
+    command:
+      - start
+      - --http-enabled=true
+      - --http-port=8080
+      - --health-enabled=true
+      - --http-management-port=9000
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${OA_KEYCLOAK_DB:-keycloak}
+      KC_DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
+      KC_DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${OA_KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${OA_KEYCLOAK_ADMIN_PASSWORD:?}
+      # 实测：不设上限时 JVM 按宿主内存取默认堆 → 空载就吃 2.17 GiB（3000MiB 级机器直接崩）。
+      # 384m 足够支撑 ≤500 用户的令牌签发；需按客户规模调大。
+      JAVA_OPTS_APPEND: "-Xms64m -Xmx384m"
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["65080:8080", "65081:9000"]
+    networks: [officeai]
+    logging: *default-logging
+
+  dify-api:
+    image: langgenius/dify-api:1.17.1
+    restart: unless-stopped
+    environment:
+      MODE: api
+      LOG_LEVEL: INFO
+      SECRET_KEY: ${OA_DIFY_SECRET_KEY:?}
+      CONSOLE_API_URL: http://127.0.0.1:5001
+      CONSOLE_WEB_URL: http://127.0.0.1:5001
+      SERVICE_API_URL: http://127.0.0.1:5001
+      APP_API_URL: http://127.0.0.1:5001
+      APP_WEB_URL: http://127.0.0.1:5001
+      FILES_URL: http://dify-api:5001
+      MIGRATION_ENABLED: "true"
+      DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
+      DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: ${OA_DIFY_DB:-dify}
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${OA_VALKEY_PASSWORD:?}
+      REDIS_DB: "0"
+      CELERY_BROKER_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/1
+      # 向量库：pgvector（与记忆同一实现，Q-2）
+      VECTOR_STORE: pgvector
+      PGVECTOR_HOST: postgres
+      PGVECTOR_PORT: "5432"
+      PGVECTOR_USER: ${OA_POSTGRES_USER:-officeai}
+      PGVECTOR_PASSWORD: ${OA_POSTGRES_PASSWORD:?}
+      PGVECTOR_DATABASE: ${OA_DIFY_DB:-dify}
+      PGVECTOR_MIN_CONNECTION: "2"
+      PGVECTOR_MAX_CONNECTION: "10"
+      # 文件存储：本地卷（省掉 SeaweedFS）
+      STORAGE_TYPE: local
+      STORAGE_LOCAL_PATH: /app/api/storage
+      # 插件守护进程（模型 provider 必需）
+      PLUGIN_DAEMON_URL: http://plugin_daemon:5002
+      PLUGIN_DAEMON_KEY: ${OA_PLUGIN_DAEMON_KEY:?}
+      PLUGIN_DIFY_INNER_API_URL: http://dify-api:5001
+      PLUGIN_DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:?}
+      # 无 sandbox / 无 ssrf_proxy：**整条变量不设**（不是置空）
+      # 教训（2026-10-24 实测）：置空会撞 DifyConfig 的 URL 校验 →
+      #   ValidationError: CODE_EXECUTION_ENDPOINT / Input should be a valid URL, input is empty
+      #   进程直接退出，dify-api 起不来。不设则取默认值，只在真跑代码节点/外网抓取时才访问。
+    volumes:
+      - difystorage:/app/api/storage
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5001/health',timeout=3).status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+    ports: ["65001:5001"]
+    networks: [officeai]
+    logging: *default-logging
+
+  dify-worker:
+    image: langgenius/dify-api:1.17.1
+    restart: unless-stopped
+    environment:
+      MODE: worker
+      LOG_LEVEL: INFO
+      SECRET_KEY: ${OA_DIFY_SECRET_KEY:?}
+      DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
+      DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: ${OA_DIFY_DB:-dify}
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${OA_VALKEY_PASSWORD:?}
+      CELERY_BROKER_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/1
+      VECTOR_STORE: pgvector
+      PGVECTOR_HOST: postgres
+      PGVECTOR_PORT: "5432"
+      PGVECTOR_USER: ${OA_POSTGRES_USER:-officeai}
+      PGVECTOR_PASSWORD: ${OA_POSTGRES_PASSWORD:?}
+      PGVECTOR_DATABASE: ${OA_DIFY_DB:-dify}
+      PGVECTOR_MIN_CONNECTION: "2"
+      PGVECTOR_MAX_CONNECTION: "10"
+      STORAGE_TYPE: local
+      STORAGE_LOCAL_PATH: /app/api/storage
+      PLUGIN_DAEMON_URL: http://plugin_daemon:5002
+      PLUGIN_DAEMON_KEY: ${OA_PLUGIN_DAEMON_KEY:?}
+      PLUGIN_DIFY_INNER_API_URL: http://dify-api:5001
+      PLUGIN_DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:?}
+    volumes:
+      - difystorage:/app/api/storage
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+    networks: [officeai]
+    logging: *default-logging
+
+  plugin_daemon:
+    image: langgenius/dify-plugin-daemon:0.6.10-local
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: INFO
+      SECRET_KEY: ${OA_DIFY_SECRET_KEY:?}
+      DEPLOY_ENV: PRODUCTION
+      DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
+      DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: dify_plugin
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${OA_VALKEY_PASSWORD:?}
+      REDIS_DB: "2"
+      SERVER_PORT: "5002"
+      SERVER_KEY: ${OA_PLUGIN_DAEMON_KEY:?}
+      DIFY_INNER_API_URL: http://dify-api:5001
+      DIFY_INNER_API_KEY: ${OA_PLUGIN_INNER_API_KEY:?}
+      PLUGIN_REMOTE_INSTALLING_HOST: 0.0.0.0
+      PLUGIN_REMOTE_INSTALLING_PORT: "5003"
+      PLUGIN_WORKING_PATH: /app/storage/cwd
+      FORCE_VERIFYING_SIGNATURE: "false"
+    volumes:
+      - plugindata:/app/storage
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [officeai]
+    logging: *default-logging
+
+  adapter:
+    image: officeai/adapter:1.0.0
+    restart: unless-stopped
+    # 与生产一致：先读 env_file（.env 里的凭据加密主密钥等），再用 environment 覆盖
+    env_file: ["./out/probe.env"]
+    environment:
+      OA_ENV: production
+      OA_AUTH_MODE: oidc
+      OA_DEPLOY_MODE: private
+      # 离线/在线「镜像来源」开关只在宿主机侧（install.sh 读 .env），不注入容器：
+      # 适配层无对应字段，注入会被静默丢弃
+      OA_LOG_LEVEL: INFO
+      OA_API_PREFIX: /api/v1
+      OA_DIFY_BASE_URL: http://dify-api:5001
+      # 键名对齐 Settings.keycloak_base_url（`OA_` + 字段名大写），
+      # 否则会被 pydantic 静默丢弃；见 deploy/validate_config_names.py
+      OA_KEYCLOAK_BASE_URL: http://keycloak:8080
+      OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
+      OA_DATABASE_URL: postgresql+asyncpg://officeai_app:CHANGE_ME_APP_PASSWORD@postgres:5432/officeai
+      OA_JWT_SECRET: ${OA_JWT_SECRET:?}
+      OA_JWT_ALGORITHM: HS256
+      OA_JWT_AUDIENCE: officeai-adapter
+      OA_JWT_ISSUER: officeai
+      OA_DEFAULT_TENANT_ID: ${OA_DEFAULT_TENANT_ID:-default}
+      OA_DOWNSTREAM_ENABLED: "true"
+      OA_BUSINESS_STORE: postgres
+      OA_DB_AUTO_MIGRATE: "false"
+      OA_DIFY_DEFAULT_APP_KEY: ${OA_DIFY_DEFAULT_APP_KEY:-}
+      OA_DIFY_AGENT_APP_KEY: ${OA_DIFY_AGENT_APP_KEY:-}
+      OA_DIFY_CODE_APP_KEY: ${OA_DIFY_CODE_APP_KEY:-}
+      OA_DIFY_LONG_CONTEXT_APP_KEY: ${OA_DIFY_LONG_CONTEXT_APP_KEY:-}
+      OA_DIFY_REASONING_APP_KEY: ${OA_DIFY_REASONING_APP_KEY:-}
+      OA_DIFY_FALLBACK_APP_KEY: ${OA_DIFY_FALLBACK_APP_KEY:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+      dify-api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/readyz',timeout=5).status==200 else 1)\""]
+      interval: 5s
+      timeout: 6s
+      retries: 40
+      start_period: 20s
+    ports: ["65000:8000"]
+    networks: [officeai]
+    logging: *default-logging
+
+  web:
+    image: officeai/web:1.0.0
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+    depends_on:
+      adapter: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+    ports: ["63000:3000"]
+    networks: [officeai]
+    logging: *default-logging
+
+  proxy:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx-probe.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      adapter: { condition: service_healthy }
+      web: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports: ["65090:80"]
+    networks: [officeai]
+    logging: *default-logging
+
+networks:
+  officeai:
+    driver: bridge
+
+volumes:
+  pgdata: {}
+  difystorage: {}
+  plugindata: {}

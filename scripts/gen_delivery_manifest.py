@@ -14,15 +14,19 @@
 重跑规则（重要）
 ----------------
 - **状态列永远由脚本算**（文件存在=已建，否则=待建），不接受手工填写；
-- **证据列**：自动填"引入该文件的短 SHA"；若某行证据是**人工写的文字**（不是 7-40 位十六进制），
-  重跑时**原样保留**——这是唯一允许手改的列（交付总监/QA 可写"已核对""客户现场验证"等）；
+- **证据列**：自动填"引入该文件的短 SHA"；文件存在但尚无提交时填 `待补`（**不编造 SHA**）；
+  若某行证据是**人工写的文字**（不是 7-40 位十六进制、也不是 `待补`），重跑时**原样保留**——
+  这是唯一允许手改的列（交付总监/QA 可写"已核对""客户现场验证"等）；
+- **备注列**由脚本按 `AUDIT_NOTES` 生成（D-28 的路径/大小核实、确属缺失项的归属），
+  同样**不接受手改**：要改备注请改 `AUDIT_NOTES`；
 - 表外内容（文件头说明、勾选口径）每次重写；**不要手工往表里加行**，加行请改任务表。
 
 用法：
     python scripts/gen_delivery_manifest.py            # 生成/刷新
     python scripts/gen_delivery_manifest.py --check    # 只校验，不写盘（CI 可用）
 
-退出码：0 正常；1 `--check` 下发现"已建项 ls 不到"或"待建项已存在"的不一致。
+退出码：0 正常；1 `--check` 下发现不一致：清单状态失真（文件已建但清单写"待建"、或反之）、
+清单行与任务表不同步、已建项 `ls` 不到。
 """
 
 from __future__ import annotations
@@ -87,6 +91,32 @@ PREFIX_HINTS: dict[str, str] = {
     "security-whitepaper.md": "docs/compliance/security-whitepaper.md",
 }
 
+#: 交付审计备注（D-28 / LED-043）：键 = 仓库根相对路径，值 = (已建时的备注, 待建时的备注)。
+#: 为什么写在脚本里而不是手改清单：备注描述的是"事实核对结果"，必须随状态自动切换——
+#: 文件一旦补建，`确属缺失` 的备注要自动消失，否则又是新的失真。
+#: 支持 `{size}` 占位符，按磁盘上当前字节数填充（大小永远现算，不会过期）。空串 = 该状态不写备注。
+AUDIT_NOTES: dict[str, tuple[str, str]] = {
+    # D-28：这三项曾被标"待建"，实际已建；备注附带路径/大小以留审计痕迹
+    "deploy/install.sh": ("D-28 核实：已建（{size}）", ""),
+    "deploy/backup.sh": ("D-28 核实：已建（{size}）", ""),
+    "deploy/restore.sh": ("D-28 核实：已建（{size}）", ""),
+    # D-28 同批核实的轻量版交付物（同属被误标"待建"的行）
+    "deploy/.env.lite.example": ("D-28 核实：已建（{size}）", ""),
+    "deploy/docker-compose.lite.yml": ("D-28 核实：已建（{size}）", ""),
+    "deploy/nginx/lite.conf": ("D-28 核实：已建（{size}）", ""),
+    "deploy/nginx/nginx.conf": ("D-28 核实：已建（{size}）", ""),
+    "deploy/validate_lite_up.sh": ("D-28 核实：已建（{size}）", ""),
+    "sql/enable-vector-extension.sql": ("D-28 核实：已建（{size}）", ""),
+    # D-28：确属缺失，保留"待建"并写明归属
+    "deploy/upgrade.sh": ("", "确属缺失：归属 W1（升级前置能力），任务表登记于 T4-05.5（W4）"),
+    "deploy/rollback.sh": ("", "确属缺失：归属 W1（回滚前置能力），任务表登记于 T4-05.5（W4）"),
+    # 待确认：目录下只有 P4-35 的轻量探针，不是任务表要求的 httpx+asyncio 压测脚本（§8.2）
+    "scripts/bench/*.py": (
+        "",
+        "仅有 scripts/bench/lite-probe/probe.py（P4-35 轻量探针）；T4-05.7 要求的压测脚本未建（待确认）",
+    ),
+}
+
 ROW_RE = re.compile(r"^\|\s*\*\*(T4-\d\d(?:\.\d+)?)\*\*\s*\|")
 
 #: 归一失败的 token（脚本会打印出来，避免交付物被静默丢掉）
@@ -102,6 +132,7 @@ class Row:
     kind: str
     status: str
     evidence: str
+    note: str = "—"
 
 
 def sh(*args: str) -> str:
@@ -227,8 +258,31 @@ def status_of(path: str) -> str:
     return "已建" if p.exists() else "待建"
 
 
+def human_size(path: str) -> str:
+    """文件大小的可读写法（逐字节现算；目录/glob 返回"大小未知"）。"""
+    try:
+        n = (ROOT / path).stat().st_size
+    except OSError:
+        return "大小未知"
+    return f"{n:,} B / {n / 1024:.1f} KiB"
+
+
+def note_of(path: str, status: str) -> str:
+    """备注列：按状态取 `AUDIT_NOTES` 里对应的一条，无则"—"。"""
+    built_note, missing_note = AUDIT_NOTES.get(path, ("", ""))
+    if status == "已建":
+        template = built_note
+    elif status == "待建":
+        template = missing_note
+    else:
+        template = ""
+    if not template:
+        return "—"
+    return template.replace("{size}", human_size(path))
+
+
 def existing_evidence() -> dict[tuple[str, str], str]:
-    """读旧清单的"人工证据"（非 SHA 才保留）。"""
+    """读旧清单的"人工证据"（非 SHA、也非自动占位符 `待补` 才保留）。"""
     kept: dict[tuple[str, str], str] = {}
     if not OUT.is_file():
         return kept
@@ -239,7 +293,9 @@ def existing_evidence() -> dict[tuple[str, str], str]:
         if len(cols) < 7:
             continue
         task, path, evidence = cols[0], cols[1], cols[6]
-        if evidence and evidence not in {"—", "-"} and not SHA_RE.match(evidence.replace("`", "")):
+        is_placeholder = evidence in {"—", "-", "待补"}
+        is_sha = bool(SHA_RE.match(evidence.replace("`", "")))
+        if evidence and not is_placeholder and not is_sha:
             kept[(task.strip("` "), path.strip("` "))] = evidence
     return kept
 
@@ -254,8 +310,20 @@ def build() -> tuple[str, list[Row]]:
             auto = first_commit(path) if status == "已建" else ""
             if status == "不适用":
                 auto = "可选交付物（任务表标「若需」），未建不影响验收"
+            elif status == "已建" and not auto:
+                # 文件在盘上但尚未入库：不编造 SHA，留给交付总监在合并后重跑刷新
+                auto = "待补"
             evidence = kept.get((task, path)) or (auto or "—")
-            rows.append(Row(task=task, path=path, kind=kind_of(path), status=status, evidence=evidence))
+            rows.append(
+                Row(
+                    task=task,
+                    path=path,
+                    kind=kind_of(path),
+                    status=status,
+                    evidence=evidence,
+                    note=note_of(path, status),
+                )
+            )
     rows.sort(key=lambda r: (r.task, r.path))
 
     n_built = sum(1 for r in rows if r.status == "已建")
@@ -277,15 +345,15 @@ def build() -> tuple[str, list[Row]]:
 
 ## 核对口径（验收时照此执行）
 
-1. **`已建` 项必须 `ls` 得到**：`python scripts/gen_delivery_manifest.py --check` 退出 0 即通过。
+1. **`已建` 项必须 `ls` 得到**：`python scripts/gen_delivery_manifest.py --check` 退出 0 即通过；该命令还校验
+   清单是否失真（已建却写"待建"、或反之）——9 个已建交付物曾被标"待建"（D-28 / LED-043），故为硬门禁。
 2. **`待建` 项在阶段四验收时必须为 0**；若不为 0，要么补建，要么在 §13 明确"不进 V1.0"。
-3. **`证据` 列是唯一允许手改的列**（可写"已核对 / 客户现场验证 / 对应 PR"）。
-   脚本重跑时：人工写的文字**原样保留**，自动生成的短 SHA 会刷新。
-4. **不要手工往表里加行**——交付物归属变了，请改 `architecture-phase4.md` 的任务表再重跑。
-5. `包内产物` 类（离线包内的 `manifest.json` / SBOM / 金标集）**不入仓库**，其"待建"指"随发布产出"。
-6. **`状态` 只回答"这个文件 ls 得到吗"，不回答"这个任务做完了没"**。对"改既有文件"类任务
-   （如 T4-01.1 收敛整改、T4-03.7 扩词），文件本来就在，`已建` 不代表改动已完成——
-   任务完成度**以任务表的验收命令为准**，本清单不得用于宣称阶段进度。
+3. **`证据` 列是唯一允许手改的列**（可写"已核对 / 客户现场验证 / 对应 PR"）；重跑时人工文字原样保留、自动短 SHA 刷新，未入库的写 `待补`。
+4. **`备注` 列由脚本按 `AUDIT_NOTES` 生成**（D-28 的路径/大小核实、确属缺失项的归属），不接受手改。
+5. **不要手工往表里加行**——交付物归属变了，请改 `architecture-phase4.md` 的任务表再重跑。
+6. `包内产物` 类（离线包内的 `manifest.json` / SBOM / 金标集）**不入仓库**，其"待建"指"随发布产出"。
+7. **`状态` 只回答"这个文件 ls 得到吗"，不回答"这个任务做完了没"**。对"改既有文件"类任务（如 T4-01.1
+   收敛整改、T4-03.7 扩词），`已建` 不代表改动已完成——完成度以任务表验收命令为准，本清单不得宣称进度。
 
 ## 汇总
 
@@ -297,16 +365,78 @@ def build() -> tuple[str, list[Row]]:
 
 ## 清单
 
-| ID | 交付物路径 | 所属任务 | 批次 | 类型 | 状态 | 验收证据 |
-| --- | --- | --- | --- | --- | --- | --- |
+| ID | 交付物路径 | 所属任务 | 批次 | 类型 | 状态 | 验收证据 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
 """
     body = []
     for task in sorted(by_task, key=lambda t: (t, )):
         for r in by_task[task]:
             body.append(
-                f"| `{r.task}` | `{r.path}` | {r.task} | {week_of(r.task)} | {r.kind} | {r.status} | {r.evidence} |"
+                f"| `{r.task}` | `{r.path}` | {r.task} | {week_of(r.task)} | {r.kind} "
+                f"| {r.status} | {r.evidence} | {r.note} |"
             )
     return head + "\n".join(body) + "\n", rows
+
+
+def disk_statuses() -> dict[tuple[str, str], str]:
+    """读当前清单里写的状态 → 用于发现"清单停在旧快照"（D-28 的根因）。"""
+    stored: dict[tuple[str, str], str] = {}
+    if not OUT.is_file():
+        return stored
+    for line in OUT.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("| `T4-"):
+            continue
+        cols = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cols) < 6:
+            continue
+        stored[(cols[0].strip("` "), cols[1].strip("` "))] = cols[5]
+    return stored
+
+
+def check(text: str, rows: list[Row]) -> int:
+    """校验"清单 ↔ 磁盘"一致；返回退出码（0 通过 / 1 不一致）。
+
+    三类不一致都要报：
+    1. 清单写 `已建` 但 `ls` 不到（假交付）；
+    2. 清单写 `待建` 但文件已在（**LED-043 的失真形态**）；
+    3. 清单整体与重新生成的结果不同（行增删、表头/汇总/备注过期）。
+    """
+    problems: list[str] = []
+    computed = {(r.task, r.path): r.status for r in rows}
+
+    for r in rows:
+        actual = status_of(r.path)
+        if r.status == "已建" and actual != "已建":
+            problems.append(f"已建但 ls 不到：{r.task} {r.path}")
+        elif r.status == "待建" and actual != "待建":
+            problems.append(f"待建但文件已存在：{r.task} {r.path}")
+
+    stored = disk_statuses()
+    if not stored:
+        problems.append(f"清单不存在或为空：{OUT.relative_to(ROOT)}，请先跑一次生成")
+    else:
+        for key, stale in sorted(stored.items()):
+            fresh = computed.get(key)
+            if fresh is None:
+                problems.append(f"清单多出任务表没有的行：{key[0]} {key[1]}")
+            elif stale != fresh:
+                problems.append(f"清单状态失真：{key[0]} {key[1]} 写「{stale}」实为「{fresh}」")
+        for key in sorted(set(computed) - set(stored)):
+            problems.append(f"清单缺行（任务表有、清单没有）：{key[0]} {key[1]}")
+
+    if OUT.is_file() and OUT.read_text(encoding="utf-8").replace("\r\n", "\n") != text:
+        problems.append("清单内容与生成结果不一致（表头/汇总/备注/证据列已过期），请重跑生成器")
+
+    if problems:
+        for p in problems:
+            print(f"[ERR] {p}", file=sys.stderr)
+        print(
+            f"[ERR] 共 {len(problems)} 处不一致，请重跑 `python scripts/gen_delivery_manifest.py`",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"[OK] {len(rows)} 行；已建 {sum(1 for r in rows if r.status == '已建')}；清单与磁盘一致")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -318,13 +448,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     text, rows = build()
     if args.check:
-        bad = [r for r in rows if r.status == "已建" and status_of(r.path) != "已建"]
-        if bad:
-            for r in bad:
-                print(f"[ERR] 已建但 ls 不到：{r.task} {r.path}", file=sys.stderr)
-            return 1
-        print(f"[OK] {len(rows)} 行；已建 {sum(1 for r in rows if r.status == '已建')}")
-        return 0
+        return check(text, rows)
     OUT.write_text(text, encoding="utf-8")
     print(f"[OK] 写出 {OUT.relative_to(ROOT)}：{len(rows)} 行 / 已建 {sum(1 for r in rows if r.status == '已建')}")
     if unresolved:
