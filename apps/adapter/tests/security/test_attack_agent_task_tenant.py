@@ -43,9 +43,9 @@ from tests.security.conftest import (
     write_headers,
 )
 
-from app.business.policy_service import ROLE_OPS, permissions_for_roles
+from app.business import policy_service
+from app.core import security as security_module
 from app.core.errors import ErrorCode
-from app.core.security import OPS_ROLE_KEYS
 from app.services.agent_service import reset_agent_service
 
 pytestmark = [pytest.mark.security, pytest.mark.integration]
@@ -157,17 +157,23 @@ def _create_tenant_a_task(client: TestClient) -> dict[str, Any]:
     return body["data"]
 
 
-def _assert_no_leak(response_text: str) -> None:
-    """断言拒绝响应体里没有任何 A 的任务内容。
+def _assert_no_leak(response: Any) -> None:
+    """断言拒绝响应**没有带出任何数据**，且不含 A 的任务目标文本。
 
     **为什么不只看状态码**：越权的危害是「内容被读到」。若实现改成了
-    「先返回 200 再在字段里带出 A 的目标」，只看状态码会全绿而泄漏照样发生。
+    「先返回 200 再在字段里带出 A 的任务」，或者「返回 404 但 `data` 里塞了残留
+    记录」，只看状态码会全绿而泄漏照样发生。因此两条一起断：
+
+    1. `data` 必须是 `null`（拒绝响应不带业务数据——A 的任务 ID、状态、产物
+       都只能从这里出去）；
+    2. 响应体里不得出现 A 的 goal 文本（逐字比对，不做片段推断）。
 
     Args:
-        response_text: 响应体原文。
+        response: `httpx.Response`（用鸭子类型标注，避免为一条辅助函数引入依赖）。
     """
-    assert SECRET_GOAL not in response_text, "拒绝响应体不得回显 A 的任务目标"
-    assert "并购条款" not in response_text, "拒绝响应体不得回显 A 的任务目标片段"
+    body = response.json()
+    assert body["data"] is None, "拒绝响应不得带出任何任务数据"
+    assert SECRET_GOAL not in response.text, "拒绝响应体不得回显 A 的任务目标"
 
 
 # ===========================================================================
@@ -184,7 +190,7 @@ def test_tenant_b_cannot_read_tenant_a_task_detail(oidc_client: TestClient) -> N
         headers=_read_headers(TENANT_B, USER_B),
     )
 
-    _assert_no_leak(response.text)
+    _assert_no_leak(response)
     assert response.status_code in {403, 404}, (
         f"跨租户直取任务详情必须被拒绝，实际 {response.status_code}：{response.text[:200]}"
     )
@@ -242,7 +248,7 @@ def test_tenant_b_cannot_read_tenant_a_task_steps(oidc_client: TestClient) -> No
         headers=_read_headers(TENANT_B, USER_B),
     )
 
-    _assert_no_leak(response.text)
+    _assert_no_leak(response)
     assert response.status_code in {403, 404}, f"跨租户查步骤必须被拒绝：{response.text[:200]}"
     body = response.json()
     assert body["code"] in DENIED_CODES
@@ -263,7 +269,7 @@ def test_tenant_b_cannot_cancel_tenant_a_task(oidc_client: TestClient) -> None:
         headers=_headers(TENANT_B, USER_B),
     )
 
-    _assert_no_leak(response.text)
+    _assert_no_leak(response)
     assert response.status_code in {403, 404}, f"跨租户取消必须被拒绝：{response.text[:200]}"
     body = response.json()
     assert body["code"] in DENIED_CODES
@@ -291,7 +297,7 @@ def test_tenant_b_cannot_retry_tenant_a_task(oidc_client: TestClient) -> None:
         headers=_headers(TENANT_B, USER_B),
     )
 
-    _assert_no_leak(response.text)
+    _assert_no_leak(response)
     assert response.status_code in {403, 404}, f"跨租户重试必须被拒绝：{response.text[:200]}"
     assert response.json()["code"] in DENIED_CODES
 
@@ -299,6 +305,36 @@ def test_tenant_b_cannot_retry_tenant_a_task(oidc_client: TestClient) -> None:
     listing = oidc_client.get(TASKS_PATH, headers=_read_headers(TENANT_A, USER_A))
     assert listing.status_code == 200
     assert listing.json()["data"]["meta"]["total"] == 1
+
+
+# ===========================================================================
+# 判据 5b：A6 SSE 事件流 —— 拒绝必须发生在**建流之前**
+#
+# 为什么单独一条：SSE 一旦开始写出，响应头就已经发出去了，**再也无法**改成一个
+# 统一错误响应体（架构 §3.0.1）。也就是说 A6 的归属校验只要晚一步，就会变成
+# 「200 + 一个空流」，客户端看起来"订阅成功"却永远收不到内容，而越权与否
+# 只能靠"流里有什么"来判——那已经是泄漏之后的事了。
+# ===========================================================================
+
+
+def test_tenant_b_cannot_stream_tenant_a_task_events(oidc_client: TestClient) -> None:
+    """B 订阅 A 的任务事件 → 12001，且 `content-type` **不是** `text/event-stream`。"""
+    created = _create_tenant_a_task(oidc_client)
+
+    response = oidc_client.get(
+        f"{TASKS_PATH}/{created['task_id']}/events",
+        headers=_read_headers(TENANT_B, USER_B),
+    )
+
+    assert response.status_code in {403, 404}, (
+        f"跨租户订阅事件必须在建流前被拒绝，实际 {response.status_code}：{response.text[:200]}"
+    )
+    # 最强的判据：证明根本没有建立 SSE 流
+    content_type = response.headers.get("content-type", "")
+    assert "text/event-stream" not in content_type, "拒绝时必须没有建立 SSE 流"
+    body = response.json()
+    assert body["code"] in DENIED_CODES
+    _assert_no_leak(response)
 
 
 # ===========================================================================
@@ -463,18 +499,22 @@ def test_directory_permission_point_as_role_still_works(oidc_client: TestClient)
 
 def test_permission_whitelist_is_the_directory() -> None:
     """`permissions_for_roles` 只认目录内权限点（单点口径，防端点层漏判）。"""
-    assert permissions_for_roles(["x:y"]) == frozenset()
-    assert permissions_for_roles(["admin:*"]) == frozenset()
-    assert permissions_for_roles(["audit:log:read"]) == frozenset({"audit:log:read"})
+    assert policy_service.permissions_for_roles(["x:y"]) == frozenset()
+    assert policy_service.permissions_for_roles(["admin:*"]) == frozenset()
+    assert policy_service.permissions_for_roles(["audit:log:read"]) == frozenset({"audit:log:read"})
     # 内置角色矩阵不受影响
-    assert "team:member:invite" in permissions_for_roles(["owner"])
+    assert "team:member:invite" in policy_service.permissions_for_roles(["owner"])
 
 
 def test_ops_role_keys_stay_in_sync_with_policy_service() -> None:
-    """`core.security.OPS_ROLE_KEYS` 必须与 `policy_service.ROLE_OPS` 保持同步。
+    """`core.security.OPS_ROLE_KEYS` 必须**恰好等于**「通配 + 运营角色」。
 
     两处是**字面量重复**（core 不能 import business，会成环）。这条用例是
-    唯一能拦住「改了一边忘了另一边」的地方：`ROLE_OPS` 改名后平台身份判定
-    会静默失效，而所有正常路径（用 `*` 的角色）仍然全绿。
+    唯一能拦住「改了一边忘了另一边」的地方，因此判据必须是**集合相等**而不是
+    `in`：`in` 只保证「运营角色在里面」，往 `OPS_ROLE_KEYS` 里顺手加个 `member`
+    仍然全绿——那正是把平台视角扩散给普通成员的路子（`__platform__` + `member`
+    即可跨租户），必须当场变红。
     """
-    assert ROLE_OPS in OPS_ROLE_KEYS
+    assert security_module.OPS_ROLE_KEYS == frozenset(
+        {security_module.OPS_WILDCARD_ROLE, policy_service.ROLE_OPS}
+    )

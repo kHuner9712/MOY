@@ -859,15 +859,25 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
     判据：
     1. `env in {staging, production}` 且 `auth_mode == "stub"` → 30004 启动失败；
     2. 同一环境下 `jwt_secret` 为空 → 30004（OIDC 校验与产物下载令牌都依赖它，
-       空密钥会让签名退化为可预测常量）。
+       空密钥会让签名退化为可预测常量）；
+    3. 同一环境下 `tenant_membership_check == "off"` 且未显式放行
+       `allow_security_downgrade` → 30004（QA-V04）。
 
-    development/test 不拦：离线单测与本地演示需要桩模式，且这两个环境不对外。
+    第 3 条的理由：`off` 会跳过跨租户成员校验，等于允许「持 A 租户令牌 +
+    `X-Tenant-Id: B`」跨租户读写。它必须保留（线上卡死时要能止血），但**不能
+    「配一行就生效」**——否则它从止血手段变成漏洞：谁都能在 .env 里加一行关掉隔离，
+    系统只打一条 WARNING 就放行。所以生产/预发要它生效必须**两处同时显式声明**
+    （`off` + `allow_security_downgrade=true`），让"我确实要降级"成为一个
+    可审计的动作而不是一次手滑。
+
+    development/test 不拦：离线单测与本地演示需要桩模式与降级态，且这两个环境不对外。
 
     Args:
         settings: 可选配置实例（注入优先）。
 
     Raises:
-        ApiError: 生产/预发环境使用桩鉴权或缺少签名密钥（30004）。
+        ApiError: 生产/预发环境使用桩鉴权、缺少签名密钥，或未经放行就关闭
+            跨租户成员校验（30004）。
     """
     conf = settings or get_settings()
     if conf.env in _INSECURE_AUTH_ENVS:
@@ -891,5 +901,24 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
                 f"当前环境为 {conf.env}，OA_JWT_SECRET 为空：令牌校验与产物下载签名都无法进行。"
                 "请在 .env 中配置强随机密钥（不少于 32 字符）后重启。"
             ),
+        )
+    if conf.tenant_membership_check == "off":
+        if not conf.allow_security_downgrade:
+            logger.error("security_downgrade_not_allowed_in_production", env=conf.env)
+            raise ApiError(
+                ErrorCode.CONFIG_ERROR,
+                internal_detail=(
+                    f"当前环境为 {conf.env}，但 OA_TENANT_MEMBERSHIP_CHECK=off："
+                    "该开关会跳过跨租户成员校验，等于允许「持 A 租户令牌 + "
+                    "X-Tenant-Id: B」跨租户读写。生产/预发禁用安全降级开关；"
+                    "如确需临时止血，必须同时显式设置 OA_ALLOW_SECURITY_DOWNGRADE=true，"
+                    "并在变更单里记录恢复时间。"
+                ),
+            )
+        logger.warning(
+            "security_downgrade_enabled",
+            env=conf.env,
+            tenant_membership_check=conf.tenant_membership_check,
+            hint="安全降级已显式放行：跨租户切换未做成员校验，止血后必须改回 auto",
         )
     logger.info("auth_startup_validated", env=conf.env, auth_mode=conf.auth_mode)

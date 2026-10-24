@@ -71,6 +71,32 @@ class Settings(BaseSettings):
     jwt_audience: str = "officeai-adapter"
     jwt_issuer: str = "officeai"
     default_tenant_id: str = "default"
+    #: 跨租户切换时的成员关系校验开关（AR-017 配套回退开关）。
+    #:
+    #: - `auto`（默认）：仅当 `deploy_mode == "saas"` **且** `auth_mode != "stub"` 时校验。
+    #:   私有化模式没有跨租户这回事；stub 模式是本地联调（不验签），查成员关系只会
+    #:   让「随手编个令牌」的联调流程失效，且 stub 在生产被 `validate_auth_startup` 拦死。
+    #: - `always`：任何模式都校验（灰度期想收紧时用）。
+    #:   **已知限制**：`always` 在**私有化模式**下会把「令牌声明被忽略」也判成跨租户
+    #:   （私有化模式下生效租户恒为 `default`，只要令牌声明不是 `default` 就不相等），
+    #:   用户在该租户无组织/角色归属时会被 20003。启用 `always` 前须先补私有化
+    #:   「全员归属」口径（W1）；默认 `auto` 不受影响。
+    #: - `off`：**紧急回退**——完全跳过校验。仅用于"校验逻辑本身导致线上不可用"时
+    #:   临时止血；关闭期间「持 A 租户令牌 + `X-Tenant-Id: B`」可跨租户读写，
+    #:   属于安全降级，必须在恢复后立即改回 `auto`（操作记录里要能查到这次变更）。
+    tenant_membership_check: Literal["auto", "always", "off"] = "auto"
+
+    #: 是否允许「安全降级开关」在生产/预发生效（QA-V04）。
+    #:
+    #: 存在的理由：`tenant_membership_check=off` 会**跳过跨租户成员校验**，等于允许
+    #: 「持 A 租户令牌 + `X-Tenant-Id: B`」跨租户读写。这类开关必须能被用（线上真的
+    #: 卡死时要有止血手段），但不能「配一行就生效」——否则它就会从止血手段变成漏洞：
+    #: 任何人都能在 .env 里加一行把隔离关掉，而系统只会打一条 WARNING。
+    #:
+    #: 因此生产/预发下 `off` **必须**同时显式设置本项为 `true` 才能启动
+    #: （`validate_auth_startup` 拦截 30004）。development/test 不受影响：
+    #: 本地联调与离线单测需要能构造「关闭校验」的态。
+    allow_security_downgrade: bool = False
 
     # ------------------------------------------------------------------
     # 底座（Dify）连接配置 —— 仅适配层可见
@@ -122,6 +148,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     redis_url: str = "redis://redis:6379/0"
     database_url: str = ""
+    #: 向量库连接串：**当前无使用方**（向量检索由底座负责，适配层只认
+    #: `dify_base_url`）。保留字段仅为部署侧兼容占位（既有 .env / 编排模板里仍有
+    #: 该项，直接删会造成"配了却没人读"的静默漂移），W1 评估删除。
     milvus_uri: str = ""
     # 对象存储连接（SeaweedFS，S3 兼容；2026-10-21 由 minio_* 统一改名，
     # 消除「名为 MinIO 实为 SeaweedFS」的指代漂移，见 QA 附录 A P2-4）
