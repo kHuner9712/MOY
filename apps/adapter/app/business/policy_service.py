@@ -108,6 +108,16 @@ OPS_PERMISSIONS: Final[frozenset[str]] = frozenset(
     }
 )
 
+#: 已知权限点目录（业务 + 运营，共 20 个）。
+#:
+#: 用途**只有一个**：判断「把权限点当角色签发」的兼容形态是否合法。
+#: 为什么必须是白名单而不是 `":" in role`：后者只要令牌里塞一个任意
+#: `x:y` 形态的字符串就能凭空白拿到一个权限点——若该字符串恰好等于某个
+#: 端点要求的权限点（如 `tool:execute`），等于签名方之外的人也能自造权限。
+#: 白名单把口径收敛到目录内，新增权限点必须先落 `BUSINESS_PERMISSIONS` /
+#: `OPS_PERMISSIONS`，与架构 §4.8 矩阵保持单一真源。
+KNOWN_PERMISSION_POINTS: Final[frozenset[str]] = BUSINESS_PERMISSIONS | OPS_PERMISSIONS
+
 #: 内置角色 → 权限点（架构文档 §4.8 矩阵的**唯一**代码实现）。
 #:
 #: 矩阵中的 🔸 表示「**拥有权限点**，但对象级仍受限（仅被授权库 / 个人数据）」，
@@ -165,8 +175,9 @@ def permissions_for_roles(roles: Iterable[str]) -> frozenset[str]:
         mapped = BUILTIN_ROLE_PERMISSIONS.get(role)
         if mapped is not None:
             granted.update(mapped)
-        elif ":" in role:
-            # 兼容以「权限点即角色」形式签发的令牌（阶段一既有形态）
+        elif role in KNOWN_PERMISSION_POINTS:
+            # 兼容以「权限点即角色」形式签发的令牌（阶段一既有形态）。
+            # 只认目录内的已知权限点：`admin:*` / `x:y` 这类自造串不再得分。
             granted.add(role)
     return frozenset(granted)
 
@@ -718,6 +729,7 @@ __all__: list[str] = [
     "BUSINESS_PERMISSIONS",
     "DEPARTMENT_ID_PREFIX",
     "GUEST_ROLES",
+    "KNOWN_PERMISSION_POINTS",
     "OPS_PERMISSIONS",
     "ORG_ADMIN_ROLES",
     "ROLE_GUEST",

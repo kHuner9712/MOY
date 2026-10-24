@@ -440,6 +440,108 @@ async def get_auth_context(request: Request) -> AuthContext:
     return auth
 
 
+def _has_cross_tenant_privilege(auth: AuthContext) -> bool:
+    """判断令牌是否为「可跨租户」的平台运维令牌。
+
+    **直接复用 `is_platform_scope`，不再另写一套条件**：两处口径曾经各自演进
+    （这里只看 `__platform__` 哨兵、那里看哨兵或 `*`），结果收紧其中一处时
+    另一处仍按旧口径放行，形成「看起来修了、实际还能进」的形态（SEC-02）。
+    跨租户特权与平台视角本来就是同一件事，只保留一个判定出口。
+
+    Args:
+        auth: 鉴权上下文（**令牌原始值**，不是收敛后的值）。
+
+    Returns:
+        bool: 具备跨租户特权返回 True。
+    """
+    return is_platform_scope(auth, auth.tenant_id)
+
+
+async def assert_tenant_membership(auth: AuthContext, tenant_id: str, settings: Settings) -> None:
+    """校验「令牌持有人确实是目标租户的成员」（AR-017 租户伪造修复）。
+
+    **为什么需要**：`resolve_tenant_id` 让 `X-Tenant-Id` 请求头优先于令牌声明，
+    它本身只回答「请求想作用于哪个租户」，不回答「这个人能不能碰这个租户」。
+    修复前这个缺口被直接透传：持 A 租户令牌 + `X-Tenant-Id: B` 即可读写 B 的数据。
+
+    成员关系的权威口径与 `identity_service.list_members` 一致：
+    `department_member`（组织归属）**并集** `member_role`（角色归属），
+    任一非空即视为该租户成员。
+
+    Args:
+        auth: 鉴权上下文（令牌原始租户）。
+        tenant_id: 请求生效的租户（可能与令牌租户不同）。
+        settings: 配置实例（决定内存/PG 后端）。
+
+    Returns:
+        None: 校验通过时无返回值。
+
+    Raises:
+        ApiError: 用户既非组织成员也无角色（20003）。
+    """
+    # 延迟导入：仓储层依赖 `app.core`（config/errors/logging），
+    # 在 core 层做模块级导入会成环。做法与 `require_permission` 引入
+    # `business.policy_service` 一致。
+    from app.db.repositories.org_repo import get_org_store
+    from app.db.repositories.role_repo import get_role_store
+
+    user_id = (auth.user_id or "").strip()
+    if not user_id:  # pragma: no cover - `AuthContext.resolve` 已保证非空
+        raise ApiError(ErrorCode.FORBIDDEN, internal_detail="tenant membership required")
+
+    links = await get_org_store(settings).links_of_user(tenant_id, user_id)
+    if not links:
+        role_ids = await get_role_store(settings).role_ids_of_user(tenant_id, user_id)
+        if not role_ids:
+            logger.warning(
+                "tenant_switch_denied",
+                user_id=user_id,
+                token_tenant=auth.tenant_id,
+                requested_tenant=tenant_id,
+            )
+            raise ApiError(ErrorCode.FORBIDDEN, internal_detail="tenant membership required")
+    logger.info(
+        "tenant_switch_allowed",
+        user_id=user_id,
+        token_tenant=auth.tenant_id,
+        requested_tenant=tenant_id,
+    )
+
+
+def _should_check_membership(auth: AuthContext, settings: Settings) -> bool:
+    """判断本次跨租户切换是否需要做成员关系校验（回退开关）。
+
+    开关语义见 `Settings.tenant_membership_check`：
+
+    - `off`：跳过（紧急回退，属于安全降级，仅在线上止血时使用）；
+    - `always`：总是校验；
+    - `auto`：仅 `deploy_mode == "saas"` 且 `auth_mode != "stub"` 时校验。
+
+    `auto` 为什么排除 stub：stub 不验签，本地联调常用手编令牌+任意租户头，
+    强校验会让联调流程失效；而 stub 在 staging/production 已被
+    `validate_auth_startup` 拦成启动失败，不存在"线上靠自动档漏校验"的窗口。
+
+    Args:
+        auth: 鉴权上下文（仅在 `off` 档写告警日志时使用，不参与判定）。
+        settings: 配置实例。
+
+    Returns:
+        bool: 需要校验返回 True。
+    """
+    mode = (settings.tenant_membership_check or "auto").strip().lower()
+    if mode == "off":
+        logger.warning(
+            "tenant_membership_check_disabled",
+            user_id=auth.user_id,
+            token_tenant=auth.tenant_id,
+            hint="安全降级：跨租户切换未做成员校验，止血后必须改回 auto",
+        )
+        return False
+    if mode == "always":
+        return True
+    return settings.deploy_mode == "saas" and settings.auth_mode != "stub"
+
+
 async def get_request_context(
     request: Request,
     auth: Annotated[AuthContext, Depends(get_auth_context)],
@@ -453,6 +555,23 @@ async def get_request_context(
     私有化模式下必须被强制为 `default`；此处以 `dataclasses.replace` 回写，
     避免下游服务（identity_service 等）继续使用未收敛的原始租户。
 
+    **跨租户切换必须验成员关系（AR-017）**：`X-Tenant-Id` 优先于令牌声明，
+    若不做成员校验，任何人都能用自己租户的令牌读写任意租户。因此当
+    「生效租户 ≠ 令牌租户」时，只允许两种情形：
+
+    1. 平台运维令牌（角色含 `*`，或角色含运营角色且租户声明 `__platform__`）
+       ——职责就是跨租户；
+    2. 该用户在目标租户里确有组织归属或角色归属（多租户成员的真实场景）。
+
+    私有化模式不参与校验：此时生效租户被强制收敛为 `default`，
+    「不等」只反映「令牌声明被忽略」，而非跨租户访问（见 QA BUG-02）。
+
+    **`__platform__` 请求头必须在查库之前拒掉**：平台租户哨兵不是真实租户，
+    它一旦流入仓储层（`tenant_scope("__platform__")`）会被 RLS 拒绝并抛成
+    HTTP 500——企业令牌伪造该头时应得到明确的 20003，而不是一个"看起来像故障"的 500。
+
+    性能：同租户请求（绝大多数）不触发任何额外查询。
+
     Args:
         request: FastAPI 请求对象。
         auth: 鉴权上下文。
@@ -461,11 +580,24 @@ async def get_request_context(
         RequestContext: 请求上下文。
 
     Raises:
-        ApiError: SaaS 模式缺少租户标识（20001）。
+        ApiError: SaaS 模式缺少租户标识（20001）；跨租户且非成员（20003）；
+            非平台令牌伪造 `__platform__` 请求头（20003）。
     """
     settings = get_request_settings(request)
     tenant_id = resolve_tenant_id(request, auth, settings)
     if tenant_id != auth.tenant_id:
+        privileged = _has_cross_tenant_privilege(auth)
+        if tenant_id == OPS_TENANT_ID and not privileged:
+            # 先于任何仓储查询拒绝：`__platform__` 不是真实租户，流入 RLS 会变 500
+            logger.warning(
+                "tenant_platform_header_denied",
+                user_id=auth.user_id,
+                token_tenant=auth.tenant_id,
+                requested_tenant=tenant_id,
+            )
+            raise ApiError(ErrorCode.FORBIDDEN, internal_detail="platform tenant header forbidden")
+        if not privileged and _should_check_membership(auth, settings):
+            await assert_tenant_membership(auth, tenant_id, settings)
         # 收敛为最终生效的租户，杜绝下游绕过隔离
         auth = replace(auth, tenant_id=tenant_id)
     request.state.tenant_id = tenant_id
@@ -615,12 +747,29 @@ OPS_CONSOLE_PERMISSION: Final[str] = "ops:console:access"
 #: 通配角色（平台运维令牌）
 OPS_WILDCARD_ROLE: Final[str] = "*"
 
+#: 平台运维角色键（与 `business.policy_service.ROLE_OPS` 的取值**必须**保持一致）。
+#:
+#: 为什么在 core 层写字面量而不 import `ROLE_OPS`：`policy_service` 依赖
+#: `app.core.security`（`AuthContext` / `require_permission` 的判权出口），
+#: 反向导入会形成循环依赖，模块直接 ImportError。代价是「改一处要同步另一处」，
+#: 因此 `tests/security/test_attack_agent_task_tenant.py` 里有一条用例
+#: 断言本常量与 `ROLE_OPS` 逐字相等，任何一边漂移都会变红。
+OPS_ROLE_KEYS: Final[frozenset[str]] = frozenset({OPS_WILDCARD_ROLE, "ops_operator"})
+
 
 def is_platform_scope(auth: AuthContext, tenant_id: str = "") -> bool:
     """判断当前令牌是否具备平台视角。
 
-    判定口径：生效租户（请求头/令牌声明收敛后的值）为 `__platform__`，
-    **或**令牌带通配角色 `*`（平台运维账号）。
+    判定口径（两条，缺一不可）：
+
+    1. 令牌带通配角色 `*`（平台运维令牌的显式标记）；
+    2. **或** 生效租户为平台哨兵 `__platform__` **且** 令牌角色含平台运维角色
+       （`OPS_ROLE_KEYS`：`*` / `ops_operator`）。
+
+    为什么第 2 条要加角色条件（SEC-02）：只认「租户声明 = `__platform__`」等于
+    把判权交给一个**可被签发改写**的字段——令牌里写什么租户就获得什么视角。
+    平台视角意味着「跨全部租户读数据」，必须额外要求一个运营角色声明，
+    与企业令牌要求 `role` 才能进业务接口保持同一强度。
 
     Args:
         auth: 鉴权上下文。
@@ -629,11 +778,13 @@ def is_platform_scope(auth: AuthContext, tenant_id: str = "") -> bool:
     Returns:
         bool: 具备平台视角返回 True。
     """
-    effective = (tenant_id or auth.tenant_id or "").strip()
-    if effective == OPS_TENANT_ID:
-        return True
     roles = {str(role).strip().lower() for role in auth.roles if str(role).strip()}
-    return OPS_WILDCARD_ROLE in roles
+    if OPS_WILDCARD_ROLE in roles:
+        return True
+    effective = (tenant_id or auth.tenant_id or "").strip()
+    if effective != OPS_TENANT_ID:
+        return False
+    return bool(roles & OPS_ROLE_KEYS)
 
 
 async def require_ops_access(

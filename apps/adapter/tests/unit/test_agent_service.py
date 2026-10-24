@@ -55,7 +55,7 @@ async def test_get_task_returns_stored_detail() -> None:
     created = await service.create_task(
         CreateTaskRequest(conversation_id="conv_1", goal="目标"), _AUTH
     )
-    detail = await service.get_task(created.task_id)
+    detail = await service.get_task(created.task_id, _AUTH)
     assert detail.task_id == created.task_id
     assert detail.status == TaskStatus.RUNNING
 
@@ -63,14 +63,14 @@ async def test_get_task_returns_stored_detail() -> None:
 async def test_get_task_unknown_returns_12001() -> None:
     """未知任务返回 12001。"""
     with pytest.raises(ApiError) as exc_info:
-        await _service().get_task("task_missing")
+        await _service().get_task("task_missing", _AUTH)
     assert exc_info.value.code == ErrorCode.TASK_NOT_FOUND
 
 
 async def test_list_steps_unknown_task_returns_12001() -> None:
     """未知任务的步骤查询返回 12001。"""
     with pytest.raises(ApiError) as exc_info:
-        await _service().list_steps("task_missing")
+        await _service().list_steps("task_missing", _AUTH)
     assert exc_info.value.code == ErrorCode.TASK_NOT_FOUND
 
 
@@ -80,7 +80,7 @@ async def test_cancel_task_marks_cancelled() -> None:
     created = await service.create_task(
         CreateTaskRequest(conversation_id="conv_1", goal="目标"), _AUTH
     )
-    detail = await service.cancel_task(created.task_id)
+    detail = await service.cancel_task(created.task_id, _AUTH)
     assert detail.status == TaskStatus.CANCELLED
 
 
@@ -90,16 +90,16 @@ async def test_cancel_task_twice_returns_12003() -> None:
     created = await service.create_task(
         CreateTaskRequest(conversation_id="conv_1", goal="目标"), _AUTH
     )
-    await service.cancel_task(created.task_id)
+    await service.cancel_task(created.task_id, _AUTH)
     with pytest.raises(ApiError) as exc_info:
-        await service.cancel_task(created.task_id)
+        await service.cancel_task(created.task_id, _AUTH)
     assert exc_info.value.code == ErrorCode.TASK_CANCELLED
 
 
 async def test_cancel_unknown_task_returns_12001() -> None:
     """取消未知任务返回 12001。"""
     with pytest.raises(ApiError) as exc_info:
-        await _service().cancel_task("task_missing")
+        await _service().cancel_task("task_missing", _AUTH)
     assert exc_info.value.code == ErrorCode.TASK_NOT_FOUND
 
 
@@ -182,7 +182,7 @@ async def test_stream_events_emits_self_defined_frames() -> None:
     created = await service.create_task(
         CreateTaskRequest(conversation_id="conv_1", goal="目标"), _AUTH
     )
-    frames = [frame async for frame in service.stream_events(created.task_id)]
+    frames = [frame async for frame in service.stream_events(created.task_id, _AUTH)]
     assert frames
     assert all(frame.startswith("event: ") for frame in frames)
     assert frames[-1].startswith("event: task_completed")
@@ -193,7 +193,7 @@ async def test_stream_events_unknown_task_raises() -> None:
     """未知任务在建立 SSE 响应前即抛 12001（由 ensure_task_exists 守卫）。"""
     service = _service()
     with pytest.raises(ApiError) as exc_info:
-        await service.ensure_task_exists("task_missing")
+        await service.ensure_task_exists("task_missing", _AUTH)
     assert exc_info.value.code == ErrorCode.TASK_NOT_FOUND
 
 
@@ -208,8 +208,9 @@ async def test_append_steps_populates_steps() -> None:
     service.append_steps(
         created.task_id,
         [StepItem(step_id="step_1", sequence=1, title="理解需求", status=StepStatus.COMPLETED)],
+        _AUTH,
     )
-    steps = await service.list_steps(created.task_id)
+    steps = await service.list_steps(created.task_id, _AUTH)
     assert len(steps.steps) == 1
     assert steps.steps[0].title == "理解需求"
 

@@ -126,11 +126,17 @@ class AgentService:
     T01 为无状态桩实现：任务与步骤保存在进程内存字典中，
     仅用于验证接口契约；T02 起接入底座 + Redis，适配层仍保持无状态。
 
+    **租户化（SEC-01）**：`_tasks` / `_steps` 的键是 `(tenant_id, task_id)` 复合键，
+    不是裸 `task_id`。进程内存字典是全进程共享的，若按裸 ID 索引，
+    持 B 租户合法令牌的人只要知道（或枚举到）A 的任务 ID 就能读到 A 的目标、
+    产物与步骤——这正是实测到的越权形态。复合键让「按 ID 直取」在数据结构层
+    就不可能命中别人的记录，而不是依赖每个调用点自觉记得判断租户。
+
     Attributes:
         _settings: 配置实例。
         _dify: 底座客户端。
-        _tasks: 桩任务表。
-        _steps: 桩步骤表。
+        _tasks: 桩任务表（键 `(tenant_id, task_id)`）。
+        _steps: 桩步骤表（键 `(tenant_id, task_id)`）。
     """
 
     def __init__(
@@ -160,8 +166,49 @@ class AgentService:
             )
         else:
             self._dify = get_dify_client()
-        self._tasks: dict[str, TaskDetailData] = {}
-        self._steps: dict[str, StepsData] = {}
+        self._tasks: dict[tuple[str, str], TaskDetailData] = {}
+        self._steps: dict[tuple[str, str], StepsData] = {}
+
+    # ------------------------------------------------------------------
+    # 租户化索引（SEC-01 的唯一键构造出口）
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _key(auth: AuthContext, task_id: str) -> tuple[str, str]:
+        """构造任务索引键（租户 + 任务）。
+
+        **所有**读写 `_tasks` / `_steps` 的地方都必须经过本方法：裸 `task_id`
+        索引一旦出现，就是一条跨租户越权路径（进程内存字典里混着全部租户的记录）。
+
+        Args:
+            auth: 鉴权上下文（取生效租户）。
+            task_id: 任务 ID。
+
+        Returns:
+            tuple[str, str]: `(tenant_id, task_id)` 复合键。
+        """
+        return (auth.tenant_id, task_id)
+
+    def _require(self, task_id: str, auth: AuthContext) -> TaskDetailData:
+        """取本租户的任务记录，未命中一律 12001。
+
+        为什么「不属于本租户」与「不存在」返回**同一个码、同一句文案**：
+        区分两者等于给攻击者一个探测接口（能试出别的租户有哪些任务 ID）。
+        这也是 A3 契约里 12001 的既定语义（`TASK_NOT_FOUND`）。
+
+        Args:
+            task_id: 任务 ID。
+            auth: 鉴权上下文。
+
+        Returns:
+            TaskDetailData: 任务详情。
+
+        Raises:
+            ApiError: 任务不存在、已过期或不属于当前租户（12001）。
+        """
+        detail = self._tasks.get(self._key(auth, task_id))
+        if detail is None:
+            raise ApiError(ErrorCode.TASK_NOT_FOUND, internal_detail=f"task_id={task_id}")
+        return detail
 
     # ------------------------------------------------------------------
     # A1 创建任务
@@ -203,7 +250,7 @@ class AgentService:
         created_at = _now_iso()
         estimated = min(request.options.max_steps * 10, request.options.timeout_seconds)
 
-        self._tasks[task_id] = TaskDetailData(
+        self._tasks[self._key(auth, task_id)] = TaskDetailData(
             task_id=task_id,
             status=TaskStatus.RUNNING,
             progress=0,
@@ -212,7 +259,7 @@ class AgentService:
             usage=Usage(),
             updated_at=created_at,
         )
-        self._steps[task_id] = StepsData(task_id=task_id, steps=[])
+        self._steps[self._key(auth, task_id)] = StepsData(task_id=task_id, steps=[])
 
         if not self._settings.mock_mode:
             response = await self._dify.post(
@@ -231,13 +278,13 @@ class AgentService:
                 # 直接映射为自研任务状态，而非停留 running（T02 实联调修复）
                 native_data = response.payload.get("data") or {}
                 native_status = str(native_data.get("status", "")).lower()
-                self._tasks[task_id] = TaskDetailData(
+                self._tasks[self._key(auth, task_id)] = TaskDetailData(
                     task_id=task_id,
                     status=_STATUS_MAP.get(native_status, TaskStatus.RUNNING),
                     progress=100 if native_status == "succeeded" else 0,
                     updated_at=created_at,
                 )
-                self._steps[task_id] = StepsData(task_id=task_id, steps=[])
+                self._steps[self._key(auth, task_id)] = StepsData(task_id=task_id, steps=[])
                 if native_status == "succeeded":
                     await self._record_automation(
                         task_id=task_id, units=_total_units_of(native_data), auth=auth
@@ -278,6 +325,10 @@ class AgentService:
     def list_tasks(self, query: ListTasksQuery, auth: AuthContext) -> Any:
         """查询任务列表（按会话/状态过滤，分页）。
 
+        **只遍历当前租户的记录**（SEC-01 的列表枚举面）：进程内存字典里存着全部
+        租户的任务，若不做租户过滤，任何租户一打开「我的任务」就能看到别人的任务 ID
+        与状态——这比按 ID 直取更容易被发现，也更容易被批量利用。
+
         Args:
             query: 分页与过滤参数。
             auth: 鉴权上下文。
@@ -285,7 +336,6 @@ class AgentService:
         Returns:
             Any: `PageResult[TaskItem]` 分页结果。
         """
-        del auth  # T01 桩模式不持有租户维度状态
         items = [
             TaskItem(
                 task_id=detail.task_id,
@@ -295,8 +345,8 @@ class AgentService:
                 created_at=detail.updated_at,
                 updated_at=detail.updated_at,
             )
-            for detail in self._tasks.values()
-            if query.status is None or detail.status == query.status
+            for (tenant, _), detail in self._tasks.items()
+            if tenant == auth.tenant_id and (query.status is None or detail.status == query.status)
         ]
         start = query.offset
         page_items = items[start : start + query.page_size]
@@ -307,28 +357,27 @@ class AgentService:
     # ------------------------------------------------------------------
     # A3 任务状态查询
     # ------------------------------------------------------------------
-    async def get_task(self, task_id: str) -> TaskDetailData:
+    async def get_task(self, task_id: str, auth: AuthContext) -> TaskDetailData:
         """查询任务状态与结果。
+
+        **未命中一律 12001，不再回落到底座**：早前实现里「本地查不到就问底座」
+        是第二条越权路径——底座按原生 `workflow_run_id` 取运行结果，不知道租户，
+        于是任何租户拿着别人的任务 ID 都能从这里读出别人的产物。归属判定只能
+        来自本地记录（`_require`），取不到就是不存在，fail-closed。
 
         Args:
             task_id: 任务 ID。
+            auth: 鉴权上下文。
 
         Returns:
             TaskDetailData: 任务详情。
 
         Raises:
-            ApiError: 任务不存在或已过期（12001）。
+            ApiError: 任务不存在、已过期或不属于当前租户（12001）。
         """
-        detail = self._tasks.get(task_id)
-        if detail is None:
-            if self._settings.mock_mode:
-                raise ApiError(ErrorCode.TASK_NOT_FOUND, internal_detail=f"task_id={task_id}")
-            response = await self._dify.get(
-                f"{_DIFY_WORKFLOWS_PATH}/run/{task_id.removeprefix(_TASK_PREFIX)}"
-            )
-            return self._transform_task_detail(task_id, response.payload)
-
+        detail = self._require(task_id, auth)
         if not self._settings.mock_mode:
+            # 归属已确认后才回查底座刷新终态（只刷新「自己的」任务）
             response = await self._dify.get(
                 f"{_DIFY_WORKFLOWS_PATH}/run/{task_id.removeprefix(_TASK_PREFIX)}"
             )
@@ -373,21 +422,24 @@ class AgentService:
     # ------------------------------------------------------------------
     # A4 步骤详情
     # ------------------------------------------------------------------
-    async def list_steps(self, task_id: str) -> StepsData:
+    async def list_steps(self, task_id: str, auth: AuthContext) -> StepsData:
         """查询任务步骤详情（工作流可视化数据源）。
+
+        先确认归属再取步骤：步骤里有每一环的产出摘要与产物下载地址，
+        越权读取的信息量比任务详情更大。
 
         Args:
             task_id: 任务 ID。
+            auth: 鉴权上下文。
 
         Returns:
             StepsData: 步骤列表。
 
         Raises:
-            ApiError: 任务不存在（12001）。
+            ApiError: 任务不存在、已过期或不属于当前租户（12001）。
         """
-        if task_id not in self._tasks:
-            raise ApiError(ErrorCode.TASK_NOT_FOUND, internal_detail=f"task_id={task_id}")
-        return self._steps.get(task_id, StepsData(task_id=task_id, steps=[]))
+        self._require(task_id, auth)  # 归属校验：未命中即 12001
+        return self._steps.get(self._key(auth, task_id), StepsData(task_id=task_id, steps=[]))
 
     @staticmethod
     def _map_native_artifact(item: dict[str, Any]) -> Artifact:
@@ -548,21 +600,24 @@ class AgentService:
     # ------------------------------------------------------------------
     # A5 取消任务
     # ------------------------------------------------------------------
-    async def cancel_task(self, task_id: str) -> TaskDetailData:
+    async def cancel_task(self, task_id: str, auth: AuthContext) -> TaskDetailData:
         """取消任务。
+
+        **未命中不得下达底座 `/stop`**：那是一句「作用于别人的运行」的写指令，
+        越权取消会让别的租户的任务无故中止（比越权读更严重）。
 
         Args:
             task_id: 任务 ID。
+            auth: 鉴权上下文。
 
         Returns:
             TaskDetailData: 取消后的任务详情（状态为 `cancelled`）。
 
         Raises:
-            ApiError: 任务不存在（12001）。
+            ApiError: 任务不存在、已过期或不属于当前租户（12001）；
+                任务已处于终态（12003）。
         """
-        detail = self._tasks.get(task_id)
-        if detail is None:
-            raise ApiError(ErrorCode.TASK_NOT_FOUND, internal_detail=f"task_id={task_id}")
+        detail = self._require(task_id, auth)
         if detail.status in {TaskStatus.COMPLETED, TaskStatus.CANCELLED}:
             raise ApiError(
                 ErrorCode.TASK_CANCELLED,
@@ -582,22 +637,23 @@ class AgentService:
     # ------------------------------------------------------------------
     # A6 任务事件推送（SSE）
     # ------------------------------------------------------------------
-    async def ensure_task_exists(self, task_id: str) -> None:
+    async def ensure_task_exists(self, task_id: str, auth: AuthContext) -> None:
         """校验任务存在性（SSE 端点必须在建立响应前调用）。
 
         SSE 响应一旦开始写出便无法再返回统一错误响应体，
         因此资源校验必须在返回 `StreamingResponse` 之前完成（架构文档 3.0.1）。
+        归属校验同理：不能等流开始推送了才发现这条任务不属于当前租户。
 
         Args:
             task_id: 任务 ID。
+            auth: 鉴权上下文。
 
         Raises:
-            ApiError: 任务不存在或已过期（12001）。
+            ApiError: 任务不存在、已过期或不属于当前租户（12001）。
         """
-        if task_id not in self._tasks:
-            raise ApiError(ErrorCode.TASK_NOT_FOUND, internal_detail=f"task_id={task_id}")
+        self._require(task_id, auth)
 
-    async def stream_events(self, task_id: str) -> AsyncIterator[str]:
+    async def stream_events(self, task_id: str, auth: AuthContext) -> AsyncIterator[str]:
         """订阅任务进度事件（SSE）。
 
         自研事件集：`step_started` / `step_finished` / `task_completed`，
@@ -605,26 +661,29 @@ class AgentService:
 
         Args:
             task_id: 任务 ID。
+            auth: 鉴权上下文。
 
         Yields:
             str: SSE 文本帧。
         """
-        steps = self._steps.get(task_id, StepsData(task_id=task_id, steps=[]))
+        steps = self._steps.get(self._key(auth, task_id), StepsData(task_id=task_id, steps=[]))
         for step in steps.steps:
             event = "step_started" if step.status == StepStatus.RUNNING else "step_finished"
             yield sse_frame(event, {"task_id": task_id, "step": step.model_dump()})
 
-        detail = self._tasks[task_id]
+        detail = self._require(task_id, auth)
         yield sse_frame("task_completed", {"task_id": task_id, "status": detail.status.value})
 
-    def append_steps(self, task_id: str, steps: list[StepItem]) -> None:
+    def append_steps(self, task_id: str, steps: list[StepItem], auth: AuthContext) -> None:
         """追加步骤到桩任务（供联调与测试使用）。
 
         Args:
             task_id: 任务 ID。
             steps: 步骤列表。
+            auth: 鉴权上下文（写入落在当前租户的键上）。
         """
-        existing = self._steps.setdefault(task_id, StepsData(task_id=task_id, steps=[]))
+        key = self._key(auth, task_id)
+        existing = self._steps.setdefault(key, StepsData(task_id=task_id, steps=[]))
         existing.steps.extend(steps)
 
 

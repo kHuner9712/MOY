@@ -237,7 +237,7 @@ async def get_task(
     tasks = _task_service(request)
     if await _plugin_task_exists(tasks, task_id, context.auth):
         return ApiResponse[TaskDetailData].ok(await tasks.get_task(task_id, context.auth))
-    return ApiResponse[TaskDetailData].ok(await get_agent_service().get_task(task_id))
+    return ApiResponse[TaskDetailData].ok(await get_agent_service().get_task(task_id, context.auth))
 
 
 @router.get(
@@ -263,7 +263,7 @@ async def list_steps(
     tasks = _task_service(request)
     if await _plugin_task_exists(tasks, task_id, context.auth):
         return ApiResponse[StepsData].ok(await tasks.steps(task_id, context.auth))
-    return ApiResponse[StepsData].ok(await get_agent_service().list_steps(task_id))
+    return ApiResponse[StepsData].ok(await get_agent_service().list_steps(task_id, context.auth))
 
 
 @router.post(
@@ -298,7 +298,7 @@ async def cancel_task(
             return CancelTaskData(
                 task_id=detail.task_id, status=detail.status, updated_at=detail.updated_at
             )
-        detail = await service.cancel_task(task_id)
+        detail = await service.cancel_task(task_id, context.auth)
         return CancelTaskData(
             task_id=detail.task_id, status=detail.status, updated_at=detail.updated_at
         )
@@ -339,11 +339,10 @@ async def stream_task_events(
         ApiError: 任务不存在（12001）。在建立 SSE 响应**之前**校验，
             否则响应一旦开始写出便无法再返回统一错误体。
     """
-    del context
     service = get_agent_service()
-    await service.ensure_task_exists(task_id)
+    await service.ensure_task_exists(task_id, context.auth)
     return StreamingResponse(
-        service.stream_events(task_id),
+        service.stream_events(task_id, context.auth),
         media_type=SSE_MEDIA_TYPE,
         headers=SSE_HEADERS,
     )
