@@ -428,3 +428,36 @@ async def test_state_change_and_installed_list_report_real_running_counts() -> N
     listed = await fixture.service.installed(auth=OWNER)
     target = next(item for item in listed.items if item.plugin_id == PLUGIN)
     assert target.running_task_count == 2, "已安装列表必须报真实在跑数"
+
+
+@pytest.mark.asyncio
+async def test_market_detail_carries_input_declarations() -> None:
+    """PL2 详情必须下发 `inputs` 声明（F-04：工作台表单的数据来源）。
+
+    为什么单独立一条：`inputs` 曾是「前端类型有、后端响应没有」的字段，
+    表现为工作台表单区整块消失（页面只报 reading 'length' 或退化为无表单）。
+    这条断言把「详情响应里到底有没有输入声明」钉在后端侧，
+    避免下次再靠前端 `?? []` 兜底把缺口藏起来。
+    """
+    fixture = await _installed(_settings())
+    detail = await fixture.service.detail(plugin_id="plg_weekly_report", auth=OWNER)
+
+    # ① 条数与 manifest 声明一致
+    assert len(detail.inputs) == 3, "plg_weekly_report 声明了 3 个输入项"
+
+    # ② 首项字段逐项可读（key/label/type/required/max_length/options）
+    first = detail.inputs[0]
+    assert first.key == "period"
+    assert first.label == "汇报周期"
+    assert first.required is True
+    assert first.max_length == 32
+    assert first.options == []
+
+    # ③ 控件类型取值必须落在宿主支持的六种之内
+    allowed_types = {"text", "textarea", "select", "multi_select", "email", "file"}
+    for item in detail.inputs:
+        assert item.type in allowed_types, f"{item.key} 的控件类型 {item.type} 不在宿主支持范围内"
+
+    # ④ 与 outputs / settings_schema 并存，互不覆盖
+    assert detail.outputs, "产物说明必须同时存在（不能被 inputs 顶掉）"
+    assert detail.settings_schema, "配置项说明必须同时存在（不能被 inputs 顶掉）"
