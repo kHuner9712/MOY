@@ -6,6 +6,7 @@ import Link from 'next/link';
 import * as React from 'react';
 
 import ConversationSidebar from '@/components/chat/conversation-sidebar';
+import { GoalLauncher } from '@/components/chat/goal-launcher';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/feedback';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -78,6 +79,8 @@ export default function ChatPage(): React.JSX.Element {
           </Button>
         </div>
       ) : null}
+
+      <GoalLauncher />
 
       <div className="flex min-h-0 flex-1 gap-6">
         <aside className="hidden w-64 shrink-0 lg:block">
