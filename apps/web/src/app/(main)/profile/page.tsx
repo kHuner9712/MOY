@@ -35,6 +35,9 @@ const ROLE_LABELS: Readonly<Record<string, string>> = {
  * 只展示「我是谁、我在哪个企业、我这个月用了多少」，
  * 不展示任何内部计费细节与技术口径；两段数据（会话资料 / 用量）各自独立三态。
  *
+ * 会话资料不再由本页判定：布局层的会话门保证「能渲染到这里 = 已就绪」，
+ * 因此本页没有「加载中 / 未登录 / 资料出错」三个分支（它们的语义已上提）。
+ *
  * @returns 个人中心页元素
  */
 export default function ProfilePage(): React.JSX.Element {
@@ -43,27 +46,11 @@ export default function ProfilePage(): React.JSX.Element {
     enabled: Boolean(session.user),
   });
 
-  if (session.loading) {
-    return <LoadingState label="正在加载账户信息…" />;
-  }
-
-  if (session.errorMessage && !session.user) {
-    return <ErrorState message={session.errorMessage} onRetry={() => void session.reload()} />;
-  }
-
   const user = session.user;
-  if (!user) {
-    return (
-      <EmptyState
-        title="还没有登录"
-        description="登录后可查看账户信息与本月用量"
-        action={
-          <Button type="button" onClick={() => void session.reload()}>
-            重新加载
-          </Button>
-        }
-      />
-    );
+  if (user === null) {
+    // 门已保证就绪，这里只是让类型收敛的兜底；刻意不渲染任何「未登录」文案，
+    // 否则「门的判据」与「页面的判据」会变成两套说法。
+    return <LoadingState label="正在加载账户信息…" />;
   }
 
   const usage = usageQuery.data;

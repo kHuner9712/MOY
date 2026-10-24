@@ -64,6 +64,18 @@ export interface PendingAuthorization {
   redirectUri: string;
   /** 创建时刻（毫秒时间戳），用于 TTL 判定 */
   createdAt: number;
+  /**
+   * 登录成功后要回到的站内路径（深链场景）。
+   *
+   * 为什么放在这里而不是另开一个存储键：本对象本来就是「这一次登录是我发起的」
+   * 的一次性载体，`returnTo` 与它同生命周期——一起写入、一起消费、一起作废，
+   * 少一个键就少一处清理责任。
+   *
+   * 可选且**不参与** `isPendingAuthorization` 的必填校验：升级前写下的旧对象
+   * 没有这个字段，若校验加严会让正在进行的登录被判为「本地状态不可信」。
+   * 取值必须经 `lib/redirect.ts` 的 `resolveNextPath` 校验后才可用于跳转。
+   */
+  returnTo?: string;
 }
 
 /**

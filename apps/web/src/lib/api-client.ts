@@ -120,6 +120,8 @@ import type {
   MemorySettingsUpdate,
 } from '@/lib/types';
 
+import { emitUnauthorized } from './session-events';
+
 
 /** 统一响应包装 */
 export interface ApiResponse<T> {
@@ -193,6 +195,13 @@ const IDEMPOTENCY_HEADER = 'Idempotency-Key';
 
 /** 默认租户（私有化模式） */
 const DEFAULT_TENANT_ID = 'default';
+
+/**
+ * 「登录状态已失效」的业务错误码。
+ *
+ * 与后端 `AppCode.UNAUTHORIZED` 一致；本文件是前端唯一的处置点（见 `unwrap`）。
+ */
+const UNAUTHORIZED_CODE = 20002;
 
 /** 请求超时（毫秒） */
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -315,6 +324,12 @@ async function unwrap<T>(response: Response): Promise<T> {
   //   请稍后再试"，用户永远不知道是额度用完了）。
   // 现状成立的前提是 `fetchWithTimeout` 不对 4xx/5xx 抛错（fetch 语义），
   // 且后端 402 响应体始终是统一信封 `{code,message,data}`。
+  if (payload.code === UNAUTHORIZED_CODE) {
+    // 会话失效的处置**只有这一处出口**：先在传输层广播，由会话门统一清会话并跳登录。
+    // 不在各页面重复实现，是因为 20 个页面平均 3 个查询 = 60 个调用点，
+    // 新增页面必然漏写，漏写后就会把「登录状态已失效」这种内部状态词留给用户。
+    emitUnauthorized();
+  }
   throw new BusinessError(payload.code, payload.message);
 }
 
@@ -384,6 +399,14 @@ async function request<T>(
   if (traceId) {
     // 便于问题排查：链路 ID 只进控制台，不展示给终端用户
     console.info('[trace]', traceId, method, path);
+  }
+
+  // HTTP 401 先于信封解析判定：网关 / 反向代理层的 401 可能没有统一信封，
+  // 那样 `unwrap` 会退化成 AdapterUnavailableError，用户看到「服务暂时不可用」，
+  // 而真实原因是登录过期——错因误导比错误本身更难排。
+  if (response.status === 401) {
+    emitUnauthorized();
+    throw new BusinessError(UNAUTHORIZED_CODE, '登录状态已失效，请重新登录');
   }
 
   return unwrap<T>(response);

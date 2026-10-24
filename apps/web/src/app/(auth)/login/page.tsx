@@ -12,6 +12,7 @@ import { toast } from '@/components/ui/toast';
 import { getAdapterBaseUrl, setAccessToken } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { buildAuthorizeUrl, createPkcePair, createState } from '@/lib/oidc';
+import { resolveNextPath } from '@/lib/redirect';
 import { savePending, saveSession } from '@/lib/session-store';
 
 /**
@@ -56,8 +57,24 @@ const UNIFIED_LOGIN_SCOPE = ['openid', 'pro' + 'file', 'email'].join(' ');
 /** 统一登录完成后回到本应用的地址（与统一登录侧登记的回跳地址一致） */
 const CALLBACK_PATH = '/auth/callback';
 
-/** 开发构建下「直接进入」的落地页 */
-const DEV_ENTRY_PATH = '/chat';
+/**
+ * 读取地址栏里的 `next` 原始值（登录后要回到哪里）。
+ *
+ * 为什么直接读 `window.location.search` 而不是 `useSearchParams()`：
+ * 后者会让整个页面被要求包一层 `Suspense`（App Router 的静态生成约束），
+ * 而本页的交互全部发生在浏览器里，读地址栏即可；这里只在点击时使用，
+ * 不参与首帧渲染，因此不需要额外的挂载时状态。
+ *
+ * 返回值**未校验**：必须交给 `resolveNextPath` 处理后才能用于跳转。
+ *
+ * @returns 地址栏里的 `next`；不存在时为空串
+ */
+function readNextParam(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  return new URLSearchParams(window.location.search).get('next') ?? '';
+}
 
 /** 浏览器无法保存登录状态时的业务语言提示（不出现任何技术词） */
 const STORAGE_UNAVAILABLE_MESSAGE = '当前环境无法保存登录状态，请更换浏览器后重试';
@@ -94,6 +111,8 @@ export default function LoginPage(): React.JSX.Element {
         codeVerifier: pkce.codeVerifier,
         redirectUri,
         createdAt: Date.now(),
+        // 深链场景：把「登录后回到哪里」随一次性状态一起带到回跳页
+        returnTo: resolveNextPath(readNextParam()),
       });
       if (!stored) {
         // 存不下就不跳：跳过去也回不来（回跳页没有状态可比对）
@@ -127,7 +146,7 @@ export default function LoginPage(): React.JSX.Element {
     setSubmitting(true);
     try {
       toast.success('正在进入工作台');
-      router.push(DEV_ENTRY_PATH);
+      router.push(resolveNextPath(readNextParam()));
     } finally {
       setSubmitting(false);
     }
@@ -160,7 +179,7 @@ export default function LoginPage(): React.JSX.Element {
       }
       setAccessToken(trimmed);
       toast.success('已进入工作台');
-      router.push(DEV_ENTRY_PATH);
+      router.push(resolveNextPath(readNextParam()));
     } catch (error) {
       toast.error(toBusinessMessage(error));
     } finally {
