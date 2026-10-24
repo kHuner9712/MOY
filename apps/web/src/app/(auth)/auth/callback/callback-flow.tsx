@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorState, LoadingState } from '@/components/ui/feedback';
 import { setAccessToken } from '@/lib/api-client';
-import { completeAuthorization } from '@/lib/oidc';
+import { completeAuthorization, type PendingAuthorization } from '@/lib/oidc';
+import { resolveNextPath } from '@/lib/redirect';
 import { clearPending, loadPending, saveSession } from '@/lib/session-store';
 
 /**
@@ -33,9 +34,6 @@ import { clearPending, loadPending, saveSession } from '@/lib/session-store';
  * 清地址栏只能缩短它在浏览器历史与后续请求里的存活时间。真要在网关层也不留痕，
  * 需要改成「后端代理兑换」，属本轮冻结方案之外。
  */
-
-/** 登录成功后落地页 */
-const POST_LOGIN_PATH = '/chat';
 
 /** 统一登录未配置时的业务语言提示 */
 const NOT_CONFIGURED_MESSAGE = '统一登录尚未配置，请联系管理员';
@@ -95,13 +93,17 @@ export function CallbackFlow(): React.JSX.Element {
     const search = window.location.search;
     window.history.replaceState({}, '', '/auth/callback');
 
+    // 待完成登录必须**只读一次**并提到外面：它既是校验依据，也是「回到哪个页面」的来源，
+    // 校验过程内部会把它作废（`onValidated`），读第二次就永远是 null 了。
+    const pending: PendingAuthorization | null = loadPending();
+
     const run = async (): Promise<void> => {
       // ②③④ 解析 + 校验 + 兑换：全部收敛在纯函数里，便于门禁逐条断言。
       // `onValidated` 在**兑换之前**被调用：一次性随机值一旦比对通过就作废，
       // 不留「兑换挂在网络上、本地状态还留着」的可重放窗口。
       const outcome = await completeAuthorization({
         search,
-        pending: loadPending(),
+        pending,
         issuer,
         clientId,
         onValidated: clearPending,
@@ -122,7 +124,9 @@ export function CallbackFlow(): React.JSX.Element {
       }
 
       setAccessToken(outcome.session.access_token);
-      router.replace(POST_LOGIN_PATH);
+      // 深链场景回到用户原本要去的页面；`returnTo` 已在校验层过滤过开放重定向，
+      // 缺失或不合法时回落默认落地页。
+      router.replace(resolveNextPath(pending?.returnTo));
     };
 
     void run().catch(() => {

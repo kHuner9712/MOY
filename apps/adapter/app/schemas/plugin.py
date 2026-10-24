@@ -134,6 +134,26 @@ class OutputBriefItem(BaseModel):
     type: str = "text"
 
 
+class InputBriefItem(BaseModel):
+    """详情页展示的输入声明（PL2，驱动宿主表单）。
+
+    Attributes:
+        key: 输入键（与任务 inputs 的键集合一致）。
+        label: 输入名称。
+        type: 控件类型（text/textarea/select/multi_select/email/file）。
+        required: 是否必填。
+        max_length: 文本类长度上限。
+        options: select / multi_select 候选值。
+    """
+
+    key: str = ""
+    label: str = ""
+    type: str = "text"
+    required: bool = False
+    max_length: int | None = None
+    options: list[str] = Field(default_factory=list, description="候选值")
+
+
 class SettingBriefItem(BaseModel):
     """详情页展示的配置项说明（PL2）。
 
@@ -179,6 +199,7 @@ class MarketDetailData(BaseModel):
         rating_count: 评分人数。
         install_count: 安装企业数。
         capabilities: 能力清单（含开关态）。
+        inputs: 输入声明（驱动宿主表单）。
         step_titles: 步骤名称清单（用户可见）。
         outputs: 产物说明。
         settings_schema: 配置项说明。
@@ -201,6 +222,7 @@ class MarketDetailData(BaseModel):
     rating_count: int = 0
     install_count: int = 0
     capabilities: list[PluginCapabilityItem] = Field(default_factory=list, description="能力清单")
+    inputs: list[InputBriefItem] = Field(default_factory=list, description="输入声明")
     step_titles: list[str] = Field(default_factory=list, description="步骤名称")
     outputs: list[OutputBriefItem] = Field(default_factory=list, description="产物说明")
     settings_schema: list[SettingBriefItem] = Field(default_factory=list, description="配置项")

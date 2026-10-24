@@ -1,7 +1,7 @@
 {
   "version": "phase3-pl-v1",
   "source": "docs/architecture-phase3.md §5.2 / §5.3（PL1-PL14 + WF1 + WF2，共 16 端点）",
-  "note": "required/optional 逐键一致；enums 逐值一致。可选性翻转、缺值、多值均视为契约漂移。",
+  "note": "required/optional 逐键一致；enums 逐值一致。可选性翻转、缺值、多值均视为契约漂移。2026-10-25：F-02/F-03/F-05 对齐后端实际实现（app/schemas/plugin.py），更正 PluginMarketData / PluginReviewsData 的 meta → 扁平四字段、PluginDetail 移除 changelog、PluginVersionBrief 增 changelog。快照来源仍为文档，换源见 F-10。",
   "interfaces": {
     "PluginMarketItem": {
       "required": [
@@ -30,7 +30,10 @@
     "PluginMarketData": {
       "required": [
         "items",
-        "meta",
+        "page",
+        "page_size",
+        "total",
+        "total_pages",
         "categories",
         "org_capabilities"
       ],
@@ -78,7 +81,8 @@
     "PluginVersionBrief": {
       "required": [
         "version",
-        "published_at"
+        "published_at",
+        "changelog"
       ],
       "optional": []
     },
@@ -98,7 +102,6 @@
         "step_titles",
         "outputs",
         "settings_schema",
-        "changelog",
         "versions",
         "installed_status",
         "installed_version",
@@ -189,7 +192,10 @@
     "PluginReviewsData": {
       "required": [
         "items",
-        "meta",
+        "page",
+        "page_size",
+        "total",
+        "total_pages",
         "rating_avg",
         "rating_count"
       ],

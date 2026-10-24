@@ -256,7 +256,14 @@ export default function PluginDetailPage(): React.JSX.Element {
   const installed = plugin.installed_status !== 'none';
   const canOperate = plugin.installable || installed;
   const reviews = reviewsQuery.data?.items ?? [];
-  const reviewTotal = reviewsQuery.data?.meta.total ?? 0;
+  const reviewTotal = reviewsQuery.data?.total ?? 0;
+  /**
+   * 有实际说明内容的版本。
+   *
+   * 后端 PL2 没有顶层 `changelog`，版本说明的唯一来源是 `versions[].changelog`；
+   * 这里用 `filter` 而不是 `some`，否则列表里会出现空行。
+   */
+  const documentedVersions = plugin.versions.filter((item) => item.changelog.trim() !== '');
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -400,12 +407,16 @@ export default function PluginDetailPage(): React.JSX.Element {
           <p className="whitespace-pre-wrap text-sm leading-relaxed">
             {orPlaceholder(plugin.description, '插件未提供详细介绍')}
           </p>
-          {plugin.changelog.length > 0 ? (
+          {documentedVersions.length > 0 ? (
             <div className="mt-4 space-y-1">
               <p className="text-xs font-medium text-muted-foreground">版本说明</p>
               <ul className="list-inside list-disc space-y-0.5 text-sm text-muted-foreground">
-                {plugin.changelog.map((entry) => (
-                  <li key={entry}>{entry}</li>
+                {documentedVersions.map((item) => (
+                  <li key={item.version}>
+                    <span className="font-medium tabular-nums">{`v${item.version}`}</span>
+                    <span className="text-xs">{`（${formatDate(item.published_at)}）`}</span>
+                    {item.changelog}
+                  </li>
                 ))}
               </ul>
             </div>

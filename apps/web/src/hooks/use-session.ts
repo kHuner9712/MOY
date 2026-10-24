@@ -1,15 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+/**
+ * 会话 Hook（兼容薄壳）。
+ *
+ * 会话状态的真实持有者已经上提到布局层的会话门（`components/layout/session-gate.tsx`）：
+ * 只有它知道「什么时候算登录成功」，也只有它在门内挂载子页面，从而保证
+ * 子页面的第一批请求一定带上正确的身份与租户头。
+ *
+ * 本文件保留原有导出名、类型名与签名不变，只是把读值改成消费 Context，
+ * 原因有两个：
+ * 1. 还有调用方按旧契约写（例如 `/profile`），一次性改完会让改动面失控；
+ * 2. 更重要的是**防止重复请求**：如果页面自己再跑一遍「读存储 + 取资料」，
+ *    一次硬刷新就会请求两次资料，还可能拿到两个租户头交替的时刻。
+ *
+ * @deprecated 新代码请直接用 `useSessionContext()`；本函数只是兼容壳。
+ */
 
-import { identityApi, setAccessToken, setTenantId } from '@/lib/api-client';
-import { shouldReauthenticate, toBusinessMessage } from '@/lib/business-errors';
-import { clearSession, isSessionExpired, loadSession } from '@/lib/session-store';
+import { useSessionContext } from '@/components/layout/session-gate';
 import type { CurrentUser } from '@/lib/types';
 
 /** 会话状态 */
 export interface SessionState {
-  /** 是否已完成初始加载 */
+  /** 是否仍在恢复会话（等价于门的 `restoring` 阶段） */
   loading: boolean;
   /** 当前登录用户；未登录为 null */
   user: CurrentUser | null;
@@ -19,84 +31,29 @@ export interface SessionState {
 
 /** `useSession` 返回值 */
 export interface UseSessionResult extends SessionState {
-  /** 重新加载会话 */
+  /** 重新加载会话（重新请求资料，不刷新整页） */
   reload: () => Promise<void>;
-  /** 退出登录（清除本地会话） */
+  /** 退出登录（清会话 + 清查询缓存 + 回登录页） */
   logout: () => void;
 }
 
-/** 本地会话失效（缺失 / 过期）时的提示：与业务错误码 20002 的既有口径一致 */
-const SESSION_EXPIRED_MESSAGE = '登录状态已失效，请重新登录';
-
 /**
- * 会话 Hook：加载当前登录用户信息。
+ * 会话 Hook：从会话上下文映射出旧的返回形状。
  *
- * 本批次的关键改动（审计 A-01：令牌只写不读）：请求资料**之前**先从本地会话
- * 恢复访问令牌并注入请求层。此前的写法是 mount 就直接请求 profile，
- * 导致统一登录完成后页面一刷新就变成「未登录」，且所有请求都不带身份。
- *
- * 判定顺序（不可颠倒）：
- * 1. 没有本地会话 → 直接置未登录（**不发请求**，避免拿匿名请求去撞后端）；
- *    读取顺序由 `loadSession` 固定为「新键 → 旧键迁移 → 都没有」，
- *    因此已经粘过凭证的开发环境不会因为换键而掉线；
- * 2. 会话已过期 → 清掉本地会话并置未登录（本轮不做自动续期，过期即回登录页）；
- *    `expires_at: null`（开发令牌）**不判过期**；
- * 3. 会话有效 → 注入令牌 → 请求资料；返回「登录状态已失效」时同样清掉本地会话。
- *
- * 错误一律转换为业务语言文案；不打印任何令牌。
+ * `reload` 的签名仍是 `() => Promise<void>`（调用方写 `void session.reload()`），
+ * 内部只是同步触发一次重新请求，语义未变。
  *
  * @returns 会话状态与操作方法
  */
 export function useSession(): UseSessionResult {
-  const [state, setState] = useState<SessionState>({
-    loading: true,
-    user: null,
-    errorMessage: '',
-  });
-
-  const reload = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true, errorMessage: '' }));
-
-    const stored = loadSession();
-    if (!stored) {
-      setAccessToken(null);
-      setState({ loading: false, user: null, errorMessage: '' });
-      return;
-    }
-    if (isSessionExpired(stored)) {
-      // 过期即视为未登录：清掉存储，别再拿一个必然被拒的令牌去请求
-      clearSession();
-      setAccessToken(null);
-      setState({ loading: false, user: null, errorMessage: SESSION_EXPIRED_MESSAGE });
-      return;
-    }
-
-    setAccessToken(stored.access_token);
-
-    try {
-      const profile = await identityApi.profile();
-      setTenantId(profile.tenant.tenant_id);
-      setState({ loading: false, user: profile, errorMessage: '' });
-    } catch (error) {
-      if (shouldReauthenticate(error)) {
-        // 服务端判定令牌失效：本地会话一定也失效了，一起清掉
-        clearSession();
-        setAccessToken(null);
-      }
-      setState({ loading: false, user: null, errorMessage: toBusinessMessage(error) });
-    }
-  }, []);
-
-  const logout = useCallback(() => {
-    clearSession();
-    setAccessToken(null);
-    setTenantId('default');
-    setState({ loading: false, user: null, errorMessage: '' });
-  }, []);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  return { ...state, reload, logout };
+  const context = useSessionContext();
+  return {
+    loading: context.phase === 'restoring',
+    user: context.user,
+    errorMessage: context.errorMessage,
+    reload: async () => {
+      context.refreshProfile();
+    },
+    logout: context.logout,
+  };
 }

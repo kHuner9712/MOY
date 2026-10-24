@@ -56,10 +56,12 @@ const PLUGIN_NAV_HREF = '/plugins';
  * 不在侧栏出现、但需要独立标题的路由前缀。
  *
  * 说明：插件详情与工作台不进一级菜单（它们从市场 / 已添加到进入），
- * 但页面顶部标题必须稳定，否则用户从卡片跳进来会看到上一个页面的标题。
+ * 运营后台同理（由 URL 直达，且移动端刻意不给入口——企业账号点进去必然被拒），
+ * 但页面顶部标题必须稳定，否则用户跳进来会看到上一个页面的标题。
  */
 const EXTRA_TITLES: ReadonlyArray<{ prefix: string; label: string }> = [
   { prefix: '/workbench', label: '工作台' },
+  { prefix: '/ops', label: '运营后台' },
 ];
 
 /**
@@ -137,6 +139,9 @@ function PluginWorkbenchGroup(): React.JSX.Element {
 /**
  * 桌面端左侧导航。
  *
+ * 移动端的图标导航已迁到 `./mobile-nav`（`MobileNav`）：两者数据源相同但排布逻辑不同，
+ * 拆开后本文件的逻辑一行不用为窄屏让步。
+ *
  * @returns 侧栏元素
  */
 export function AppSidebar(): React.JSX.Element {
@@ -180,37 +185,3 @@ export function AppSidebar(): React.JSX.Element {
   );
 }
 
-/**
- * 移动端顶部图标导航（窄屏替代左侧栏）。
- *
- * @returns 图标导航元素
- */
-export function MobileNav(): React.JSX.Element {
-  const pathname = usePathname();
-  const active = resolveNavItem(pathname);
-
-  return (
-    <div className="flex items-center gap-1 md:hidden">
-      {NAV_ITEMS.map((item) => {
-        const Icon = item.icon;
-        const isActive = item.href === active?.href;
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-label={item.label}
-            aria-current={isActive ? 'page' : undefined}
-            className={cn(
-              'rounded-md p-2',
-              isActive
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:bg-accent',
-            )}
-          >
-            <Icon className="h-4 w-4" />
-          </Link>
-        );
-      })}
-    </div>
-  );
-}

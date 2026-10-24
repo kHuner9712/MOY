@@ -185,7 +185,7 @@ export default function ChatWindow(): React.JSX.Element {
                 void handleSend();
               }
             }}
-            placeholder="输入你的问题，Ctrl/⌘ + Enter 发送"
+            placeholder="输入你的问题"
             className="min-h-[56px]"
             rows={2}
           />
@@ -206,6 +206,8 @@ export default function ChatWindow(): React.JSX.Element {
             </Button>
           )}
         </div>
+        {/* 快捷键提示只在桌面保留：移动端没有 Ctrl/⌘ 键，占一行会把输入区推高 */}
+        <p className="mt-1 hidden text-xs text-muted-foreground md:block">Ctrl/⌘ + Enter 发送</p>
       </div>
 
       <CitationDrawer open={drawerOpen} onOpenChange={setDrawerOpen} citation={activeCitation} />

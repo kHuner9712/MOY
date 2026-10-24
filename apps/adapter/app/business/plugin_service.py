@@ -70,6 +70,7 @@ from app.schemas.plugin import (
     InstalledData,
     InstalledItem,
     InstallRequest,
+    InputBriefItem,
     MarketData,
     MarketDetailData,
     MarketItem,
@@ -340,6 +341,20 @@ class PluginService:
             rating_count=context.catalog.rating_count,
             install_count=context.catalog.install_count,
             capabilities=_capability_items(manifest, context.policies),
+            # 与下方 outputs / settings_schema 同构的防御写法：manifest 理论非空，
+            # 但保持一致以免将来 _load_market_context 变化时这里先炸。
+            inputs=[
+                InputBriefItem(
+                    key=item.key,
+                    label=item.label,
+                    type=item.type,
+                    required=item.required,
+                    max_length=item.max_length,
+                    # 显式复制：避免把 manifest 内部 list 共享进响应对象
+                    options=list(item.options),
+                )
+                for item in (manifest.inputs if manifest is not None else [])
+            ],
             step_titles=list(versions[0].step_titles) if versions else [],
             outputs=[
                 OutputBriefItem(key=item.key, label=item.label, type=item.type)
