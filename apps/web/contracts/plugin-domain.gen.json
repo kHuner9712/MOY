@@ -1,0 +1,297 @@
+{
+  "backend_schema": {
+    "CapabilityPolicyItem": "CapabilityPolicyItem",
+    "InstalledPluginItem": "InstalledItem",
+    "PluginCapabilitiesData": "CapabilityListData",
+    "PluginCapabilityItem": "PluginCapabilityItem",
+    "PluginCategoryItem": "CategoryCountItem",
+    "PluginDetail": "MarketDetailData",
+    "PluginGrantsUpdateRequest": "UpdateGrantsRequest",
+    "PluginGrantsUpdateResult": "UpdateGrantsData",
+    "PluginInputSpec": "InputBriefItem",
+    "PluginInstallResult": "InstallData",
+    "PluginMarketData": "MarketData",
+    "PluginMarketItem": "MarketItem",
+    "PluginOutputSpec": "OutputBriefItem",
+    "PluginReviewItem": "ReviewItem",
+    "PluginReviewResult": "ReviewData",
+    "PluginReviewsData": "ReviewListData",
+    "PluginRollbackResult": "VersionData",
+    "PluginSettingSpec": "SettingBriefItem",
+    "PluginSettingsResult": "SettingsData",
+    "PluginStateResult": "StateData",
+    "PluginUninstallResult": "UninstallData",
+    "PluginUpgradeResult": "VersionData",
+    "PluginVersionBrief": "VersionBriefItem"
+  },
+  "enums_observed": {
+    "MarketDetailData.installed_status": [
+      "none",
+      "enabled",
+      "disabled",
+      "installed",
+      "uninstalled"
+    ],
+    "MarketItem.installed_status": [
+      "none",
+      "enabled",
+      "disabled",
+      "installed",
+      "uninstalled"
+    ],
+    "PluginCapabilityItem.category": [
+      "personal",
+      "org"
+    ]
+  },
+  "excluded": {
+    "projection": [
+      "OrgCapabilitySwitch"
+    ],
+    "task_domain": [
+      "TaskChecklistItem",
+      "TaskStepFailure",
+      "TaskArtifact",
+      "TaskDetail",
+      "TaskRetryRequest",
+      "TaskRetryResult",
+      "TaskArtifactUpdateRequest",
+      "TaskArtifactUpdateResult"
+    ]
+  },
+  "generated_from": "create_app().openapi() @ components.schemas",
+  "interfaces": {
+    "CapabilityPolicyItem": {
+      "keys": [
+        "capability_key",
+        "display_name",
+        "enabled",
+        "updated_by_name",
+        "updated_at"
+      ]
+    },
+    "InstalledPluginItem": {
+      "keys": [
+        "plugin_id",
+        "name",
+        "category",
+        "icon_key",
+        "version",
+        "latest_version",
+        "has_update",
+        "status",
+        "last_used_at",
+        "running_task_count"
+      ]
+    },
+    "PluginCapabilitiesData": {
+      "keys": [
+        "items",
+        "granted_capabilities",
+        "org_switch_updated_at",
+        "installable",
+        "install_block_reason"
+      ]
+    },
+    "PluginCapabilityItem": {
+      "keys": [
+        "capability_key",
+        "display_name",
+        "reason",
+        "denial_effect",
+        "category",
+        "required",
+        "org_switch_enabled"
+      ]
+    },
+    "PluginCategoryItem": {
+      "keys": [
+        "key",
+        "name",
+        "count"
+      ]
+    },
+    "PluginDetail": {
+      "keys": [
+        "plugin_id",
+        "name",
+        "summary",
+        "description",
+        "category",
+        "icon_key",
+        "latest_version",
+        "rating_avg",
+        "rating_count",
+        "install_count",
+        "capabilities",
+        "inputs",
+        "step_titles",
+        "outputs",
+        "settings_schema",
+        "versions",
+        "installed_status",
+        "installed_version",
+        "has_update",
+        "installable",
+        "install_block_reason"
+      ]
+    },
+    "PluginGrantsUpdateRequest": {
+      "keys": [
+        "grants"
+      ]
+    },
+    "PluginGrantsUpdateResult": {
+      "keys": [
+        "granted_capabilities",
+        "denied_capabilities",
+        "required_capabilities"
+      ]
+    },
+    "PluginInputSpec": {
+      "keys": [
+        "key",
+        "label",
+        "type",
+        "required",
+        "max_length",
+        "options"
+      ]
+    },
+    "PluginInstallResult": {
+      "keys": [
+        "plugin_id",
+        "status",
+        "version",
+        "granted_capabilities",
+        "denied_capabilities",
+        "already_installed"
+      ]
+    },
+    "PluginMarketData": {
+      "keys": [
+        "items",
+        "categories",
+        "org_capabilities",
+        "page",
+        "page_size",
+        "total",
+        "total_pages"
+      ]
+    },
+    "PluginMarketItem": {
+      "keys": [
+        "plugin_id",
+        "name",
+        "summary",
+        "category",
+        "icon_key",
+        "rating_avg",
+        "rating_count",
+        "latest_version",
+        "installed_status",
+        "has_update",
+        "installable",
+        "install_block_reason"
+      ]
+    },
+    "PluginOutputSpec": {
+      "keys": [
+        "key",
+        "label",
+        "type"
+      ]
+    },
+    "PluginReviewItem": {
+      "keys": [
+        "review_id",
+        "rating",
+        "content",
+        "author_name",
+        "department_name",
+        "created_at"
+      ]
+    },
+    "PluginReviewResult": {
+      "keys": [
+        "review_id",
+        "rating",
+        "created_at",
+        "rating_avg",
+        "rating_count"
+      ]
+    },
+    "PluginReviewsData": {
+      "keys": [
+        "items",
+        "rating_avg",
+        "rating_count",
+        "page",
+        "page_size",
+        "total",
+        "total_pages"
+      ]
+    },
+    "PluginRollbackResult": {
+      "keys": [
+        "plugin_id",
+        "version",
+        "previous_version",
+        "has_update"
+      ]
+    },
+    "PluginSettingSpec": {
+      "keys": [
+        "key",
+        "label",
+        "type",
+        "options"
+      ]
+    },
+    "PluginSettingsResult": {
+      "keys": [
+        "plugin_id",
+        "settings",
+        "updated_at"
+      ]
+    },
+    "PluginStateResult": {
+      "keys": [
+        "plugin_id",
+        "status",
+        "running_task_count"
+      ]
+    },
+    "PluginUninstallResult": {
+      "keys": [
+        "plugin_id",
+        "uninstalled",
+        "running_task_count",
+        "kept_task_count"
+      ]
+    },
+    "PluginUpgradeResult": {
+      "keys": [
+        "plugin_id",
+        "version",
+        "previous_version",
+        "has_update"
+      ]
+    },
+    "PluginVersionBrief": {
+      "keys": [
+        "version",
+        "published_at",
+        "changelog"
+      ]
+    }
+  },
+  "optionality_authority": "snapshot",
+  "rename": {
+    "CapabilityPolicyItem": {
+      "org_switch_enabled": "enabled"
+    }
+  },
+  "version": "plugin-domain-v1",
+  "whitelist_version": 1
+}

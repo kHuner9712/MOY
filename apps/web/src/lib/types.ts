@@ -1069,8 +1069,16 @@ export type ToastLevel = 'success' | 'error' | 'info' | 'warning';
 /** 插件分类（PRD 六分类，市场筛选用） */
 export type PluginCategoryKey = 'dev' | 'content' | 'hr' | 'data' | 'collab' | 'other';
 
-/** 我在这个插件上的状态 */
-export type PluginInstalledStatus = 'none' | 'enabled' | 'disabled';
+/**
+ * 我在这个插件上的状态。
+ *
+ * 五值：后端 `PluginInstalledStatus` 为属性级枚举
+ * `none|enabled|disabled|installed|uninstalled`（`app/schemas/plugin.py`），
+ * 前三个是「我在这个插件上的可操作状态」，后两个是市场条目的历史态。
+ * 本批按契约扩到 5 值（Batch 2 裁决 §7-2）；判断处一律用等值比较、无
+ * exhaustive `switch`，因此扩值不影响既有渲染。
+ */
+export type PluginInstalledStatus = 'none' | 'enabled' | 'disabled' | 'installed' | 'uninstalled';
 
 /** 市场排序方式 */
 export type PluginMarketSort = 'recommended' | 'newest' | 'rating';
@@ -1123,6 +1131,12 @@ export interface PluginMarketItem {
   has_update: boolean;
   /** 当前套餐是否可安装；false 时市场照常展示，仅在安装/启用时拦截 */
   installable: boolean;
+  /**
+   * 不可安装的原因（业务语言）；可安装时为空串。
+   *
+   * 后端 `MarketItem.install_block_reason`（本批换源补入）。
+   */
+  install_block_reason?: string;
 }
 
 /** 市场分类项（PL1 `categories[]`，count 为该分类下可见插件数） */
@@ -1208,10 +1222,11 @@ export interface PluginDetail {
   description: string;
   category: PluginCategoryKey | string;
   icon_key: string;
-  vendor?: string;
   rating_avg: number;
   rating_count: number;
   latest_version: string;
+  /** 累计安装数（后端 `MarketDetailData.install_count`，本批换源补入） */
+  install_count?: number;
   capabilities: PluginCapabilityItem[];
   /**
    * 输入声明（驱动宿主表单：text/textarea/select/multi_select/email/file）。
@@ -1230,6 +1245,8 @@ export interface PluginDetail {
   installed_version: string;
   has_update: boolean;
   installable: boolean;
+  /** 不可安装的原因（业务语言）；可安装时为空串 */
+  install_block_reason?: string;
 }
 
 /** 能力清单响应（PL4） */
@@ -1241,6 +1258,8 @@ export interface PluginCapabilitiesData {
   org_switch_updated_at: string;
   /** 当前套餐是否可安装 */
   installable: boolean;
+  /** 不可安装的原因（业务语言）；可安装时为空串 */
+  install_block_reason?: string;
 }
 
 /** 已安装条目（PL3） */
@@ -1248,6 +1267,8 @@ export interface InstalledPluginItem {
   plugin_id: string;
   name: string;
   category: PluginCategoryKey | string;
+  /** 图标标识（后端 `InstalledItem.icon_key`，本批换源补入） */
+  icon_key?: string;
   version: string;
   latest_version: string;
   has_update: boolean;
@@ -1273,6 +1294,12 @@ export interface PluginInstallResult {
   version: string;
   granted_capabilities: string[];
   denied_capabilities: string[];
+  /**
+   * 该插件此前已添加过（重复添加提示用）。
+   *
+   * 后端 `InstallData.already_installed`，本批换源补入。
+   */
+  already_installed?: boolean;
 }
 
 /** 启停结果（PL6）：running_task_count 供「在跑任务不受影响」提示 */
@@ -1298,11 +1325,13 @@ export interface PluginUpgradeResult {
   has_update: boolean;
 }
 
-/** 回退结果（PL9） */
+/** 回退结果（PL9）：后端复用升级的响应模型 `VersionData`，故也带 `has_update` */
 export interface PluginRollbackResult {
   plugin_id: string;
   version: string;
   previous_version: string;
+  /** 回退后是否仍有新版本可升（后端 `VersionData.has_update`） */
+  has_update?: boolean;
 }
 
 /** 已安装后改授权请求（PL14）：required=true 的能力不允许撤回 */
@@ -1310,9 +1339,8 @@ export interface PluginGrantsUpdateRequest {
   grants: Record<string, boolean>;
 }
 
-/** 改授权结果（PL14） */
+/** 改授权结果（PL14）：后端 `UpdateGrantsData` 不回 `plugin_id`（本批换源收敛） */
 export interface PluginGrantsUpdateResult {
-  plugin_id: string;
   granted_capabilities: string[];
   denied_capabilities: string[];
   /** 该插件声明的必需能力（UI 置灰依据，**不靠自己猜声明**） */

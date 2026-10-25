@@ -23,6 +23,8 @@
     "scan:oidc": "node scripts/check-oidc-auth.mjs",
     "scan:contract": "node scripts/check-plugin-contract.mjs",
     "scan:contract-self-test": "node scripts/check-plugin-contract.mjs --self-test",
+    "scan:contract:gen": "node scripts/check-plugin-contract.mjs --generated",
+    "scan:contract:gen-self-test": "node scripts/check-plugin-contract.mjs --generated --self-test",
     "scan:workbench": "node scripts/check-workbench-host.mjs",
     "scan:workbench-self-test": "node scripts/check-workbench-host.mjs --self-test",
     "scan:capability": "node scripts/check-capability-consistency.mjs",

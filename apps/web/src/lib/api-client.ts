@@ -1266,6 +1266,43 @@ export const opsApi = {
 // ---------------------------------------------------------------------------
 
 /**
+ * 后端 `CapabilityPolicyItem` 的**原始**形状。
+ *
+ * 后端字段名是 `enabled`（`app/schemas/plugin.py` 的 `CapabilityPolicyItem`），
+ * 前端业务名是 `org_switch_enabled`（"企业总开关是否开启"，与 `PluginCapabilityItem`
+ * 同名同义）。Batch 2 裁决（§7-1）：**不改后端字段名**，在本文件的一处入口做映射，
+ * 这样 `team/page.tsx` 的 `setSaved(data.policies)` 拿到的是前端口径，
+ * 不必每个消费点各写一遍（写 9 遍必然漏写）。
+ */
+interface BackendCapabilityPolicyItem {
+  capability_key: string;
+  display_name: string;
+  /** 后端字段名（映射前） */
+  enabled?: boolean;
+  /** 前端口径（后端若已改名则直接可用） */
+  org_switch_enabled?: boolean;
+  updated_by_name: string;
+  updated_at: string;
+}
+
+/**
+ * 把后端 `CapabilityPolicyItem` 映射为前端 `CapabilityPolicyItem`。
+ *
+ * @param item - 后端返回的原始条目
+ * @returns 前端口径的条目（`org_switch_enabled` 一定有值）
+ */
+function adaptCapabilityPolicy(item: BackendCapabilityPolicyItem): CapabilityPolicyItem {
+  const enabled = item.enabled ?? item.org_switch_enabled ?? false;
+  return {
+    capability_key: item.capability_key,
+    display_name: item.display_name,
+    org_switch_enabled: enabled,
+    updated_by_name: item.updated_by_name,
+    updated_at: item.updated_at,
+  };
+}
+
+/**
  * 插件接口（阶段三 13 个端点）。
  *
  * 统一说明：
@@ -1353,7 +1390,14 @@ export const pluginsApi = {
 
   /** PL13 企业能力总开关（仅 org.* 三项；个人能力恒开；响应回全量 6 项） */
   setCapabilityPolicy(body: CapabilityPolicyRequest): Promise<{ policies: CapabilityPolicyItem[] }> {
-    return request('PUT', '/plugins/capability-policy', { body });
+    // 后端回 `enabled`，前端用 `org_switch_enabled`：映射收敛在这一处（裁决 §7-1）。
+    // 不改后端字段名，是因为改它要动 6 个消费方 + 数据迁移，收益不抵成本。
+    return request<{ policies: BackendCapabilityPolicyItem[] }>('PUT', '/plugins/capability-policy', {
+      body,
+    }).then((data) => ({
+      ...data,
+      policies: (data.policies ?? []).map(adaptCapabilityPolicy),
+    }));
   },
 
   /** PL14 已安装后改授权（required=true 的能力不允许撤回） */
