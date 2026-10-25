@@ -67,9 +67,7 @@ PluginGrantsUpdateResult→UpdateGrantsData, PluginGrantsUpdateRequest→UpdateG
 
 **明确排除**（不生成、不比对，各自有独立门禁）：
 
-- 任务域 6 个（`TaskChecklistItem`/`TaskStepFailure`/`TaskArtifact`/`TaskDetail`/`TaskRetryRequest`/`TaskRetryResult`/`TaskArtifactUpdate*`）——在 `app/schemas/task.py`，属另一模块，本批不动。
-- `OrgCapabilitySwitch`：**前端投影类型**，后端无对应 schema（`MarketData.org_capabilities` 的元素是 `PluginCapabilityItem`，7 键）。列入 `projection: ["OrgCapabilitySwitch"]`，不比对。
-- 96 端点全量契约：不生成（计划 §2.3 已排除）。
+- 任务域 7 个（`TaskChecklistItem`/`TaskStepFailure`/`TaskArtifact`/`TaskDetail`/`TaskRetry*`/`TaskArtifactUpdate*`）在 `app/schemas/task.py`，属另一模块，本批不动；`OrgCapabilitySwitch` 是**前端投影类型**（后端 `MarketData.org_capabilities` 的元素是 7 键的 `PluginCapabilityItem`），列入 `projection: ["OrgCapabilitySwitch"]`，不比对；96 端点全量契约不生成（计划 §2.3 已排除）。
 
 **映射规则**（生成器实现口径）：
 
@@ -79,7 +77,6 @@ PluginGrantsUpdateResult→UpdateGrantsData, PluginGrantsUpdateRequest→UpdateG
 | `$ref` / `allOf` / `anyOf` | 只取键名，不展开类型 |
 | `enum`（顶层 schema） | 本批白名单内无此项（`TaskStatus`/`StepStatus`/`ArtifactType` 在任务域，不在白名单），故 `enums` 不参与判定 |
 | `enum`（属性级，如 `MarketItem.installed_status`） | 只记入 `enums_observed` 供人工核对，**不判红**（见 §7-2） |
-| `additionalProperties` / `oneOf` 泛型容器（`SettingsData.settings`） | 只计键名，不递归 |
 
 **可选性口径：采用 A（主理人裁决）——生成契约只负责键集合。** 实测依据：22 个插件域模型**全部字段带默认值**（`= ""` / `= 0` / `Field(default=...)`，`app/schemas/plugin.py:72-641`），Pydantic v2 因此**一个 `required` 数组都不输出**（`MarketData`/`MarketDetailData`/`ReviewListData`/`InputBriefItem` 实测均 `required: None`）。若让生成契约参与可选性判定，`types.ts` 里 175 个字段几乎全必填 → 首跑 170+ 条误报，W-01 直接不可用。故：
 
@@ -105,19 +102,17 @@ PluginGrantsUpdateResult→UpdateGrantsData, PluginGrantsUpdateRequest→UpdateG
 flowchart LR
   A["deploy/export_plugin_contract.py"] -->|importlib 加载| B["validate_openapi.build_schema()"]
   B --> C["create_app().openapi()"]
-  C --> D["components.schemas"]
-  D -->|白名单 22 项 + 映射规则| E["contracts/plugin-domain.gen.json"]
-  E --> F["check-plugin-contract.mjs --generated"]
+  C -->|白名单 22 项 + 映射规则| D["contracts/plugin-domain.gen.json"]
+  D --> F["check-plugin-contract.mjs --generated"]
   G["src/lib/types.ts"] --> F
   H["contracts/phase3.pl.json"] --> F
-  F --> I{0 差异?}
-  I -->|是| J["EXIT 0"]
+  F --> I{"键集合 0 差异?"} -->|是| J["EXIT 0"]
   I -->|否| K["EXIT 1 + 逐条差异"]
 ```
 
 **验收负样本（计划 S1）**：改 `MarketData.total` → `total_count`（`app/schemas/plugin.py:119`）→ `python deploy/export_plugin_contract.py && npm --workspace apps/web run scan:contract:gen` 必须 EXIT 1，改回后 0。**不刷新 `docs/api/openapi.snapshot.json`**（`validate_openapi.py:870-874` 的 `sort_keys=True` 全量重写，55.8 万字节 → 噪声 diff）。
 
-**W-08 的 `format` 如何吸收**：`InputBriefItem` 新增 `format` → 重新生成后 `PluginInputSpec` 的键集合多一项。处理：`types.ts` 加 `format?: PluginInputFormat`（可选），手写快照 `optional` 加 `format`。因为 `optionality_authority = snapshot`，`format` 的可选性由快照决定，不依赖后端 `required`。
+**W-08 的 `format` 如何吸收**：`InputBriefItem` 加 `format` → 重生成后 `PluginInputSpec.keys` 多一项。处理：`types.ts` 加 `format?: PluginInputFormat`（可选）、手写快照 `optional` 加 `format`；A 口径下 gen 只比键集合，故三处必须同一次提交改完（顺序见 §2.8）。
 
 ### 2.2 W-02 行为回归网
 
@@ -211,8 +206,7 @@ def is_success(self) -> bool:
 1. 删 `apps/adapter/app/plugins/manifests/plg_hr_admin.json` 的 `capabilities[2]`（`org.directory.read`，实测位于 `:21-24`），其余 3 项保留。
 2. **改 CI**：`.github/workflows/ci-web.yml:238` `scan:capability-warn` → `scan:capability`（严格），并删掉注释里「整改期」表述（`:232-236`）。这一步是 C1 的直接后果，**不做则本项等于没做**。
 3. 订正 `docs/plugin-dev-guide.md` 第 ④ 行（`:199`），「什么场景该申请」列当前写着「需要填写所属部门的插件」——HR 插件正是该场景却不再申请，改为「需要按部门自动确定收件人的插件（人工填部门的场景不需要申请）」。
-4. 文案核查结论：能力行由后端按 manifest 渲染（`components/plugin/capability-list.tsx:47`、`grant-drawer.tsx:128`），`lib/capability-labels.ts:18` 是 6 项白名单**兜底**、不按插件裁剪 → **前端代码不改**。
-5. 测试快照：`tests/unit/test_plugin_assembly.py` 断言 checklist 4 项 / 6 步，不校验能力条数（计划已核对）→ 不改。
+4. 文案核查结论：能力行由后端按 manifest 渲染（`components/plugin/capability-list.tsx:47`、`grant-drawer.tsx:128`），`lib/capability-labels.ts:18` 是 6 项能力全集兜底、**不改**；`tests/unit/test_plugin_assembly.py` 只断言 checklist 4 项 / 6 步，不校验能力条数；`tests/e2e/conftest.py`、`task_helpers.py` 里的 `org.directory.read` 是 org.* 枚举夹具，不动。
 
 **验收**：`npm --workspace apps/web run scan:capability` = 0；`node scripts/check-capability-consistency.mjs` 输出「多余能力 **0 处**」；`grep -rn "org.directory.read" apps/adapter/app/plugins/manifests/` = 0 命中；`pytest tests/unit/test_plugin_assembly.py -q` 绿；`python deploy/validate_plugins.py` = 0。
 
@@ -236,7 +230,7 @@ def is_success(self) -> bool:
 1. `declaration-form.tsx:51` `<form` 加 `noValidate`（一行）；
 2. `type="email"`（`:200`）**保留**——`noValidate` 只关掉浏览器拦截，`type=email` 仍影响移动端键盘；
 3. 提交路径：`onSubmit` 已经 `event.preventDefault(); onSubmit();`（`:53-56`），父级 `use-declaration-form` 的提交入口须**先对全部 `inputs` 跑一遍 `validateField` 并写 `errors`**，有错则不调 `buildInputs()`/不发请求（当前只在 `onChange`/失焦校验，点提交不补跑 → 这是「点了没反应」的根因链）。规则全部来自声明，邮箱正则在 `use-declaration-form.ts:38-39`，**不新增文案**（「请填写有效的邮箱地址」）。
-4. 错误槽位与 `aria-invalid`：`Field` 已收 `error`，`Input` 已收 `invalid={Boolean(errors[spec.key])}`（`:196`、`:203`）→ 无需新增。
+4. 错误槽位与 `aria-invalid`：`Field` 已收 `error`，`Input` 已收 `invalid={Boolean(errors[spec.key])}`（`:196`、`:203`）→ 无需新增；`type="email"` 的错误文案必须来自应用内（「请填写有效的邮箱地址」），**不得**依赖浏览器气泡。
 
 **验证**：`grep -c "noValidate" apps/web/src/components/workbench/declaration-form.tsx` ≥ 1；vitest 3 条（空/非法/合法邮箱 → 错误文案 + `buildInputs` 是否被调）；e2e 可选并入 W-02。**静态扫描**：`scan:workbench` 只校验动态段与宿主约束，不涉及 `noValidate` → 不冲突。
 
@@ -244,21 +238,18 @@ def is_success(self) -> bool:
 
 **为什么只改 `Pagination` 一处**：9 个消费点（7 个页面：`ops/orders`、`ops/tenants`、`plugins`、`plugins/[pluginId]`、`profile/memories`、`team`、`workflows`；2 个组件：`knowledge/document-table`、`knowledge/grant-panel`）**各自持 `page` state**。在 9 处各写一遍 `useEffect` 必然漏写（`scan:pages` 抓不到语义重复）。`Pagination` 是唯一共同必经点，且它已持有 `page`/`total`/`pageSize` 与 `onPageChange`。
 
-**改动**（`components/ui/pagination.tsx`）：
+**改动**（`components/ui/pagination.tsx`：抽纯函数 + 组件内约束性 effect）：
 
 ```ts
 export function clampPage(page: number, totalPages: number): number {
   const max = Math.max(1, Math.trunc(totalPages) || 1);
   return Math.min(Math.max(1, Math.trunc(page) || 1), max);
 }
-```
 
-组件内：
-
-```ts
+// 组件内：父级 page 越界时回落到 [1, totalPages]，把修正值通知父级
 React.useEffect(() => {
   if (currentPage !== page) onPageChange(currentPage);
-}, [currentPage, page, onPageChange]);   // 依赖只含这三个原始值
+}, [currentPage, page]);   // 不含 onPageChange，见下
 ```
 
 **为什么不会循环**：`onPageChange(currentPage)` 把父级 `page` 置成 `currentPage`，下一轮 `currentPage === page` → effect 直接返回。**前提**：父级 `onPageChange` 必须是 `setPage`（9 处均为 `useState` setter，待验证是否存在内联箭头函数导致每次换引用——若存在，effect 依赖去掉 `onPageChange` 或用 `useRef` 固定）。**只改读取侧**：不新增 `refetch`/不强制刷新数据（计划 §5 W-07 定稿）；父级 `page` 变了，`useApiQuery` 的 key 自然带新页码重取。
@@ -274,9 +265,7 @@ if (response.status === 413 || response.status === 429) {
 
 **错误码裁决（§7-3）**：复用已注册码 **20008**（`PAYLOAD_TOO_LARGE`，`core/errors.py:40`）与 **20006**（`RATE_LIMITED`，`:38`），**不新增 30005/30006**。理由：错误码是注册制，前端为网关状态新造码会绕过后端登记；两条既有文案语义正好匹配（`business-errors.ts:27,29`），`business-errors.ts` **本批不用改**。写法上直接 `throw new BusinessError(20008 | 20006, undefined)` 让 `toBusinessMessage` 走兜底表，或显式传 `business-errors.ts` 的既有文案——**二选一，以不复制字符串为准**（推荐前者：`BusinessError` 的 message 传 `''`，UI 侧 `toBusinessMessage` 按 code 取表）。
 
-顺序不能变：**401 → 413/429 → `unwrap`（code=20002 → BusinessError）**。理由：网关层的 401/413/429 常无信封，`unwrap` 会把它们退化成 `AdapterUnavailableError`（`api-client.ts:321-325`），真实原因丢失。三者互不覆盖：401 分支 `throw` 后即返回，不会走到 413/429。非信封 502 保持兜底（落到 `unwrap` → `AdapterUnavailableError`），因为 502 确实无法解释原因。
-
-**已知偏差（登记，不修）**：20008 的文案写死「上限 50MB」，而网关 body limit 常小于 50MB（1/10MB），413 时这句话可能不准。本批接受（不改注册文案），记入 `docs/phase4-batch-log.md` 观察项。
+顺序不能变：**401 → 413/429 → `unwrap`（code=20002 → BusinessError）**。理由：网关层的 401/413/429 常无信封，`unwrap` 会把它们退化成 `AdapterUnavailableError`（`api-client.ts:321-325`），真实原因丢失。三者互不覆盖：401 分支 `throw` 后即返回，不会走到 413/429。非信封 502 保持兜底（落到 `unwrap` → `AdapterUnavailableError`），因为 502 确实无法解释原因。**已知偏差**：20008 文案写死「上限 50MB」，而网关 body limit 常更小，本批接受，记 `phase4-batch-log.md`（§5 同条）。
 
 **测试**：见 §2.2 矩阵 #5/#6/#7/#15/#16（越界回落、413、429、502 兜底）。
 
@@ -387,7 +376,7 @@ if (response.status === 413 || response.status === 429) {
 
 ---
 
-## 6. 给工程师的 3 个易错点
+## 6. 给工程师的 4 个易错点
 
 1. **`scan:capability` 今天是绿的，别以为改完 manifest 就完事。** CI 跑的是 `scan:capability-warn`（`ci-web.yml:238`）。T01 必须同时把 CI 换成严格模式，否则「删了声明」这件事没有任何门禁守着；而且改完要**本地先跑严格模式确认全绿**，再提交 CI 变更（否则会把 CI 一次性弄红）。
 2. **支付 fail-open 有 4 处，最前面的那处在 `schemas/billing.py:481`，不在 gateway 里。** 只改 `payment_gateway.py` 的三处，缺 `trade_state` 的回调依然会被判成功——因为路由 `billing.py:612` 的 `model_dump()` 已经把默认 `"SUCCESS"` 填进去了。验收 grep 必须查**两个文件**。另外 `:293`/`:387` 的 `or TRADE_STATE_SUCCESS` 尾巴也要删（空串会被 `or` 抬回成功）。
@@ -406,9 +395,7 @@ if (response.status === 413 || response.status === 429) {
 | 4 | `scan:contract:gen` → **放 `ci-adapter.yml`** | 与 `validate_openapi.py --strict` 同 job 的下一步；`ci-web.yml` 的 `:196` 后**不加**。T02 |
 | 5 | 第 4 条 e2e → **不做** | `playwright.config.ts` 保持单 `webServer`；必做那条改为 `/chat → /login?next=%2Fchat`。T03 |
 
-**阻塞项：无。** 唯一需要工程师在执行中主动确认的是第 2 项的「无 exhaustive switch」——`grep -rn "installed_status" apps/web/src` 逐个看，若有 `switch` 就补 `default`，不要写死 3 个分支。
-
-> Q1/Q2/Q3 已拍板，不再问。W-01 可选性口径 = **A**（§2.1），不再评估 B。
+**阻塞项：无。** 唯一需工程师执行中确认的是第 2 项「无 exhaustive switch」：`grep -rn "installed_status" apps/web/src` 逐个看，有 `switch` 就补 `default`，不写死 3 分支。Q1/Q2/Q3 已拍板不再问；W-01 可选性口径 = **A**（§2.1），不再评估 B。
 
 ---
 
@@ -424,10 +411,10 @@ if (response.status === 413 || response.status === 429) {
 | 4 | `InstalledPluginItem` → `InstalledItem` | 后端多 `icon_key` | 加 `icon_key?: string` | 0 消费点；`InstalledItem` 需要它渲染图标，将来会用 |
 | 5 | `PluginInstallResult` → `InstallData` | 后端多 `already_installed` | 加 `already_installed?: boolean` | 0 消费点；语义有用（重复添加提示） |
 | 6 | `PluginRollbackResult` → `VersionData` | 后端多 `has_update`（回退复用升级的模型） | 加 `has_update?: boolean` | 0 消费点 |
-| 7 | `CapabilityPolicyItem` → `CapabilityPolicyItem` | 快照 `org_switch_enabled` vs 后端 `enabled` | **疑似缺陷**：gen 记 `rename: {org_switch_enabled: enabled}`；`api-client.setCapabilityPolicy` 做映射 | 见 §7-1 |
+| 7 | `CapabilityPolicyItem` → `CapabilityPolicyItem` | 快照 `org_switch_enabled` vs 后端 `enabled` | **已确认缺陷并决议修复**（§7-1）：gen 记 `rename: {org_switch_enabled: enabled}`；`api-client.setCapabilityPolicy` 做 `enabled → org_switch_enabled` 映射；**不改后端字段名** | `team/page.tsx:614` `setSaved(data.policies)` 直接吃返回值，映射前 `org_switch_enabled` 恒 `undefined` |
 | 8 | `PluginGrantsUpdateResult` → `UpdateGrantsData` | 快照多 `plugin_id` | 删 `plugin_id` | 前端改授权结果 0 消费点（实测 `grant-drawer` 只读三项能力数组） |
 | 9 | 枚举 `PluginInstalledStatus` | 前端 3 值 vs 后端属性级 `enum` 5 值 | 见 §7-2 | — |
 
-**已核对无差异（16 项）**：`PluginCategoryItem`/`PluginMarketData`/`PluginCapabilityItem`/`PluginOutputSpec`/`PluginSettingSpec`/`PluginVersionBrief`/`PluginStateResult`/`PluginUninstallResult`/`PluginUpgradeResult`/`PluginSettingsResult`/`PluginReviewItem`/`PluginReviewsData`/`PluginReviewResult`/`PluginGrantsUpdateResult` 之外的键、`PluginGrantsUpdateRequest`、`PluginInputSpec`。任务域 3 个枚举（`TaskStatus` 7 值/`StepStatus` 5 值/`ArtifactType` 6 值）实测与快照**完全一致**，无需改。
+**已核对键集合无差异（16 项）**：`PluginCategoryItem`/`PluginMarketData`/`PluginCapabilityItem`/`PluginOutputSpec`/`PluginSettingSpec`/`PluginVersionBrief`/`PluginStateResult`/`PluginUninstallResult`/`PluginUpgradeResult`/`PluginSettingsResult`/`PluginReviewItem`/`PluginReviewsData`/`PluginReviewResult`/`PluginGrantsUpdateRequest`/`PluginInputSpec`，以及行 8 中 `PluginGrantsUpdateResult` 除 `plugin_id` 外的键。任务域 3 个枚举（`TaskStatus` 7 值/`StepStatus` 5 值/`ArtifactType` 6 值）实测与快照**完全一致**，无需改。**文档结束**——事实基线 `main @ 8b8fdaa`，逐项实测（2026-10-25）。
 
 **文档结束。** 事实基线：`main @ 8b8fdaa`，本次实测（2026-10-25）。
