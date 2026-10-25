@@ -821,3 +821,95 @@ MSYS_NO_PATHCONV=1 docker run --rm --entrypoint promtool \
 - **单机只能跑一套轻量版**：`container_name: oal-*` 写死，换项目名仍撞名。
 - `OA_MAINTENANCE` 全仓无消费点，只是脚本侧意图；真拦流量靠 `stop proxy web`。
 - 回滚 down SQL 只有 `0006–0011`；`0002–0005` 没有，且不补（补写等于给客户库准备删除脚本）。
+
+---
+
+## 34. Batch 2：契约防线与边界收口（W-01 / W-02 / W-03 / W-04 / W-05 / W-06 / W-07 / W-08）
+
+> 分支 `feat/batch2-contract-and-boundaries`。八项各一笔提交（T01–T08），
+> 另加一笔 QA 回归修复（§34.6 的 A-7 请求侧），共 9 笔；每笔可独立 revert。
+> 方案与任务分解见 `docs/phase4-batch2-design-2026-10-25.md`。
+
+### 34.1 W-01 插件域契约改由 `app.openapi()` 派生
+
+| 项 | 结果 |
+| --- | --- |
+| 真相源 | `create_app().openapi()`（生成器 `deploy/export_plugin_contract.py` 用 `importlib` 加载 `deploy/validate_openapi.py` 的 `build_schema()`，**不复制**它的 `sys.path` 处理） |
+| 生成物 | `apps/web/contracts/plugin-domain.gen.json`：23 个 TS 接口 / 133 键 / 3 处属性级枚举（入库） |
+| 手写快照 | `contracts/phase3.pl.json` **降为比对对象**（不再是真相源），仍负责「可选性 + 枚举」——后端插件域模型全部字段带默认值，Pydantic v2 不输出 `required`，可选性无法由生成契约承担（口径 A） |
+| 门禁 | `scan:contract:gen`（gen ↔ `types.ts` ↔ 手写快照，**只比键集合**，双向严格）+ `--generated --self-test`；gen 缺失退 2、不静默回退 |
+| CI 落点 | `.github/workflows/ci-adapter.yml` 的 openapi-export job（`export… --check` + `scan:contract:gen` + 自检）；**`ci-web.yml` 不加** |
+| 实测 | 换源首跑 18 处差异（附录 A 的 8 类漂移 × 双侧），收敛后 0；负样本：`plugin.py` 的 `MarketData.total → total_count` → 重生成 → `scan:contract:gen` **EXIT 1**，改回 0 |
+
+**已知代价（接受）**：后端把某字段从「有默认值」改成「必填」，本批抓不到——那需要 `model_fields` 派生 + 手写例外表，登记 V1.1。
+
+### 34.2 W-03 演示支付口径与回调 fail-open 收口
+
+- 本版为**演示支付**，未接真实渠道；对外材料不得写「支持在线支付」。
+- 回调 fail-open **共 4 处**（此前记录只有 3 处），第 4 处且最先命中的在 schema 层：
+  `app/schemas/billing.py` 的 `PaymentCallbackRequest.trade_state` 默认 `"SUCCESS"`。
+  路由 `api/v1/billing.py` 先 `model_dump()`，于是「渠道没传状态」被补成成功。
+  4 处一起改后：缺字段 / `NOTPAY` / `CLOSED` / 空串 → 订单仍 `pending_payment`，
+  回调流水留 `reason=trade_not_success` 取证行；`is_success` 改 `PAID_TRADE_STATES`
+  白名单 + `.strip().upper()`。
+- **未进白名单的取值**：微信 v2 用词 `TRADE_SUCCESS` 不认（真接 v3 时再补词表）；
+  本批接受，记录于此。
+
+### 34.3 W-04 `plg_hr_admin` 能力声明收紧（4 → 3 项）
+
+- 删除 `org.directory.read`：6 个步骤 / 7 个输入均不消费它，属「多要权限」。
+- `ci-web.yml` 的 G-30 由 `scan:capability-warn`（`--warn-only`）改**严格** `scan:capability`
+  —— 只删声明不改 CI 等于没修（历史上 CI 一直是绿的）。
+- `docs/plugin-dev-guide.md` 订正两处口径：④ 行「什么场景该申请」、§3.2「所属部门来自通讯录」。
+- 结果：`多余能力 0 处`、`越权 0 处`；6 份声明一次跑通，无第二个「多要权限」插件。
+- `scan:capability-warn` **保留**为本地排查命令（CI 不再引用，不构成绕过）。
+
+### 34.4 W-07 网关 413 / 429 复用已注册错误码（含文案偏差）
+
+- `api-client` 在 401 判定之后、`unwrap()` 之前新增 `throwIfGatewayStatusRejected()`：
+  413 → `20008`（`PAYLOAD_TOO_LARGE`）、429 → `20006`（`RATE_LIMITED`），
+  `BusinessError(code, '')` 让 UI 按 code 取既有文案，**不新造码、不复制字符串**。
+- **`request()` 与 `upload()` 都接**：大文件上传正是 413 的主战场，只改前者等于漏掉真实场景。
+- **已知偏差**：`20008` 的注册文案写死「上限 50MB」，而网关 `client_max_body_size`
+  可能更小（轻量版 50m / 其他环境 1–10MB），413 时这句可能不准。本批**不改注册文案**
+  （错误码文案是登记制），登记为观察项。
+
+### 34.5 W-08 空候选输入的 `format` 约束（四处联动）
+
+`InputSpec.format`（manifest 加载期校验）→ `InputBriefItem.format`（下发）→
+`plugin_service.detail()` 显式复制 → 前端 `PluginInputSpec.format?` + `validateField`
+形状校验。`repo` = 四类地址（`https?://` / `ssh://` / `git@host:path` / `owner/repo`，
+容忍 `#branch`、`?ref=`）；`department` = 1–32 字且不含换行；**未知 format 直接跳过**
+（后端将来新增 format 不会让旧前端把所有输入判成不合法）。
+负样本：manifest 写 `"format": "bogus"` → `validate_plugins.py` **EXIT 1**。
+
+### 34.6 A-7 `CapabilityPolicyItem` 双向映射（QA 回归修复）
+
+- 背景：后端 `CapabilityPolicyItem` / 请求项都叫 `enabled`，前端业务名是
+  `org_switch_enabled`。裁决「不改后端字段名」，映射放前端一处入口。
+- **缺陷**：第一版只做了**响应**映射，请求仍发 `org_switch_enabled`；后端请求模型
+  `extra="forbid"` → `PUT /plugins/capability-policy` 恒 400/20001（QA 实测：同 body
+  换成 `enabled` 即 200，说明后端一直是对的）。属预存在缺陷，本批 A-7 首版只修了一半。
+- 修复：`setCapabilityPolicy` 发请求前把 `policies` 映射为
+  `{ capability_key, enabled }`，响应仍映射回 `org_switch_enabled`；补 1 条单测断言
+  **请求体 JSON 逐字**为 `{"policies":[{"capability_key":"org.repo.write","enabled":true}]}`
+  且不含 `org_switch_enabled`。
+
+### 34.7 本批实测（口径：分支 HEAD，未 `--run-pg`、未跑 `build:web`）
+
+| 项 | 值 |
+| --- | --- |
+| 适配层全量 | `pytest tests -q`（`OA_BATCH=B21`）**2055 passed / 0 failed**，203 skipped 全部为 `--run-pg` 门控 |
+| 静态 | `ruff check .` / `ruff format --check .` / `mypy app` 均 0；`validate_openapi.py --strict` 0；`validate_plugins.py` 0 |
+| 前端单测 | **53 passed**（18 → 53，含 W-02 行为网 12 条、分页 8 条、表单 14 条、能力开关映射 1 条） |
+| 前端静态 | `typecheck:web` / `lint:web` 0；8 道扫描（banned/pages/workbench/placeholders/contract/contract:gen/capability/oidc）全 0；7 道自检全 1 |
+| e2e | `playwright test` **3 passed**（新增 `/chat → /login?next=%2Fchat`） |
+
+### 34.8 遗留（不属本批）
+
+| # | 事项 | 处置 |
+| --- | --- | --- |
+| 1 | `scripts/gen_delivery_manifest.py --check` 红：清单里 `deploy/.env.lite.example`、`deploy/docker-compose.lite.yml` 尺寸失真 | **预存在**（清单最后刷新 `5a72604`，两文件其后被 `f33b22b` / `ed199f4` 改过），非本批引入；Batch 3 的 docs 批次统一重跑生成器 |
+| 2 | `20008` 文案写死 50MB | 见 §34.4，观察项 |
+| 3 | 微信 v2 `TRADE_SUCCESS` 未进白名单 | 见 §34.2，真接 v3 时再补 |
+

@@ -1312,6 +1312,39 @@ interface BackendCapabilityPolicyItem {
 }
 
 /**
+ * 后端 `CapabilityPolicyRequestItem` 的**原始**形状。
+ *
+ * 后端请求模型是 `extra="forbid"`（`app/schemas/plugin.py` 的
+ * `CapabilityPolicyRequest`），多一个 `org_switch_enabled` 就直接 422/20001——
+ * 所以请求侧必须映射成 `enabled`，不能把前端形状原样发出去。
+ */
+interface BackendCapabilityPolicyRequestItem {
+  capability_key: string;
+  enabled: boolean;
+}
+
+/**
+ * 把前端能力开关请求映射为后端形状（请求方向的 A-7 映射）。
+ *
+ * 为什么两端都要映射：A-7 的裁决是「不改后端字段名」。只做响应映射**只修了一半**——
+ * 读取正常、保存恒失败（QA 实测：同一 body 把 `org_switch_enabled` 换成 `enabled`
+ * 即 200，说明后端一直是对的，是前端发错了形状）。
+ *
+ * @param body - 前端口径的请求体
+ * @returns 后端口径的请求体（逐项只带 `capability_key` + `enabled`）
+ */
+function adaptCapabilityPolicyRequest(
+  body: CapabilityPolicyRequest,
+): { policies: BackendCapabilityPolicyRequestItem[] } {
+  return {
+    policies: (body.policies ?? []).map((item) => ({
+      capability_key: item.capability_key,
+      enabled: item.org_switch_enabled,
+    })),
+  };
+}
+
+/**
  * 把后端 `CapabilityPolicyItem` 映射为前端 `CapabilityPolicyItem`。
  *
  * @param item - 后端返回的原始条目
@@ -1416,10 +1449,12 @@ export const pluginsApi = {
 
   /** PL13 企业能力总开关（仅 org.* 三项；个人能力恒开；响应回全量 6 项） */
   setCapabilityPolicy(body: CapabilityPolicyRequest): Promise<{ policies: CapabilityPolicyItem[] }> {
-    // 后端回 `enabled`，前端用 `org_switch_enabled`：映射收敛在这一处（裁决 §7-1）。
-    // 不改后端字段名，是因为改它要动 6 个消费方 + 数据迁移，收益不抵成本。
+    // 双向映射（裁决 §7-1）：请求 `org_switch_enabled → enabled`、响应 `enabled →
+    // org_switch_enabled`，都在本方法这一处收敛。后端字段名不改——改它要动 6 个消费方
+    // 加数据迁移，收益不抵成本；但请求侧**必须**换名，后端请求模型 `extra="forbid"`，
+    // 发前端的字段名会直接被拒（保存恒失败）。
     return request<{ policies: BackendCapabilityPolicyItem[] }>('PUT', '/plugins/capability-policy', {
-      body,
+      body: adaptCapabilityPolicyRequest(body),
     }).then((data) => ({
       ...data,
       policies: (data.policies ?? []).map(adaptCapabilityPolicy),

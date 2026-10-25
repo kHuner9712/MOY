@@ -286,6 +286,42 @@ describe('api-client · 企业标识请求头', () => {
   });
 });
 
+describe('api-client · 能力开关双向映射（A-7）', () => {
+  it('请求体用后端字段名、响应映射回前端字段名（缺一半就是保存恒失败）', async () => {
+    const { api } = await load();
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      envelope({
+        policies: [
+          {
+            capability_key: 'org.repo.write',
+            display_name: '写入代码仓库',
+            // 后端回的是 `enabled`
+            enabled: true,
+            updated_by_name: '管理员',
+            updated_at: '2026-10-25T00:00:00Z',
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.pluginsApi.setCapabilityPolicy({
+      policies: [{ capability_key: 'org.repo.write', org_switch_enabled: true }],
+    });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const sent = JSON.parse(String(init?.body)) as { policies: Record<string, unknown>[] };
+
+    // 请求方向：逐项只带 `capability_key` + `enabled`（后端 extra="forbid"）
+    expect(sent).toEqual({ policies: [{ capability_key: 'org.repo.write', enabled: true }] });
+    expect(JSON.stringify(sent)).not.toContain('org_switch_enabled');
+
+    // 响应方向：`enabled` 必须映射回 `org_switch_enabled`
+    expect(result.policies[0]?.org_switch_enabled).toBe(true);
+    expect(result.policies[0]?.capability_key).toBe('org.repo.write');
+  });
+});
+
 describe('api-client · 写接口与上传', () => {
   it('#13 POST 两次都带 Idempotency-Key 且两值不同', async () => {
     const { api } = await load();
