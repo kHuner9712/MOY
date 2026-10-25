@@ -78,13 +78,19 @@ class FakeDifyClient:
     def __init__(self) -> None:
         """初始化。"""
         self.post_calls: list[dict[str, Any]] = []
+        self.multipart_calls: list[dict[str, Any]] = []
         self.get_calls: list[dict[str, Any]] = []
         self.delete_calls: list[dict[str, Any]] = []
 
     @property
     def total_calls(self) -> int:
         """下游调用总数。"""
-        return len(self.post_calls) + len(self.get_calls) + len(self.delete_calls)
+        return (
+            len(self.post_calls)
+            + len(self.multipart_calls)
+            + len(self.get_calls)
+            + len(self.delete_calls)
+        )
 
     async def post(
         self,
@@ -97,6 +103,30 @@ class FakeDifyClient:
         """记录 POST 调用。"""
         self.post_calls.append({"path": path, "api_key": api_key, "idempotent": idempotent})
         return DifyResponse(200, {"records": [], "id": "file-1", "batch": "b1"})
+
+    async def post_multipart(
+        self,
+        path: str,
+        *,
+        files: dict[str, tuple[str, bytes, str]],
+        form_data: dict[str, str] | None = None,
+        api_key: str | None = None,
+    ) -> DifyResponse:
+        """记录 multipart POST 调用（P1-1 真实模式上传的文件字段）。
+
+        Args:
+            path: 下游路径。
+            files: 文件字段。
+            form_data: 文本字段。
+            api_key: 下游密钥。
+
+        Returns:
+            DifyResponse: 固定成功载荷。
+        """
+        self.multipart_calls.append(
+            {"path": path, "api_key": api_key, "files": files, "form_data": form_data}
+        )
+        return DifyResponse(200, {"id": "file-1", "batch": "b1"})
 
     async def get(
         self,
@@ -461,7 +491,9 @@ async def test_upload_and_index_status_pass_bound_key() -> None:
         file_size=1024,
         chunk_policy=ChunkPolicy.DEFAULT,
         auth=auth_context(),
+        content=b"%PDF-1.4 test",
     )
+    assert dify.multipart_calls[0]["api_key"] == _BOUND_KEY
     assert {call["api_key"] for call in dify.post_calls} == {_BOUND_KEY}
 
     await service.get_index_status(

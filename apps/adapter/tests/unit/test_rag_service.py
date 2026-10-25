@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.clients.dify_client import DifyClient
+from app.clients.dify_client import DifyClient, DifyResponse
 from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
@@ -474,3 +474,134 @@ async def test_search_does_not_wrap_credential_error() -> None:
     assert int(exc_info.value.code) == 11007
     assert exc_info.value.http_status == 200
     assert dify.paths == []
+
+
+# ---------------------------------------------------------------------------
+# P1-1：真实模式上传必须把**文件字节**透传到底座
+#
+# 修复前的实证：`upload_document` 真实分支只向 `/v1/files/upload` POST
+# `{"filename": ..., "purpose": ...}`，端点读到的字节在服务层被丢弃，
+# 底座永远拿不到文件内容。本组用例把"字节 → multipart 文件字段"钉成契约。
+# ---------------------------------------------------------------------------
+
+
+class _RecordingDify:
+    """记录 multipart 与 JSON 两种调用的假底座。
+
+    Attributes:
+        multipart_calls: 每次 multipart 调用的入参。
+        post_calls: 每次 JSON POST 的入参。
+    """
+
+    def __init__(self, file_id: str = "file-abc") -> None:
+        """初始化假底座。
+
+        Args:
+            file_id: 上传接口返回的文件 ID。
+        """
+        self.file_id = file_id
+        self.multipart_calls: list[dict[str, object]] = []
+        self.post_calls: list[dict[str, object]] = []
+
+    async def post_multipart(
+        self,
+        path: str,
+        *,
+        files: dict[str, tuple[str, bytes, str]],
+        form_data: dict[str, str] | None = None,
+        api_key: str | None = None,
+    ) -> DifyResponse:
+        """记录一次 multipart 上传。
+
+        Args:
+            path: 下游路径。
+            files: 文件字段。
+            form_data: 文本字段。
+            api_key: 下游密钥。
+
+        Returns:
+            DifyResponse: 上传成功的底座载荷。
+        """
+        self.multipart_calls.append(
+            {
+                "path": path,
+                "files": files,
+                "form_data": form_data,
+                "api_key": api_key,
+            }
+        )
+        return DifyResponse(200, {"id": self.file_id, "name": "员工手册.pdf"})
+
+    async def post(
+        self,
+        path: str,
+        payload: dict[str, object],
+        *,
+        idempotent: bool = False,
+        api_key: str | None = None,
+    ) -> DifyResponse:
+        """记录一次 JSON POST（`documents/create`）。
+
+        Args:
+            path: 下游路径。
+            payload: 请求体。
+            idempotent: 是否幂等（本替身不使用）。
+            api_key: 下游密钥。
+
+        Returns:
+            DifyResponse: 建文档成功的底座载荷。
+        """
+        del idempotent
+        self.post_calls.append({"path": path, "payload": payload, "api_key": api_key})
+        return DifyResponse(200, {"batch": "batch-1", "indexing_status": "waiting"})
+
+
+async def test_upload_live_mode_passes_file_bytes_as_multipart() -> None:
+    """真实模式：字节 + 文件名进入 multipart 文件字段，`documents/create` 逻辑不变。"""
+    dify = _RecordingDify()
+    content = b"%PDF-1.4 \xe5\x91\x98\xe5\xb7\xa5\xe6\x89\x8b\xe5\x86\x8c"
+
+    data = await _live_service(dify=dify).upload_document(
+        base_id="kb_1",
+        file_name="员工手册.pdf",
+        file_size=len(content),
+        chunk_policy=ChunkPolicy.FINE,
+        auth=_AUTH,
+        content=content,
+    )
+
+    # ① 上传走 multipart，且文件字段带真实字节与文件名
+    upload_call = dify.multipart_calls[0]
+    assert upload_call["path"] == "/v1/files/upload"
+    files = upload_call["files"]
+    assert isinstance(files, dict)
+    name, payload, content_type = files["file"]
+    assert name == "员工手册.pdf"
+    assert payload == content
+    assert content_type == "application/pdf"
+    # ② 文本字段说明用途（底座据此判定"文档"而非图片）
+    assert upload_call["form_data"]["purpose"] == "document"  # type: ignore[index]
+    # ②b 上传者标识：Dify `/v1/files/upload` 的 `user` 是**必填**字段，
+    # 漏发会直接 400（真实底座上表现为"上传失败"，而桩模式永远看不出来）。
+    assert upload_call["form_data"]["user"] == _AUTH.user_id  # type: ignore[index]
+    # ③ 后续建文档逻辑不变：仍走 JSON POST，携带同一文件 ID 派生的文档 ID
+    create_call = dify.post_calls[0]
+    assert create_call["path"] == "/v1/datasets/1/documents"
+    assert data.document_id == "doc_file-abc"
+    assert data.file_name == "员工手册.pdf"
+    assert data.chunk_policy == ChunkPolicy.FINE
+
+
+async def test_upload_live_mode_without_content_is_a_coding_defect() -> None:
+    """真实模式漏传字节 → 30003（编码缺陷），且**不向底座发空文件**。"""
+    dify = _RecordingDify()
+    with pytest.raises(ApiError) as exc_info:
+        await _live_service(dify=dify).upload_document(
+            base_id="kb_1",
+            file_name="员工手册.pdf",
+            file_size=1024,
+            auth=_AUTH,
+        )
+    assert exc_info.value.code == ErrorCode.INTERNAL_ERROR
+    assert dify.multipart_calls == []
+    assert dify.post_calls == []

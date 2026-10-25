@@ -36,6 +36,12 @@ logger = get_logger(__name__)
 #: 底座默认应用密钥对应的环境变量名（T02 由路由表按档位覆盖）
 DEFAULT_APP_KEY_ENV: Final[str] = "OA_DIFY_DEFAULT_APP_KEY"
 
+#: multipart 文件字段形态：`字段名 → (文件名, 字节内容, 内容类型)`。
+#:
+#: 审计 OA-AUDIT-001 / P1-1：`/v1/files/upload` 只接受 multipart 表单里的**文件字段**，
+#: 早期实现把 `{"filename": ...}` 当 JSON 发过去，底座永远拿不到文件内容。
+MultipartFiles = dict[str, tuple[str, bytes, str]]
+
 
 @dataclass(frozen=True, slots=True)
 class DifyResponse:
@@ -129,15 +135,26 @@ class DifyClient:
             connect=self._settings.dify_connect_timeout_seconds,
         )
 
-    def _headers(self, *, stream: bool = False, api_key: str | None = None) -> dict[str, str]:
+    def _headers(
+        self,
+        *,
+        stream: bool = False,
+        api_key: str | None = None,
+        multipart: bool = False,
+    ) -> dict[str, str]:
         """构造请求头（含底座鉴权与链路透传）。
 
         阶段二 D-10：支持按知识库覆盖密钥（per-kb 凭据）。传 `None` 时沿用
         客户端自身的全局密钥——既有调用方**无需改动**，行为完全不变。
 
+        审计 OA-AUDIT-001 / P1-1：multipart 请求的 `Content-Type` 必须由 httpx 自己写
+        （要带随机 `boundary`）。这里写死 `application/json` 会让底座无法切分表单，
+        上传请求在网关层就被判成非法请求——这是上传链路断裂的**第二个**断点。
+
         Args:
             stream: 是否为流式请求。
             api_key: 库级密钥（`None` 表示使用全局密钥）。
+            multipart: 是否为 multipart 表单请求（为真时不写 `Content-Type`）。
 
         Returns:
             dict[str, str]: 请求头。
@@ -145,9 +162,10 @@ class DifyClient:
         effective_key = api_key if api_key is not None else self.api_key
         headers = {
             "Authorization": f"Bearer {effective_key}",
-            "Content-Type": "application/json",
             TRACE_HEADER: structlog.contextvars.get_contextvars().get("trace_id", "-"),
         }
+        if not multipart:
+            headers["Content-Type"] = "application/json"
         if stream:
             headers["Accept"] = "text/event-stream"
         return headers
@@ -164,6 +182,8 @@ class DifyClient:
         path: str,
         *,
         json_body: dict[str, Any] | None = None,
+        files: MultipartFiles | None = None,
+        form_data: dict[str, str] | None = None,
         params: dict[str, Any] | None = None,
         stream: bool = False,
         idempotent: bool = False,
@@ -174,10 +194,16 @@ class DifyClient:
         重试策略（架构文档 3.0.4）：仅对幂等 GET 与下游 5xx/连接错误重试，
         最多 2 次，指数退避 200ms → 800ms，抖动 ±20%；写操作与流式不重试。
 
+        审计 OA-AUDIT-001 / P1-1：新增 `files`/`form_data` 两个 multipart 入口，
+        **复用**同一套鉴权头、超时、重试与错误映射——不另造一条请求通路，
+        否则超时/错误码/链路透传会在两条通路上逐渐分叉。
+
         Args:
             method: HTTP 方法。
             path: 底座路径（以 `/` 开头）。
             json_body: JSON 请求体。
+            files: multipart 文件字段（`字段名 → (文件名, 字节, 内容类型)`）。
+            form_data: multipart 文本字段（与 `files` 搭配使用）。
             params: 查询参数。
             stream: 是否使用流式响应。
             idempotent: 是否为幂等请求（决定是否允许重试）。
@@ -191,15 +217,18 @@ class DifyClient:
         """
         attempts = self._settings.dify_max_retries + 1 if idempotent else 1
         last_error: ApiError | None = None
+        is_multipart = files is not None
 
         for attempt in range(attempts):
             try:
                 request = self._client.build_request(
                     method,
                     path,
-                    json=json_body,
+                    json=json_body if not is_multipart else None,
+                    data=form_data if is_multipart else None,
+                    files=files,
                     params=params,
-                    headers=self._headers(stream=stream, api_key=api_key),
+                    headers=self._headers(stream=stream, api_key=api_key, multipart=is_multipart),
                     timeout=self._client.timeout,
                 )
                 response = await self._client.send(request, stream=stream)
@@ -299,6 +328,44 @@ class DifyClient:
         """
         async with self._request(
             "POST", path, json_body=payload, idempotent=idempotent, api_key=api_key
+        ) as response:
+            return DifyResponse(response.status_code, await self._json(response))
+
+    async def post_multipart(
+        self,
+        path: str,
+        *,
+        files: MultipartFiles,
+        form_data: dict[str, str] | None = None,
+        api_key: str | None = None,
+    ) -> DifyResponse:
+        """发起 multipart 表单 POST 请求（文件上传专用，不重试）。
+
+        为什么单独一个方法而不是给 `post()` 加参数：`post()` 的契约是「JSON 写请求」，
+        把 multipart 塞进去会让所有既有调用点都要回答"这次到底传什么体"。
+        单独入口 + 复用 `_request()` 内部机制（鉴权头 / 超时 / 重试 / 错误映射）
+        才能既保持调用点清晰、又不让两条通路的基础设施分叉。
+
+        上传是写操作（底座会落一条文件记录），因此**不重试**（架构文档 3.0.4）。
+
+        Args:
+            path: 底座路径（如 `/v1/files/upload`）。
+            files: multipart 文件字段（`字段名 → (文件名, 字节内容, 内容类型)`）。
+            form_data: multipart 文本字段（如 `purpose`）。
+            api_key: 库级密钥（D-10；`None` 表示使用全局密钥）。
+
+        Returns:
+            DifyResponse: 底座响应包装（文件上传返回 `{"id": ..., "name": ...}`）。
+
+        Raises:
+            ApiError: 超时（30002）、连接失败（30001）、下游业务错误（经 ErrorMapper 映射）。
+        """
+        async with self._request(
+            "POST",
+            path,
+            files=files,
+            form_data=form_data,
+            api_key=api_key,
         ) as response:
             return DifyResponse(response.status_code, await self._json(response))
 

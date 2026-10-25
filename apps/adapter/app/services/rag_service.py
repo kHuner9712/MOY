@@ -27,6 +27,7 @@ B05 追加（引用回链 D-11）：
 
 from __future__ import annotations
 
+import mimetypes
 from datetime import UTC, datetime
 from typing import Any, Final
 
@@ -149,6 +150,22 @@ def map_index_status(native_status: str) -> IndexStatus:
         IndexStatus: 自研索引状态；未知状态按处理中处理。
     """
     return _INDEX_STATUS_MAP.get(native_status, IndexStatus.PROCESSING)
+
+
+def _content_type_of(file_name: str) -> str:
+    """按文件名推断上传的文件内容类型。
+
+    底座按扩展名切分与解析，`Content-Type` 只是给网关/审计看的元数据；推断不出来时
+    退回 `application/octet-stream`（**不要**猜成 `text/plain`，那会让二进制文件被当文本处理）。
+
+    Args:
+        file_name: 文件名（含扩展名）。
+
+    Returns:
+        str: MIME 类型。
+    """
+    guessed, _encoding = mimetypes.guess_type(file_name)
+    return guessed or "application/octet-stream"
 
 
 class RagService:
@@ -305,8 +322,15 @@ class RagService:
         file_size: int,
         auth: AuthContext,
         chunk_policy: ChunkPolicy | None = None,
+        content: bytes = b"",
     ) -> UploadDocumentData:
         """上传文档并登记文档元数据（不带 `chunk_policy` 时按库级设置处理）。
+
+        审计 OA-AUDIT-001 / P1-1：真实模式必须把**文件字节**送到底座
+        （`/v1/files/upload` 只认 multipart 文件字段）。修复前本方法只发
+        `{"filename", "purpose"}` 的 JSON，端点读到的字节在此被丢弃——
+        底座拿不到内容，文档永远停在"正在读取内容"。
+        桩模式**不使用** `content`（零行为变化）。
 
         Args:
             base_id: 知识库 ID。
@@ -314,12 +338,14 @@ class RagService:
             file_size: 文件字节数。
             auth: 鉴权上下文。
             chunk_policy: 单次覆盖的内容切分精细度；缺省取库级设置。
+            content: 文件字节内容（真实模式必填；桩模式忽略）。
 
         Returns:
             UploadDocumentData: 文档 ID 与处理进度初值（含五态阶段）。
 
         Raises:
-            ApiError: 知识库已删除（11001）、格式不支持（11002）、超出大小限制（11003）。
+            ApiError: 知识库已删除（11001）、格式不支持（11002）、超出大小限制（11003）、
+                调用方漏传文件字节（30003，属编码缺陷）。
         """
         # ID 归一化（QA B05-P0-01）：下游 `datasets/<原生 id>/...` 与本地记录必须同一规范键
         base_id = normalize_base_id(base_id)
@@ -329,6 +355,7 @@ class RagService:
             base_id=base_id,
             file_name=file_name,
             file_size=file_size,
+            has_content=bool(content),
             chunk_policy=chunk_policy.value if chunk_policy is not None else "inherit",
             tenant_id=auth.tenant_id,
         )
@@ -354,10 +381,18 @@ class RagService:
                 auth,
             )
 
+        # 真实模式没有字节就等于没有文件：宁可报编码缺陷（30003），
+        # 也不要向底座发一个空文件、换回一条"解析失败"的假业务原因。
+        if not content:
+            raise ApiError(ErrorCode.INTERNAL_ERROR, internal_detail="upload content missing")
+
         api_key = await self._api_key_for(base_id, auth)
         effective_policy = chunk_policy or await self._resolve_base_policy(base_id, auth)
-        upload = await self._dify.post(
-            _DIFY_UPLOAD_PATH, {"filename": file_name, "purpose": "document"}, api_key=api_key
+        upload = await self._dify.post_multipart(
+            _DIFY_UPLOAD_PATH,
+            files={"file": (file_name, content, _content_type_of(file_name))},
+            form_data={"purpose": "document", "user": auth.user_id},
+            api_key=api_key,
         )
         native_file_id = str(upload.payload.get("id", ""))
         if not native_file_id:

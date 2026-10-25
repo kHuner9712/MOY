@@ -65,6 +65,7 @@ from app.plugins.engine import (
     TASK_CANCELLED,
     TASK_COMPLETED,
     TASK_FAILED,
+    TASK_PENDING,
     TASK_QUEUED,
     TASK_RUNNING,
     TASK_WAITING_CONFIRM,
@@ -111,6 +112,18 @@ _ARTIFACT_PREFIX: Final[str] = "art_"
 
 #: 可重试的原任务状态（WF1 `retry_step` / `retry_all` 的准入集合）
 _RETRYABLE_TASK_STATUSES: Final[tuple[str, ...]] = (TASK_FAILED, TASK_CANCELLED)
+
+#: 「仍在推进」的状态集合 —— 终态写入（收尾 / 取消）的**乐观并发条件**。
+#:
+#: P1-2 的判据就是它：终态只能从这些状态出发写一次。双方都拿旧快照时，
+#: 先写成功的那一方赢，后写的那一方 `update_task` 返回 `None` 并放弃覆写——
+#: 这样"取消被 COMPLETED 覆盖"与"额度被释放两次"同时消失。
+_LIVE_TASK_STATUSES: Final[tuple[str, ...]] = (
+    TASK_PENDING,
+    TASK_QUEUED,
+    TASK_RUNNING,
+    TASK_WAITING_CONFIRM,
+)
 
 #: 资源类型（审计 `resource_type`）
 _RESOURCE_TASK: Final[str] = "task"
@@ -428,7 +441,22 @@ class TaskService:
         artifacts = await self._artifacts.list_by_task(record.tenant_id, record.task_id)
         outputs = {item.output_key: item.inline_text or item.external_url for item in artifacts}
         skipped_keys: set[str] = set()
-        await self._tasks.update_task(record.tenant_id, record.task_id, status=TASK_RUNNING)
+        # P1-2：推进的第一步（`running`）也必须是**条件写**。否则"取消已写终态、
+        # 推进方拿着旧快照进来"会先把状态改回 running，再跑完后续步骤——
+        # 取消被复活，且收尾时又能成功释放一次额度（双释放的第二个入口）。
+        claimed = await self._tasks.update_task(
+            record.tenant_id,
+            record.task_id,
+            status=TASK_RUNNING,
+            expected_status=_LIVE_TASK_STATUSES,
+        )
+        if claimed is None:
+            logger.info(
+                "task_advance_skipped_finished",
+                task_id=record.task_id,
+                status=record.status,
+            )
+            return
         record.status = TASK_RUNNING
         if not record.started_at:
             record.started_at = now_iso()
@@ -520,7 +548,9 @@ class TaskService:
             await self._update_progress(record, statuses)
 
         if aborted:
-            await self._release_slot(record)
+            # `_finish(TASK_FAILED)` 已经完成终态写入并释放过额度；
+            # 这里再释放一次会多拉起一个排队任务（P1-2 的"双释放"入口之一）。
+            await self._release_slot(record, transitioned=False)
             return
         await self._finish(record, steps, TASK_COMPLETED, artifacts)
 
@@ -735,6 +765,16 @@ class TaskService:
     ) -> None:
         """收尾任务（终态 + 核查清单 + 计量 + 审计 + 释放额度）。
 
+        P1-2（取消竞态）两处加固：
+
+        1. **写终态前校验 `cancel_requested`**：用户已请求取消时，"跑完了"不是
+           `completed` 而是 `cancelled`——否则用户点了取消、任务却显示"已完成"
+           （取消丢失，且统计里还算成一次成功）。
+        2. **终态写带 `expected_status=_LIVE_TASK_STATUSES`**：并发方（取消）已经
+           写了终态时，本次写入**一行都不改**（拿到 `None`），于是既不会覆盖取消，
+           也不会二次释放额度。失败归因不在降级范围内：步骤真失败就如实记 `failed`，
+           `cancel_requested` 仍留在行上，用户能看到"取消请求已登记"。
+
         Args:
             record: 任务行。
             steps: 步骤列表。
@@ -742,6 +782,11 @@ class TaskService:
             artifacts: 产物列表。
             error_message: 失败原因（业务语言）。
         """
+        latest = await self._tasks.get_task(record.tenant_id, record.task_id)
+        if latest is not None and latest.cancel_requested and status == TASK_COMPLETED:
+            logger.info("plugin_task_finish_downgraded_to_cancelled", task_id=record.task_id)
+            status = TASK_CANCELLED
+            error_message = error_message or "任务已取消"
         produced = {item.output_key for item in artifacts}
         pending_keys = {
             item.key
@@ -755,7 +800,7 @@ class TaskService:
             "missing": "没有产出",
         }
         summary = _summary_text(status, checklist, derived)
-        await self._tasks.update_task(
+        updated = await self._tasks.update_task(
             record.tenant_id,
             record.task_id,
             status=status,
@@ -765,7 +810,17 @@ class TaskService:
             error_message=error_message,
             confirm_step_seq=0,
             finished_at=now_iso(),
+            expected_status=_LIVE_TASK_STATUSES,
         )
+        if updated is None:
+            # 并发方已经收口（典型是用户取消）：终态、审计与额度都归它，
+            # 本方法**不得**再写一次，否则取消被覆盖、额度被双释放。
+            logger.info(
+                "plugin_task_finish_skipped_terminal",
+                task_id=record.task_id,
+                planned_status=status,
+            )
+            return
         record.status = status
         record.progress = 100 if status == TASK_COMPLETED else record.progress
         record.confirm_step_seq = 0
@@ -805,12 +860,21 @@ class TaskService:
         )
         await self._release_slot(record)
 
-    async def _release_slot(self, record: TaskRecord) -> None:
+    async def _release_slot(self, record: TaskRecord, *, transitioned: bool = True) -> None:
         """腾出并发额度：把最早排队的任务转 `running` 并推进（PRD E-12）。
+
+        P1-2（幂等）：释放额度**只能由"把任务写成终态的那一方"发起**（`transitioned=True`）。
+        推进收尾与用户取消是两条并行路径，双方都调一次就会各拉起一个排队任务，
+        并发上限被击穿。调用方用 `transitioned` 声明自己是否真的完成了
+        「仍在推进 → 终态」的那一次写入，没写成功的一方传 `False`，这里直接返回。
 
         Args:
             record: 刚结束的任务行。
+            transitioned: 本次调用是否**由自己完成了终态写入**（幂等判据）。
         """
+        if not transitioned:
+            logger.info("plugin_task_slot_release_skipped", task_id=record.task_id)
+            return
         queued = await self._tasks.list_queued(record.tenant_id, record.plugin_id)
         if not queued:
             return
@@ -818,12 +882,18 @@ class TaskService:
         if occupying >= self._settings.plugin_task_concurrency:
             return
         promoted = queued[0]
-        await self._tasks.update_task(
+        # 拉起排队任务同样是状态转换：带 `expected_status=queued` 才算"抢到"。
+        # 没有这个条件时，两个并发释放方会各拉起一个任务，并发上限被击穿。
+        claimed = await self._tasks.update_task(
             promoted.tenant_id,
             promoted.task_id,
             status=TASK_RUNNING,
             queue_position=None,
+            expected_status=TASK_QUEUED,
         )
+        if claimed is None:
+            logger.info("plugin_task_promote_skipped", task_id=promoted.task_id)
+            return
         for index, item in enumerate(queued[1:], start=1):
             await self._tasks.update_task(item.tenant_id, item.task_id, queue_position=index)
         promoted.status = TASK_RUNNING
@@ -986,7 +1056,18 @@ class TaskService:
     # A5 取消（插件任务）
     # ------------------------------------------------------------------
     async def cancel(self, task_id: str, auth: AuthContext) -> TaskDetailData:
-        """取消插件任务（置 `cancel_requested`，引擎在下一步入口停止）。
+        """取消插件任务（置 `cancel_requested` + 终态，引擎在下一步入口停止）。
+
+        P1-2（取消竞态）：取消是**状态转换**，不是普通字段更新。修复前三处漏洞：
+
+        1. 取消不持推进锁直接写终态 → 与推进并发时，`_finish` 可以拿旧快照把它覆盖；
+        2. `update_task` 没有乐观条件 → 覆盖是**无条件**的，覆盖后状态变成 `completed`；
+        3. 两条路径各调一次 `_release_slot` → 额度被释放两次，排队任务被多拉起一个。
+
+        现在的写法：终态写入带 `expected_status=仍在推进`（双后端同语义的原子条件写），
+        **写成功的那一方**才释放额度。拿不到推进锁时**不排队等待**——取消是用户请求，
+        把它挂在"当前这一步跑完"上等于让用户点不动；互斥由条件写保证，
+        推进方即使手里是旧快照也写不进终态。
 
         Args:
             task_id: 任务 ID。
@@ -1004,16 +1085,30 @@ class TaskService:
         self._assert_task_visible(record, auth)
         if record.terminal:
             raise ApiError(ErrorCode.TASK_CANCELLED, internal_detail=f"task_id={task_id} terminal")
-        await self._tasks.update_task(
-            record.tenant_id,
-            record.task_id,
-            cancel_requested=True,
-            status=TASK_CANCELLED,
-            finished_at=now_iso(),
-            error_message="任务已取消",
-        )
+
+        async with task_advance_lock(record.task_id, self._settings) as acquired:
+            if not acquired:
+                logger.info("plugin_task_cancel_contended", task_id=record.task_id)
+            updated = await self._tasks.update_task(
+                record.tenant_id,
+                record.task_id,
+                cancel_requested=True,
+                status=TASK_CANCELLED,
+                finished_at=now_iso(),
+                error_message="任务已取消",
+                expected_status=_LIVE_TASK_STATUSES,
+            )
+        if updated is None:
+            # 竞态输给了推进方（对方已把终态写进去）：如实返回 12003，
+            # 不假装"取消成功"——否则用户会以为取消生效，实际任务已完成。
+            raise ApiError(
+                ErrorCode.TASK_CANCELLED,
+                internal_detail=f"task_id={task_id} terminal by peer",
+            )
         record.status = TASK_CANCELLED
-        await self._release_slot(record)
+        record.cancel_requested = True
+        # 终态由本次调用写入 → 由本次调用释放额度（`transitioned=True`）
+        await self._release_slot(record, transitioned=True)
         return await self.get_task(task_id, auth)
 
     # ------------------------------------------------------------------

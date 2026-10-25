@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
@@ -120,6 +120,26 @@ def now_iso() -> str:
         str: 形如 `2026-11-02T09:00:00Z` 的时间戳。
     """
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def normalize_expected_status(value: str | Sequence[str] | None) -> list[str] | None:
+    """把乐观并发条件归一为状态列表。
+
+    双后端必须**用同一归一口径**：调用方可能传单值（`"running"`）也可能传集合，
+    PG 侧要拼进 `status = ANY(:expected_status)`（需 list），内存侧要做等价的
+    `in` 判断（需可迭代）。两处各写一遍归一，迟早出现"内存过、PG 不过"的偏差。
+
+    Args:
+        value: 期望状态（单值 / 序列 / `None` 表示不加条件）。
+
+    Returns:
+        list[str] | None: 状态列表；`None` 表示不加乐观条件。
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value]
+    return list(value)
 
 
 @dataclass(slots=True)
@@ -312,8 +332,19 @@ class TaskStore(Protocol):
         """分页列出任务（返回 `(items, total)`）。"""
         ...
 
-    async def update_task(self, tenant_id: str, task_id: str, **fields: Any) -> TaskRecord | None:
-        """更新任务可变字段。"""
+    async def update_task(
+        self,
+        tenant_id: str,
+        task_id: str,
+        *,
+        expected_status: str | Sequence[str] | None = None,
+        **fields: Any,
+    ) -> TaskRecord | None:
+        """更新任务可变字段（可带乐观状态条件）。
+
+        P1-2：`expected_status` 是**乐观并发条件**——写终态前先确认"库里现在的状态
+        仍是这些之一"，避免"推进方拿着旧快照收尾"覆盖掉取消等并发写入的终态。
+        """
         ...
 
     async def count_occupying(self, tenant_id: str, plugin_id: str) -> int:
@@ -465,16 +496,29 @@ class InMemoryTaskStore:
         start = max(0, (page - 1) * page_size)
         return items[start : start + page_size], total
 
-    async def update_task(self, tenant_id: str, task_id: str, **fields: Any) -> TaskRecord | None:
-        """更新任务可变字段。
+    async def update_task(
+        self,
+        tenant_id: str,
+        task_id: str,
+        *,
+        expected_status: str | Sequence[str] | None = None,
+        **fields: Any,
+    ) -> TaskRecord | None:
+        """更新任务可变字段（可带乐观状态条件）。
+
+        `expected_status` 的语义必须与 PG 实现**完全一致**（`status = ANY(...)`）：
+        条件不满足时**什么都不写**并返回 `None`（PG 侧 `RETURNING` 无行即 `None`）。
+        这里没有 await 夹在"判断"与"写入"之间，因此在事件循环内是原子的；
+        PG 侧由单条 `UPDATE ... WHERE status = ANY(...)` 保证原子。
 
         Args:
             tenant_id: 企业 ID。
             task_id: 任务 ID。
+            expected_status: 乐观条件（期望的当前状态；`None` 表示不加条件）。
             **fields: 待更新字段（受白名单约束）。
 
         Returns:
-            TaskRecord | None: 更新后的任务行。
+            TaskRecord | None: 更新后的任务行；条件不满足或任务不存在时返回 `None`。
 
         Raises:
             ApiError: 字段不在白名单（30003）。
@@ -482,9 +526,13 @@ class InMemoryTaskStore:
         current = self._tasks.get((tenant_id, task_id))
         if current is None:
             return None
-        for key, value in fields.items():
+        for key in fields:
             if key not in TASK_MUTABLE_FIELDS:
                 raise ApiError(ErrorCode.INTERNAL_ERROR, internal_detail=f"task field {key}")
+        allowed = normalize_expected_status(expected_status)
+        if allowed is not None and current.status not in allowed:
+            return None
+        for key, value in fields.items():
             setattr(current, key, value)
         return current
 
@@ -860,16 +908,29 @@ class PostgresTaskStore:
             )
         return [_to_task(row) for row in rows], int(total or 0)
 
-    async def update_task(self, tenant_id: str, task_id: str, **fields: Any) -> TaskRecord | None:
-        """更新任务可变字段。
+    async def update_task(
+        self,
+        tenant_id: str,
+        task_id: str,
+        *,
+        expected_status: str | Sequence[str] | None = None,
+        **fields: Any,
+    ) -> TaskRecord | None:
+        """更新任务可变字段（可带乐观状态条件）。
+
+        P1-2：`expected_status` 拼成 `AND status = ANY(:expected_status)`，
+        与内存实现同语义——条件不满足时**一行都不改**，`RETURNING` 无行 → 返回 `None`。
+        用条件 UPDATE 而不是"先 SELECT 再判断再 UPDATE"：后者在并发下是典型的
+        TOCTOU，取消与收尾仍会互相覆盖（本缺陷的根因）。
 
         Args:
             tenant_id: 企业 ID。
             task_id: 任务 ID。
+            expected_status: 乐观条件（期望的当前状态；`None` 表示不加条件）。
             **fields: 待更新字段。
 
         Returns:
-            TaskRecord | None: 更新后的任务行。
+            TaskRecord | None: 更新后的任务行；条件不满足或任务不存在时返回 `None`。
 
         Raises:
             ApiError: 字段不在白名单（30003）。
@@ -895,15 +956,21 @@ class PostgresTaskStore:
                 params[key] = value
         if not assignments:
             return await self.get_task(tenant_id, task_id)
+        where = "tenant_id = :tenant_id AND task_id = :task_id"
+        extra: dict[str, Any] = {"task_id": task_id}
+        allowed = normalize_expected_status(expected_status)
+        if allowed is not None:
+            where += " AND status = ANY(:expected_status)"
+            extra["expected_status"] = allowed
         async with tenant_scope(tenant_id, settings=self._settings) as uow:
             repo = _TaskRepository(uow)
             row = await repo.fetch_one(
                 f"""
                 UPDATE {TASK_TABLE} SET {", ".join(assignments)}
-                 WHERE tenant_id = :tenant_id AND task_id = :task_id
+                 WHERE {where}
                 RETURNING *
                 """,
-                repo.params(task_id=task_id, **params),
+                repo.params(**extra, **params),
             )
         return _to_task(row) if row is not None else None
 

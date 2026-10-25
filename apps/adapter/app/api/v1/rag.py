@@ -180,6 +180,9 @@ async def upload_document(
             file_size=file_size,
             auth=context.auth,
             chunk_policy=chunk_policy,
+            # 审计 OA-AUDIT-001 / P1-1：真实模式要把字节透传到底座
+            # （此前在此丢弃，底座永远收不到文件内容）
+            content=payload,
         )
 
     # multipart 请求体已被表单解析器消费，无法二次读取；
