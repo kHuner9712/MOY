@@ -391,15 +391,31 @@ jobs:
           PY
 
       - name: 校验工具注册表与连接器实现一致
+        # 工作流级 defaults 已把 cwd 设为 apps/adapter，本步显式回到仓库根，
+        # 再由脚本内 `cd apps/adapter` 进入适配层目录（与后续各步同风格）。
+        working-directory: .
         run: |
+          # 内联脚本要 import app 包（连接器靠 import 副作用完成注册），
+          # 需先安装适配层运行时依赖。仓库根无 Python 工程（唯一工程在
+          # apps/adapter），故按路径显式安装；此前本 job 只装了 pyyaml，
+          # 脚本必死于 ModuleNotFoundError。检查判定逻辑与修复前逐字一致。
+          python -m pip install -e apps/adapter
           cd apps/adapter
           python - <<'PY'
+          import importlib
           import sys
 
           from app.registry.loader import get_tool_registry
+          from app.services.tool_service import _CONNECTOR_MODULES
           from app.tools.base import ConnectorRegistry
-          import app.tools.email_connector  # noqa: F401
-          import app.tools.github_connector  # noqa: F401
+
+          # 连接器模块清单的单一真源是 tool_service._CONNECTOR_MODULES：
+          # 新增连接器只需在那一处登记模块路径，本门禁与
+          # ToolService._load_connectors 自动跟随同一份清单，
+          # 杜绝「注册表登记了却没人 import」的静默缺口（审计 P0-1）。
+          # 本脚本是 CI 一次性内联脚本、不属 app 包，读取该内部常量不受 SLF 约束。
+          for module_path in _CONNECTOR_MODULES:
+              importlib.import_module(module_path)
 
           registry = get_tool_registry()
           registered = ConnectorRegistry.all()
