@@ -7,6 +7,7 @@ import * as React from 'react';
 import { SessionGate } from '@/components/layout/session-gate';
 import { MobileNav } from '@/components/layout/mobile-nav';
 import { AppSidebar, resolveNavItem } from '@/components/layout/sidebar';
+import { BrandMark } from '@/components/brand/brand-mark';
 import { installErrorGuard } from '@/lib/error-guard';
 import { QueryProvider } from '@/lib/query-client';
 
@@ -62,9 +63,17 @@ export default function MainLayout({
 
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="flex h-16 items-center justify-between gap-3 border-b px-4 md:px-6">
-              <h1 className="min-w-0 flex-1 truncate whitespace-nowrap text-base font-semibold">
-                {current?.label ?? ''}
-              </h1>
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <BrandMark
+                  size="sm"
+                  showName={false}
+                  showLatin={false}
+                  className="md:hidden"
+                />
+                <h1 className="min-w-0 truncate whitespace-nowrap text-base font-semibold">
+                  {current?.label ?? ''}
+                </h1>
+              </div>
               <MobileNav />
             </header>
 

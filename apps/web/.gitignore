@@ -34,3 +34,8 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# 前端测试产物
+test-results/
+playwright-report/
+blob-report/

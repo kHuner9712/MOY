@@ -2,16 +2,18 @@ import type React from "react";
 import type { Metadata, Viewport } from 'next';
 
 import { Toaster } from '@/components/ui/toast';
+import { BRAND } from '@/lib/brand';
 
 import '@/styles/globals.css';
 
 /** 应用元信息 */
 export const metadata: Metadata = {
+  applicationName: BRAND.name,
   title: {
-    default: '企业级办公 AI 平台',
-    template: '%s · 企业级办公 AI 平台',
+    default: `${BRAND.name} · ${BRAND.tagline}`,
+    template: `%s · ${BRAND.name}`,
   },
-  description: '面向企业与团队用户的跨生态办公 AI 平台，开箱即用，无需了解任何技术细节。',
+  description: BRAND.description,
   robots: { index: false, follow: false },
 };
 
