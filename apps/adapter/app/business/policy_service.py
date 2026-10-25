@@ -31,6 +31,16 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 
+from app.core.builtin_roles import BUILTIN_ROLE_KEYS as _BUILTIN_ROLE_KEYS
+from app.core.builtin_roles import BUILTIN_ROLE_PERMISSIONS as _BUILTIN_ROLE_PERMISSIONS
+from app.core.builtin_roles import BUSINESS_PERMISSIONS as _BUSINESS_PERMISSIONS
+from app.core.builtin_roles import KNOWN_PERMISSION_POINTS as _KNOWN_PERMISSION_POINTS
+from app.core.builtin_roles import OPS_PERMISSIONS as _OPS_PERMISSIONS
+from app.core.builtin_roles import ROLE_GUEST as _ROLE_GUEST
+from app.core.builtin_roles import ROLE_MEMBER as _ROLE_MEMBER
+from app.core.builtin_roles import ROLE_OPS as _ROLE_OPS
+from app.core.builtin_roles import ROLE_ORG_ADMIN as _ROLE_ORG_ADMIN
+from app.core.builtin_roles import ROLE_OWNER as _ROLE_OWNER
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.security import AuthContext
@@ -61,101 +71,27 @@ BASE_ID_PREFIX: Final[str] = "kb_"
 #: 部门 ID 前缀（B08 唯一规范形态）
 DEPARTMENT_ID_PREFIX: Final[str] = "dept_"
 
-#: 角色键：企业所有者
-ROLE_OWNER: Final[str] = "owner"
-
-#: 角色键：组织管理员
-ROLE_ORG_ADMIN: Final[str] = "org_admin"
-
-#: 角色键：普通成员
-ROLE_MEMBER: Final[str] = "member"
-
-#: 角色键：访客
-ROLE_GUEST: Final[str] = "guest"
-
-#: 角色键：平台运营（仅运营后台）
-ROLE_OPS: Final[str] = "ops_operator"
-
-#: 16 个业务权限点（架构文档 §4.8）
-BUSINESS_PERMISSIONS: Final[frozenset[str]] = frozenset(
-    {
-        "knowledge:base:create",
-        "knowledge:base:update",
-        "knowledge:base:delete",
-        "knowledge:document:upload",
-        "knowledge:document:delete",
-        "knowledge:grant:manage",
-        "knowledge:base:read",
-        "tool:connection:manage",
-        "tool:execute",
-        "team:member:invite",
-        "team:member:update",
-        "team:structure:manage",
-        "team:role:manage",
-        "billing:subscription:read",
-        "billing:subscription:manage",
-        "audit:log:read",
-    }
-)
-
-#: 4 个运营权限点（架构文档 §4.8）
-OPS_PERMISSIONS: Final[frozenset[str]] = frozenset(
-    {
-        "ops:console:access",
-        "ops:order:confirm",
-        "ops:tenant:manage",
-        "ops:settings:manage",
-    }
-)
-
-#: 已知权限点目录（业务 + 运营，共 20 个）。
-#:
-#: 用途**只有一个**：判断「把权限点当角色签发」的兼容形态是否合法。
-#: 为什么必须是白名单而不是 `":" in role`：后者只要令牌里塞一个任意
-#: `x:y` 形态的字符串就能凭空白拿到一个权限点——若该字符串恰好等于某个
-#: 端点要求的权限点（如 `tool:execute`），等于签名方之外的人也能自造权限。
-#: 白名单把口径收敛到目录内，新增权限点必须先落 `BUSINESS_PERMISSIONS` /
-#: `OPS_PERMISSIONS`，与架构 §4.8 矩阵保持单一真源。
-KNOWN_PERMISSION_POINTS: Final[frozenset[str]] = BUSINESS_PERMISSIONS | OPS_PERMISSIONS
-
-#: 内置角色 → 权限点（架构文档 §4.8 矩阵的**唯一**代码实现）。
-#:
-#: 矩阵中的 🔸 表示「**拥有权限点**，但对象级仍受限（仅被授权库 / 个人数据）」，
-#: 因此 🔸 计入本表；真正的对象级判定由 `is_visible()` 与各业务服务负责。
-#: 这是「权限点层 → 对象级」两层分离的口径，缺一层都会造成越权或误拒。
-BUILTIN_ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
-    ROLE_OWNER: BUSINESS_PERMISSIONS,
-    ROLE_ORG_ADMIN: BUSINESS_PERMISSIONS,
-    ROLE_MEMBER: frozenset(
-        {
-            "knowledge:base:create",
-            "knowledge:base:update",
-            "knowledge:base:delete",
-            "knowledge:document:upload",
-            "knowledge:document:delete",
-            "knowledge:base:read",
-            "tool:connection:manage",
-            "tool:execute",
-            "billing:subscription:read",
-        }
-    ),
-    ROLE_GUEST: frozenset(
-        {
-            "knowledge:base:read",
-            "tool:connection:manage",
-            "billing:subscription:read",
-        }
-    ),
-    ROLE_OPS: OPS_PERMISSIONS,
-}
-
-#: 内置角色键（B08 建 4 个内置角色，不可删除）
-BUILTIN_ROLE_KEYS: Final[tuple[str, ...]] = (
-    ROLE_OWNER,
-    ROLE_ORG_ADMIN,
-    ROLE_MEMBER,
-    ROLE_GUEST,
-)
+# ===========================================================================
+# 角色与权限点矩阵（审计 P1-4 / P1-7：已下沉 `app.core.builtin_roles`）
+#
+# 为什么下沉：这份矩阵是三处共用的**词汇表**——`core/security.py`（令牌判权）、
+# `db/repositories/role_repo.py`（内置角色播种）、本模块（对象级判定）全都要用。
+# 留在业务层，鉴权内核与仓储就得反向依赖业务服务（P1-4 / P1-7 实测）。
+#
+# 为什么继续在这里 re-export：本模块是「可见性/权限判定」的业务入口，
+# 既有调用方与测试按 `from app.business.policy_service import ROLE_OWNER ...`
+# 取值。原样 re-export 让常量搬家**不触碰任何调用方**（零改动下沉）。
+# ===========================================================================
+ROLE_OWNER: Final[str] = _ROLE_OWNER
+ROLE_ORG_ADMIN: Final[str] = _ROLE_ORG_ADMIN
+ROLE_MEMBER: Final[str] = _ROLE_MEMBER
+ROLE_GUEST: Final[str] = _ROLE_GUEST
+ROLE_OPS: Final[str] = _ROLE_OPS
+BUSINESS_PERMISSIONS: Final[frozenset[str]] = _BUSINESS_PERMISSIONS
+OPS_PERMISSIONS: Final[frozenset[str]] = _OPS_PERMISSIONS
+KNOWN_PERMISSION_POINTS: Final[frozenset[str]] = _KNOWN_PERMISSION_POINTS
+BUILTIN_ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = _BUILTIN_ROLE_PERMISSIONS
+BUILTIN_ROLE_KEYS: Final[tuple[str, ...]] = _BUILTIN_ROLE_KEYS
 
 
 def permissions_for_roles(roles: Iterable[str]) -> frozenset[str]:

@@ -25,7 +25,7 @@ import csv
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Final
 
 from app.core.errors import ApiError, ErrorCode
@@ -145,6 +145,20 @@ SCHEDULE_TIME_KEYS: Final[tuple[str, ...]] = (
     "时间",
     "time",
 )
+
+#: 排期时间的**业务时区**（Asia/Shanghai，固定 UTC+8）。
+#:
+#: 为什么需要它：`strptime` 解析出的是 **naive** datetime（无时区），而
+#: 无参 `datetime.now` 也给 naive 本地时间。两者相减/相比只在「进程本地时区恰好
+#: 就是业务时区」时才对——容器默认 `TZ=UTC` 时，用户写的「2026-11-02 10:00」
+#: 会被当成 UTC 10:00，也就是北京时间 18:00，**过去 8 小时的排期会被判成未来**，
+#: 反之亦然；更糟的是把 tz-aware 的 `now`（如 `datetime.now(UTC)`）传进来会直接
+#: `TypeError: can't compare offset-naive and offset-aware datetimes`。
+#:
+#: 口径：排期表是给人看的**北京时间**，因此解析结果一律按 `SCHEDULE_TZ` 解释，
+#: 参照时间统一折算到 aware 后再比较。中国全境单一时区、无夏令时，固定偏移
+#: 是安全且免依赖 `zoneinfo`（tzdata 在精简镜像里未必存在）的选择。
+SCHEDULE_TZ: Final[timezone] = timezone(timedelta(hours=8))
 
 #: 可识别的时间写法（识别不了的**不判失败**——宁可放过也不误伤用户的自由格式）
 SCHEDULE_TIME_FORMATS: Final[tuple[str, ...]] = (
@@ -1220,14 +1234,24 @@ def scan_schedule(rows: list[dict[str, str]], *, now: datetime | None = None) ->
     识别不了的时间写法**不判失败**——排期表的时间列允许用户自由填写，
     把"没认出来"当成违规会让守规矩的用户反复被拦（比漏判更伤）。
 
+    时区口径（审计 P2-4）：排期时间是**北京时间**（`SCHEDULE_TZ` = UTC+8）。
+    解析结果与参照时间都折算到 aware 后比较；naive 的 `now` 按 `SCHEDULE_TZ`
+    解释，缺省参照取 `datetime.now(UTC)`。这样容器 `TZ=UTC` 时也不会错 8 小时，
+    传 aware `now` 也不会 `TypeError`。
+
     Args:
         rows: 排期表行。
         now: 参照时间（缺省取当前时刻；测试注入固定值以保证可复现）。
+            naive 值按 `SCHEDULE_TZ` 解释，aware 值按绝对时间参与比较。
 
     Returns:
         ScheduleScan: 校验结果。
     """
-    reference = now or datetime.now()
+    # 参照时间必须与解析结果**同时区**（见 SCHEDULE_TZ 说明）：naive 入参按
+    # 业务时区解释，缺省取 UTC 当前时刻（aware），比较的是绝对时间。
+    reference = now or datetime.now(UTC)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=SCHEDULE_TZ)
     problems: list[str] = []
     seen: dict[tuple[str, datetime], int] = {}
     checked = 0
@@ -1280,7 +1304,9 @@ def _parse_schedule_time(value: str) -> datetime | None:
         return None
     for fmt in SCHEDULE_TIME_FORMATS:
         try:
-            return datetime.strptime(text, fmt)
+            # 解析结果按**业务时区**解释（naive + tzinfo），否则与 aware 的参照
+            # 时间比较会 TypeError，与 naive 本地时间比较会错 8 小时。
+            return datetime.strptime(text, fmt).replace(tzinfo=SCHEDULE_TZ)
         except ValueError:
             continue
     return None

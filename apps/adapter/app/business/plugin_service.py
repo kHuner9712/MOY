@@ -18,6 +18,7 @@ PL1/PL2/PL4 **不受** `features.plugin_market` 影响，一律正常返回，�
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -247,9 +248,10 @@ class PluginService:
         ]
         items = _sorted_items(items, sort)
 
-        # 分类计数基于**过滤前**的全量可售目录：横筛要能看到"切过去还有多少"
-        all_catalog = await self._store.list_catalog()
-        categories = _category_counts(all_catalog)
+        # 分类计数基于**过滤前**的全量可售目录：横筛要能看到"切过去还有多少"。
+        # 审计 P2-6：此前是再取一次 `list_catalog()` 全量（把 6 条目录的 description
+        # 正文整块读进内存）只为数个数；改成仓储侧 `GROUP BY`，只回 6 行计数。
+        categories = _category_counts(await self._store.count_catalog_by_category())
 
         total = len(items)
         start = max(page - 1, 0) * page_size
@@ -413,9 +415,16 @@ class PluginService:
             for record in await self._store.list_installations(auth.tenant_id, status=status)
             if record.is_live and (is_admin or record.status == STATUS_ENABLED)
         ]
+        # 审计 P2-6（N+1）：此前每个插件各来一次 `get_catalog()` + 一次
+        # `count_occupying()`，装 40 个插件就是 80 次查询。改为两次批量：
+        # 目录一次 `ANY(...)`、占用任务数一次 `GROUP BY plugin_id`，
+        # 与逐条调用**同语义**（下架行仍返回、缺行仍回落、无任务按 0）。
+        plugin_ids = [record.plugin_id for record in records]
+        catalogs = await self._store.catalogs_of(plugin_ids)
+        occupying = await self._tasks.counts_occupying(auth.tenant_id, plugin_ids)
         items: list[InstalledItem] = []
         for record in records:
-            catalog = await self._store.get_catalog(record.plugin_id)
+            catalog = catalogs.get(record.plugin_id)
             latest = catalog.latest_version if catalog is not None else record.version
             items.append(
                 InstalledItem(
@@ -431,9 +440,7 @@ class PluginService:
                     # 真实在跑数（占并发额度的口径，含 waiting_confirm）。
                     # 曾硬编码 0：已安装列表永远显示"0 个任务在跑"，
                     # 用户在**有任务真在跑**时点卸载/停用，弹窗却告诉他"没有任务"。
-                    running_task_count=await self._tasks.count_occupying(
-                        auth.tenant_id, record.plugin_id
-                    ),
+                    running_task_count=occupying.get(record.plugin_id, 0),
                 )
             )
         total = len(items)
@@ -1344,20 +1351,26 @@ def _capability_items(
     return items
 
 
-def _category_counts(catalog: list[CatalogRecord]) -> list[CategoryCountItem]:
-    """统计分类计数（固定顺序，缺项也返回 0）。
+def _category_counts(counts: Mapping[str, int]) -> list[CategoryCountItem]:
+    """把「分类 → 条数」整理成固定顺序的展示项（缺项零填充）。
+
+    审计 P2-6：入参从「全量目录行」改成「仓储侧聚合好的计数」，避免为了数个数
+    把整张目录（含 description 正文）读进内存。零填充仍在这里做：
+
+    - `CATEGORY_ORDER` 是**展示顺序的唯一真源**，缺席的分类必须显示 0，
+      否则前端横筛会因为"少一个分类"而重排；
+    - 仓储只回非零行（`GROUP BY` 不产出空组），所以补零是调用方的责任。
 
     Args:
-        catalog: 全量可售目录。
+        counts: 分类 → 条数（仓储聚合结果，可缺项）。
 
     Returns:
-        list[CategoryCountItem]: 分类计数。
+        list[CategoryCountItem]: 分类计数（固定顺序，未出现的分类计 0）。
     """
-    counts: dict[str, int] = {}
-    for record in catalog:
-        counts[record.category] = counts.get(record.category, 0) + 1
     return [
-        CategoryCountItem(key=key, name=CATEGORY_NAMES.get(key, key), count=counts.get(key, 0))
+        CategoryCountItem(
+            key=key, name=CATEGORY_NAMES.get(key, key), count=int(counts.get(key, 0) or 0)
+        )
         for key in CATEGORY_ORDER
     ]
 

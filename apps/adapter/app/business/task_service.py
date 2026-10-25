@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from typing import Any, Final
 
@@ -55,7 +55,7 @@ from app.db.repositories.task_repo import (
     get_task_store,
     now_iso,
 )
-from app.plugins.actions import RunContext
+from app.plugins.actions import ActionGateway, RunContext
 from app.plugins.engine import (
     STEP_COMPLETED,
     STEP_FAILED,
@@ -159,6 +159,7 @@ class TaskService:
         usage: UsageService | None = None,
         sanitizer: ArtifactSanitizer | None = None,
         step_timeout_seconds: float | None = None,
+        gateway_factory: Callable[[Settings], ActionGateway] | None = None,
     ) -> None:
         """初始化服务。
 
@@ -169,12 +170,21 @@ class TaskService:
             registry: 声明注册表。
             grants: 授权服务。
             plugins: 插件服务。
-            engine: 步骤引擎（缺省由 `plugin_deps.build_action_gateway` 装配）。
+            engine: 步骤引擎（缺省由 `gateway_factory` 装配）。
             audit: 审计服务。
             usage: 计量服务。
             sanitizer: 产物脱敏器。
             step_timeout_seconds: 单步超时覆盖值（测试用小值；缺省取
                 `plugin_task_timeout_seconds`，生产默认 900s）。
+            gateway_factory: 动作门面的**工厂**（`Settings -> ActionGateway`），
+                由组合根（`api/v1/agent.py`）注入。审计 P1-6：业务层此前直接
+                import `api.v1.plugin_deps.build_action_gateway`，等于让业务层
+                反向依赖 HTTP 装配层——`import app.business.task_service` 会连带
+                拉起整个 `app.api`，业务层再也无法独立启动。改成注入后方向恢复
+                `api → business`，业务层对「谁来造门面」一无所知。
+
+        Raises:
+            ApiError: 未注入 `gateway_factory` 且未直接传 `engine`（配置错误 30004）。
         """
         self._settings = settings or get_settings()
         self._tasks = tasks or get_task_store(self._settings)
@@ -185,6 +195,7 @@ class TaskService:
         self._audit = audit or get_audit_service(self._settings)
         self._usage = usage or get_usage_service(self._settings)
         self._sanitizer = sanitizer or ArtifactSanitizer()
+        self._gateway_factory = gateway_factory
         self._engine = engine or self._build_engine()
         self._step_timeout_seconds = float(
             step_timeout_seconds
@@ -193,15 +204,35 @@ class TaskService:
         )
 
     def _build_engine(self) -> PluginEngine:
-        """装配步骤引擎（延迟到真正需要时才构造门面实现）。
+        """装配步骤引擎（**在 `TaskService.__init__` 里立即调用**，除非显式注入 `engine`）。
+
+        注意时机：不是"用到时才造"，而是**构造 TaskService 时就造**——
+        门面装配（连接器/下游客户端）失败要在启动期暴露，不能等到第一个任务
+        进来才炸（那时用户已经在等结果）。测试要换门面，走
+        `reset_task_service()` 后重新取单例，或直接注入 `engine=`/`gateway_factory=`。
+
+        门面由**组合根注入的工厂**产出（审计 P1-6）：业务层不再 import
+        `api.v1.plugin_deps`，只依赖 `ActionGateway` 协议（`plugins/actions.py`）。
+        启动路径上「谁提供门面」变成显式契约：没注入就是配置错误，直接报
+        `30004`（而不是像以前那样偷偷把 `app.api` 拉进业务进程）。
 
         Returns:
             PluginEngine: 引擎实例。
-        """
-        from app.api.v1.plugin_deps import build_action_gateway
 
+        Raises:
+            ApiError: 未注入 `gateway_factory`（组合根装配遗漏）。
+        """
+        if self._gateway_factory is None:
+            raise ApiError(
+                ErrorCode.CONFIG_ERROR,
+                internal_detail=(
+                    "action gateway not wired: 组合根须注入 gateway_factory"
+                    "（见 api/v1/agent.py::_action_gateway）"
+                ),
+            )
+        gateway = self._gateway_factory(self._settings)
         return PluginEngine(
-            build_action_gateway(self._settings),
+            gateway,
             self._sanitizer,
             retry_backoff_ms=self._settings.plugin_retry_backoff_ms,
         )
@@ -1688,18 +1719,27 @@ def _artifact_type(value: str) -> ArtifactType:
 _service: TaskService | None = None
 
 
-def get_task_service(settings: Settings | None = None) -> TaskService:
+def get_task_service(
+    settings: Settings | None = None,
+    *,
+    gateway_factory: Callable[[Settings], ActionGateway] | None = None,
+) -> TaskService:
     """获取任务服务单例。
+
+    单例语义：`gateway_factory` 只在**首次构造**时生效（组合根每次请求都传同一个
+    工厂函数，因此不会出现"先到先得"的配置漂移）；测试要换门面就
+    `reset_task_service()` 后再取。
 
     Args:
         settings: 可选配置实例。
+        gateway_factory: 动作门面工厂（组合根注入；审计 P1-6）。
 
     Returns:
         TaskService: 服务实例。
     """
     global _service
     if _service is None:
-        _service = TaskService(settings)
+        _service = TaskService(settings, gateway_factory=gateway_factory)
     return _service
 
 

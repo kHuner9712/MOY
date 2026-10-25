@@ -34,6 +34,7 @@ from app.core.idempotency import (
     hash_request_body,
 )
 from app.core.security import RequestContext, get_request_context, run_idempotent
+from app.plugins.actions import ActionGateway
 from app.schemas.agent import (
     CancelTaskData,
     CreateTaskData,
@@ -59,6 +60,32 @@ router = APIRouter(prefix="/agent", tags=["Agent 服务"])
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 
 
+def _action_gateway(settings: Settings) -> ActionGateway:
+    """动作门面工厂（组合根职责，审计 P1-6）。
+
+    **为什么工厂在这里而不是在业务层**：门面要装配办公工具连接器与实际下游
+    客户端，属于「进程怎么拼起来」的装配知识。放在业务层会让
+    `business/task_service.py` 直接 import `api.v1.plugin_deps`——业务层反向
+    依赖 HTTP 层，`import app.business.task_service` 会连带拉起整个 `app.api`。
+    现在业务层只认 `ActionGateway` 协议，由本函数在**组合根**提供实现。
+
+    **为什么 import 写在函数体内**（而不是模块顶部）：
+    ① e2e 的桩注入点是 `app.api.v1.plugin_deps.build_action_gateway`
+    （`tests/e2e/conftest.py::use_script` 用 monkeypatch 打在这个**属性**上），
+    函数体内导入可保证补丁生效；
+    ② 避免 `api.v1.agent` 与 `api.v1.plugin_deps` 在模块加载期互相牵连。
+
+    Args:
+        settings: 请求生效配置。
+
+    Returns:
+        ActionGateway: 已装配的动作门面实现。
+    """
+    from app.api.v1.plugin_deps import build_action_gateway
+
+    return build_action_gateway(settings)
+
+
 def _task_service(request: Request) -> TaskService:
     """按请求生效配置构造任务服务（插件任务分支）。
 
@@ -69,7 +96,7 @@ def _task_service(request: Request) -> TaskService:
         TaskService: 任务服务。
     """
     settings: Settings = get_request_settings(request)
-    return get_task_service(settings)
+    return get_task_service(settings, gateway_factory=_action_gateway)
 
 
 async def _plugin_task_exists(service: TaskService, task_id: str, auth: object) -> bool:

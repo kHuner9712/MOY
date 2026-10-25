@@ -370,6 +370,74 @@ async def test_get_catalog_missing_returns_none(store: PostgresPluginStore) -> N
     assert await store.get_catalog("plg_nosuchplugin") is None
 
 
+async def test_catalogs_of_matches_get_catalog(store: PostgresPluginStore) -> None:
+    """批量读目录 == 逐条读目录；缺失 id 不入字典、空入参直接返回空字典（P2-6）。"""
+    listed = await store.list_catalog()
+    assert listed, "目录基线不应为空"
+    plugin_ids = [item.plugin_id for item in listed]
+
+    batch = await store.catalogs_of([*plugin_ids, "plg_nosuchplugin"])
+
+    assert set(batch) == set(plugin_ids)
+    assert "plg_nosuchplugin" not in batch
+    for plugin_id in plugin_ids:
+        assert batch[plugin_id] == await store.get_catalog(plugin_id)
+    assert await store.catalogs_of([]) == {}
+
+
+async def test_catalogs_of_includes_hidden_rows(
+    store: PostgresPluginStore, pg_settings: Settings
+) -> None:
+    """下架行必须仍能被批量读到（服务层靠 `status` 判 `16002`，不是靠"查不到"）。"""
+    listed = await store.list_catalog()
+    assert listed
+    plugin_id = listed[0].plugin_id
+    previous = listed[0].status
+    await _set_catalog_status(pg_settings, plugin_id, "hidden")
+    try:
+        batch = await store.catalogs_of([plugin_id])
+        assert plugin_id in batch, "下架行不得从批量结果里消失"
+        assert batch[plugin_id].status == "hidden"
+        assert batch[plugin_id].installable is False
+        # 逐条读取同口径（两条路径不得漂移）
+        single = await store.get_catalog(plugin_id)
+        assert single is not None and single == batch[plugin_id]
+    finally:
+        await _set_catalog_status(pg_settings, plugin_id, previous)
+
+
+async def test_count_catalog_by_category_matches_list_catalog(
+    store: PostgresPluginStore,
+) -> None:
+    """分类计数 == `list_catalog()` 的分组结果（P2-6：只回非零分类）。"""
+    listed = await store.list_catalog()
+    assert listed
+    expected: dict[str, int] = {}
+    for item in listed:
+        expected[item.category] = expected.get(item.category, 0) + 1
+
+    counts = await store.count_catalog_by_category()
+
+    assert counts == expected
+    assert sum(counts.values()) == len(listed)
+
+
+async def _set_catalog_status(settings: Settings, plugin_id: str, status: str) -> None:
+    """直接改目录行的上架状态（造「下架行」这一场景；仓储层没有状态写入口）。
+
+    Args:
+        settings: 配置实例。
+        plugin_id: 插件标识。
+        status: 目标状态。
+    """
+    async with platform_scope(settings) as uow:
+        await uow.execute(
+            "UPDATE plugin_catalog SET status = :status"
+            " WHERE tenant_id = '__platform__' AND plugin_id = :plugin_id",
+            {"status": status, "plugin_id": plugin_id},
+        )
+
+
 # ===========================================================================
 # 5. 后端选择 / 记录对象语义
 # ===========================================================================

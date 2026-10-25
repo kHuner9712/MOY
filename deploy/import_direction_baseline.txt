@@ -1,0 +1,63 @@
+# 分层依赖方向基线（G-37 / 审计 P1-3~P1-7、P2-9~P2-11）
+# 校验器：deploy/validate_import_directions.py（`--baseline` 指向本文件）
+#
+# 格式（全字段精确匹配，禁通配）：
+#   <rule_id> <file> <imported_module> <mode> -- <审计编号> <消除计划>
+#   mode ∈ {module, deferred, type_checking}
+#
+# ==========================================================================
+# 本文件**只许减不许增**。新增一行 = 新增一处方向依赖倒挂，必须走评审，
+# 并同时给出审计编号与消除计划；校验器**没有** --update-baseline 参数，
+# 就是为了让「先登记、再违规」这条捷径不成立。
+#
+# 违规消失（修好了）时必须**删掉对应行**，否则校验器报 [FAIL] stale 并 exit 1
+# —— 基线不允许靠「历史遗留」长期挂账。
+# ==========================================================================
+#
+# 当前登记 24 条（切片 1 收口后实测，随后续切片逐步减少）：
+#   P1-3  api → db        6 条  HTTP 层直接使用仓储/引擎，绕过业务层唯一入口
+#   P1-7  core → 上层     5 条  核心内核依赖 business / db / schemas
+#   P2-9  business → 编排 3 条  业务层反向依赖 services / workers
+#   P2-10 services → db   6 条  服务层直接使用仓储（切片 1 新发现，切片 2 收口）
+#   P2-11 db → 上层       4 条  仓储依赖 plugins / services 实现
+#
+# 切片 1 已消除 4 条（P1-4 两条 / P1-5 一条 / P1-6 一条，行**已删除**，删不掉就报 stale）：
+#   · P1-4 db → business   role_repo（延迟 import 角色常量）→ 下沉 core/builtin_roles
+#   · P1-4 db → business   audit_repo（动作常量 + 记录器）→ core/audit_actions + db/audit_recorder
+#   · P1-5 schemas → biz   schemas/tenant_data.py（EXPORT_SCOPES）→ core/tenant_data
+#   · P1-6 business → api  task_service（plugin_deps）→ 组合根注入 gateway_factory
+# ==========================================================================
+
+# --- P1-3：api 直接使用仓储/引擎（绕过业务层） ---------------------------
+R-API-DB apps/adapter/app/api/v1/artifact_files.py app.db.repositories.artifact_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
+R-API-DB apps/adapter/app/api/v1/conversation.py app.db.repositories.conversation_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
+R-API-DB apps/adapter/app/api/v1/identity_ext.py app.db.repositories.audit_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
+R-API-DB apps/adapter/app/api/v1/memory.py app.db.repositories.memory_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
+R-API-DB apps/adapter/app/api/v1/router.py app.db.engine module -- P1-3 api 直接使用 db 引擎（健康探针），改为 services 暴露探针后消除
+R-API-DB apps/adapter/app/api/v1/stats.py app.db.repositories.task_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
+
+# --- P1-7：core 依赖上层（内核不再可独立复用） ---------------------------
+R-CORE-BIZ apps/adapter/app/core/security.py app.business.audit_service deferred -- P1-7 core 内核依赖业务审计服务；改为组合根注入后消除（切片 2）
+R-CORE-BIZ apps/adapter/app/core/security.py app.business.policy_service deferred -- P1-7 core 内核依赖业务权限服务；改为注入权限判定后消除（切片 2）
+R-CORE-DB apps/adapter/app/core/security.py app.db.repositories.org_repo deferred -- P1-7 core 内核依赖仓储实现；改为注入 Protocol 后消除（切片 2）
+R-CORE-DB apps/adapter/app/core/security.py app.db.repositories.role_repo deferred -- P1-7 core 内核依赖仓储实现；改为注入 Protocol 后消除（切片 2）
+R-CORE-SCH apps/adapter/app/core/errors.py app.schemas.common module -- P1-7 core 内核依赖 schemas（错误码与公共模型同源）；切片 2 合并真源后消除
+
+# --- P2-9：business 反向依赖编排层 / workers -----------------------------
+R-BIZ-SVC apps/adapter/app/business/memory_service.py app.services.memory_embedding module -- P2-9 业务层依赖服务实现（向量化）；切片 2 随服务下沉消除
+R-BIZ-SVC apps/adapter/app/business/memory_service.py app.services.memory_extractor module -- P2-9 业务层依赖服务实现（抽取器）；切片 2 随服务下沉消除
+R-BIZ-WRK apps/adapter/app/business/tenant_data_service.py app.workers.tasks.retention_cleanup deferred -- P2-9 业务层延迟 import worker 入口；改为组合根注册任务后消除（切片 2）
+
+# --- P2-10：services 直接使用仓储（本波新发现） --------------------------
+R-SVC-DB apps/adapter/app/services/identity_service.py app.db.repositories.audit_repo deferred -- P2-10 服务层直接读仓储；由 business 暴露查询入口后消除（切片 2）
+R-SVC-DB apps/adapter/app/services/memory_extractor.py app.db.repositories.memory_repo module -- P2-10 服务层直接读仓储；由 business 暴露查询入口后消除（切片 2）
+R-SVC-DB apps/adapter/app/services/model_service.py app.db.repositories.knowledge_base_repo module -- P2-10 服务层直接读仓储；由 business 暴露查询入口后消除（切片 2）
+R-SVC-DB apps/adapter/app/services/model_service.py app.db.tenant module -- P2-10 服务层直接读租户上下文工具；切片 2 移入 core 后消除
+R-SVC-DB apps/adapter/app/services/rag_service.py app.db.tenant module -- P2-10 服务层直接读租户上下文工具；切片 2 移入 core 后消除
+R-SVC-DB apps/adapter/app/services/tool_service.py app.db.repositories.tool_repo module -- P2-10 服务层直接读仓储；由 business 暴露查询入口后消除（切片 2）
+
+# --- P2-11：db 依赖 plugins / services 实现 ------------------------------
+R-DB-PLG apps/adapter/app/db/repositories/plugin_repo.py app.plugins.actions module -- P2-11 仓储依赖插件动作契约；切片 2 移至 core/schemas 后消除
+R-DB-PLG apps/adapter/app/db/repositories/plugin_repo.py app.plugins.loader module -- P2-11 仓储依赖插件加载器；切片 2 改为依赖 registry 契约后消除
+R-DB-PLG apps/adapter/app/db/repositories/plugin_repo.py app.plugins.loader deferred -- P2-11 仓储延迟 import 插件加载器；切片 2 改为依赖 registry 契约后消除
+R-DB-SVC apps/adapter/app/db/repositories/memory_repo.py app.services.memory_embedding deferred -- P2-11 仓储延迟 import 服务实现（向量化）；切片 2 改为注入后消除

@@ -38,6 +38,7 @@
 # ruff: noqa: S608 - 表名/列名均为模块常量，值一律命名参数绑定
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -54,13 +55,18 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
+from app.core.tenant_data import EXPORT_SCOPES as _EXPORT_SCOPES
 from app.db.repositories.artifact_repo import ArtifactRecord, ArtifactStore, get_artifact_store
 from app.db.session import tenant_scope
 
 logger = get_logger(__name__)
 
 #: 导出可选的类别（架构 §4.2 TD1：`scope[]{audit,usage,chat,memory,artifact}`）
-EXPORT_SCOPES: Final[tuple[str, ...]] = ("audit", "usage", "chat", "memory", "artifact")
+#:
+#: 定义已下沉 `app.core.tenant_data`（审计 P1-5）：请求模型
+#: `schemas/tenant_data.py` 的默认值要用它，留在业务层会让 DTO 反向依赖服务实现。
+#: 这里**原样 re-export**（连同 `__all__`），既有调用方 import 路径零改动。
+EXPORT_SCOPES: Final[tuple[str, ...]] = _EXPORT_SCOPES
 
 #: 导出包内各文件的固定名（**顺序即清单顺序**，便于人工核对）
 EXPORT_FILE_NAMES: Final[dict[str, str]] = {
@@ -79,6 +85,16 @@ MAX_EXPORT_ROWS: Final[int] = 200_000
 
 #: 单页读取行数（同时是单批删除行数）
 PAGE_SIZE: Final[int] = 1000
+
+#: zip 写入的**攒批行数**（审计 P2-5）。
+#:
+#: 为什么攒批：`ZipFile.open()` 返回的句柄上，`write()` 是**同步阻塞**调用
+#: （deflate 压缩 + 落盘），在 `async for` 的循环体里直接调它会把事件循环卡住
+#: ——20 万行的导出期间，同一进程的所有请求（含健康检查）一起停摆。
+#: 现在攒够 `_ZIP_CHUNK_ROWS` 行就 `await asyncio.to_thread(handle.write, ...)`
+#: 交给线程池：单次跨线程开销被摊到 500 行上（每次约几十 KB），既不让循环
+#: 每行 switch 一次，也不让循环被压缩卡住。
+_ZIP_CHUNK_ROWS: Final[int] = 500
 
 #: 导出超过上限时的业务文案（架构 §4.2：复用既有码，不新造 18xxx）
 EXPORT_TOO_LARGE_MESSAGE: Final[str] = "数据量较大，请联系管理员分批导出"
@@ -657,6 +673,12 @@ class TenantDataService:
         **流式写 zip**（`ZipFile.open(name, "w")`）而不是"先把整包拼进内存"：
         200,000 行的包可能上百 MB，`writestr` 会把同一份数据在内存里存两遍。
 
+        **写入不占事件循环**（审计 P2-5）：`handle.write` 是同步阻塞调用
+        （deflate + 落盘），每 `_ZIP_CHUNK_ROWS` 行攒成一批后
+        `await asyncio.to_thread(handle.write, b"".join(pending))`。
+        `ZipFile` 的创建与关闭仍在事件循环线程（它们要读写同一个 `BytesIO`，
+        跨线程反而要加锁）；只有「压缩+写」这一段挪到线程池。
+
         Args:
             tenant_id: 企业 ID。
             export_id: 导出 ID。
@@ -681,10 +703,13 @@ class TenantDataService:
                 lines = 0
                 size_bytes = 0
                 with archive.open(name, "w") as handle:
+                    # 攒批写（见 `_ZIP_CHUNK_ROWS`）：`handle.write` 是同步阻塞调用，
+                    # 直接写在循环体里会卡住事件循环；攒够一批再丢线程池。
+                    pending: list[bytes] = []
                     async for line in self._iter_scope(tenant_id, scope):
                         encoded = (line + "\n").encode("utf-8")
                         digest.update(encoded)
-                        handle.write(encoded)
+                        pending.append(encoded)
                         lines += 1
                         size_bytes += len(encoded)
                         written += 1
@@ -697,6 +722,12 @@ class TenantDataService:
                                     f"written={written} limit={MAX_EXPORT_ROWS}"
                                 ),
                             )
+                        if len(pending) >= _ZIP_CHUNK_ROWS:
+                            await asyncio.to_thread(handle.write, b"".join(pending))
+                            pending.clear()
+                    if pending:
+                        await asyncio.to_thread(handle.write, b"".join(pending))
+                        pending.clear()
                 files[name] = {
                     "scope": scope,
                     "rows": lines,
