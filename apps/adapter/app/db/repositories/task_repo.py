@@ -351,6 +351,15 @@ class TaskStore(Protocol):
         """统计占用并发额度的任务数。"""
         ...
 
+    async def counts_occupying(self, tenant_id: str, plugin_ids: Sequence[str]) -> dict[str, int]:
+        """批量统计各插件占用额度的任务数（审计 P2-6）。
+
+        已安装列表按插件逐条调用 `count_occupying()` 是 N+1：装 40 个插件就是
+        40 次聚合查询。批量版一次 `GROUP BY plugin_id` 取回；**没有在跑任务的
+        插件不进字典**（调用方按 0 处理，与逐条调用的返回值一致）。
+        """
+        ...
+
     async def count_queued(self, tenant_id: str, plugin_id: str) -> int:
         """统计排队任务数。"""
         ...
@@ -551,6 +560,28 @@ class InMemoryTaskStore:
             for record in self._tasks.values()
             if record.tenant_id == tenant_id and record.plugin_id == plugin_id and record.occupying
         )
+
+    async def counts_occupying(self, tenant_id: str, plugin_ids: Sequence[str]) -> dict[str, int]:
+        """批量统计各插件占用额度的任务数。
+
+        Args:
+            tenant_id: 企业 ID。
+            plugin_ids: 插件标识列表。
+
+        Returns:
+            dict[str, int]: 插件标识 → 任务数（只含非零项）。
+        """
+        wanted = set(plugin_ids)
+        if not wanted:
+            return {}
+        counts: dict[str, int] = {}
+        for record in self._tasks.values():
+            if record.tenant_id != tenant_id or not record.occupying:
+                continue
+            if record.plugin_id not in wanted:
+                continue
+            counts[record.plugin_id] = counts.get(record.plugin_id, 0) + 1
+        return counts
 
     async def count_queued(self, tenant_id: str, plugin_id: str) -> int:
         """统计排队任务数。
@@ -995,6 +1026,32 @@ class PostgresTaskStore:
                 repo.params(plugin_id=plugin_id, statuses=list(OCCUPYING_STATUSES)),
             )
         return int(total or 0)
+
+    async def counts_occupying(self, tenant_id: str, plugin_ids: Sequence[str]) -> dict[str, int]:
+        """批量统计各插件占用额度的任务数（一次 `GROUP BY plugin_id`）。
+
+        Args:
+            tenant_id: 企业 ID。
+            plugin_ids: 插件标识列表。
+
+        Returns:
+            dict[str, int]: 插件标识 → 任务数（只含非零项，与逐条调用口径一致）。
+        """
+        wanted = list(dict.fromkeys(plugin_ids))
+        if not wanted:
+            return {}
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _TaskRepository(uow)
+            rows = await repo.fetch_all(
+                f"""
+                SELECT plugin_id, count(*) AS total FROM {TASK_TABLE}
+                 WHERE tenant_id = :tenant_id AND plugin_id = ANY(:plugin_ids)
+                   AND status = ANY(:statuses)
+                 GROUP BY plugin_id
+                """,
+                repo.params(plugin_ids=wanted, statuses=list(OCCUPYING_STATUSES)),
+            )
+        return {str(row["plugin_id"]): int(row["total"] or 0) for row in rows}
 
     async def count_queued(self, tenant_id: str, plugin_id: str) -> int:
         """统计排队任务数。

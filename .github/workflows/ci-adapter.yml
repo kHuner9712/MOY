@@ -209,6 +209,26 @@ jobs:
         run: python deploy/validate_pg_markers.py --self-test
 
       # ------------------------------------------------------------------
+      # 门禁 4c：分层依赖方向（G-37，审计 P1-3 ~ P1-7 / P2-9 ~ P2-11）
+      #
+      # `app/` 的二级包就是分层，§9.6 允许矩阵此前只是文档、没有机械校验：
+      # 「顺手 import 一下」就能把方向反过来，而**测试全绿**（审计实测 28 处）。
+      # 基线 `deploy/import_direction_baseline.txt` 登记的是「已评审、有消除计划」
+      # 的存量违规（WARN 不阻断）；基线外违规、或基线行已消失（stale）都判红。
+      # 脚本**没有** --update-baseline：只许减不许增。
+      # ------------------------------------------------------------------
+      - name: 分层依赖方向（P1-3~7）
+        working-directory: .
+        run: python deploy/validate_import_directions.py --baseline deploy/import_direction_baseline.txt
+
+      # 第二条是「门禁必须能红」的机械证明：自检内部已在临时目录验证
+      # 「基线外违规 exit 1 / stale exit 1 / 格式错误 exit 2 / 基线命中 WARN exit 0」，
+      # 全部符合才是 exit 0；直接跑即可，不要套 `-ne 1`（本脚本自检成功 = 0）。
+      - name: 依赖方向门禁自检（可红证明）
+        working-directory: .
+        run: python deploy/validate_import_directions.py --self-test
+
+      # ------------------------------------------------------------------
       # 门禁 4d：交付清单与磁盘/任务表一致（阶段四 D-28 / LED-043）
       #
       # 曾出现 9 个已建交付物被标"待建"。清单由脚本从任务表生成，`--check`

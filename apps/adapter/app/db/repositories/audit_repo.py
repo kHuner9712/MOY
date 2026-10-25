@@ -3,7 +3,9 @@
 
 `audit_log` 是**业务事实**（可供客户在「操作记录」页查询），与技术日志职责不同。
 本模块只负责**查询**：写入统一走 `business/audit_service.py`（唯一写入口，
-不提供更新/删除入口）。
+不提供更新/删除入口）。**本模块不 import `app.business`**（审计 P1-4）：
+条目类型与内存记录器已在 `db/repositories/audit_recorder.py`，动作常量在
+`core/audit_actions.py`，依赖方向全部落在矩阵内。
 
 U6 的多维筛选（架构文档 §4.4 要点）：
 
@@ -25,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final
 
-from app.business.audit_service import (
+from app.core.audit_actions import (
     ACTION_DEPT_CREATE,
     ACTION_DEPT_DELETE,
     ACTION_DEPT_UPDATE,
@@ -56,15 +58,13 @@ from app.business.audit_service import (
     ACTION_SUBSCRIPTION_UPDATE,
     ACTION_TENANT_STATUS,
     AUDIT_TABLE,
-    AuditEntry,
-    InMemoryAuditRecorder,
-    get_audit_recorder,
 )
 from app.core.config import Settings, get_settings
-from app.core.logging import get_logger
+from app.db.repositories.audit_recorder import (
+    AuditEntry,
+    get_in_memory_audit_recorder,
+)
 from app.db.session import tenant_scope
-
-logger = get_logger(__name__)
 
 #: 单次查询的最大时间跨度（天）：超过则由服务层返回 20001（架构文档 §4.4 要点）
 MAX_QUERY_SPAN_DAYS: Final[int] = 90
@@ -225,11 +225,11 @@ async def query_audit_logs(
     conf = settings or get_settings()
     if conf.uses_postgres:
         return await _query_postgres(conf, tenant_id, query)
-    recorder = get_audit_recorder(conf)
-    if not isinstance(recorder, InMemoryAuditRecorder):
-        # 生产后端必经 postgres 分支；走到这里说明配置被手工改坏，按空结果 fail-closed
-        logger.warning("audit_query_unexpected_recorder", type=type(recorder).__name__)
-        return AuditQueryResult(items=[], total=0)
+    # 内存后端：**直接取数据侧单例**（审计 P1-4）。此前是
+    # `get_audit_recorder(conf)` + `isinstance(..., InMemoryAuditRecorder)` 探测——
+    # 那要求本模块 import 业务层的记录器与工厂，并把「后端选择」重复实现一遍；
+    # 现在 PG / 内存的分支判据就是 `conf.uses_postgres` 一处，不再有探测式防御。
+    recorder = get_in_memory_audit_recorder(conf)
     entries = await recorder.entries_for(tenant_id)
     matched = [entry for entry in entries if _matches(entry, query)]
     return AuditQueryResult(

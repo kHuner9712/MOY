@@ -154,6 +154,12 @@ graph TB
 3. Dify 原生 API 的 URL、请求参数、响应结构、event 名称、错误码等一切形态特征，**禁止**向上层泄露。适配层是唯一的「形态防火墙」。
 4. 代码级防线：monorepo 中仅 `apps/adapter` 允许出现 Dify 客户端依赖与 Dify URL 配置；`apps/web`、插件 SDK 的依赖与代码中禁止出现 dify/milvus/litellm 等字样（CI 增加 import 扫描门禁，见 9.5）。
 5. 违反后果：若上层直连底座，底座替换（总方案 7.1 风险预案）时将导致大面积重构，与「替换底座仅改适配层，上层零改动」的核心设计目标直接冲突。
+6. **运维引导脚本豁免（P2-12）**：`apps/adapter/qa_probe/bootstrap_dify.py` 允许以 urllib 直连底座控制台 API（`/console/api/...`）。这是本条红线**唯一的、逐条登记的**豁免，边界如下，越界即失效：
+   - **部署期一次性工具**：供部署人员首次初始化时手工执行，**不进任何镜像**（`deploy/` 的 compose / Dockerfile 均不 COPY `qa_probe/`）、**不被 `app` 包 import**、**不被 pytest 收集**（`pyproject.toml` 的 ruff `extend-exclude` 与 pytest `testpaths` 均不含它）。
+   - **做的是控制台初始化，不是产品数据面**：建管理员、建应用、装模型提供方插件——这些能力**没有**对应的自研适配层接口，也不可能为客户开放（否则等于对客户开放底座管理面）。产品运行期的任何请求都必须走 `/api/v1/...`。
+   - **为什么收口进 `dify_client` 会更糟**：适配层的 `clients/dify_client.py` 是**产品运行时**的底座访问层，攻击面随每次请求存在，且其凭据来自租户配置。把控制台管理 API（管理员口令级权限）搬进去，等于把「管理员口令」这条路带进产品进程，反而扩大攻击面。
+   - **禁止**：承接产品流量、读取产品凭据、被 `app`/CI/镜像引用、扩写为常驻服务或多租户可调用的接口。
+   - **复核触发条件**：一旦该脚本被 CI、镜像或 `app` 包引用（`grep` 命中即失效），或出现第二条「底座直连」豁免需求，则本豁免自动作废，须回到本条红线的评审流程重新裁决。
 
 ---
 
@@ -1521,6 +1527,9 @@ graph LR
 - Lint（ruff / eslint）+ 类型检查（mypy / tsc）不过禁合并；
 - 适配层核心接口测试覆盖率 < 80% 禁合并；
 - **底座直连扫描**：`apps/web` 与未来插件 SDK 代码中出现 `dify/milvus/litellm/5001` 等字样即失败（1.4 红线的代码级防线）；
+- **底座直连扫描的范围说明**：`apps/adapter/qa_probe/bootstrap_dify.py` **不在**该扫描范围内，
+  理由与边界见 §1.4 第 6 条（P2-12 运维引导脚本豁免：部署期一次性、不进镜像、不被 `app` import、
+  不被 pytest 收集；被 CI/镜像引用即自动失效）。除此之外适配层其余代码一律在范围内；
 - SCA 协议扫描：PR 触发 + 每月全量，发现黑名单协议即失败；
 - **依赖清单同步门禁**：代码依赖的**包名 + 版本约束**必须同时出现在本文档第 8 章清单内，缺一即失败；
 - **镜像清单门禁（`deploy/images.lock`，Sprint 1）**：
@@ -1558,6 +1567,27 @@ graph LR
 
   > **门禁编号归属说明**：G-26 ~ G-31 的判据与命令以 `docs/architecture-phase3.md` §10 为唯一真源；
   > 本文档只登记"存在哪些门禁、命令是什么"，避免两处各自演化出不同判据。
+
+- **切片 1 新增门禁（G-37：分层依赖方向，审计 P1-3 ~ P1-7 / P2-9 ~ P2-11）**：
+
+  | 门禁 | 判据 | 命令 |
+  | --- | --- | --- |
+  | **G-37 分层依赖方向** | `app/` 的 12 个二级包按**允许矩阵**判定 import 方向（同层自引用恒允许，**违规 = 矩阵补集**，rule_id 形如 `R-DB-BIZ`）；三分类：模块级 / 函数体延迟导入 / `if TYPE_CHECKING:`（只统计不判红）；相对导入与 `__init__` 归一化后判定 | `python deploy/validate_import_directions.py --baseline deploy/import_direction_baseline.txt` |
+  | **G-37 可红证明** | `--self-test` 在临时目录合成样本树：模块级检出 / 延迟导入检出（含函数内嵌套）/ `for`-`while`-`match` 分支体内检出（形态必须 `module`，白名单式递归漏检过的四类语句在此钉住）/ `services→business` 放行 / 相对导入检出 / `TYPE_CHECKING` 不判红 / 基线命中 WARN exit 0 / 基线外 exit 1 / stale exit 1 / 格式错误与 `rule_id` 不符 exit 2 / **app-root 不存在-非目录-空目录-文件数低于下限 exit 2（fail-open 护栏）** | `python deploy/validate_import_directions.py --self-test` |
+
+  > **基线 `deploy/import_direction_baseline.txt` 只许减不许增**：脚本**不提供**
+  > `--update-baseline`，新增豁免必须走评审并写明审计编号与消除计划；违规修好后必须
+  > **删掉**对应基线行，否则报 `[FAIL] stale` 并 exit 1（防止基线长期挂账变成免死金牌）。
+  > 基线格式：`<rule_id> <file> <imported_module> <mode> -- <审计编号> <消除计划>`，全字段精确匹配、禁通配。
+  > **fail-open 护栏**：扫描前校验 `app-root` 存在且 `.py` 文件数 ≥ `MIN_SCANNED_FILES`（默认 100，实测 152），
+  > 不满足即 exit 2——否则目录被移动时门禁会打印「扫描 0 个文件」并变绿。`--min-files` 仅供 `--self-test` 下调用，
+  > **CI 不得传**。
+  > **检出范围**：除函数体（`deferred`）与 `if TYPE_CHECKING:`（只统计）外，**一切位置**（模块级、`class` 体、
+  > `if`/`try`/`except`/`except*`/`with`/`for`/`while`/`match` 体内）都按 `module` 判定——通用递归，无语句白名单可漏。
+  > **动态导入盲区**：`importlib.import_module("app.business.x")` 是运行期字符串，AST 判定覆盖不到；
+  > 脚本对含此类调用的文件做文本兜底（出现 `"app.<层>.` 前缀即 `[WARN]`，不判红），仍需 code review 收口。
+  > **编号说明**：本门禁原计划登记为 G-36，但 G-36 已被 `deploy/validate_config_names.py` 的
+  > 「前端构建参数同名 ARG」占用，故取 **G-37**。
 
 ---
 

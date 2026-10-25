@@ -16,6 +16,7 @@ import asyncio
 import pytest
 
 from app.business.task_service import TaskService
+from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
 from app.db.repositories.artifact_repo import InMemoryArtifactStore
 from app.db.repositories.task_repo import InMemoryTaskStore
@@ -88,6 +89,36 @@ def _first_confirm_seq(manifest: object) -> int:
         if spec.confirm is not None:
             return int(spec.seq)
     return 0
+
+
+def test_engine_without_gateway_factory_raises_config_error() -> None:
+    """未注入 `engine` 且未注入 `gateway_factory` → 构造即抛 30004（审计 P1-6）。
+
+    为什么必须有一条用例：P1-6 把「谁造动作门面」从业务层搬到了组合根
+    （`api/v1/agent.py::_action_gateway`）。搬完之后业务层**不再知道**门面从哪来，
+    于是「组合根忘了注入」不再是 ImportError（那种会当场炸），而是运行期拿到
+    `None`——如果不显式报错，就会退化成
+    `TypeError: 'NoneType' object is not callable`，现场完全看不出是**装配遗漏**。
+
+    本用例钉住三件事：① 构造期就失败（不拖到第一个任务）；② 码必须是
+    `30004 CONFIG_ERROR`（不是 500 内部错误、不是 20001）；③ `internal_detail`
+    指出该注入什么，否则排障只能靠猜。
+    """
+    settings = Settings(
+        env="test",
+        mock_mode=True,
+        jwt_secret="task-helper-test-secret",
+        plugin_retry_backoff_ms=0,
+    )
+
+    with pytest.raises(ApiError) as excinfo:
+        TaskService(settings)
+
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+    assert int(excinfo.value.code) == 30004
+    assert excinfo.value.http_status == 500
+    detail = excinfo.value.internal_detail or ""
+    assert "gateway_factory" in detail, "内部诊断必须指出该注入什么（组合根职责）"
 
 
 def test_confirm_step_pauses_task_and_does_not_auto_advance() -> None:

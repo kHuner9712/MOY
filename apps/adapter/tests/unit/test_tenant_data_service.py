@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -55,6 +56,7 @@ from app.business.tenant_data_service import (
 from app.core.artifact_token import parse_token
 from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
+from app.core.tenant_data import EXPORT_SCOPES as CORE_EXPORT_SCOPES
 from app.db.repositories.artifact_repo import InMemoryArtifactStore
 from tests.unit.fake_tenant_scope import FakeDatabase, install_tenant_scope
 
@@ -109,6 +111,28 @@ def _privilege_error() -> BaseException:
         pgcode = "42501"
 
     return InsufficientPrivilegeError("permission denied for table audit_log")
+
+
+# ===========================================================================
+# 常量口径（审计 P1-5 下沉后的防腐断言）
+# ===========================================================================
+def test_export_file_names_match_export_scopes() -> None:
+    """`EXPORT_FILE_NAMES` 与 `EXPORT_SCOPES` 必须同集合、且与 core 同源。
+
+    为什么把它们钉在一起：`EXPORT_SCOPES`（可导出的类别）已下沉
+    `app.core.tenant_data`（DTO 与前端共用的**契约词汇**），而
+    `EXPORT_FILE_NAMES`（类别 → zip 内文件名）**故意留在业务层**，因为它是
+    打包的**实现细节**。两者一旦漂移，请求里合法的 scope 会在打包时
+    `KeyError`，或多出一个永远导不出的类别——这类缺陷只在真正导出时才炸。
+
+    同时钉住 re-export 的**同一性**：业务层与服务层读到的必须是**同一个对象**，
+    否则说明有人在业务层又复制了一份常量，`schemas` 与 `service` 会各读一份。
+    """
+    assert set(EXPORT_FILE_NAMES) == set(EXPORT_SCOPES)
+    assert EXPORT_SCOPES is CORE_EXPORT_SCOPES
+    assert tenant_data_service.EXPORT_SCOPES is CORE_EXPORT_SCOPES
+    # 顺序也是契约：请求缺省时按固定顺序输出，清单顺序便于人工核对。
+    assert tuple(EXPORT_SCOPES) == tuple(EXPORT_FILE_NAMES)
 
 
 # ===========================================================================
@@ -420,6 +444,60 @@ class TestExport:
         assert pages[1]["cursor_id"] == f"id_{PAGE_SIZE - 1:05d}"
         assert pages[1]["cursor_ts"] > pages[0]["cursor_ts"]
         assert pages[1]["page_size"] == PAGE_SIZE
+
+    async def test_zip_writes_go_through_thread_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """zip 写入必须经 `asyncio.to_thread`（审计 P2-5：不许卡事件循环）。
+
+        为什么这条用例不可省：`ZipFile.open()` 句柄上的 `write()` 是**同步阻塞**
+        调用（deflate 压缩 + 落盘）。写在 `async for` 循环体里，20 万行导出期间
+        事件循环整体停摆，同进程的健康检查/其它请求一起超时——**功能测试全绿**，
+        故障只在线上并发时暴露。
+
+        本用例只钉「写入路径经过了线程池」这一机械事实（不验证真实并发性能）：
+        把 `asyncio.to_thread` 换成同步直调的同签名间谍，断言
+
+        1. 被调用次数 == `ceil(行数 / _ZIP_CHUNK_ROWS)`（攒批粒度生效）；
+        2. 每批不超过 `_ZIP_CHUNK_ROWS` 行；
+        3. zip 内容与清单 sha256 仍与实际字节一致（换成异步写不能改变产物）。
+        """
+        database = install_tenant_scope(monkeypatch, tenant_data_service, FakeDatabase())
+        _seed_tenant(database)
+        total_rows = 1200  # > 2 × _ZIP_CHUNK_ROWS，能覆盖「整批 + 尾批」两条路径
+        source = next(item for item in EXPORT_SOURCES if item.scope == "usage")
+        database.seed(source.table, [_row(source, index) for index in range(total_rows)])
+
+        batches: list[int] = []
+        real_to_thread = asyncio.to_thread
+
+        async def spy(func: Any, *args: Any, **kwargs: Any) -> Any:
+            """记录每批字节数后**同步**执行（本用例不验证并发，只验证路径）。"""
+            batches.append(len(args[0]) if args else 0)
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", spy)
+        try:
+            store = InMemoryArtifactStore()
+            service = TenantDataService(_settings(), artifacts=store)
+            result = await service.export(TENANT, ["usage"], actor_id=ACTOR)
+        finally:
+            monkeypatch.setattr(asyncio, "to_thread", real_to_thread)
+
+        assert result.rows["usage"] == total_rows
+        # 攒批粒度是本用例的被测事实，必须读实现里的那个常量（SLF001 显式豁免）。
+        chunk = tenant_data_service._ZIP_CHUNK_ROWS  # noqa: SLF001 - 断言攒批粒度
+        assert chunk > 0
+        assert len(batches) == -(-total_rows // chunk), "写入批次应与攒批粒度一致"
+        assert all(size > 0 for size in batches), batches
+
+        artifact = await store.get(TENANT, result.export_id)
+        assert artifact is not None
+        archive = zipfile.ZipFile(io.BytesIO(artifact.content))
+        raw = archive.read(EXPORT_FILE_NAMES["usage"])
+        assert len([line for line in raw.decode("utf-8").splitlines() if line]) == total_rows
+        manifest = json.loads(archive.read(MANIFEST_NAME))
+        assert manifest["files"][EXPORT_FILE_NAMES["usage"]]["sha256"] == (
+            hashlib.sha256(raw).hexdigest()
+        )
 
     async def test_export_over_limit_is_business_error_without_artifact(
         self, monkeypatch: pytest.MonkeyPatch

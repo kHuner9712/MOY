@@ -251,6 +251,24 @@ class PluginStore(Protocol):
         """读取目录行（含下架行，由服务层判 `16002`）。"""
         ...
 
+    async def catalogs_of(self, plugin_ids: Sequence[str]) -> dict[str, CatalogRecord]:
+        """批量读取目录行（**含下架行**；缺失的 id 不进字典）。
+
+        为什么要批量版（审计 P2-6）：已安装列表按插件逐条 `get_catalog()`，
+        N 个插件就是 N 次查询（N+1）。批量版一次 `IN (...) / ANY(...)` 取回，
+        缺失与下架两种情形由「字典里有没有这个键」「`status` 是什么」分别表达，
+        语义与逐条调用完全一致。
+        """
+        ...
+
+    async def count_catalog_by_category(self) -> dict[str, int]:
+        """按分类统计**可售**目录条数（口径同 `list_catalog()` 无参调用）。
+
+        为什么不在服务层用 `list_catalog()` 数（审计 P2-6）：那会把整张目录
+        （含 description 正文）读进内存只为计数。`GROUP BY` 只回 6 行。
+        """
+        ...
+
     async def set_catalog_rating(
         self, plugin_id: str, *, rating_avg: float, rating_count: int
     ) -> None:
@@ -468,6 +486,41 @@ class InMemoryPluginStore:
         async with self._lock:
             self._seed()
             return self._catalog.get(plugin_id)
+
+    async def catalogs_of(self, plugin_ids: Sequence[str]) -> dict[str, CatalogRecord]:
+        """批量读取目录行（含下架行；缺失的 id 不进字典）。
+
+        Args:
+            plugin_ids: 插件标识列表（可重复，内部去重）。
+
+        Returns:
+            dict[str, CatalogRecord]: 插件标识 → 目录行。
+        """
+        wanted = list(dict.fromkeys(plugin_ids))
+        if not wanted:
+            return {}
+        async with self._lock:
+            self._seed()
+            return {
+                plugin_id: self._catalog[plugin_id]
+                for plugin_id in wanted
+                if plugin_id in self._catalog
+            }
+
+    async def count_catalog_by_category(self) -> dict[str, int]:
+        """按分类统计可售目录条数（口径同 `list_catalog()` 无参调用）。
+
+        Returns:
+            dict[str, int]: 分类 → 条数（只含非零分类，缺省由服务层零填充）。
+        """
+        async with self._lock:
+            self._seed()
+            counts: dict[str, int] = {}
+            for record in self._catalog.values():
+                if not record.installable:
+                    continue
+                counts[record.category] = counts.get(record.category, 0) + 1
+            return counts
 
     async def set_catalog_rating(
         self, plugin_id: str, *, rating_avg: float, rating_count: int
@@ -899,6 +952,57 @@ class PostgresPluginStore:
                 parameters,
             )
         return [_to_catalog(row) for row in rows]
+
+    async def catalogs_of(self, plugin_ids: Sequence[str]) -> dict[str, CatalogRecord]:
+        """批量读取目录行（含下架行；缺失的 id 不进字典）。
+
+        一次 `= ANY(:plugin_ids)` 取回（审计 P2-6）：N 个插件 1 次查询，而不是 N 次。
+
+        Args:
+            plugin_ids: 插件标识列表（可重复，内部去重）。
+
+        Returns:
+            dict[str, CatalogRecord]: 插件标识 → 目录行。
+        """
+        wanted = list(dict.fromkeys(plugin_ids))
+        if not wanted:
+            return {}
+        async with platform_scope(self._settings, read_only=True) as uow:
+            repo = _CatalogRepository(uow)
+            rows = await repo.fetch_all(
+                f"""
+                SELECT plugin_id, name, summary, description, category, icon_key, latest_version,
+                       rating_avg, rating_count, install_count, status, sort_order
+                FROM {CATALOG_TABLE}
+                WHERE tenant_id = :platform AND plugin_id = ANY(:plugin_ids)
+                """,
+                {
+                    "tenant_id": PLATFORM_TENANT,
+                    "platform": PLATFORM_TENANT,
+                    "plugin_ids": wanted,
+                },
+            )
+        records = [_to_catalog(row) for row in rows]
+        return {record.plugin_id: record for record in records}
+
+    async def count_catalog_by_category(self) -> dict[str, int]:
+        """按分类统计可售目录条数（`GROUP BY category`，口径同 `list_catalog()`）。
+
+        Returns:
+            dict[str, int]: 分类 → 条数（只含非零分类，缺省由服务层零填充）。
+        """
+        async with platform_scope(self._settings, read_only=True) as uow:
+            repo = _CatalogRepository(uow)
+            rows = await repo.fetch_all(
+                f"""
+                SELECT category, count(*) AS total
+                FROM {CATALOG_TABLE}
+                WHERE tenant_id = :platform AND status = 'available'
+                GROUP BY category
+                """,
+                {"tenant_id": PLATFORM_TENANT, "platform": PLATFORM_TENANT},
+            )
+        return {str(row["category"] or ""): int(row["total"] or 0) for row in rows}
 
     async def get_catalog(self, plugin_id: str) -> CatalogRecord | None:
         """读取目录行（含下架行）。

@@ -23,7 +23,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.business.tenant_data_service import EXPORT_SCOPES
+# 审计 P1-5：导出类别是**契约词汇表**（请求模型 / 服务实现 / 前端共用），
+# 归 `app.core.tenant_data`。此前从 `app.business.tenant_data_service` 取，
+# 等于让 DTO 反向依赖服务实现——服务层改打包细节就能震到序列化契约。
+from app.core.tenant_data import EXPORT_SCOPES
 
 
 class TenantDataExportRequest(BaseModel):

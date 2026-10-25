@@ -294,6 +294,36 @@ async def test_count_occupying_includes_waiting_confirm(task_store: PostgresTask
     assert await task_store.count_queued(TENANT_ID, PLUGIN_ID) == 1
 
 
+async def test_counts_occupying_matches_per_plugin_counts(
+    task_store: PostgresTaskStore,
+) -> None:
+    """批量占用计数 == 逐条计数，且无占用任务的插件不进字典（审计 P2-6）。
+
+    为什么单立一条：已安装列表从「每个插件一次 `count_occupying()`」改成
+    「一次 `GROUP BY plugin_id`」，批量版漏掉 `waiting_confirm`（少 1）或把
+    `queued` 也算进来（多 1），症状都是前端显示的在跑任务数与实际不符，
+    而逐条版用例仍然全绿。
+    """
+    this_plugin = PLUGIN_ID
+    other_plugin = "plg_b21c_other"
+    await task_store.create_task(_task_record(status="running"))
+    await task_store.create_task(_task_record(status="waiting_confirm"))
+    await task_store.create_task(_task_record(status="completed"))
+    await task_store.create_task(_task_record(status="running", plugin_id=other_plugin))
+
+    counts = await task_store.counts_occupying(
+        TENANT_ID, [this_plugin, other_plugin, "plg_b21c_nosuch"]
+    )
+
+    assert counts == {this_plugin: 2, other_plugin: 1}
+    assert counts.get("plg_b21c_nosuch", 0) == 0, "无占用任务的插件不接受字典项"
+    for plugin_id in (this_plugin, other_plugin, "plg_b21c_nosuch"):
+        assert counts.get(plugin_id, 0) == await task_store.count_occupying(TENANT_ID, plugin_id)
+    assert await task_store.counts_occupying(TENANT_ID, []) == {}
+    # 跨租户不得计入（租户隔离红线）
+    assert await task_store.counts_occupying(OTHER_TENANT, [this_plugin]) == {}
+
+
 async def test_next_queued_is_none_when_queue_empty(task_store: PostgresTaskStore) -> None:
     """队列空时返回 None（不能抛异常，否则"额度释放"路径会在空队列上炸）。"""
     assert await task_store.next_queued(TENANT_ID, PLUGIN_ID) is None

@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -242,6 +242,41 @@ def test_schedule_rejects_past_time_and_duplicates() -> None:
     assert "第 1 行计划时间（2026-10-01 10:00）已经过去了" in joined
     assert "第 2 行与第 3 行" in joined
     assert scan.checked_rows == 3
+
+
+def test_schedule_handles_aware_now_and_judges_in_beijing_time() -> None:
+    """参照时间带时区时不得 `TypeError`，且排期按**北京时间**（+08）判定（审计 P2-4）。
+
+    修之前两个坑：
+
+    1. `scan_schedule(rows, now=datetime.now(UTC))` 直接
+       `TypeError: can't compare offset-naive and offset-aware datetimes`——
+       解析出的计划时间是 naive，参照时间是 aware；
+    2. 即使不抛，容器默认 `TZ=UTC` 时「2026-11-02 10:00」被当成 UTC 10:00
+       （北京时间 18:00），过去 8 小时的排期会被判成未来。
+
+    本用例用「北京时间 10:00 == UTC 02:00」这组等价时刻锁口径：09:59 判过去、
+    10:00 恰好不早于、10:01 判未来。
+    """
+    # 北京 2026-11-02 10:00 == UTC 2026-11-02 02:00
+    now = datetime(2026, 11, 2, 2, 0, tzinfo=UTC)
+    rows = [
+        {"平台": "公众号", "计划时间": "2026-11-02 09:59"},
+        {"平台": "邮件", "计划时间": "2026-11-02 10:00"},
+        {"平台": "短信", "计划时间": "2026-11-02 10:01"},
+    ]
+    scan = scan_schedule(rows, now=now)
+    assert scan.checked_rows == 3
+    joined = "；".join(scan.problems)
+    assert "第 1 行计划时间（2026-11-02 09:59）已经过去了" in joined
+    # 10:00 是「现在」，不算过去；10:01 在未来：两行都不该出现在问题里
+    assert "第 2 行" not in joined
+    assert "第 3 行" not in joined
+
+    # 真实调用形态（不注入 now）也不得抛 TypeError：缺省参照是 aware 的 UTC 现在
+    far_future = scan_schedule([{"平台": "公众号", "计划时间": "2999-01-01 09:00"}])
+    assert far_future.clean is True
+    assert far_future.checked_rows == 1
 
 
 def test_schedule_ignores_unrecognized_time_format() -> None:

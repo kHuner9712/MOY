@@ -10,9 +10,14 @@
 | `role_permission` | 角色 → 权限点 |
 | `member_role` | 成员 → 角色（一企业一角色） |
 
-**权限点矩阵的唯一代码实现**在 `business/policy_service.py`
-（`BUILTIN_ROLE_PERMISSIONS`）：判权与角色播种共用同一份常量，
-避免「目录里有一套、判权用另一套」的双口径漂移。
+**权限点矩阵的唯一代码实现**在 `app/core/builtin_roles.py`
+（`BUILTIN_ROLE_PERMISSIONS`）：判权（`core/security.py`）、角色播种（本模块）
+与对象级判定（`business/policy_service.py`）共用同一份常量，避免
+「目录里有一套、判权用另一套」的双口径漂移。
+
+> 该常量原在 `business/policy_service.py`，本模块为拿它而**延迟 import 业务层**
+> （审计 P1-4：`db → business` 方向倒挂）。切片 1 下沉到 `core` 后改为顶部导入，
+> 方向变成 `db → core`（矩阵内），延迟导入也随之删除。
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import asyncio
 from dataclasses import dataclass, field, replace
 from typing import Final, Protocol
 
+from app.core.builtin_roles import BUILTIN_ROLE_KEYS, BUILTIN_ROLE_PERMISSIONS
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.db.repositories.base import BaseRepository
@@ -310,8 +316,6 @@ class InMemoryRoleStore:
         Returns:
             list[RoleRecord]: 内置角色列表。
         """
-        from app.business.policy_service import BUILTIN_ROLE_KEYS, BUILTIN_ROLE_PERMISSIONS
-
         created: list[RoleRecord] = []
         async with self._lock:
             for role_key in BUILTIN_ROLE_KEYS:
@@ -547,8 +551,6 @@ class PostgresRoleStore:
         Returns:
             list[RoleRecord]: 内置角色列表。
         """
-        from app.business.policy_service import BUILTIN_ROLE_KEYS, BUILTIN_ROLE_PERMISSIONS
-
         async with tenant_scope(tenant_id, settings=self._settings) as uow:
             role_repo = _RoleTableRepository(uow)
             permission_repo = _RolePermissionTableRepository(uow)

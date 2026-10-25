@@ -15,21 +15,81 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any, Final, Protocol
+from datetime import datetime
+from typing import Any, Final
 
+from app.core.audit_actions import (
+    ACTION_DEPT_CREATE,
+    ACTION_DEPT_DELETE,
+    ACTION_DEPT_UPDATE,
+    ACTION_DISPLAY_NAMES,
+    ACTION_DOC_DELETE,
+    ACTION_DOC_UPLOAD,
+    ACTION_GRANT_CREATE,
+    ACTION_GRANT_REVOKE,
+    ACTION_KB_CREATE,
+    ACTION_KB_DELETE,
+    ACTION_KB_UPDATE,
+    ACTION_MEMBER_BATCH,
+    ACTION_MEMBER_REMOVE,
+    ACTION_MEMBER_UPDATE,
+    ACTION_MEMORY_DELETE,
+    ACTION_MEMORY_DELETE_ALL,
+    ACTION_MEMORY_DELETE_CATEGORY,
+    ACTION_MEMORY_SETTINGS,
+    ACTION_ORDER_CONFIRMED,
+    ACTION_ORDER_CREATED,
+    ACTION_ORDER_PAID,
+    ACTION_PAYMENT_CALLBACK_REJECTED,
+    ACTION_PERMISSION_DENIED,
+    ACTION_PLUGIN_CAPABILITY_GRANT,
+    ACTION_PLUGIN_CAPABILITY_POLICY,
+    ACTION_PLUGIN_INSTALL,
+    ACTION_PLUGIN_STATE_CHANGE,
+    ACTION_PLUGIN_UNINSTALL,
+    ACTION_PLUGIN_VERSION_CHANGE,
+    ACTION_RECONCILE_MISMATCH,
+    ACTION_ROLE_DELETE,
+    ACTION_SETTINGS_UPDATE,
+    ACTION_SUBSCRIPTION_UPDATE,
+    ACTION_TASK_FINISH,
+    ACTION_TASK_RETRY,
+    ACTION_TASK_START,
+    ACTION_TENANT_DATA_DELETE,
+    ACTION_TENANT_DATA_EXPORT,
+    ACTION_TENANT_STATUS,
+    AUDIT_TABLE,
+)
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.db.repositories.audit_recorder import (
+    AuditEntry,
+    AuditRecorder,
+    InMemoryAuditRecorder,
+    get_in_memory_audit_recorder,
+    now_iso,
+    reset_in_memory_audit_recorder,
+    with_defaults,
+)
 from app.db.session import platform_scope, tenant_scope
 from app.db.tenant import PLATFORM_TENANT
 
 logger = get_logger(__name__)
 
-#: 审计表名
-AUDIT_TABLE: Final[str] = "audit_log"
+# ===========================================================================
+# 常量（审计 P1-4：动作编码 / 展示名 / 表名已下沉 `app.core.audit_actions`）
+#
+# 为什么下沉：这些常量是**跨层共享的词汇表**——业务层写审计、仓储层
+# （`db/repositories/audit_repo.py`）查审计与分组、前端展示动作名，全都用它们。
+# 留在业务层，就会让仓储层为了拿一个常量而**反向依赖业务层**（P1-4 实测的
+# `app.business` import 正是这一处）；动作清单改一个字，仓储跟着重新编译。
+#
+# 为什么在业务层继续 re-export：`audit_service` 是「审计」这件事的业务入口，
+# 49 处调用方（含测试）都按 `from app.business.audit_service import ACTION_*`
+# 取值。这里原样 re-export，等于把 import 路径的兼容面钉在业务层，
+# 让常量搬家**不触碰任何调用方**（零改动下沉）。
+# ===========================================================================
 
 #: 审计写入 SQL（租户作用域与平台作用域共用，避免两份定义漂移）
 _AUDIT_INSERT_SQL: Final[str] = f"""
@@ -52,27 +112,6 @@ RESOURCE_DOCUMENT: Final[str] = "document"
 #: 资源类型：知识库授权（B05）
 RESOURCE_GRANT: Final[str] = "knowledge_base_grant"
 
-#: 操作：创建知识库
-ACTION_KB_CREATE: Final[str] = "knowledge_base.create"
-
-#: 操作：更新知识库
-ACTION_KB_UPDATE: Final[str] = "knowledge_base.update"
-
-#: 操作：删除知识库
-ACTION_KB_DELETE: Final[str] = "knowledge_base.delete"
-
-#: 操作：新增成员授权（B05，PRD P2-KB-03 验收 6）
-ACTION_GRANT_CREATE: Final[str] = "knowledge_base.grant_create"
-
-#: 操作：撤销成员授权（B05）
-ACTION_GRANT_REVOKE: Final[str] = "knowledge_base.grant_revoke"
-
-#: 操作：上传文档
-ACTION_DOC_UPLOAD: Final[str] = "document.upload"
-
-#: 操作：删除文档
-ACTION_DOC_DELETE: Final[str] = "document.delete"
-
 #: 资源类型：部门（B08）
 RESOURCE_DEPARTMENT: Final[str] = "department"
 
@@ -81,30 +120,6 @@ RESOURCE_MEMBER: Final[str] = "member"
 
 #: 资源类型：角色（B08）
 RESOURCE_ROLE: Final[str] = "role"
-
-#: 操作：新建部门（B08）
-ACTION_DEPT_CREATE: Final[str] = "department.create"
-
-#: 操作：修改/移动部门（B08）
-ACTION_DEPT_UPDATE: Final[str] = "department.update"
-
-#: 操作：删除部门（B08）
-ACTION_DEPT_DELETE: Final[str] = "department.delete"
-
-#: 操作：变更成员角色/部门/状态（B08）
-ACTION_MEMBER_UPDATE: Final[str] = "member.update"
-
-#: 操作：移出成员（B08）
-ACTION_MEMBER_REMOVE: Final[str] = "member.remove"
-
-#: 操作：批量变更成员（B08）
-ACTION_MEMBER_BATCH: Final[str] = "member.batch_update"
-
-#: 操作：删除角色（B08）
-ACTION_ROLE_DELETE: Final[str] = "role.delete"
-
-#: 操作：计量对账偏差（B07，G-23）
-ACTION_RECONCILE_MISMATCH: Final[str] = "billing.reconcile_mismatch"
 
 #: 资源类型：订阅（B09）
 RESOURCE_SUBSCRIPTION: Final[str] = "subscription"
@@ -118,244 +133,26 @@ RESOURCE_TENANT: Final[str] = "tenant"
 #: 资源类型：系统配置（B10 运营后台）
 RESOURCE_SETTINGS: Final[str] = "ops_settings"
 
-#: 操作：开通/变更套餐与席位（B09，BL3/BL4）
-ACTION_SUBSCRIPTION_UPDATE: Final[str] = "billing.subscription_update"
-
-#: 操作：创建订单（B09，BL6）
-ACTION_ORDER_CREATED: Final[str] = "billing.order_created"
-
-#: 操作：订单支付成功（B09，BL10 回调 / OPS5 核销）
-ACTION_ORDER_PAID: Final[str] = "billing.order_paid"
-
-#: 操作：启用/停用企业（B10，OPS3）
-ACTION_TENANT_STATUS: Final[str] = "ops.tenant_status"
-
-#: 操作：订单核销（B10，OPS5）
-ACTION_ORDER_CONFIRMED: Final[str] = "ops.order_confirm"
-
-#: 操作：修改系统配置（B10，OPS8）
-ACTION_SETTINGS_UPDATE: Final[str] = "ops.settings_update"
-
 #: 资源类型：支付回调（B09 安全加固）
 RESOURCE_PAYMENT_CALLBACK: Final[str] = "payment_callback"
 
 #: 资源类型：插件（阶段三 B17）
 RESOURCE_PLUGIN: Final[str] = "plugin"
 
-#: 操作：添加插件（PL5，阶段三 B17）
-ACTION_PLUGIN_INSTALL: Final[str] = "plugin.install"
 
-#: 操作：变更企业能力开关（PL13，阶段三 B17）
-ACTION_PLUGIN_CAPABILITY_POLICY: Final[str] = "plugin.capability_policy"
-
-#: 操作：启用或停用插件（PL6，阶段三 B18）
-ACTION_PLUGIN_STATE_CHANGE: Final[str] = "plugin.state_change"
-
-#: 操作：移除插件（PL7，阶段三 B18）
-ACTION_PLUGIN_UNINSTALL: Final[str] = "plugin.uninstall"
-
-#: 操作：更新或恢复插件版本（PL8 / PL9，阶段三 B18）
-ACTION_PLUGIN_VERSION_CHANGE: Final[str] = "plugin.version_change"
-
-#: 操作：变更插件能力授权（阶段三 B18）
-ACTION_PLUGIN_CAPABILITY_GRANT: Final[str] = "plugin.capability_grant"
-
-#: 任务域动作（阶段三 B19，架构文档 §8.2）
-ACTION_TASK_START: Final[str] = "task.start"
-ACTION_TASK_FINISH: Final[str] = "task.finish"
-ACTION_TASK_RETRY: Final[str] = "task.retry"
-
-# 记忆域（阶段四 T4-03.5，PRD §4.8）：只记**动作与条数**，绝不记正文
-ACTION_MEMORY_DELETE: Final[str] = "memory.delete"
-ACTION_MEMORY_DELETE_CATEGORY: Final[str] = "memory.delete_category"
-ACTION_MEMORY_DELETE_ALL: Final[str] = "memory.delete_all"
-ACTION_MEMORY_SETTINGS: Final[str] = "memory.settings_update"
-
-# 安全域（阶段四 T4-04.5）：权限被拒也要留痕（拒绝本身已生效，审计失败不影响）
-ACTION_PERMISSION_DENIED: Final[str] = "security.permission_denied"
-
-#: 数据权利域（阶段四 T4-05.3，PRD P4-05 ③④）
-#:
-#: 导出/删除是**企业管理员代表企业行使数据权利**，动作必须留痕：客户退租时
-#: "谁在什么时候导出过、删过"要和删除证明一起成为可核查的事实。
-#: `change_summary` 只放条数与范围，**不放任何正文**。
-ACTION_TENANT_DATA_EXPORT: Final[str] = "tenant_data.export"
-ACTION_TENANT_DATA_DELETE: Final[str] = "tenant_data.delete"
-
-#: 操作：支付回调被拒绝（签名/金额/订单状态校验未通过，B09 安全加固）
-#:
-#: 拒绝事件**必须**进审计：`payment_callback_log` 只记「已接受并处理」的回调，
-#: 若把未验签的载荷写进去，攻击者只要带上真实 `transaction_id` 就能占掉幂等键，
-#: 让真实支付永远无法开通（P0-07）。因此拒绝事件只有 `audit_log` 一份归属，
-#: 且未验签的渠道流水号**不进入**幂等键空间。
-ACTION_PAYMENT_CALLBACK_REJECTED: Final[str] = "billing.payment_callback_rejected"
-
-#: 操作 → 用户可见名称（写入 `action_display_name`，供操作记录页直接展示）
-ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
-    ACTION_KB_CREATE: "创建知识库",
-    ACTION_KB_UPDATE: "修改知识库设置",
-    ACTION_KB_DELETE: "删除知识库",
-    ACTION_GRANT_CREATE: "添加成员授权",
-    ACTION_GRANT_REVOKE: "撤销成员授权",
-    ACTION_DOC_UPLOAD: "上传文档",
-    ACTION_DOC_DELETE: "删除文档",
-    ACTION_DEPT_CREATE: "新建部门",
-    ACTION_DEPT_UPDATE: "修改部门",
-    ACTION_DEPT_DELETE: "删除部门",
-    ACTION_MEMBER_UPDATE: "变更成员角色与部门",
-    ACTION_MEMBER_REMOVE: "移出成员",
-    ACTION_MEMBER_BATCH: "批量变更成员",
-    ACTION_ROLE_DELETE: "删除角色",
-    ACTION_RECONCILE_MISMATCH: "计量对账偏差",
-    ACTION_SUBSCRIPTION_UPDATE: "变更套餐与席位",
-    ACTION_ORDER_CREATED: "创建订单",
-    ACTION_ORDER_PAID: "订单支付完成",
-    ACTION_TENANT_STATUS: "启用或停用企业",
-    ACTION_ORDER_CONFIRMED: "订单核销",
-    ACTION_SETTINGS_UPDATE: "修改系统配置",
-    ACTION_PAYMENT_CALLBACK_REJECTED: "支付回调被拒绝",
-    ACTION_PLUGIN_INSTALL: "添加插件",
-    ACTION_PLUGIN_CAPABILITY_POLICY: "变更企业能力开关",
-    ACTION_PLUGIN_STATE_CHANGE: "启用或停用插件",
-    ACTION_PLUGIN_UNINSTALL: "移除插件",
-    ACTION_PLUGIN_VERSION_CHANGE: "更新或恢复插件版本",
-    ACTION_PLUGIN_CAPABILITY_GRANT: "变更插件能力授权",
-    ACTION_TASK_START: "发起自动化任务",
-    ACTION_TASK_FINISH: "自动化任务结束",
-    ACTION_TASK_RETRY: "重试自动化任务",
-    ACTION_MEMORY_DELETE: "删除一条记忆",
-    ACTION_MEMORY_DELETE_CATEGORY: "按类别删除记忆",
-    ACTION_MEMORY_DELETE_ALL: "清空记忆",
-    ACTION_MEMORY_SETTINGS: "修改记忆设置",
-    ACTION_PERMISSION_DENIED: "权限校验未通过",
-    ACTION_TENANT_DATA_EXPORT: "导出企业数据",
-    ACTION_TENANT_DATA_DELETE: "删除企业数据",
-}
-
-
-def _now_iso() -> str:
-    """当前 UTC 时间（ISO 8601）。
-
-    Returns:
-        str: 形如 `2026-11-02T09:00:00Z`。
-    """
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
-@dataclass(frozen=True, slots=True)
-class AuditEntry:
-    """操作记录条目。
-
-    Attributes:
-        tenant_id: 租户 ID。
-        actor_id: 操作人用户 ID。
-        action: 操作编码（`{域}_{对象}_{动作}`）。
-        resource_type: 资源类型。
-        resource_id: 资源 ID。
-        result: 操作结果（`success` / `failure`）。
-        actor_role: 操作人当时的角色（首个角色，便于筛选）。
-        action_display_name: 操作的用户可见名称。
-        change_summary: 变更摘要（只放业务字段，禁止放密钥/正文）。
-        occurred_at: 发生时间（ISO 8601）。
-        trace_id: 链路追踪 ID。
-    """
-
-    tenant_id: str
-    actor_id: str
-    action: str
-    resource_type: str
-    resource_id: str = ""
-    result: str = "success"
-    actor_role: str = ""
-    action_display_name: str = ""
-    change_summary: dict[str, Any] = field(default_factory=dict)
-    occurred_at: str = ""
-    trace_id: str = ""
-
-    @property
-    def display_name(self) -> str:
-        """操作的用户可见名称（未登记时回退为操作编码）。"""
-        return self.action_display_name or ACTION_DISPLAY_NAMES.get(self.action, self.action)
-
-
-class AuditRecorder(Protocol):
-    """操作记录存储契约。"""
-
-    async def record(self, entry: AuditEntry) -> AuditEntry:
-        """写入一条操作记录。"""
-        ...
-
-    async def recent(
-        self, tenant_id: str, *, action: str = "", resource_id: str = "", limit: int = 50
-    ) -> list[AuditEntry]:
-        """按时间倒序读取最近的操作记录。"""
-        ...
-
-
-class InMemoryAuditRecorder:
-    """进程内操作记录存储（development/test）。"""
-
-    def __init__(self) -> None:
-        """初始化。"""
-        self._entries: list[AuditEntry] = []
-        self._lock = asyncio.Lock()
-
-    async def record(self, entry: AuditEntry) -> AuditEntry:
-        """写入一条操作记录。
-
-        Args:
-            entry: 操作记录条目。
-
-        Returns:
-            AuditEntry: 补齐时间与展示名后的条目。
-        """
-        payload = entry if entry.occurred_at else _with_defaults(entry)
-        async with self._lock:
-            self._entries.append(payload)
-        return payload
-
-    async def recent(
-        self, tenant_id: str, *, action: str = "", resource_id: str = "", limit: int = 50
-    ) -> list[AuditEntry]:
-        """按时间倒序读取。
-
-        Args:
-            tenant_id: 租户 ID。
-            action: 操作编码过滤（空表示不过滤）。
-            resource_id: 资源 ID 过滤（空表示不过滤）。
-            limit: 返回条数上限。
-
-        Returns:
-            list[AuditEntry]: 操作记录列表（最近在前）。
-        """
-        async with self._lock:
-            candidates = [item for item in self._entries if item.tenant_id == tenant_id]
-        if action:
-            candidates = [item for item in candidates if item.action == action]
-        if resource_id:
-            candidates = [item for item in candidates if item.resource_id == resource_id]
-        candidates.sort(key=lambda item: item.occurred_at, reverse=True)
-        return candidates[:limit]
-
-    async def entries_for(self, tenant_id: str) -> list[AuditEntry]:
-        """读取该租户的全部操作记录（B08 的 U6 多维筛选在仓储层完成）。
-
-        与 `recent()` 的区别：不做条数截断，供 `audit_repo` 做多条件过滤与分页。
-
-        Args:
-            tenant_id: 租户 ID。
-
-        Returns:
-            list[AuditEntry]: 操作记录列表（时间倒序）。
-        """
-        async with self._lock:
-            items = [item for item in self._entries if item.tenant_id == tenant_id]
-        items.sort(key=lambda item: item.occurred_at, reverse=True)
-        return items
-
-    def clear(self) -> None:
-        """清空（测试隔离用）。"""
-        self._entries.clear()
+# ===========================================================================
+# 记录器契约与内存实现（审计 P1-4：已下沉 `app/db/repositories/audit_recorder.py`）
+#
+# 为什么下沉：`InMemoryAuditRecorder` 是**存储实现**，而「操作记录查询仓储」
+# （`db/repositories/audit_repo.py`）要读它 → 仓储层被迫反向 `import app.business`。
+# 记录器与仓储同属数据侧，归 `db` 后方向变成 `db → db` / `db → core`（矩阵内）。
+#
+# 为什么在这里继续 re-export：`AuditEntry` / `AuditRecorder` / `InMemoryAuditRecorder`
+# 是 49 处调用方（含测试）的既有 import 路径，re-export 保证**零改动下沉**。
+#
+# `PostgresAuditRecorder` **故意不走**：它属于业务写入入口的 PG 实现，要处理
+# `tenant_scope` / `platform_scope` 的平台哨兵分流口径，随写入语义留在业务层。
+# ===========================================================================
 
 
 class PostgresAuditRecorder:
@@ -380,7 +177,7 @@ class PostgresAuditRecorder:
         """
         import json
 
-        payload = entry if entry.occurred_at else _with_defaults(entry)
+        payload = entry if entry.occurred_at else with_defaults(entry)
         summary = json.dumps(payload.change_summary, ensure_ascii=False, sort_keys=True)
         parameters = {
             "tenant_id": payload.tenant_id,
@@ -486,31 +283,6 @@ def _to_timestamp(value: Any) -> str:
     return str(value)
 
 
-def _with_defaults(entry: AuditEntry) -> AuditEntry:
-    """补齐发生时间与操作展示名。
-
-    Args:
-        entry: 原始条目。
-
-    Returns:
-        AuditEntry: 补齐后的条目。
-    """
-    display = entry.action_display_name or ACTION_DISPLAY_NAMES.get(entry.action, entry.action)
-    return AuditEntry(
-        tenant_id=entry.tenant_id,
-        actor_id=entry.actor_id,
-        action=entry.action,
-        resource_type=entry.resource_type,
-        resource_id=entry.resource_id,
-        result=entry.result,
-        actor_role=entry.actor_role,
-        action_display_name=display,
-        change_summary=dict(entry.change_summary),
-        occurred_at=entry.occurred_at or _now_iso(),
-        trace_id=entry.trace_id,
-    )
-
-
 class AuditService:
     """操作记录服务（业务层唯一入口）。
 
@@ -576,7 +348,7 @@ class AuditService:
             result=result,
             actor_role=actor_role,
             change_summary=dict(change_summary or {}),
-            occurred_at=_now_iso(),
+            occurred_at=now_iso(),
             trace_id=trace_id,
         )
         stored = await self._recorder.record(entry)
@@ -609,9 +381,8 @@ class AuditService:
 
 
 # ===========================================================================
-# 进程级单例
+# 进程级单例（内存后端由 `db/repositories/audit_recorder.py` 持有）
 # ===========================================================================
-_memory_recorder: InMemoryAuditRecorder | None = None
 
 
 def get_audit_service(settings: Settings | None = None) -> AuditService:
@@ -629,28 +400,25 @@ def get_audit_service(settings: Settings | None = None) -> AuditService:
 def get_audit_recorder(settings: Settings | None = None) -> AuditRecorder:
     """获取操作记录存储。
 
+    单例所有权在数据侧（`db/repositories/audit_recorder.py`）：写入方与查询方
+    （`audit_repo` 的 U6 分页）读的必须是**同一份**记录，否则「刚记的操作查不到」。
+    本函数只做后端选择，内存分支直接委托。
+
     Args:
         settings: 可选配置实例。
 
     Returns:
         AuditRecorder: `business_store=postgres` 时为数据库实现，否则为内存实现。
     """
-    global _memory_recorder
-
     conf = settings or get_settings()
     if conf.uses_postgres:
         return PostgresAuditRecorder(conf)
-    if _memory_recorder is None:
-        _memory_recorder = InMemoryAuditRecorder()
-    return _memory_recorder
+    return get_in_memory_audit_recorder(conf)
 
 
 def reset_audit_recorder() -> None:
-    """重置内存后端单例（测试隔离用）。"""
-    global _memory_recorder
-    if _memory_recorder is not None:
-        _memory_recorder.clear()
-    _memory_recorder = None
+    """重置内存后端单例（测试隔离用，委托数据侧单例）。"""
+    reset_in_memory_audit_recorder()
 
 
 __all__: list[str] = [
@@ -690,6 +458,8 @@ __all__: list[str] = [
     "ACTION_TASK_FINISH",
     "ACTION_TASK_RETRY",
     "ACTION_TASK_START",
+    "ACTION_TENANT_DATA_DELETE",
+    "ACTION_TENANT_DATA_EXPORT",
     "ACTION_TENANT_STATUS",
     "AUDIT_TABLE",
     "RESOURCE_DEPARTMENT",
