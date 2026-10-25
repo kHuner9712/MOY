@@ -232,6 +232,19 @@
       ],
       "optional": []
     },
+    "CapabilityPolicyRequest": {
+      "required": [
+        "policies"
+      ],
+      "optional": []
+    },
+    "CapabilityPolicyRequestItem": {
+      "required": [
+        "capability_key",
+        "org_switch_enabled"
+      ],
+      "optional": []
+    },
     "PluginGrantsUpdateResult": {
       "required": [
         "granted_capabilities",

@@ -50,6 +50,11 @@ const STATUS_DESCRIPTORS: Readonly<Record<string, StatusDescriptor>> = Object.fr
   invited: { label: '待接受邀请', tone: 'warning' },
   disabled: { label: '已停用', tone: 'neutral' },
 
+  // 插件安装态（`PluginInstalledStatus` 五值；`disabled` 与成员态同文案，不重复登记）
+  enabled: { label: '已添加', tone: 'success' },
+  installed: { label: '已安装', tone: 'info' },
+  uninstalled: { label: '未添加', tone: 'neutral' },
+
   // 工具连接状态
   connected: { label: '已连接', tone: 'success' },
   expired: { label: '待重新连接', tone: 'warning' },

@@ -26,6 +26,7 @@ import { QUERY_KEYS, useApiMutation, useApiQuery } from '@/hooks/use-api';
 import { BusinessError, pluginsApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { formatDate, formatDateTime, orPlaceholder } from '@/lib/format';
+import { isPluginInstalled } from '@/lib/plugin-status';
 import type { PluginDetail, PluginSettingValue } from '@/lib/types';
 
 /** 评价分页大小（与后端默认一致） */
@@ -253,7 +254,7 @@ export default function PluginDetailPage(): React.JSX.Element {
   }
 
   const enabled = plugin.installed_status === 'enabled';
-  const installed = plugin.installed_status !== 'none';
+  const installed = isPluginInstalled(plugin.installed_status);
   const canOperate = plugin.installable || installed;
   const reviews = reviewsQuery.data?.items ?? [];
   const reviewTotal = reviewsQuery.data?.total ?? 0;
@@ -280,16 +281,7 @@ export default function PluginDetailPage(): React.JSX.Element {
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-semibold">{plugin.name}</h2>
               <Badge variant="outline">{orPlaceholder(plugin.category)}</Badge>
-              <StatusBadge
-                status={plugin.installed_status}
-                label={
-                  plugin.installed_status === 'enabled'
-                    ? '已添加'
-                    : plugin.installed_status === 'disabled'
-                      ? '已停用'
-                      : '未添加'
-                }
-              />
+              <StatusBadge status={plugin.installed_status} />
               {plugin.has_update ? <Badge variant="warning">有新版本</Badge> : null}
             </div>
             <p className="max-w-2xl text-sm text-muted-foreground">

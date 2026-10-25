@@ -913,3 +913,52 @@ MSYS_NO_PATHCONV=1 docker run --rm --entrypoint promtool \
 | 2 | `20008` 文案写死 50MB | 见 §34.4，观察项 |
 | 3 | 微信 v2 `TRADE_SUCCESS` 未进白名单 | 见 §34.2，真接 v3 时再补 |
 
+---
+
+## 35. Batch 3：交付清单刷新、请求形状契约盲区与状态渲染修正
+
+> 分支 `feat/batch3-contract-and-render-gaps`。本批只做 **Batch 2 验收后无外部阻塞** 的收尾项；
+> 由主理人执行并自测，未引入新的团队协作轮次。
+
+### 35.1 交付清单预存在红已修（P2-1）
+
+- 重跑 `python scripts/gen_delivery_manifest.py`：`deploy/.env.lite.example`（10,217→11,028 B）、
+  `deploy/docker-compose.lite.yml`（29,894→30,327 B）两行尺寸刷新；
+- `python scripts/gen_delivery_manifest.py --check` = **0**；diff 仅 2 行。
+
+### 35.2 能力开关请求形状纳入契约门禁（P3 结构盲区）
+
+- 新增白名单接口：`CapabilityPolicyRequest` / `CapabilityPolicyRequestItem`；
+  `plugin-domain.gen.json` 由 23 接口/133 字段扩为 **25 接口 / 136 字段**；
+- `types.ts` 把内联请求项提为 `CapabilityPolicyRequestItem`，`rename` 登记
+  `org_switch_enabled → enabled`（请求/响应同源）；
+- `phase3.pl.json` 同步补两个接口；`team/page.tsx` 改用命名类型；
+- 目标：QA 初检发现的「只映射响应、请求恒 400/20001」这类**请求形状错配**以后由门禁可见，
+  不再依赖人看。
+
+### 35.3 插件安装态渲染修正（P3）
+
+- `StatusBadge` 补插件安装态：`enabled=已添加`、`disabled=已停用`、`installed=已安装`、`uninstalled=未添加`；
+- 新增 `lib/plugin-status.ts` 的 `isPluginInstalled()`，三处消费点改用：
+  `plugins/[pluginId]`、`workbench/[pluginId]`、`components/plugin/plugin-card`；
+- 修复 `installed_status !== 'none'` 把 `uninstalled` 误判为已安装的问题；
+- 新增 `plugin-status.test.ts` 2 条（判定 + 文案）。
+
+### 35.4 工程卫生
+
+- `.gitignore` 忽略 `apps/adapter/pytest_run.log`（本地 pytest 落盘日志，不入库）。
+
+### 35.5 自测（主理人，HEAD = 本批合并前）
+
+| 项 | 结果 |
+| --- | --- |
+| `gen_delivery_manifest.py --check` | **0** |
+| `export_plugin_contract.py` + `--check` | 生成 25 接口/136 字段；`--check` **0** |
+| `scan:contract` / `scan:contract:gen` | **0**（34 接口/184 字段/5 枚举；25 接口/136 字段三方一致） |
+| `typecheck:web` / `lint:web` | **0** |
+| `npm test --workspace apps/web` | **55 passed**（53 + 2） |
+| 扫描 banned/pages/workbench/capability/oidc | 全 **0** |
+| `validate_plugins.py` | **0** |
+
+未跑：`pytest --run-pg`（无 PG）、`build:web`（本批未改构建路径）；未 push。
+

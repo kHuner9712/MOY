@@ -102,10 +102,7 @@ export function PluginCard({
           />
           <span className="text-xs text-muted-foreground">v{orPlaceholder(plugin.latest_version)}</span>
           {plugin.installed_status !== 'none' ? (
-            <StatusBadge
-              status={plugin.installed_status}
-              label={plugin.installed_status === 'enabled' ? '已添加' : '已停用'}
-            />
+            <StatusBadge status={plugin.installed_status} />
           ) : null}
           {plugin.has_update ? (
             <Badge variant="warning" className="whitespace-nowrap">

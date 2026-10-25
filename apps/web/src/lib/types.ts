@@ -1429,9 +1429,22 @@ export interface CapabilityPolicyItem {
   updated_at: string;
 }
 
+/**
+ * 企业能力开关写请求项（PL13）。
+ *
+ * 注意：这是**前端业务名**（`org_switch_enabled`）。后端 `CapabilityPolicyRequestItem`
+ * 的字段名是 `enabled` 且 `extra="forbid"`，因此 `api-client.setCapabilityPolicy`
+ * 必须在发请求前做形状映射；该改名已在 `plugin-domain.gen.json` 的 `rename` 登记，
+ * 契约门禁据此把它与后端 `enabled` 视为同一键，避免「请求形状错配」再次无人拦截。
+ */
+export interface CapabilityPolicyRequestItem {
+  capability_key: string;
+  org_switch_enabled: boolean;
+}
+
 /** 企业能力开关写请求（PL13）：只允许 org.* 三项 */
 export interface CapabilityPolicyRequest {
-  policies: Array<{ capability_key: string; org_switch_enabled: boolean }>;
+  policies: CapabilityPolicyRequestItem[];
 }
 
 // ---------------------------------------------------------------------------
