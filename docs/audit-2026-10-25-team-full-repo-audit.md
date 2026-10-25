@@ -102,6 +102,8 @@
 
 > **2026-10-26 第 1 波闭环**：P2-1（ops 三个写端点接入 Idempotency-Key，资金操作不再裸奔）、P2-2（幂等/限流/锁表/桩任务四处内存上限与淘汰）、P2-3（in-flight 重放改 20005，不再返回 data=null 冒充成功）、P2-16（17 条暗跳用例补 pg 标记 + `deploy/validate_pg_markers.py` 静态门禁接入 CI）、P2-22（限流隔离断言强化）已修复并推送（`b3a9d7c`）。实证：`-m pg` 收集 186→203，与无库跳过数 203 一致；全量 2075 passed / 203 skipped / 0 failed；ruff/format/mypy 全绿。
 
+> **2026-10-26 第 2 波切片 1 闭环**（`384870c`）：**P1-4**（db→business 归零：审计词表 `core/audit_actions.py`、内置角色 `core/builtin_roles.py`、记录器 `db/repositories/audit_recorder.py`）、**P1-6**（business→api 归零：`TaskService` 改 `gateway_factory` 组合根注入）、**P1-7**（schemas→business 归零：`EXPORT_SCOPES` 下沉 core）、**P2-4**（排期判定 UTC aware，`datetime.now()` 全仓归零）、**P2-5**（zip 500 行分块 `to_thread`）、**P2-6**（插件目录/占用计数批量查询，21→2 次）、**P2-12**（qa_probe 豁免登记）已闭环。新增 **G-37 依赖方向门禁**：层对 12×12 矩阵、module/deferred/type_checking 三分类、基线只许减不许增、fail-closed（app-root 异常/文件数<100 → exit 2）、12 类正负自检；基线 **28→24**（`services→db` 6 条与 `core→schemas` 1 条经门禁判定入基线，编号 P2-10/P1-7）。全量 **2083 passed / 207 skipped / 0 failed**；QA 独立验证 IS_PASS: YES。
+
 ### 追加登记（2026-10-26 第 0 波复验，QA 发现，不阻塞第 0 波放行）
 
 - **R-1（P2）** `_pause_for_confirm()` 与 `retry(continue/redo)` 的 `status=` 写仍为无条件写：极窄窗口（取消落在 `cancel_requested` 检查之后、写之前）可把已 `cancelled` 翻回 `waiting_confirm`；可自愈（`cancel_requested` 仍在行上，再点取消即收敛）。建议下一波统一补 `expected_status`。
