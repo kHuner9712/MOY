@@ -263,7 +263,7 @@ if (response.status === 413 || response.status === 429) {
 }
 ```
 
-**错误码裁决（§7-3）**：复用已注册码 **20008**（`PAYLOAD_TOO_LARGE`，`core/errors.py:40`）与 **20006**（`RATE_LIMITED`，`:38`），**不新增 30005/30006**。理由：错误码是注册制，前端为网关状态新造码会绕过后端登记；两条既有文案语义正好匹配（`business-errors.ts:27,29`），`business-errors.ts` **本批不用改**。写法上直接 `throw new BusinessError(20008 | 20006, undefined)` 让 `toBusinessMessage` 走兜底表，或显式传 `business-errors.ts` 的既有文案——**二选一，以不复制字符串为准**（推荐前者：`BusinessError` 的 message 传 `''`，UI 侧 `toBusinessMessage` 按 code 取表）。
+**错误码裁决（§7-3）**：复用已注册码 **20008**（`PAYLOAD_TOO_LARGE`，`core/errors.py:40`）与 **20006**（`RATE_LIMITED`，`:38`），**不新增 30005/30006**。理由：错误码是注册制，前端为网关状态新造码会绕过后端登记；两条既有文案语义正好匹配（`business-errors.ts:27,29`），`business-errors.ts` **本批不用改**。写法上 `throw new BusinessError(code, '')` 让 UI 侧 `toBusinessMessage` 按 code 取既有文案，**不复制字符串**。
 
 顺序不能变：**401 → 413/429 → `unwrap`（code=20002 → BusinessError）**。理由：网关层的 401/413/429 常无信封，`unwrap` 会把它们退化成 `AdapterUnavailableError`（`api-client.ts:321-325`），真实原因丢失。三者互不覆盖：401 分支 `throw` 后即返回，不会走到 413/429。非信封 502 保持兜底（落到 `unwrap` → `AdapterUnavailableError`），因为 502 确实无法解释原因。**已知偏差**：20008 文案写死「上限 50MB」，而网关 body limit 常更小，本批接受，记 `phase4-batch-log.md`（§5 同条）。
 
