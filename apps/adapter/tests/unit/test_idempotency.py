@@ -319,3 +319,60 @@ def test_hash_request_body_handles_empty() -> None:
     assert hash_request_body(None) == fixed
     assert hash_request_body(b"") == fixed
     assert hash_request_body("") == fixed
+
+
+async def test_execute_in_flight_duplicate_returns_conflict(
+    manager: IdempotencyManager,
+) -> None:
+    """首次请求未完成时重复请求返回 20005，不得返回空结果冒充成功（审计 P2-3）。"""
+    assert await manager.check_or_set(_KEY, _FP) is True  # 模拟首次请求已占用、仍在执行
+    calls: list[int] = []
+
+    async def factory() -> dict[str, int]:
+        calls.append(1)
+        return {"n": 1}
+
+    with pytest.raises(ApiError) as exc_info:
+        await manager.execute(_KEY, _FP, factory)
+    assert exc_info.value.code == ErrorCode.CONFLICT
+    assert calls == [], "in-flight 重复请求不得执行业务逻辑"
+
+
+async def test_execute_replays_after_completion(manager: IdempotencyManager) -> None:
+    """首次完成后重复请求正常回放（20007 路径，与 in-flight 区分）。"""
+    await manager.check_or_set(_KEY, _FP)
+    await manager.store_result(_KEY, {"n": 1})
+    result, replayed = await manager.execute(_KEY, _FP, lambda: None)  # type: ignore[arg-type]
+    assert replayed is True
+    assert result == {"n": 1}
+
+
+async def test_in_memory_store_evicts_completed_entries_over_capacity() -> None:
+    """条目达上限时淘汰最旧的已完成条目，上限生效（审计 P2-2）。"""
+    store = InMemoryIdempotencyStore(max_entries=2)
+    assert await store.acquire("k1", _FP, 60) is True
+    await store.store_result("k1", {"n": 1}, 60)
+    assert await store.acquire("k2", _FP, 60) is True
+    await store.store_result("k2", {"n": 2}, 60)
+    assert await store.acquire("k3", _FP, 60) is True  # 触发淘汰：k1
+    assert len(store._entries) == 2  # noqa: SLF001 - 断言容量上限
+    assert await store.get("k1") is None
+    assert await store.get("k2") == {"n": 2}
+
+
+async def test_in_memory_store_keeps_in_flight_entries() -> None:
+    """上限内全是未完成条目时允许短暂超出，不得淘汰（否则重复请求失去保护）。"""
+    store = InMemoryIdempotencyStore(max_entries=1)
+    assert await store.acquire("a", _FP, 60) is True
+    assert await store.acquire("b", _FP, 60) is True
+    assert len(store._entries) == 2  # noqa: SLF001 - 断言未完成条目不淘汰
+    assert await store.is_completed("a") is False
+
+
+async def test_redis_store_is_completed() -> None:
+    """Redis 后端可区分「已完成」与「执行中」。"""
+    store = RedisIdempotencyStore(_FakeRedis())  # type: ignore[arg-type]
+    await store.acquire(_KEY, _FP, 60)
+    assert await store.is_completed(_KEY) is False
+    await store.store_result(_KEY, {"ok": True}, 60)
+    assert await store.is_completed(_KEY) is True

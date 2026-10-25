@@ -37,8 +37,26 @@ logger = get_logger(__name__)
 #: advisory lock 的命名空间（不同业务用不同前缀，避免键空间撞车）
 TASK_ADVANCE_LOCK_PREFIX: Final[str] = "task_advance:"
 
+#: 进程内锁表上限（防长跑进程无界增长；超出后只淘汰未被持有的锁）
+_LOCAL_LOCKS_MAX: Final[int] = 2048
+
 #: 进程内锁表（内存模式）
 _local_locks: Final[dict[str, asyncio.Lock]] = {}
+
+
+def _prune_local_locks() -> None:
+    """锁表达到上限时淘汰未被持有的锁。
+
+    持有中的锁**不能**淘汰：丢掉正在使用的锁会让新的推进者拿到另一把
+    同名锁，互斥直接失效。活跃任务数本身有界，允许极端情况下短暂超出上限。
+    """
+    if len(_local_locks) < _LOCAL_LOCKS_MAX:
+        return
+    for name in list(_local_locks):
+        if len(_local_locks) < _LOCAL_LOCKS_MAX:
+            return
+        if not _local_locks[name].locked():
+            _local_locks.pop(name, None)
 
 
 def advisory_key(name: str) -> int:
@@ -70,6 +88,8 @@ async def task_advance_lock(task_id: str, settings: Settings | None = None) -> A
     name = f"{TASK_ADVANCE_LOCK_PREFIX}{task_id}"
 
     if not conf.uses_postgres:
+        if name not in _local_locks:
+            _prune_local_locks()
         lock = _local_locks.setdefault(name, asyncio.Lock())
         if lock.locked():
             yield False

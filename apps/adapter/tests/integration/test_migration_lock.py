@@ -122,6 +122,7 @@ async def _cleanup(dsn: str, version: str, table: str) -> None:
         await connection.close()
 
 
+@pytest.mark.pg
 async def test_two_connections_apply_only_once(pg_dsn: str, probe_dir: tuple) -> None:
     """两个连接同时 `--apply`：只有一方执行 DDL，台账无重复，另一方等待后成功。"""
     sql_dir, version, table = probe_dir
@@ -163,6 +164,7 @@ async def test_two_connections_apply_only_once(pg_dsn: str, probe_dir: tuple) ->
         await _cleanup(pg_dsn, version, table)
 
 
+@pytest.mark.pg
 async def test_applied_probe_is_skipped_inside_lock(pg_dsn: str, probe_dir: tuple) -> None:
     """已应用的版本再 `--apply` 一次：pending 为空，探针行数不变（锁内二次判定同样生效）。"""
     sql_dir, version, table = probe_dir

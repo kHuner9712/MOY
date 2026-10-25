@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -155,13 +155,17 @@ async def test_ops_tenants_list_and_detail(ops_client: TestClient, saas_settings
 
 
 @pytest.mark.asyncio
-async def test_ops_suspend_tenant(ops_client: TestClient, saas_settings: Settings) -> None:
+async def test_ops_suspend_tenant(
+    ops_client: TestClient,
+    saas_settings: Settings,
+    make_idempotency_headers: Callable[[str], dict[str, str]],
+) -> None:
     """OPS3：停用企业后再启用，状态与原因都落到存储与响应里。"""
     await _seed_tenant(saas_settings, TENANT_B, "乙公司")
     headers = _ops_headers(saas_settings)
     suspend = ops_client.patch(
         f"/api/v1/ops/tenants/{TENANT_B}",
-        headers=headers,
+        headers={**headers, **make_idempotency_headers("ops-suspend")},
         json={"status": "suspended", "reason": "欠费停用"},
     )
     assert suspend.status_code == 200, suspend.text
@@ -173,7 +177,7 @@ async def test_ops_suspend_tenant(ops_client: TestClient, saas_settings: Setting
 
     resume = ops_client.patch(
         f"/api/v1/ops/tenants/{TENANT_B}",
-        headers=headers,
+        headers={**headers, **make_idempotency_headers("ops-resume")},
         json={"status": "active", "reason": "补缴恢复"},
     )
     assert resume.status_code == 200
@@ -181,7 +185,11 @@ async def test_ops_suspend_tenant(ops_client: TestClient, saas_settings: Setting
 
 
 @pytest.mark.asyncio
-async def test_ops_orders_list_and_confirm(ops_client: TestClient, saas_settings: Settings) -> None:
+async def test_ops_orders_list_and_confirm(
+    ops_client: TestClient,
+    saas_settings: Settings,
+    make_idempotency_headers: Callable[[str], dict[str, str]],
+) -> None:
     """OPS4 / OPS5：订单列表可查，核销后 paid、订阅生效；重复核销 15008。"""
     await _seed_tenant(saas_settings, TENANT_A, "甲公司")
     billing = get_billing_store(saas_settings)
@@ -205,7 +213,7 @@ async def test_ops_orders_list_and_confirm(ops_client: TestClient, saas_settings
 
     mismatch = ops_client.post(
         f"/api/v1/ops/orders/{pending.order_id}/confirm",
-        headers=headers,
+        headers={**headers, **make_idempotency_headers("ops-confirm-mismatch")},
         json={"paid_amount_cents": 1, "remark": "金额录错"},
     )
     assert mismatch.status_code == 400
@@ -213,7 +221,7 @@ async def test_ops_orders_list_and_confirm(ops_client: TestClient, saas_settings
 
     confirmed = ops_client.post(
         f"/api/v1/ops/orders/{pending.order_id}/confirm",
-        headers=headers,
+        headers={**headers, **make_idempotency_headers("ops-confirm-ok")},
         json={"paid_amount_cents": pending.amount_cents, "remark": "对公到账"},
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -223,7 +231,7 @@ async def test_ops_orders_list_and_confirm(ops_client: TestClient, saas_settings
 
     repeat = ops_client.post(
         f"/api/v1/ops/orders/{pending.order_id}/confirm",
-        headers=headers,
+        headers={**headers, **make_idempotency_headers("ops-confirm-repeat")},
         json={"paid_amount_cents": pending.amount_cents, "remark": "重复点击"},
     )
     assert repeat.status_code == 409
@@ -257,7 +265,11 @@ async def test_ops_metrics_matches_tenant_usage(
 
 
 @pytest.mark.asyncio
-async def test_ops_settings_read_and_patch(ops_client: TestClient, saas_settings: Settings) -> None:
+async def test_ops_settings_read_and_patch(
+    ops_client: TestClient,
+    saas_settings: Settings,
+    make_idempotency_headers: Callable[[str], dict[str, str]],
+) -> None:
     """OPS7 / OPS8：读默认配置、部分更新、空更新 20001。"""
     headers = _ops_headers(saas_settings)
     initial = ops_client.get("/api/v1/ops/settings", headers=headers)
@@ -266,7 +278,9 @@ async def test_ops_settings_read_and_patch(ops_client: TestClient, saas_settings
     assert set(initial.json()["data"]["plan_status"]) == {"free", "professional", "enterprise"}
 
     updated = ops_client.patch(
-        "/api/v1/ops/settings", headers=headers, json={"trial_days": 30, "announcement": "公告"}
+        "/api/v1/ops/settings",
+        headers={**headers, **make_idempotency_headers("ops-settings-update")},
+        json={"trial_days": 30, "announcement": "公告"},
     )
     assert updated.status_code == 200, updated.text
     data = updated.json()["data"]
@@ -274,9 +288,61 @@ async def test_ops_settings_read_and_patch(ops_client: TestClient, saas_settings
     assert data["announcement"] == "公告"
     assert data["updated_by"] == "usr_ops_tester"
 
-    empty = ops_client.patch("/api/v1/ops/settings", headers=headers, json={})
+    empty = ops_client.patch(
+        "/api/v1/ops/settings",
+        headers={**headers, **make_idempotency_headers("ops-settings-empty")},
+        json={},
+    )
     assert empty.status_code == 400
     assert empty.json()["code"] == int(ErrorCode.PARAM_INVALID)
+
+
+@pytest.mark.asyncio
+async def test_ops_confirm_replay_returns_20007(
+    ops_client: TestClient,
+    saas_settings: Settings,
+    make_idempotency_headers: Callable[[str], dict[str, str]],
+) -> None:
+    """OPS5 幂等：同键重放 → 20007 且回放首次 data，订单不重复核销（审计 P2-1）。"""
+    await _seed_tenant(saas_settings, TENANT_A, "甲公司")
+    billing = get_billing_store(saas_settings)
+    plans = PlanService(saas_settings, billing)
+    subscriptions = SubscriptionService(saas_settings, billing, plans=plans)
+    await subscriptions.change(
+        tenant_id=TENANT_A,
+        actor_id="usr_owner_a",
+        request=ChangeSubscriptionRequest(plan_code=PLAN_PROFESSIONAL, seats=5, action="upgrade"),
+    )
+    pending = await billing.find_pending_order(TENANT_A)
+    assert pending is not None
+    headers = {
+        **_ops_headers(saas_settings),
+        **make_idempotency_headers("ops-confirm-replay"),
+    }
+    payload = {"paid_amount_cents": pending.amount_cents, "remark": "对公到账"}
+
+    first = ops_client.post(
+        f"/api/v1/ops/orders/{pending.order_id}/confirm", headers=headers, json=payload
+    )
+    assert first.status_code == 200, first.text
+
+    replay = ops_client.post(
+        f"/api/v1/ops/orders/{pending.order_id}/confirm", headers=headers, json=payload
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["code"] == int(ErrorCode.IDEMPOTENT_DUPLICATE)
+    assert replay.json()["data"] == first.json()["data"], "重放必须回放首次结果"
+
+
+@pytest.mark.asyncio
+async def test_ops_write_requires_idempotency_key(
+    ops_client: TestClient, saas_settings: Settings
+) -> None:
+    """OPS 写端点缺幂等键 → 20001（写接口必须携带，审计 P2-1）。"""
+    headers = _ops_headers(saas_settings)
+    response = ops_client.patch("/api/v1/ops/settings", headers=headers, json={"trial_days": 7})
+    assert response.status_code == 400
+    assert response.json()["code"] == int(ErrorCode.PARAM_INVALID)
 
 
 def test_ops_requires_ops_permission(ops_client: TestClient, saas_settings: Settings) -> None:

@@ -139,6 +139,9 @@ class AgentService:
         _steps: 桩步骤表（键 `(tenant_id, task_id)`）。
     """
 
+    #: 桩任务/步骤表上限（防长跑进程无界增长；优先淘汰最旧的终态记录）
+    _STUB_CAPACITY: Final[int] = 1000
+
     def __init__(
         self,
         settings: Settings | None = None,
@@ -187,6 +190,23 @@ class AgentService:
             tuple[str, str]: `(tenant_id, task_id)` 复合键。
         """
         return (auth.tenant_id, task_id)
+
+    def _prune_stub_tasks(self) -> None:
+        """桩表达到上限时淘汰最旧的终态任务（运行中的任务不淘汰）。
+
+        任务与步骤必须用同一个复合键一起删，否则 `list_steps` 会读到孤立步骤。
+        终态集合与 `TaskStatus` 的语义一致：pending/running/queued/waiting_confirm
+        都视为活跃，不能淘汰（否则用户会看到任务凭空消失）。
+        """
+        if len(self._tasks) < self._STUB_CAPACITY:
+            return
+        terminal = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        for key, task in list(self._tasks.items()):
+            if len(self._tasks) < self._STUB_CAPACITY:
+                return
+            if task.status in terminal:
+                self._tasks.pop(key, None)
+                self._steps.pop(key, None)
 
     def _require(self, task_id: str, auth: AuthContext) -> TaskDetailData:
         """取本租户的任务记录，未命中一律 12001。
@@ -254,6 +274,7 @@ class AgentService:
         task_id = new_task_id()
         created_at = _now_iso()
         estimated = min(request.options.max_steps * 10, request.options.timeout_seconds)
+        self._prune_stub_tasks()
 
         self._tasks[self._key(auth, task_id)] = TaskDetailData(
             task_id=task_id,

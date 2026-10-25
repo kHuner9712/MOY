@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncpg
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.pg]
 
 TENANT_A = "tnt_mem_a"
 TENANT_B = "tnt_mem_b"
