@@ -3,7 +3,6 @@
 import {
   BookOpen,
   CreditCard,
-  LayoutGrid,
   MessageSquare,
   Network,
   Plug,
@@ -16,8 +15,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import * as React from 'react';
 
+import { BrandMark } from '@/components/brand/brand-mark';
 import { QUERY_KEYS, useApiQuery } from '@/hooks/use-api';
 import { pluginsApi } from '@/lib/api-client';
+import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/utils';
 
 /** 导航项 */
@@ -150,10 +151,13 @@ export function AppSidebar(): React.JSX.Element {
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r bg-muted/20 md:flex">
-      <div className="flex h-16 items-center gap-2 border-b px-6">
-        <LayoutGrid className="h-5 w-5 text-primary" />
-        <span className="text-sm font-semibold">办公 AI 平台</span>
-      </div>
+      <Link
+        href="/chat"
+        aria-label={`${BRAND.name}首页`}
+        className="flex h-16 items-center border-b px-6 transition-opacity hover:opacity-80"
+      >
+        <BrandMark />
+      </Link>
       <nav aria-label="主导航" className="flex-1 space-y-1 overflow-y-auto p-3">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;

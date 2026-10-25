@@ -5,11 +5,13 @@ import type React from 'react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
 
+import { BrandMark } from '@/components/brand/brand-mark';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Field, Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import { getAdapterBaseUrl, setAccessToken } from '@/lib/api-client';
+import { BRAND } from '@/lib/brand';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { buildAuthorizeUrl, createPkcePair, createState } from '@/lib/oidc';
 import { resolveNextPath } from '@/lib/redirect';
@@ -190,8 +192,13 @@ export default function LoginPage(): React.JSX.Element {
   return (
     <Card>
       <CardHeader className="text-center">
-        <CardTitle className="text-xl">欢迎使用办公 AI 平台</CardTitle>
-        <CardDescription>登录后即可开始对话、上传资料并使用团队能力</CardDescription>
+        <div className="mb-5 flex justify-center">
+          <BrandMark size="lg" />
+        </div>
+        <CardTitle className="text-xl">欢迎回到{BRAND.name}</CardTitle>
+        <CardDescription>
+          {BRAND.tagline} · {BRAND.promise}
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         {IS_PRODUCTION_BUILD ? (
