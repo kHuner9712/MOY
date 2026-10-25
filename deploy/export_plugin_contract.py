@@ -11,11 +11,11 @@
 本脚本把**后端 OpenAPI 文档**变成插件域契约的真相源：它用 `importlib` 加载
 `deploy/validate_openapi.py`（**不复制**它那三行 `sys.path` 处理），调用它的
 `build_schema()` 拿到 `create_app().openapi()`，再按白名单从
-`components.schemas` 里挑出插件域的 22 个模型，**只导出键集合**。
+`components.schemas` 里挑出插件域的白名单模型，**只导出键集合**。
 
 可选性口径 = A（主理人裁决）
 ---------------------------
-生成的契约**只负责键集合**，不负责可选性。实测依据：插件域 22 个模型全部字段带
+生成的契约**只负责键集合**，不负责可选性。实测依据：插件域白名单模型全部字段带
 默认值（`= ""` / `= 0` / `Field(default=...)`），Pydantic v2 因此一个 `required`
 数组都不输出——照字面用 `required` 判可选性会得到「175 个字段全部可选」，首跑
 170+ 条误报，门禁直接不可用。可选性仍由**手写快照 ↔ `types.ts`** 的既有
@@ -66,7 +66,7 @@ CONTRACT_VERSION: Final[str] = "plugin-domain-v1"
 #: 白名单版本号：插件域接口增删时 +1
 WHITELIST_VERSION: Final[int] = 1
 
-#: TS 接口名 → OpenAPI `components.schemas` 名（22 项，实测全部存在）
+#: TS 接口名 → OpenAPI `components.schemas` 名（25 项，实测全部存在）
 PLUGIN_DOMAIN_MAP: Final[dict[str, str]] = {
     "PluginMarketItem": "MarketItem",
     "PluginCategoryItem": "CategoryCountItem",
@@ -88,6 +88,8 @@ PLUGIN_DOMAIN_MAP: Final[dict[str, str]] = {
     "PluginReviewsData": "ReviewListData",
     "PluginReviewResult": "ReviewData",
     "CapabilityPolicyItem": "CapabilityPolicyItem",
+    "CapabilityPolicyRequest": "CapabilityPolicyRequest",
+    "CapabilityPolicyRequestItem": "CapabilityPolicyRequestItem",
     "PluginGrantsUpdateResult": "UpdateGrantsData",
     "PluginGrantsUpdateRequest": "UpdateGrantsRequest",
     "PluginInputSpec": "InputBriefItem",
@@ -108,13 +110,15 @@ TASK_DOMAIN_EXCLUDED: Final[tuple[str, ...]] = (
 #: 前端投影类型：后端没有同名同形的 schema，不比对
 PROJECTION_EXCLUDED: Final[tuple[str, ...]] = ("OrgCapabilitySwitch",)
 
-#: 前端键 → 后端键的改名声明（附录 A-7）。
+#: 前端键 → 后端键的改名声明（附录 A-7 / Batch 3 请求形状盲区）。
 #:
-#: 后端 `CapabilityPolicyItem` 返回 `enabled`，前端声明 `org_switch_enabled`。
-#: 裁决是**不改后端字段名**（改了要动 6 个消费方 + 迁移），由前端在
-#: `setCapabilityPolicy` 做映射；门禁这边声明改名，避免把它当成真的缺键/多键。
+#: 后端 `CapabilityPolicyItem` 与 `CapabilityPolicyRequestItem` 都用 `enabled`，
+#: 前端业务名是 `org_switch_enabled`。裁决是**不改后端字段名**（改了要动 6 个消费方 +
+#: 迁移），由前端在 `setCapabilityPolicy` 做请求/响应双向映射；门禁这边声明改名，
+#: 避免把同一业务概念的两侧字段名当成真的缺键/多键。
 FIELD_RENAME: Final[dict[str, dict[str, str]]] = {
     "CapabilityPolicyItem": {"org_switch_enabled": "enabled"},
+    "CapabilityPolicyRequestItem": {"org_switch_enabled": "enabled"},
 }
 
 

@@ -123,8 +123,8 @@
 | `T4-05.3` | `apps/adapter/app/workers/tasks/tenant_export.py` | T4-05.3 | W4 | 代码 | 待建 | — | — |
 | `T4-05.3` | `apps/adapter/tests/integration/test_retention_export_delete.py` | T4-05.3 | W4 | 测试 | 已建 | f30c95e | — |
 | `T4-05.3` | `sql/retention-audit.sql` | T4-05.3 | W4 | 代码 | 已建 | f30c95e | — |
-| `T4-05.4` | `deploy/.env.lite.example` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（10,217 B / 10.0 KiB） |
-| `T4-05.4` | `deploy/docker-compose.lite.yml` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（29,894 B / 29.2 KiB） |
+| `T4-05.4` | `deploy/.env.lite.example` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（11,028 B / 10.8 KiB） |
+| `T4-05.4` | `deploy/docker-compose.lite.yml` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（30,327 B / 29.6 KiB） |
 | `T4-05.4` | `deploy/nginx/lite.conf` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（6,015 B / 5.9 KiB） |
 | `T4-05.4` | `deploy/nginx/nginx.conf` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（2,228 B / 2.2 KiB） |
 | `T4-05.4` | `deploy/validate_lite_up.sh` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（35,098 B / 34.3 KiB） |

@@ -1,6 +1,8 @@
 {
   "backend_schema": {
     "CapabilityPolicyItem": "CapabilityPolicyItem",
+    "CapabilityPolicyRequest": "CapabilityPolicyRequest",
+    "CapabilityPolicyRequestItem": "CapabilityPolicyRequestItem",
     "InstalledPluginItem": "InstalledItem",
     "PluginCapabilitiesData": "CapabilityListData",
     "PluginCapabilityItem": "PluginCapabilityItem",
@@ -68,6 +70,17 @@
         "enabled",
         "updated_by_name",
         "updated_at"
+      ]
+    },
+    "CapabilityPolicyRequest": {
+      "keys": [
+        "policies"
+      ]
+    },
+    "CapabilityPolicyRequestItem": {
+      "keys": [
+        "capability_key",
+        "enabled"
       ]
     },
     "InstalledPluginItem": {
@@ -290,6 +303,9 @@
   "optionality_authority": "snapshot",
   "rename": {
     "CapabilityPolicyItem": {
+      "org_switch_enabled": "enabled"
+    },
+    "CapabilityPolicyRequestItem": {
       "org_switch_enabled": "enabled"
     }
   },

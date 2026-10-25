@@ -43,7 +43,7 @@ import {
 import { CapabilityList } from '@/components/plugin/capability-list';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { formatDateTime, orPlaceholder } from '@/lib/format';
-import type { CapabilityPolicyItem, OrganizationMember } from '@/lib/types';
+import type { CapabilityPolicyItem, CapabilityPolicyRequestItem, OrganizationMember } from '@/lib/types';
 
 /** 角色展示映射（业务语言） */
 const ROLE_LABELS: Readonly<Record<string, string>> = {
@@ -613,7 +613,7 @@ function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.El
   }, [rows]);
 
   const saveMutation = useApiMutation(
-    (policies: Array<{ capability_key: string; org_switch_enabled: boolean }>) =>
+    (policies: CapabilityPolicyRequestItem[]) =>
       pluginsApi.setCapabilityPolicy({ policies }),
     {
       invalidateKeys: [['plugins']],

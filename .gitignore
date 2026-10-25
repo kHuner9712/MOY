@@ -127,3 +127,6 @@ docs/api/openapi.json
 
 # 备份产物（db.dump 含全部业务数据与产物，绝不入库）
 deploy/backups/
+
+# 适配层本地 pytest 运行日志（只在本机排障时落盘，不入库；CI 的 pytest 输出由 job 自己采集）
+apps/adapter/pytest_run.log

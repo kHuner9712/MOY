@@ -20,6 +20,7 @@ import { QUERY_KEYS, useApiMutation, useApiQuery } from '@/hooks/use-api';
 import { BusinessError, agentApi, pluginsApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { orPlaceholder } from '@/lib/format';
+import { isPluginInstalled } from '@/lib/plugin-status';
 import type { PluginDetail, PluginInputSpec, TaskStep } from '@/lib/types';
 
 /** 进行中状态集合（用于决定是否轮询） */
@@ -264,7 +265,7 @@ export default function WorkbenchPage(): React.JSX.Element {
     );
   }
 
-  const installed = plugin.installed_status !== 'none';
+  const installed = isPluginInstalled(plugin.installed_status);
   const disabled = plugin.installed_status === 'disabled';
   const sections = buildSections(plugin);
   const confirm = task?.confirm ?? null;
@@ -303,7 +304,7 @@ export default function WorkbenchPage(): React.JSX.Element {
           </Button>
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-semibold">{plugin.name}</h2>
-            <StatusBadge status={plugin.installed_status} label="已添加" />
+            <StatusBadge status={plugin.installed_status} />
           </div>
           <p className="max-w-2xl text-sm text-muted-foreground">
             {orPlaceholder(plugin.summary, '按下面填写后即可开始')}
