@@ -50,6 +50,13 @@ export function DeclarationForm({
   return (
     <form
       className="space-y-4"
+      // `noValidate` 关掉浏览器的原生拦截：`type="email"` 在原生校验失败时会**静默**
+      // 阻止 submit 事件（无气泡、无事件、无请求），用户只看到「点了没反应」。
+      // 原生气泡还会把文案交给浏览器语言，违背「文案来自应用内」的口径。
+      // 校验一律走 `useDeclarationForm().validate()`（规则来自声明，文案在
+      // `validateField` 里），因此这里必须关掉原生校验、而不是把 `type` 改回 text：
+      // `type="email"` 仍要保留，它决定移动端键盘与浏览器自动填充行为。
+      noValidate
       onSubmit={(event) => {
         event.preventDefault();
         onSubmit();

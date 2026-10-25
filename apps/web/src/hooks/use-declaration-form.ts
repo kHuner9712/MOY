@@ -198,6 +198,29 @@ export function validateField(spec: PluginInputSpec, value: DeclarationValue): s
 }
 
 /**
+ * 全字段校验（纯函数，`validate()` 与测试共用同一份规则）。
+ *
+ * 抽成纯函数的原因：`validate()` 只是「跑一遍 + 写 state」，而「提交前必须跑完全部字段」
+ * 这件事本身需要被机械守住（W-06：只校验失焦字段会漏，用户点提交时看到的是
+ * 「点了没反应」）。把它做成可在无渲染器环境直接断言的函数，测试就不必拖进 React 渲染器。
+ *
+ * @param inputs - 声明输入项
+ * @param values - 当前值
+ * @returns 错误表（key → 业务语言）；全部通过时为空对象
+ */
+export function collectFieldErrors(
+  inputs: PluginInputSpec[],
+  values: Record<string, DeclarationValue>,
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const spec of inputs) {
+    const message = validateField(spec, values[spec.key] ?? null);
+    if (message) errors[spec.key] = message;
+  }
+  return errors;
+}
+
+/**
  * 声明驱动表单 Hook。
  *
  * 目标预填（W1 切片 B）：`initial` 非空时，在 `inputs` 由空变非空后
@@ -257,11 +280,7 @@ export function useDeclarationForm(
   );
 
   const validate = useCallback((): boolean => {
-    const nextErrors: Record<string, string> = {};
-    for (const spec of inputs) {
-      const message = validateField(spec, values[spec.key] ?? null);
-      if (message) nextErrors[spec.key] = message;
-    }
+    const nextErrors = collectFieldErrors(inputs, values);
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }, [inputs, values]);

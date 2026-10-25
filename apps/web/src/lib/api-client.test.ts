@@ -98,13 +98,13 @@ describe('api-client · 信封与业务错误', () => {
     const { api } = await load();
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => envelope({ items: [{ plugin_id: 'plg_dev_workbench' }] })),
+      vi.fn(async () => envelope({ items: [{ plugin_id: 'demo_plugin' }] })),
     );
 
     const result = await api.pluginsApi.installed();
 
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.plugin_id).toBe('plg_dev_workbench');
+    expect(result.items[0]?.plugin_id).toBe('demo_plugin');
   });
 
   it('#2 登录失效的业务码抛 BusinessError 并广播会话失效', async () => {
