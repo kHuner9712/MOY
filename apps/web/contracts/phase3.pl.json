@@ -1,7 +1,7 @@
 {
   "version": "phase3-pl-v1",
   "source": "docs/architecture-phase3.md §5.2 / §5.3（PL1-PL14 + WF1 + WF2，共 16 端点）",
-  "note": "required/optional 逐键一致；enums 逐值一致。可选性翻转、缺值、多值均视为契约漂移。2026-10-25：F-02/F-03/F-05 对齐后端实际实现（app/schemas/plugin.py），更正 PluginMarketData / PluginReviewsData 的 meta → 扁平四字段、PluginDetail 移除 changelog、PluginVersionBrief 增 changelog。快照来源仍为文档，换源见 F-10。",
+  "note": "**键集合的权威真相源已换为 `contracts/plugin-domain.gen.json`**（由 deploy/export_plugin_contract.py 从 create_app().openapi() 派生，W-01 契约换源）。本文件降级为「可选性 + 枚举」的权威：required/optional 的逐键归属仍由本文件守（后端全部字段带默认值，OpenAPI 不输出 required，故可选性不能由生成契约承担）。键集合由 `scan:contract:gen` 三方比对（gen ↔ types.ts ↔ 本文件），可选性与枚举由 `scan:contract` 比对（本文件 ↔ types.ts）。2026-10-25：附录 A 8 处漂移收敛——PluginMarketItem/PluginCapabilitiesData 增 install_block_reason、PluginDetail 删 vendor 增 install_count+install_block_reason、InstalledPluginItem 增 icon_key、PluginInstallResult 增 already_installed、PluginRollbackResult 增 has_update、PluginGrantsUpdateResult 删 plugin_id；PluginInstalledStatus 扩到 5 值与后端属性级枚举一致。",
   "interfaces": {
     "PluginMarketItem": {
       "required": [
@@ -17,7 +17,9 @@
         "has_update",
         "installable"
       ],
-      "optional": []
+      "optional": [
+        "install_block_reason"
+      ]
     },
     "PluginCategoryItem": {
       "required": [
@@ -58,7 +60,9 @@
         "org_switch_updated_at",
         "installable"
       ],
-      "optional": []
+      "optional": [
+        "install_block_reason"
+      ]
     },
     "PluginOutputSpec": {
       "required": [
@@ -109,7 +113,8 @@
         "installable"
       ],
       "optional": [
-        "vendor"
+        "install_count",
+        "install_block_reason"
       ]
     },
     "InstalledPluginItem": {
@@ -124,7 +129,9 @@
         "last_used_at",
         "running_task_count"
       ],
-      "optional": []
+      "optional": [
+        "icon_key"
+      ]
     },
     "PluginInstallResult": {
       "required": [
@@ -134,7 +141,9 @@
         "granted_capabilities",
         "denied_capabilities"
       ],
-      "optional": []
+      "optional": [
+        "already_installed"
+      ]
     },
     "PluginStateResult": {
       "required": [
@@ -168,7 +177,9 @@
         "version",
         "previous_version"
       ],
-      "optional": []
+      "optional": [
+        "has_update"
+      ]
     },
     "PluginSettingsResult": {
       "required": [
@@ -223,7 +234,6 @@
     },
     "PluginGrantsUpdateResult": {
       "required": [
-        "plugin_id",
         "granted_capabilities",
         "denied_capabilities",
         "required_capabilities"
@@ -341,7 +351,8 @@
       ],
       "optional": [
         "max_length",
-        "options"
+        "options",
+        "format"
       ]
     }
   },
@@ -373,7 +384,9 @@
     "PluginInstalledStatus": [
       "none",
       "enabled",
-      "disabled"
+      "disabled",
+      "installed",
+      "uninstalled"
     ],
     "PluginCapabilityKey": [
       "personal.knowledge.read",

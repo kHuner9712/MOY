@@ -380,6 +380,26 @@ function buildQuery(query: RequestOptions['query']): string {
   return serialized ? `?${serialized}` : '';
 }
 
+/**
+ * 网关层状态码 → 业务错误（413 / 429）。
+ *
+ * 网关（nginx / 反向代理）的 413、429 **不带统一信封**，落到 `unwrap` 会被退化成
+ * 「服务暂时不可用」——用户永远不知道是文件太大还是请求太密。码复用后端已注册的
+ * 20008（PAYLOAD_TOO_LARGE）/ 20006（RATE_LIMITED）；文案交给 `toBusinessMessage`
+ * 按 code 取表，此处**不复制字符串**（`business-errors.ts` 本批不改）。
+ *
+ * 抽成函数是因为 `request()` 与 `upload()` 是两条独立实现：只补 `request()` 的话，
+ * 恰恰最容易触发 413 的**大文件上传**仍然拿不到正确文案。
+ *
+ * @param response - fetch 的响应
+ * @throws BusinessError 413 → 20008，429 → 20006
+ */
+function throwIfGatewayStatusRejected(response: Response): void {
+  if (response.status === 413 || response.status === 429) {
+    throw new BusinessError(response.status === 413 ? 20008 : 20006, '');
+  }
+}
+
 /** 执行一次适配层请求 */
 async function request<T>(
   method: string,
@@ -419,6 +439,10 @@ async function request<T>(
     throw new BusinessError(UNAUTHORIZED_CODE, '登录状态已失效，请重新登录');
   }
 
+  // 网关层的 413 / 429 同样**没有统一信封**，必须在 `unwrap` 之前拦下。
+  // 顺序不能变：401 → 413/429 → `unwrap(code=20002)`；三者互不覆盖（上面那条 throw 即返回）。
+  throwIfGatewayStatusRejected(response);
+
   return unwrap<T>(response);
 }
 
@@ -442,6 +466,8 @@ async function upload<T>(path: string, form: FormData, options: RequestOptions =
     { method: 'POST', headers, body: form, cache: 'no-store' },
     options.timeoutMs ?? REQUEST_TIMEOUT_MS,
   );
+  // 上传是 413 的主战场（网关 body limit 先于业务层生效），必须与 `request()` 同口径
+  throwIfGatewayStatusRejected(response);
   return unwrap<T>(response);
 }
 
@@ -1266,6 +1292,76 @@ export const opsApi = {
 // ---------------------------------------------------------------------------
 
 /**
+ * 后端 `CapabilityPolicyItem` 的**原始**形状。
+ *
+ * 后端字段名是 `enabled`（`app/schemas/plugin.py` 的 `CapabilityPolicyItem`），
+ * 前端业务名是 `org_switch_enabled`（"企业总开关是否开启"，与 `PluginCapabilityItem`
+ * 同名同义）。Batch 2 裁决（§7-1）：**不改后端字段名**，在本文件的一处入口做映射，
+ * 这样 `team/page.tsx` 的 `setSaved(data.policies)` 拿到的是前端口径，
+ * 不必每个消费点各写一遍（写 9 遍必然漏写）。
+ */
+interface BackendCapabilityPolicyItem {
+  capability_key: string;
+  display_name: string;
+  /** 后端字段名（映射前） */
+  enabled?: boolean;
+  /** 前端口径（后端若已改名则直接可用） */
+  org_switch_enabled?: boolean;
+  updated_by_name: string;
+  updated_at: string;
+}
+
+/**
+ * 后端 `CapabilityPolicyRequestItem` 的**原始**形状。
+ *
+ * 后端请求模型是 `extra="forbid"`（`app/schemas/plugin.py` 的
+ * `CapabilityPolicyRequest`），多一个 `org_switch_enabled` 就直接 422/20001——
+ * 所以请求侧必须映射成 `enabled`，不能把前端形状原样发出去。
+ */
+interface BackendCapabilityPolicyRequestItem {
+  capability_key: string;
+  enabled: boolean;
+}
+
+/**
+ * 把前端能力开关请求映射为后端形状（请求方向的 A-7 映射）。
+ *
+ * 为什么两端都要映射：A-7 的裁决是「不改后端字段名」。只做响应映射**只修了一半**——
+ * 读取正常、保存恒失败（QA 实测：同一 body 把 `org_switch_enabled` 换成 `enabled`
+ * 即 200，说明后端一直是对的，是前端发错了形状）。
+ *
+ * @param body - 前端口径的请求体
+ * @returns 后端口径的请求体（逐项只带 `capability_key` + `enabled`）
+ */
+function adaptCapabilityPolicyRequest(
+  body: CapabilityPolicyRequest,
+): { policies: BackendCapabilityPolicyRequestItem[] } {
+  return {
+    policies: (body.policies ?? []).map((item) => ({
+      capability_key: item.capability_key,
+      enabled: item.org_switch_enabled,
+    })),
+  };
+}
+
+/**
+ * 把后端 `CapabilityPolicyItem` 映射为前端 `CapabilityPolicyItem`。
+ *
+ * @param item - 后端返回的原始条目
+ * @returns 前端口径的条目（`org_switch_enabled` 一定有值）
+ */
+function adaptCapabilityPolicy(item: BackendCapabilityPolicyItem): CapabilityPolicyItem {
+  const enabled = item.enabled ?? item.org_switch_enabled ?? false;
+  return {
+    capability_key: item.capability_key,
+    display_name: item.display_name,
+    org_switch_enabled: enabled,
+    updated_by_name: item.updated_by_name,
+    updated_at: item.updated_at,
+  };
+}
+
+/**
  * 插件接口（阶段三 13 个端点）。
  *
  * 统一说明：
@@ -1353,7 +1449,16 @@ export const pluginsApi = {
 
   /** PL13 企业能力总开关（仅 org.* 三项；个人能力恒开；响应回全量 6 项） */
   setCapabilityPolicy(body: CapabilityPolicyRequest): Promise<{ policies: CapabilityPolicyItem[] }> {
-    return request('PUT', '/plugins/capability-policy', { body });
+    // 双向映射（裁决 §7-1）：请求 `org_switch_enabled → enabled`、响应 `enabled →
+    // org_switch_enabled`，都在本方法这一处收敛。后端字段名不改——改它要动 6 个消费方
+    // 加数据迁移，收益不抵成本；但请求侧**必须**换名，后端请求模型 `extra="forbid"`，
+    // 发前端的字段名会直接被拒（保存恒失败）。
+    return request<{ policies: BackendCapabilityPolicyItem[] }>('PUT', '/plugins/capability-policy', {
+      body: adaptCapabilityPolicyRequest(body),
+    }).then((data) => ({
+      ...data,
+      policies: (data.policies ?? []).map(adaptCapabilityPolicy),
+    }));
   },
 
   /** PL14 已安装后改授权（required=true 的能力不允许撤回） */

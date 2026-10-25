@@ -254,6 +254,31 @@ class InputSpec(_StrictModel):
     max_items: int | None = Field(
         default=None, ge=1, le=200, description="数量上限（file / multi_select）"
     )
+    format: Literal["", "repo", "department"] = Field(
+        default="",
+        description="候选值的格式约束（空候选输入用：平台按身份给值，插件声明它的形状）",
+    )
+
+    @model_validator(mode="after")
+    def _format_only_for_scalar_inputs(self) -> InputSpec:
+        """`format` 只允许用在**单值**输入上（`file` / `multi_select` 禁止）。
+
+        为什么写在形态校验里：`format` 约束的是「一个值长什么样」。多值输入里
+        每一份的形状可能不同（多个文件、多个选项），声明一个整体 format 表达不出
+        这层意思，放过去只会让人误以为已经校验过了——于是「声明了格式、运行期不校验」
+        变成第二条假护栏（与 `max_items` 那条同源）。
+
+        Returns:
+            InputSpec: 自身（Pydantic v2 `mode="after"` 约定）。
+
+        Raises:
+            ValueError: 在多值输入上声明了 `format`。
+        """
+        if self.format and self.type in {"file", "multi_select"}:
+            raise ValueError(
+                f"输入项 {self.key} 是多值输入（{self.type}），不能声明 format={self.format!r}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _item_limit_only_for_multi_value(self) -> InputSpec:

@@ -30,15 +30,23 @@ from app.business.audit_service import (
     AuditService,
 )
 from app.business.order_service import REJECTED_TXN_PREFIX, OrderService
-from app.business.payment_gateway import FakeGateway, payload_digest
+from app.business.payment_gateway import (
+    PAID_TRADE_STATES,
+    TRADE_STATE_SUCCESS,
+    TRADE_STATE_UNKNOWN,
+    FakeGateway,
+    PaymentNotification,
+    payload_digest,
+)
 from app.business.plan_service import PlanService
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ApiError, ErrorCode
 from app.db.repositories.billing_repo import (
+    ORDER_PENDING,
     PLAN_PROFESSIONAL,
     InMemoryBillingStore,
 )
-from app.schemas.billing import CreateOrderRequest
+from app.schemas.billing import CreateOrderRequest, PaymentCallbackRequest
 
 pytestmark = pytest.mark.unit
 
@@ -328,3 +336,124 @@ async def test_rejected_callback_never_writes_channel_identifier_to_key_space() 
     assert (await fixture.store.get_callback("fake", "txn_dos_1")) is None
     assert (await fixture.store.get_callback("fake", "txn_dos_2")) is None
     assert fixture.store.counts()["callbacks"] == 2, "两条脏载荷各留一条取证行"
+
+
+# ===========================================================================
+# W-03 支付 fail-open 收口（4 处默认值）
+#
+# 缺陷形态：渠道回调**不带** `trade_state` 时被当成成功。
+# 四处必须一起改，少一处仍然 fail-open：
+#   ① `PaymentCallbackRequest.trade_state` 默认 `"SUCCESS"`（schema 层，最先命中）
+#   ② `PaymentNotification.trade_state` 默认 `TRADE_STATE_SUCCESS`（dataclass 层）
+#   ③④ 两处 `payload.get("trade_state", TRADE_STATE_SUCCESS) or TRADE_STATE_SUCCESS`
+# 判定改成白名单（`PAID_TRADE_STATES`），未知值默认不成功。
+# ===========================================================================
+
+
+def test_callback_request_defaults_trade_state_to_unknown() -> None:
+    """① schema 层的缺省必须是空串（否则 `model_dump()` 先把它补成成功）。"""
+    body = PaymentCallbackRequest(
+        out_trade_no="ord_x", transaction_id="txn_x", amount_total=100, sign="s"
+    )
+
+    dumped = body.model_dump()
+    assert dumped["trade_state"] == TRADE_STATE_UNKNOWN
+    assert dumped["trade_state"] != "SUCCESS", "缺字段不得被补成成功（fail-open 的第一道入口）"
+    # 该默认值流到通知对象后，必须落在白名单之外
+    assert PaymentNotification(trade_state=dumped["trade_state"]).is_success is False
+
+
+def test_notification_default_trade_state_is_unknown() -> None:
+    """② dataclass 层的缺省同样不能是成功。"""
+    notification = PaymentNotification(order_id="ord_x", external_txn_id="txn_x")
+
+    assert notification.trade_state == TRADE_STATE_UNKNOWN
+    assert notification.is_success is False
+    assert PAID_TRADE_STATES == frozenset({TRADE_STATE_SUCCESS})
+
+
+@pytest.mark.parametrize("state", ["SUCCESS", "success", " SUCCESS ", "Success"])
+def test_is_success_accepts_case_and_whitespace_variants(state: str) -> None:
+    """真实成功回调不得因大小写/空白差异被判失败（反向误判）。"""
+    assert PaymentNotification(trade_state=state).is_success is True
+
+
+@pytest.mark.parametrize("state", ["NOTPAY", "CLOSED", "", "  ", "TRADE_SUCCESS", "UNKNOWN"])
+def test_is_success_rejects_non_whitelisted_states(state: str) -> None:
+    """白名单之外一律不成功（含空串、空白、微信 v2 的 `TRADE_SUCCESS` 未登记态）。"""
+    assert PaymentNotification(trade_state=state).is_success is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.p0
+async def test_missing_trade_state_keeps_order_pending() -> None:
+    """回调**完全没有** `trade_state` 键 → 订单仍待支付，并留 `trade_not_success` 取证行。
+
+    这是 W-03 的核心回归：修复前该载荷会被判成功（订单变已支付、套餐开通），
+    等于任何人发一条只有订单号+流水号的回调就能白拿套餐。
+    """
+    fixture = await _make_fixture()
+    payload = _payload(fixture.order_id, fixture.amount_cents, "txn_missing_state")
+    payload.pop("trade_state")
+
+    with pytest.raises(ApiError) as excinfo:
+        await fixture.service.handle_callback(payload)
+
+    assert excinfo.value.code is ErrorCode.PAYMENT_INCOMPLETE
+    record = await fixture.store.get_order(TENANT_ID, fixture.order_id)
+    assert record is not None
+    assert record.status == ORDER_PENDING, "缺交易状态不得把订单推成已支付"
+    assert record.is_paid is False
+    counts = fixture.store.counts()
+    assert counts["invoices"] == 0, "缺交易状态不得开票"
+    assert counts["subscriptions"] == 0, "缺交易状态不得开通套餐"
+
+    await _assert_untouched(fixture, payload)
+    entries = await _rejection_entries(fixture, TENANT_ID)
+    assert [item.change_summary["reason"] for item in entries] == ["trade_not_success"]
+    # 取证行要能区分「没传」与「传了别的值」：空值时 detail 里是裸的 `trade_state=`
+    assert entries[0].change_summary["detail"].endswith("trade_state=")
+
+
+@pytest.mark.asyncio
+@pytest.mark.p0
+@pytest.mark.parametrize("state", ["NOTPAY", "CLOSED", ""])
+async def test_unknown_trade_state_keeps_order_pending(state: str) -> None:
+    """`NOTPAY` / `CLOSED` / 空串 → 订单仍待支付，套餐未开通，取证行留 `trade_state=<值>`。"""
+    fixture = await _make_fixture()
+    payload = _payload(
+        fixture.order_id, fixture.amount_cents, f"txn_state_{state or 'empty'}", state=state
+    )
+
+    with pytest.raises(ApiError) as excinfo:
+        await fixture.service.handle_callback(payload)
+
+    assert excinfo.value.code is ErrorCode.PAYMENT_INCOMPLETE
+    record = await fixture.store.get_order(TENANT_ID, fixture.order_id)
+    assert record is not None
+    assert record.status == ORDER_PENDING
+    counts = fixture.store.counts()
+    assert counts["invoices"] == 0
+    assert counts["subscriptions"] == 0
+
+    await _assert_untouched(fixture, payload)
+    entries = await _rejection_entries(fixture, TENANT_ID)
+    assert [item.change_summary["reason"] for item in entries] == ["trade_not_success"]
+    assert entries[0].change_summary["detail"].endswith(f"trade_state={state}")
+
+
+@pytest.mark.asyncio
+async def test_small_case_success_still_activates() -> None:
+    """渠道回小写 `success` / 带空格时仍要生效（白名单比较前已归一）。"""
+    fixture = await _make_fixture()
+    result = await fixture.service.handle_callback(
+        _payload(fixture.order_id, fixture.amount_cents, "txn_lower_ok", state=" success ")
+    )
+
+    assert result.code == "SUCCESS"
+    record = await fixture.store.get_order(TENANT_ID, fixture.order_id)
+    assert record is not None
+    assert record.status == "paid"
+    counts = fixture.store.counts()
+    assert counts["invoices"] == 1
+    assert counts["subscriptions"] == 1

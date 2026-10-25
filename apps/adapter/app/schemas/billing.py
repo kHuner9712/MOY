@@ -478,7 +478,13 @@ class PaymentCallbackRequest(BaseModel):
     transaction_id: str = Field(default="", max_length=128, description="渠道流水号")
     amount_total: int = Field(default=0, ge=0, description="实付金额（分）")
     sign: str = Field(default="", max_length=256, description="渠道签名")
-    trade_state: str = Field(default="SUCCESS", max_length=32, description="交易状态")
+    # 缺省必须是空串，**不能**是 "SUCCESS"：本模型的 `model_dump()` 是回调业务校验的
+    # 入口（`api/v1/billing.py`），默认成 SUCCESS 等于「渠道没说成功就算成功」——
+    # 一条缺字段的回调就能把订单推成已支付（fail-open）。空串会落到
+    # `PaymentNotification.is_success` 的白名单外，走 `trade_not_success` 拒绝出口。
+    trade_state: str = Field(
+        default="", max_length=32, description="交易状态（`SUCCESS` 表示成功）"
+    )
 
 
 class PaymentCallbackData(BaseModel):

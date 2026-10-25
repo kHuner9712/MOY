@@ -515,6 +515,13 @@ jobs:
         with:
           python-version: '3.13'
 
+      # 契约门禁脚本是零依赖 Node 脚本（只用 node:fs / node:path），
+      # 因此只需 Node 运行时，不必 `npm ci`（省 2-3 分钟与一次 lock 校验）。
+      - name: 安装 Node.js（契约门禁用）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: 安装依赖
         working-directory: apps/adapter
         run: |
@@ -534,6 +541,29 @@ jobs:
         working-directory: .
         run: |
           python deploy/validate_openapi.py --strict
+
+      # W-01 契约换源（§7-4 裁决：gen 门禁放本 job，不放 ci-web）：
+      # 1) `--check` 证明入库的 gen 文件与后端 OpenAPI 一致（后端改了没重生成 → 红）；
+      # 2) `--generated` 证明 gen ↔ types.ts ↔ 手写快照三方键集合一致。
+      # 脚本零依赖（只 node 内建），故只需 Node 运行时，不必 `npm ci`。
+      - name: 插件域契约换源门禁（gen ↔ 后端 / gen ↔ 前端）
+        working-directory: .
+        run: |
+          python deploy/export_plugin_contract.py --check
+          node apps/web/scripts/check-plugin-contract.mjs --generated
+
+      - name: 插件域契约门禁自检（期望退出码 1）
+        working-directory: .
+        run: |
+          set +e
+          node apps/web/scripts/check-plugin-contract.mjs --generated --self-test
+          status=$?
+          set -e
+          if [ "$status" -ne 1 ]; then
+            echo "[FAIL] 生成契约门禁自检退出码 $status，期望 1"
+            exit 1
+          fi
+          echo "[PASS] 生成契约门禁抓到全部负样本（缺键/多键/接口缺失/白名单外快照接口）"
 
       - name: 对外文档禁止泄露底座术语
         # 保留阶段一既有扫描（G5 已在 validate_openapi.py 内覆盖，

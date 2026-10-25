@@ -230,12 +230,10 @@ jobs:
       # ------------------------------------------------------------------
       # G-30：能力使用一致性（跨层静态校验，枚举与后端 actions.py 同源）
       #
-      # 整改期：先跑 --warn-only（发现的问题打印在日志里但不判失败）。
-      # 后端 B20 把 plg_hr_admin 的「多要权限」修掉后，把下面这行换成
-      # `npm run scan:capability --workspace apps/web` 即转严格模式。
+      # 严格模式：多要权限 / 使用未声明能力一律判失败，不放行整改期。
       # ------------------------------------------------------------------
-      - name: G-30 能力使用一致性（整改期 warn-only）
-        run: npm run scan:capability-warn --workspace apps/web
+      - name: G-30 能力使用一致性
+        run: npm run scan:capability --workspace apps/web
 
       - name: G-30 一致性门禁自检（期望退出码 1）
         run: |
