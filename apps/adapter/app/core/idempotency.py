@@ -32,6 +32,9 @@ DEFAULT_TTL_SECONDS: Final[int] = 86_400
 #: 空请求体的规范化固定摘要（架构文档 3.0.5：不得跳过请求体摘要项）
 EMPTY_BODY_SHA256: Final[str] = hashlib.sha256(b"").hexdigest()
 
+#: 内存幂等条目上限（防长跑进程无界增长；超出后优先淘汰最旧的已完成条目）
+DEFAULT_MAX_ENTRIES: Final[int] = 20_000
+
 
 @dataclass(slots=True)
 class _Entry:
@@ -65,6 +68,21 @@ class IdempotencyStore(Protocol):
 
         Returns:
             Any | None: 首次结果；无记录时返回 `None`。
+        """
+        ...
+
+    async def is_completed(self, key: str) -> bool:
+        """判断幂等键是否已完成首次执行。
+
+        **为什么需要它**：`get()` 对「无记录」「未完成」都返回 `None`，
+        重复请求无法区分「首次请求仍在执行」与「首次结果为空」。
+        返回空结果冒充成功会让客户端误以为写操作已完成（审计 P2-3）。
+
+        Args:
+            key: 幂等键。
+
+        Returns:
+            bool: 已完成返回 True；无记录、已过期或仍在执行返回 False。
         """
         ...
 
@@ -120,12 +138,44 @@ class InMemoryIdempotencyStore:
     Attributes:
         _entries: 幂等条目表。
         _lock: 异步锁，保证并发安全。
+        _max_entries: 条目上限（超出后优先淘汰最旧的已完成条目）。
     """
 
-    def __init__(self) -> None:
-        """初始化内存存储。"""
+    def __init__(self, max_entries: int = DEFAULT_MAX_ENTRIES) -> None:
+        """初始化内存存储。
+
+        Args:
+            max_entries: 条目上限，防止长跑进程内存无界增长。
+        """
         self._entries: dict[str, _Entry] = {}
         self._lock = asyncio.Lock()
+        self._max_entries = max_entries
+
+    def _prune_locked(self, now: float) -> None:
+        """清理过期条目；仍超上限时淘汰最旧的已完成条目（调用方须持锁）。
+
+        未完成的条目（首次请求仍在执行）**不得淘汰**，否则重复请求会失去
+        幂等保护；并发数本身有界，允许在极端情况下短暂超出上限。
+
+        Args:
+            now: 当前单调时钟。
+        """
+        if len(self._entries) < self._max_entries:
+            return
+        expired = [
+            key
+            for key, entry in self._entries.items()
+            if now - entry.created_at > DEFAULT_TTL_SECONDS
+        ]
+        for key in expired:
+            self._entries.pop(key, None)
+        if len(self._entries) < self._max_entries:
+            return
+        for key in list(self._entries):
+            if len(self._entries) < self._max_entries:
+                return
+            if self._entries[key].completed:
+                self._entries.pop(key, None)
 
     async def get(self, key: str) -> Any | None:
         """读取已完成结果，并惰性清理过期条目。
@@ -146,6 +196,24 @@ class InMemoryIdempotencyStore:
             if not entry.completed:
                 return None
             return entry.result
+
+    async def is_completed(self, key: str) -> bool:
+        """判断幂等键是否已完成首次执行，并惰性清理过期条目。
+
+        Args:
+            key: 幂等键。
+
+        Returns:
+            bool: 已完成返回 True；无记录、已过期或仍在执行返回 False。
+        """
+        async with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return False
+            if time.monotonic() - entry.created_at > DEFAULT_TTL_SECONDS:
+                self._entries.pop(key, None)
+                return False
+            return entry.completed
 
     async def peek(self, key: str) -> str | None:
         """读取已占用的请求指纹，并惰性清理过期条目。
@@ -180,6 +248,8 @@ class InMemoryIdempotencyStore:
             existing = self._entries.get(key)
             if existing is not None and time.monotonic() - existing.created_at <= ttl_seconds:
                 return False
+            if existing is None:
+                self._prune_locked(time.monotonic())
             self._entries[key] = _Entry(fingerprint=fingerprint)
             return True
 
@@ -261,6 +331,26 @@ class RedisIdempotencyStore:
         if not isinstance(payload, dict) or not payload.get("done"):
             return None
         return payload.get("result")
+
+    async def is_completed(self, key: str) -> bool:
+        """判断幂等键是否已完成首次执行。
+
+        Args:
+            key: 幂等键。
+
+        Returns:
+            bool: 已完成返回 True；无记录或仍在执行返回 False。
+        """
+        import json
+
+        raw = await self._client.get(self._build_key(key))
+        if raw is None:
+            return False
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):  # pragma: no cover - 防御性分支
+            return False
+        return isinstance(payload, dict) and bool(payload.get("done"))
 
     async def peek(self, key: str) -> str | None:
         """读取已占用的请求指纹。
@@ -437,6 +527,13 @@ class IdempotencyManager:
         """
         acquired = await self.check_or_set(key, fingerprint)
         if not acquired:
+            # 首个请求仍在执行：返回空结果会被客户端当成「写成功」（审计 P2-3）。
+            # 20005 的既有语义是「操作冲突，请刷新后重试」，与此场景一致。
+            if not await self._store.is_completed(key.strip()):
+                raise ApiError(
+                    ErrorCode.CONFLICT,
+                    internal_detail="idempotent request still in progress",
+                )
             cached = await self.get_result(key)
             logger.debug("idempotency_replayed", key_suffix=key.strip()[-8:])
             return cached, True

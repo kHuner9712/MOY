@@ -1026,7 +1026,7 @@ async def test_b10_2_confirm_order_pays_activates_and_audits_operator_and_remark
     remark = "W3 核销：对公到账已核对（流水 20261021）"
     confirmed = saas_client.post(
         f"{OPS_ORDERS}/{order['order_id']}/confirm",
-        headers=ops_headers,
+        headers=ops_headers | _key("w3-confirm-ok"),
         json={"paid_amount_cents": order["amount_cents"], "remark": remark},
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -1064,7 +1064,7 @@ async def test_b10_2_confirm_order_pays_activates_and_audits_operator_and_remark
     # 重复核销 → 15008（不得二次生效）
     repeated = saas_client.post(
         f"{OPS_ORDERS}/{order['order_id']}/confirm",
-        headers=ops_headers,
+        headers=ops_headers | _key("w3-confirm-repeat"),
         json={"paid_amount_cents": order["amount_cents"], "remark": "重复点击"},
     )
     assert repeated.status_code == 409
@@ -1086,7 +1086,7 @@ async def test_b10_2_confirm_order_pays_activates_and_audits_operator_and_remark
     second_order = second.json()["data"]
     mismatch = saas_client.post(
         f"{OPS_ORDERS}/{second_order['order_id']}/confirm",
-        headers=ops_headers,
+        headers=ops_headers | _key("w3-confirm-mismatch"),
         json={"paid_amount_cents": second_order["amount_cents"] - 1, "remark": "少一分"},
     )
     assert mismatch.status_code == 400

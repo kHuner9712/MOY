@@ -90,10 +90,13 @@ class _FakeRedis:
 
 
 async def test_allows_within_limit() -> None:
-    """限额内请求全部放行。"""
+    """限额内请求全部放行，越界后拦截（显式断言边界，审计 P2-22）。"""
     limiter = RateLimiter(settings=Settings(ratelimit_enabled=True))
     for _ in range(3):
         await limiter.check("tnt_1", "usr_1", "/api/v1/model/generate", limit=3)
+    with pytest.raises(ApiError) as exc_info:
+        await limiter.check("tnt_1", "usr_1", "/api/v1/model/generate", limit=3)
+    assert exc_info.value.code == ErrorCode.RATE_LIMITED
 
 
 async def test_blocks_over_limit() -> None:
@@ -106,9 +109,12 @@ async def test_blocks_over_limit() -> None:
 
 
 async def test_isolates_by_tenant_and_path() -> None:
-    """不同租户/路径互不影响。"""
+    """不同租户/路径互不影响（隔离失效即红，审计 P2-22）。"""
     limiter = RateLimiter(settings=Settings(ratelimit_enabled=True))
     await limiter.check("tnt_1", "usr_1", "/api/v1/model/generate", limit=1)
+    with pytest.raises(ApiError):
+        await limiter.check("tnt_1", "usr_1", "/api/v1/model/generate", limit=1)
+    # 其他租户与同租户其他路径不受影响
     await limiter.check("tnt_2", "usr_1", "/api/v1/model/generate", limit=1)
     await limiter.check("tnt_1", "usr_1", "/api/v1/model/catalog", limit=1)
 
@@ -171,3 +177,15 @@ def test_limiter_uses_injected_store() -> None:
     store: Any = InMemoryRateLimitStore()
     limiter = RateLimiter(store=store, settings=Settings(ratelimit_enabled=True))
     assert limiter.enabled is True
+
+
+async def test_memory_store_evicts_oldest_window_over_capacity() -> None:
+    """窗口达上限时淘汰最旧窗口，上限生效（审计 P2-2）。"""
+    store = InMemoryRateLimitStore(max_windows=2)
+    await store.hit("a", 1, 60)
+    await store.hit("b", 1, 60)
+    await store.hit("c", 1, 60)  # 触发淘汰：a
+    assert len(store._windows) == 2  # noqa: SLF001 - 断言容量上限
+    assert "a" not in store._windows  # noqa: SLF001 - 断言最旧窗口被淘汰
+    allowed, _, _ = await store.hit("c", 2, 60)
+    assert allowed is True

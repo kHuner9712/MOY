@@ -28,8 +28,15 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
 from app.business.ops_service import OpsService
 from app.core.config import get_request_settings
+from app.core.errors import ErrorCode, error_response
+from app.core.idempotency import IdempotencyManager, get_idempotency_manager
 from app.core.logging import get_logger
-from app.core.security import RequestContext, get_request_context, require_ops_access
+from app.core.security import (
+    RequestContext,
+    get_request_context,
+    require_ops_access,
+    run_idempotent,
+)
 from app.schemas.common import ApiResponse
 from app.schemas.ops import (
     ORDER_STATUS_FILTER,
@@ -170,6 +177,7 @@ async def update_tenant(
     context: RequestContext = Depends(get_request_context),
     body: UpdateTenantStatusRequest = Body(...),
     tenant_id: str = Path(..., description="企业 ID", min_length=2, max_length=128),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
 ) -> ApiResponse[UpdateTenantStatusData]:
     """OPS3 启用或停用企业。
 
@@ -178,6 +186,7 @@ async def update_tenant(
         context: 请求上下文。
         body: 状态变更请求。
         tenant_id: 企业 ID。
+        manager: 幂等管理器（所有写接口必须携带 Idempotency-Key）。
 
     Returns:
         ApiResponse[UpdateTenantStatusData]: 变更结果。
@@ -186,10 +195,20 @@ async def update_tenant(
         ApiError: 企业不存在（20004）、非运营账号（20003）。
     """
     await require_ops_access(request, context, OPS_TENANT_PERMISSION)
-    data = await _ops_service(request).update_tenant_status(
-        tenant_id=tenant_id, actor_id=context.user_id, request=body
-    )
-    return ApiResponse[UpdateTenantStatusData].ok(data)
+
+    async def factory() -> UpdateTenantStatusData:
+        return await _ops_service(request).update_tenant_status(
+            tenant_id=tenant_id, actor_id=context.user_id, request=body
+        )
+
+    result, replayed = await run_idempotent(request, context, factory, manager)
+    if replayed:
+        return ApiResponse[UpdateTenantStatusData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message=error_response(ErrorCode.IDEMPOTENT_DUPLICATE).message,
+            data=result,
+        )
+    return ApiResponse[UpdateTenantStatusData].ok(result)
 
 
 # ===========================================================================
@@ -253,6 +272,7 @@ async def confirm_order(
     context: RequestContext = Depends(get_request_context),
     body: ConfirmOrderRequest = Body(...),
     order_id: str = Path(..., description="订单 ID", min_length=3, max_length=128),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
 ) -> ApiResponse[ConfirmOrderData]:
     """OPS5 订单核销。
 
@@ -261,6 +281,7 @@ async def confirm_order(
         context: 请求上下文。
         body: 核销请求。
         order_id: 订单 ID。
+        manager: 幂等管理器。**资金操作**：网络重试/双击不得重复核销。
 
     Returns:
         ApiResponse[ConfirmOrderData]: 核销结果。
@@ -270,10 +291,20 @@ async def confirm_order(
             金额不符（15009）、非运营账号（20003）。
     """
     await require_ops_access(request, context, OPS_ORDER_PERMISSION)
-    data = await _ops_service(request).confirm_order(
-        order_id=order_id, actor_id=context.user_id, request=body
-    )
-    return ApiResponse[ConfirmOrderData].ok(data)
+
+    async def factory() -> ConfirmOrderData:
+        return await _ops_service(request).confirm_order(
+            order_id=order_id, actor_id=context.user_id, request=body
+        )
+
+    result, replayed = await run_idempotent(request, context, factory, manager)
+    if replayed:
+        return ApiResponse[ConfirmOrderData].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message=error_response(ErrorCode.IDEMPOTENT_DUPLICATE).message,
+            data=result,
+        )
+    return ApiResponse[ConfirmOrderData].ok(result)
 
 
 # ===========================================================================
@@ -361,6 +392,7 @@ async def update_settings(
     request: Request,
     context: RequestContext = Depends(get_request_context),
     body: UpdateOpsSettingsRequest = Body(...),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
 ) -> ApiResponse[OpsSettingsPayload]:
     """OPS8 修改系统配置。
 
@@ -368,6 +400,7 @@ async def update_settings(
         request: FastAPI 请求对象。
         context: 请求上下文。
         body: 部分更新请求。
+        manager: 幂等管理器（所有写接口必须携带 Idempotency-Key）。
 
     Returns:
         ApiResponse[OpsSettingsPayload]: 更新后的全量配置。
@@ -376,8 +409,18 @@ async def update_settings(
         ApiError: 未传可改字段（20001）、非运营账号（20003）。
     """
     await require_ops_access(request, context, OPS_SETTINGS_PERMISSION)
-    data = await _ops_service(request).update_settings(actor_id=context.user_id, request=body)
-    return ApiResponse[OpsSettingsPayload].ok(data)
+
+    async def factory() -> OpsSettingsPayload:
+        return await _ops_service(request).update_settings(actor_id=context.user_id, request=body)
+
+    result, replayed = await run_idempotent(request, context, factory, manager)
+    if replayed:
+        return ApiResponse[OpsSettingsPayload].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message=error_response(ErrorCode.IDEMPOTENT_DUPLICATE).message,
+            data=result,
+        )
+    return ApiResponse[OpsSettingsPayload].ok(result)
 
 
 __all__: list[str] = [

@@ -35,7 +35,7 @@ from app.db.repositories.conversation_repo import (
     reset_conversation_stores,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.pg]
 
 
 @pytest.fixture(autouse=True)

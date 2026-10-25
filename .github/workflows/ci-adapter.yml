@@ -194,6 +194,21 @@ jobs:
         run: python deploy/validate_config_names.py --self-test
 
       # ------------------------------------------------------------------
+      # 门禁 4b：依赖 PG 夹具的用例必须带 pg 标记（审计 P2-16）
+      #
+      # 未加 `--run-pg` 时 conftest 只跳过带 pg 标记的用例；缺标记的 PG 用例
+      # 会在运行时由夹具静默跳过——既不在 `-m pg` 集合里，也不在带库
+      # skipped=0 断言的覆盖范围内，形成「本地永远跳过、账面无感知」的黑洞。
+      # ------------------------------------------------------------------
+      - name: PG 标记一致性（P2-16）
+        working-directory: .
+        run: python deploy/validate_pg_markers.py
+
+      - name: PG 标记门禁自检（可红证明）
+        working-directory: .
+        run: python deploy/validate_pg_markers.py --self-test
+
+      # ------------------------------------------------------------------
       # 门禁 4d：交付清单与磁盘/任务表一致（阶段四 D-28 / LED-043）
       #
       # 曾出现 9 个已建交付物被标"待建"。清单由脚本从任务表生成，`--check`

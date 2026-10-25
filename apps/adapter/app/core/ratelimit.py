@@ -25,6 +25,9 @@ logger = get_logger(__name__)
 #: 默认限流键前缀
 DEFAULT_KEY_PREFIX: Final[str] = "oa:ratelimit"
 
+#: 内存窗口上限（防长跑进程无界增长；超出后优先淘汰最旧窗口）
+DEFAULT_MAX_WINDOWS: Final[int] = 20_000
+
 
 @dataclass(slots=True)
 class _Window:
@@ -57,12 +60,43 @@ class RateLimitStore(Protocol):
 
 
 class InMemoryRateLimitStore:
-    """进程内固定窗口限流存储（T01 默认实现）。"""
+    """进程内固定窗口限流存储（T01 默认实现）。
 
-    def __init__(self) -> None:
-        """初始化内存限流存储。"""
+    Attributes:
+        _windows: 窗口表。
+        _max_windows: 窗口上限（超出后优先淘汰已过期/最旧窗口）。
+        _lock: 异步锁，保证并发安全。
+    """
+
+    def __init__(self, max_windows: int = DEFAULT_MAX_WINDOWS) -> None:
+        """初始化内存限流存储。
+
+        Args:
+            max_windows: 窗口上限，防止长跑进程内存无界增长。
+        """
         self._windows: dict[str, _Window] = {}
+        self._max_windows = max_windows
         self._lock = asyncio.Lock()
+
+    def _prune_locked(self, now: float, window_seconds: int) -> None:
+        """容量达到上限时清理过期窗口，仍不足则淘汰最旧窗口（调用方须持锁）。
+
+        Args:
+            now: 当前单调时钟。
+            window_seconds: 窗口长度（秒）。
+        """
+        if len(self._windows) < self._max_windows:
+            return
+        expired = [
+            key
+            for key, window in self._windows.items()
+            if now - window.window_start >= window_seconds
+        ]
+        for key in expired:
+            self._windows.pop(key, None)
+        while len(self._windows) >= self._max_windows and self._windows:
+            oldest = min(self._windows, key=lambda key: self._windows[key].window_start)
+            self._windows.pop(oldest, None)
 
     async def hit(self, key: str, limit: int, window_seconds: int) -> tuple[bool, int, int]:
         """记录一次命中并判断是否放行。
@@ -79,6 +113,8 @@ class InMemoryRateLimitStore:
             now = time.monotonic()
             window = self._windows.get(key)
             if window is None or now - window.window_start >= window_seconds:
+                if window is None:
+                    self._prune_locked(now, window_seconds)
                 window = _Window(count=0, window_start=now)
                 self._windows[key] = window
             window.count += 1

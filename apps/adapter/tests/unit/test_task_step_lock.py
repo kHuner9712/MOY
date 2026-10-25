@@ -334,10 +334,28 @@ class TestCancelRace:
         assert still_queued.status == "queued", "非终态写入方不应释放额度"
 
 
+class TestLockTableBound:
+    """进程内锁表容量上限（审计 P2-2：长跑进程不得无界增长）。"""
+
+    async def test_local_lock_table_is_bounded(self) -> None:
+        """创建超过上限的锁后，锁表规模收敛在容量上限内（未持有的锁可淘汰）。"""
+        from app.db import advisory_lock as module
+
+        reset_advance_locks()
+        try:
+            for index in range(module._LOCAL_LOCKS_MAX + 16):  # noqa: SLF001
+                async with task_advance_lock(f"task_bound_{index}"):
+                    pass
+            assert len(module._local_locks) <= module._LOCAL_LOCKS_MAX  # noqa: SLF001
+        finally:
+            reset_advance_locks()
+
+
 __all__: list[str] = [
     "PLUGIN_ID",
     "USER",
     "TestAdvanceLock",
     "TestCancelRace",
+    "TestLockTableBound",
     "TestStepTimeout",
 ]
