@@ -948,17 +948,22 @@ MSYS_NO_PATHCONV=1 docker run --rm --entrypoint promtool \
 
 - `.gitignore` 忽略 `apps/adapter/pytest_run.log`（本地 pytest 落盘日志，不入库）。
 
-### 35.5 自测（主理人，HEAD = 本批合并前）
+### 35.5 自测与推送前补测（主理人）
 
 | 项 | 结果 |
 | --- | --- |
 | `gen_delivery_manifest.py --check` | **0** |
 | `export_plugin_contract.py` + `--check` | 生成 25 接口/136 字段；`--check` **0** |
 | `scan:contract` / `scan:contract:gen` | **0**（34 接口/184 字段/5 枚举；25 接口/136 字段三方一致） |
+| **契约门禁负样本** | 临时把后端 `CapabilityPolicyRequestItem.enabled` 改成 `is_enabled` → 重生成 → `scan:contract:gen` **EXIT 1**（4 处差异）；还原后 **0**、`git diff` 空 |
+| 后端全量 | `pytest tests -q`（`OA_BATCH=B21`）**2055 passed / 203 skipped**（332s，skip 均为 `--run-pg`） |
 | `typecheck:web` / `lint:web` | **0** |
 | `npm test --workspace apps/web` | **55 passed**（53 + 2） |
 | 扫描 banned/pages/workbench/capability/oidc | 全 **0** |
+| `scan:banned-built` | **0**（63 个产物 / 2060 条可见文本） |
+| 生产构建 | `npm run build:web` **成功**（27m35s） |
+| e2e | `playwright test` **3 passed** |
 | `validate_plugins.py` | **0** |
 
-未跑：`pytest --run-pg`（无 PG）、`build:web`（本批未改构建路径）；未 push。
+未跑：`pytest --run-pg`（无 PG）。本批完成后推送 main。
 
