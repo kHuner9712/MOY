@@ -93,6 +93,7 @@ def _issue_token(
     roles: list[str] | None = None,
     expires_in: int = 3600,
     secret: str = REAL_SECRET,
+    include_tenant_id: bool = True,
 ) -> str:
     """签发一张合法令牌。
 
@@ -102,6 +103,7 @@ def _issue_token(
         roles: 角色列表（None 表示使用默认 `member`）。
         expires_in: 有效期（秒）。
         secret: 签名密钥（PG 用例用独立配置，故可覆盖）。
+        include_tenant_id: 是否写入 `tenant_id` 声明（False 用于构造「声明缺失」令牌）。
 
     Returns:
         str: JWT。
@@ -109,7 +111,6 @@ def _issue_token(
     now = int(time.time())
     payload: dict[str, Any] = {
         "sub": user_id,
-        "tenant_id": tenant_id,
         "roles": roles if roles is not None else ["member"],
         "email": f"{user_id}@example.com",
         "aud": "officeai-adapter",
@@ -117,6 +118,8 @@ def _issue_token(
         "iat": now,
         "exp": now + expires_in,
     }
+    if include_tenant_id:
+        payload["tenant_id"] = tenant_id
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
@@ -506,3 +509,67 @@ def test_forged_platform_header_rejected_on_pg(
         f"{response.json().get('code')}（30003 说明请求流进了 tenant_scope）"
     )
     assert response.json()["code"] == int(ErrorCode.FORBIDDEN)
+
+
+# ===========================================================================
+# 用例 7（W-05）：租户来源**全部缺失**时必须拒绝，而不是静默收敛到 default
+#
+# 这一格此前没有机械防线：`resolve_tenant_id` 的最后一行是 `return _default_tenant(conf)`，
+# 只要把 `:222` 的 raise 改成 pass，SaaS 模式下「无头 + 无声明」的请求就会安静地
+# 落进 `default` 租户——单租户私有化里 `default` 是唯一租户，SaaS 里它仍然存在，
+# 于是未声明租户的调用方可以读到 `default` 里的数据（越权读的隐形态）。
+# ===========================================================================
+
+
+def test_saas_missing_tenant_header_and_claim_is_rejected(saas_client: TestClient) -> None:
+    """SaaS + 无 `X-Tenant-Id` + 令牌无 `tenant_id` 声明 → 400 / 20001。
+
+    **负样本（回归证明）**：把 `app/core/security.py` 中 `resolve_tenant_id` 的
+    `raise ApiError(ErrorCode.PARAM_INVALID, ...)` 改成 `pass`（即让函数继续走到
+    末尾的 `return _default_tenant(conf)`），本用例立刻变红：
+    状态码 200、`code` 变 0、租户变成 `default`。
+
+    **文案红线**：拒绝文案必须是既有业务语言「请求内容不完整，请检查后重试」，
+    不得出现 `header` / `claim` / `tenant_id` 这类内部词——调用方缺的是一个业务
+    概念（企业归属），不是「你没给我某个技术字段」。
+    """
+    token = _issue_token(user_id=USER_A, include_tenant_id=False)
+
+    response = saas_client.get(PROFILE_PATH, headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 400, "两个租户来源都缺失时必须拒绝，不得静默收敛"
+    body = response.json()
+    assert body["code"] == int(ErrorCode.PARAM_INVALID)
+    assert body["message"] == "请求内容不完整，请检查后重试"
+    assert body["data"] is None
+    serialized = f"{body}".lower()
+    for leak in ("header", "claim", "tenant_id", "x-tenant-id"):
+        assert leak not in serialized, f"拒绝文案泄露内部词「{leak}」：{serialized}"
+
+
+def test_private_converges_to_default_and_skips_membership_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """私有化 + 头 B + 令牌声明 A → 200，生效租户 `default`，且不查成员仓储。
+
+    私有化是单租户交付：头与声明**都被忽略**，一切收敛到 `default`。
+    这里刻意用「头 B + 声明 A」这种互不一致的组合，确保收敛不是因为某一侧生效；
+    同时把成员查询替换成必抛断言，证明这条路径上根本没有跨租户校验（没有可校验的对象）。
+    """
+
+    async def _spy(auth: Any, tenant_id: str, settings: Settings) -> None:
+        raise AssertionError("私有化模式不得触发成员查询（单租户没有跨租户这回事）")
+
+    monkeypatch.setattr(security_module, "assert_tenant_membership", _spy)
+    app = create_app(_settings(deploy_mode="private"))
+    with TestClient(app) as client:
+        response = client.get(
+            PROFILE_PATH,
+            headers=_headers(_issue_token(tenant_id=TENANT_A, user_id=USER_A), TENANT_B),
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 0
+    assert body["data"]["tenant"]["tenant_id"] == PRIVATE_TENANT
+    assert body["data"]["tenant"]["tenant_id"] not in {TENANT_A, TENANT_B}
