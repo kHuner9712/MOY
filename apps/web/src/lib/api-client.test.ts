@@ -11,8 +11,8 @@
  *   `request` / `unwrap`：某分支若只能靠私有函数触发，说明它在生产路径不可达，
  *   那就不是该测的东西。
  *
- * 413 / 429（矩阵 #5/#6）与 `pagination.test.ts` 的越界回落属于 W-07，
- * 与 `clampPage` 同一提交落地（此处写了也是红，红着提交没有意义）。
+ * 矩阵 #5（413）/ #6（429）在 W-07 随 `throwIfGatewayStatusRejected()` 一起落地；
+ * #15/#16 的分页越界回落见 `components/ui/pagination.test.ts`。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -161,6 +161,37 @@ describe('api-client · 信封与业务错误', () => {
 });
 
 describe('api-client · 传输层降级', () => {
+  it('#5 HTTP 413（网关无信封）→ 文件过大文案，且不广播会话失效', async () => {
+    const { api, events } = await load();
+    const { toBusinessMessage } = await import('./business-errors');
+    const calls = countUnauthorized(events);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 413 })));
+
+    const error = await api.knowledgeApi.uploadDocument('kb_1', new File(['x'], 'a.txt')).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(api.BusinessError);
+    expect((error as InstanceType<ApiClientModule['BusinessError']>).code).toBe(20008);
+    // 文案按已注册码取，前端不复制字符串
+    expect(toBusinessMessage(error)).toBe('文件超出大小限制（上限 50MB）');
+    expect(calls()).toBe(0);
+  });
+
+  it('#6 HTTP 429（网关无信封）→ 稍后再试文案，且不广播会话失效', async () => {
+    const { api, events } = await load();
+    const { toBusinessMessage } = await import('./business-errors');
+    const calls = countUnauthorized(events);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 429 })));
+
+    const error = await api.pluginsApi.installed().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(api.BusinessError);
+    expect((error as InstanceType<ApiClientModule['BusinessError']>).code).toBe(20006);
+    expect(toBusinessMessage(error)).toBe('当前使用人数较多，请稍后再试');
+    expect(calls()).toBe(0);
+  });
+
   it('#7 HTTP 502 + HTML → AdapterUnavailableError（502 确实无法解释原因）', async () => {
     const { api } = await load();
     vi.stubGlobal(

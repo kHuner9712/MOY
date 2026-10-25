@@ -380,6 +380,26 @@ function buildQuery(query: RequestOptions['query']): string {
   return serialized ? `?${serialized}` : '';
 }
 
+/**
+ * 网关层状态码 → 业务错误（413 / 429）。
+ *
+ * 网关（nginx / 反向代理）的 413、429 **不带统一信封**，落到 `unwrap` 会被退化成
+ * 「服务暂时不可用」——用户永远不知道是文件太大还是请求太密。码复用后端已注册的
+ * 20008（PAYLOAD_TOO_LARGE）/ 20006（RATE_LIMITED）；文案交给 `toBusinessMessage`
+ * 按 code 取表，此处**不复制字符串**（`business-errors.ts` 本批不改）。
+ *
+ * 抽成函数是因为 `request()` 与 `upload()` 是两条独立实现：只补 `request()` 的话，
+ * 恰恰最容易触发 413 的**大文件上传**仍然拿不到正确文案。
+ *
+ * @param response - fetch 的响应
+ * @throws BusinessError 413 → 20008，429 → 20006
+ */
+function throwIfGatewayStatusRejected(response: Response): void {
+  if (response.status === 413 || response.status === 429) {
+    throw new BusinessError(response.status === 413 ? 20008 : 20006, '');
+  }
+}
+
 /** 执行一次适配层请求 */
 async function request<T>(
   method: string,
@@ -419,6 +439,10 @@ async function request<T>(
     throw new BusinessError(UNAUTHORIZED_CODE, '登录状态已失效，请重新登录');
   }
 
+  // 网关层的 413 / 429 同样**没有统一信封**，必须在 `unwrap` 之前拦下。
+  // 顺序不能变：401 → 413/429 → `unwrap(code=20002)`；三者互不覆盖（上面那条 throw 即返回）。
+  throwIfGatewayStatusRejected(response);
+
   return unwrap<T>(response);
 }
 
@@ -442,6 +466,8 @@ async function upload<T>(path: string, form: FormData, options: RequestOptions =
     { method: 'POST', headers, body: form, cache: 'no-store' },
     options.timeoutMs ?? REQUEST_TIMEOUT_MS,
   );
+  // 上传是 413 的主战场（网关 body limit 先于业务层生效），必须与 `request()` 同口径
+  throwIfGatewayStatusRejected(response);
   return unwrap<T>(response);
 }
 

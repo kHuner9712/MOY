@@ -13,6 +13,44 @@ type PageToken = number | 'gap-left' | 'gap-right';
 const DEFAULT_PAGE_SIZE_OPTIONS: number[] = [10, 20, 50, 100];
 
 /**
+ * 把页码收敛到 `[1, totalPages]`。
+ *
+ * 抽成纯函数是为了能被直接断言（无渲染器环境），也让「显示值」与「通知父级的值」
+ * 用的是同一份规则——两处各写一遍，改一处漏一处就会出现「显示第 1 页、请求第 5 页」。
+ *
+ * @param page - 期望页码（可能越界或非整数）
+ * @param totalPages - 总页数（至少按 1 页算）
+ * @returns 收敛后的页码（≥1 且 ≤totalPages）
+ */
+export function clampPage(page: number, totalPages: number): number {
+  const max = Math.max(1, Math.trunc(totalPages) || 1);
+  return Math.min(Math.max(1, Math.trunc(page) || 1), max);
+}
+
+/**
+ * 由「页码 / 每页条数 / 总条数」推出分页条自身需要的四个值。
+ *
+ * 单拆一层的原因：`total` 变小（删数据、换筛选条件）时 `totalPages` 会收缩，
+ * 此时**父级的 `page` 仍然是旧值**——本函数给出「应该收敛到第几页」，
+ * 组件再用 effect 把这个修正值通知父级。
+ *
+ * @param page - 父级当前页码
+ * @param pageSize - 每页条数（非法值按 10 处理）
+ * @param total - 总条数（非法值按 0 处理）
+ * @returns 安全化后的每页条数、总条数、总页数，以及收敛后的当前页
+ */
+export function resolvePageState(
+  page: number,
+  pageSize: number,
+  total: number,
+): { safePageSize: number; safeTotal: number; totalPages: number; currentPage: number } {
+  const safePageSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.trunc(pageSize) : 10;
+  const safeTotal = Number.isFinite(total) && total > 0 ? Math.trunc(total) : 0;
+  const totalPages = Math.max(1, Math.ceil(safeTotal / safePageSize));
+  return { safePageSize, safeTotal, totalPages, currentPage: clampPage(page, totalPages) };
+}
+
+/**
  * 生成页码序列：页数较少时全部平铺，页数较多时收起中间部分。
  *
  * @param current - 当前页（1 起）
@@ -105,12 +143,30 @@ export function Pagination({
   disabled = false,
   className,
 }: PaginationProps): React.JSX.Element {
-  const safePageSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.trunc(pageSize) : 10;
-  const safeTotal = Number.isFinite(total) && total > 0 ? Math.trunc(total) : 0;
-  const totalPages = Math.max(1, Math.ceil(safeTotal / safePageSize));
-  const currentPage = Math.min(Math.max(1, Math.trunc(page) || 1), totalPages);
+  const { safePageSize, safeTotal, totalPages, currentPage } = resolvePageState(
+    page,
+    pageSize,
+    total,
+  );
   const tokens = buildPageTokens(currentPage, totalPages, Math.max(0, Math.trunc(siblingCount)));
   const navDisabled = disabled || totalPages <= 1;
+
+  // `onPageChange` 用 ref 固定：9 个消费点里只要有一个传内联箭头函数，直接把它写进
+  // effect 依赖就会「每次渲染换引用 → effect 重跑 → 再通知父级 → 再渲染」地循环。
+  // 用 ref 既能拿到最新的回调，又不会因引用变化触发 effect。
+  const onPageChangeRef = React.useRef(onPageChange);
+  React.useEffect(() => {
+    onPageChangeRef.current = onPageChange;
+  }, [onPageChange]);
+
+  // 父级 `page` 越界时（典型：删掉最后一条数据，`totalPages` 由 3 变 1），把修正值
+  // **通知父级**。只改显示不改父级的话，`useApiQuery` 的 key 仍带旧页码，
+  // 父级会一直请求一个空页——用户看到「共 12 条，第 3 / 1 页，列表空白」。
+  // 依赖只放两个原始值：`currentPage === page` 时直接返回，因此不会自激循环。
+  React.useEffect(() => {
+    if (currentPage === page) return;
+    onPageChangeRef.current(currentPage);
+  }, [currentPage, page]);
 
   /** 跳转到指定页（越界自动收敛） */
   const goTo = (next: number): void => {
