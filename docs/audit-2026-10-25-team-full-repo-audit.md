@@ -24,6 +24,8 @@
 ## 二、P0（致命，1 项）
 
 ### P0-1 CI「工具注册表 ↔ 连接器」一致性门禁已失效，当前 HEAD 上恒红
+
+> **状态（2026-10-25）：已修复并经 QA 两轮独立复验闭环**——commit `f210432`（分支 `hotfix/p0-1-registry-validation-gate`，本地未推送）。修复内容：① CI 脚本改动态导入 `_CONNECTOR_MODULES`（单一真源）；② 修正 `pip install -e apps/adapter`（Round 1 QA 发现仓库根安装必失败的连带缺陷）与注释事实陈述；③ pytest 删除「连接器缺失容忍」并新增存在性断言。实证：CI 口径（仓库根 + `bash -eo pipefail` + 干净 venv）正向 exit 0（5 工具全 OK）、负样本 exit 1（3 FAIL 精准报出）；全量回归 2056 passed / 203 skipped / 0 failed。剩余外部卡点为 Actions 额度本身（见完整性清单 B-01）。
 - **位置**：`.github/workflows/ci-adapter.yml:393-425`（`registry-validation` job Python 内联片段）
 - **证据**：本地复现 CI 原文 exit 1：`[FAIL] 注册条目 wecom/feishu/wechat_mp 的连接器未实现`。根因：片段硬编码只 import `email_connector` 与 `github_connector`（ci-adapter.yml:401-402），而 `tool_registry.yaml` 已登记 5 个连接器，`app/tools/__init__.py` 不做自动导入。
 - **加重情节**：pytest 侧对应测试 `tests/integration/test_tool_registry_mode.py:64-69` 对「连接器未实现」取容忍态度（`connector_cls is None → 按 DEMO`）→「注册表登记了但连接器不存在」这个属性**在任何会绿的门禁里都没有被断言**。因 GitHub Actions 额度用尽本轮未跑，故无人发现；**额度恢复第一天即阻塞所有 PR**。
