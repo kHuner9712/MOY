@@ -63,6 +63,20 @@ FAKE_PAY_URL_PREFIX: Final[str] = "https://pay.example.invalid/checkout"
 #: 渠道交易成功状态
 TRADE_STATE_SUCCESS: Final[str] = "SUCCESS"
 
+#: 渠道交易状态未知（缺字段 / 空串）。
+#:
+#: **必须存在且必须为空串**：渠道回调可能不带 `trade_state`（或被中间层剥掉）。
+#: 历史上缺省值写的是 `TRADE_STATE_SUCCESS`，于是「没传」被当成「成功」——典型的
+#: fail-open。空串落在 `PAID_TRADE_STATES` 白名单之外，一律走拒绝出口。
+TRADE_STATE_UNKNOWN: Final[str] = ""
+
+#: 视为「已支付」的交易状态白名单。
+#:
+#: 用**白名单**而不是「不等于某值」：未知值（`NOTPAY` / `CLOSED` / 渠道新造的词）默认
+#: 不成功，宁可不生效也不能给用户开一个没付钱的服务。比较前 `strip().upper()`，
+#: 避免渠道大小写/空白差异把真实成功回调误判为失败。
+PAID_TRADE_STATES: Final[frozenset[str]] = frozenset({TRADE_STATE_SUCCESS})
+
 
 @dataclass(frozen=True, slots=True)
 class PaymentInitiation:
@@ -94,13 +108,13 @@ class PaymentNotification:
     external_txn_id: str = ""
     amount_cents: int = 0
     signature_ok: bool = False
-    trade_state: str = TRADE_STATE_SUCCESS
+    trade_state: str = TRADE_STATE_UNKNOWN
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_success(self) -> bool:
-        """渠道是否宣告交易成功。"""
-        return self.trade_state.upper() == TRADE_STATE_SUCCESS
+        """渠道是否宣告交易成功（白名单判定，未知值一律 False）。"""
+        return self.trade_state.strip().upper() in PAID_TRADE_STATES
 
 
 def signing_payload(
@@ -290,7 +304,7 @@ class WechatPayGateway:
             external_txn_id=txn_id,
             amount_cents=amount_cents,
             signature_ok=hmac.compare_digest(expected, sign),
-            trade_state=str(payload.get("trade_state", TRADE_STATE_SUCCESS) or TRADE_STATE_SUCCESS),
+            trade_state=str(payload.get("trade_state") or TRADE_STATE_UNKNOWN),
             extra={
                 key_name: value
                 for key_name, value in payload.items()
@@ -384,7 +398,7 @@ class FakeGateway:
             external_txn_id=txn_id,
             amount_cents=amount_cents,
             signature_ok=hmac.compare_digest(expected, str(payload.get("sign", "") or "")),
-            trade_state=str(payload.get("trade_state", TRADE_STATE_SUCCESS) or TRADE_STATE_SUCCESS),
+            trade_state=str(payload.get("trade_state") or TRADE_STATE_UNKNOWN),
             extra={
                 key_name: value
                 for key_name, value in payload.items()
@@ -444,7 +458,9 @@ __all__: list[str] = [
     "FAKE_PAY_URL_PREFIX",
     "GATEWAY_FAKE",
     "GATEWAY_WECHAT_PAY",
+    "PAID_TRADE_STATES",
     "TRADE_STATE_SUCCESS",
+    "TRADE_STATE_UNKNOWN",
     "FakeGateway",
     "PaymentGateway",
     "PaymentGatewayNotConfiguredError",

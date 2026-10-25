@@ -278,6 +278,37 @@ def test_callback_is_idempotent_through_http(client: TestClient, settings: Setti
     assert detail["payment_no_masked"].startswith("****")
 
 
+def test_callback_missing_trade_state_keeps_order_pending(
+    client: TestClient, settings: Settings
+) -> None:
+    """BL10 回调**完全不带**交易状态 → 15007，订单仍待支付（W-03 fail-open 回归）。
+
+    这条用例走完整 HTTP 路径，因此同时守住四处默认值的**第一处**
+    （`PaymentCallbackRequest.trade_state`）——只改网关不改 schema 时，本用例会红。
+    """
+    created = client.post(
+        ORDERS_PATH,
+        headers={**_headers(settings), **_idem("cb-nostate-order")},
+        json={"plan_code": "professional", "seats": 5, "payment_method": "online"},
+    )
+    order = created.json()["data"]
+    payload = _callback_body(order["order_id"], order["amount_cents"], "txn_nostate_http")
+    payload.pop("trade_state")
+
+    response = client.post(CALLBACK_PATH, json=payload)
+    body = response.json()
+    assert body["code"] == int(ErrorCode.PAYMENT_INCOMPLETE), body
+    assert "支付未完成" in body["message"]
+    _assert_no_leak(body)
+
+    detail = client.get(f"{ORDERS_PATH}/{order['order_id']}", headers=_headers(settings)).json()[
+        "data"
+    ]
+    assert detail["status"] == "pending_payment", "缺交易状态不得把订单推成已支付"
+    invoices = client.get(INVOICES_PATH, headers=_headers(settings)).json()["data"]
+    assert invoices["items"] == [], "缺交易状态不得开票"
+
+
 def test_callback_rejects_bad_signature(client: TestClient, settings: Settings) -> None:
     """BL10 验签失败 → 20001（文案不含技术细节）。"""
     created = client.post(

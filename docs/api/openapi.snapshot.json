@@ -5189,6 +5189,52 @@
         "title": "IndexStatusData",
         "type": "object"
       },
+      "InputBriefItem": {
+        "description": "详情页展示的输入声明（PL2，驱动宿主表单）。\n\nAttributes:\n    key: 输入键（与任务 inputs 的键集合一致）。\n    label: 输入名称。\n    type: 控件类型（text/textarea/select/multi_select/email/file）。\n    required: 是否必填。\n    max_length: 文本类长度上限。\n    options: select / multi_select 候选值。",
+        "properties": {
+          "key": {
+            "default": "",
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length"
+          },
+          "options": {
+            "description": "候选值",
+            "items": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "required": {
+            "default": false,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "default": "text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "InputBriefItem",
+        "type": "object"
+      },
       "InstallData": {
         "description": "安装结果（PL5）。\n\nAttributes:\n    plugin_id: 插件标识。\n    status: 安装态（安装即启用）。\n    version: 安装版本。\n    granted_capabilities: 已授权能力。\n    denied_capabilities: 未授权能力。\n    already_installed: 是否「本来就已添加」（首次 false / 重复 true，字段恒有）。",
         "properties": {
@@ -5621,7 +5667,7 @@
         "type": "object"
       },
       "MarketDetailData": {
-        "description": "市场详情（PL2）。\n\nAttributes:\n    plugin_id: 插件标识。\n    name: 插件名称。\n    summary: 一句话说明。\n    description: 详细说明。\n    category: 分类。\n    icon_key: 图标名。\n    latest_version: 最新版本。\n    rating_avg: 平均评分。\n    rating_count: 评分人数。\n    install_count: 安装企业数。\n    capabilities: 能力清单（含开关态）。\n    step_titles: 步骤名称清单（用户可见）。\n    outputs: 产物说明。\n    settings_schema: 配置项说明。\n    versions: 版本历史。\n    installed_status: 当前安装态。\n    installed_version: 已安装版本。\n    has_update: 是否有可更新版本。\n    installable: 是否可安装。\n    install_block_reason: 不可安装原因。",
+        "description": "市场详情（PL2）。\n\nAttributes:\n    plugin_id: 插件标识。\n    name: 插件名称。\n    summary: 一句话说明。\n    description: 详细说明。\n    category: 分类。\n    icon_key: 图标名。\n    latest_version: 最新版本。\n    rating_avg: 平均评分。\n    rating_count: 评分人数。\n    install_count: 安装企业数。\n    capabilities: 能力清单（含开关态）。\n    inputs: 输入声明（驱动宿主表单）。\n    step_titles: 步骤名称清单（用户可见）。\n    outputs: 产物说明。\n    settings_schema: 配置项说明。\n    versions: 版本历史。\n    installed_status: 当前安装态。\n    installed_version: 已安装版本。\n    has_update: 是否有可更新版本。\n    installable: 是否可安装。\n    install_block_reason: 不可安装原因。",
         "properties": {
           "capabilities": {
             "description": "能力清单",
@@ -5650,6 +5696,14 @@
             "default": "",
             "title": "Icon Key",
             "type": "string"
+          },
+          "inputs": {
+            "description": "输入声明",
+            "items": {
+              "$ref": "#/components/schemas/InputBriefItem"
+            },
+            "title": "Inputs",
+            "type": "array"
           },
           "install_block_reason": {
             "default": "",
@@ -6835,8 +6889,8 @@
             "type": "string"
           },
           "trade_state": {
-            "default": "SUCCESS",
-            "description": "交易状态",
+            "default": "",
+            "description": "交易状态（`SUCCESS` 表示成功）",
             "maxLength": 32,
             "title": "Trade State",
             "type": "string"
