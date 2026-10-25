@@ -37,11 +37,15 @@
 ## 三、P1（高，13 项）
 
 ### P1-1 RAG 真实模式上传链路断裂（文件字节被丢弃）【工程】
+
+> **状态（2026-10-26）：已修复并经 QA 独立全量复验闭环**——commit `52032e5`（合并 `f3dac84`，已推送）。修复：`DifyClient.post_multipart()`（httpx files/form_data，复用鉴权/超时/重试/ErrorMapper；multipart 时不写 Content-Type）；`upload_document(content=)` 透传字节与推断的 content_type，真实模式漏传字节抛 30003 且下游零调用；端点接通 payload；mock 路径零变化。验证：全量 2066 passed / 203 skipped / 0 failed；回滚旧逻辑后 5 条用例失败（行为级证伪）。QA 提示：真实 Dify 联调仍未做（需底座环境 + 密钥，见 B-02/B-03）。
 - `services/rag_service.py:359-361`：真实模式下仅向后端 POST `{"filename": ..., "purpose": "document"}`；`clients/dify_client.py:196-204` 的 `_request` 只支持 `json=` 请求体，**全仓无 multipart/文件流能力**；端点读取的文件内容（`api/v1/rag.py:167` 的 `payload`）未传进 service，被丢弃。
 - 影响：`downstream_enabled=true` 时 RAG 文档上传必然失败/产生空记录；默认 `mock_mode=True` 掩盖，本机测试全绿 →「上线即爆」。
 - 修复：`DifyClient` 增加 `post_multipart()`；`upload_document` 透传字节；补非 mock 路径集成测试。
 
 ### P1-2 任务状态机取消竞态（取消可被完成态覆盖）【工程】
+
+> **状态（2026-10-26）：已修复并经 QA 独立全量复验闭环**——commit `52032e5`（合并 `f3dac84`，已推送）。修复：`update_task(expected_status=)` 双后端同步（PG 单条条件 UPDATE + RETURNING，无 TOCTOU）；`_advance_locked`/`_finish` 条件写；`_finish` 校验 `cancel_requested`（completed 降级 cancelled、failed 不降级）；`_release_slot` 仅状态转换所有者执行一次；`cancel()` 入推进锁、条件写失败如实 12003。新增 `TestCancelRace` 4 条并发用例，回滚旧逻辑后 4 failed（取消被覆盖×2、双拉起、缺参数）。
 - `business/task_service.py:988-1017`：`cancel()` 不持 `task_advance_lock` 直接写 `status=TASK_CANCELLED`；`db/repositories/task_repo.py:863-910` 的 `update_task` 无 `AND status = :expected` 乐观条件。
 - 竞态序列：advance 通过取消检查点跑最后一步 → cancel 置 CANCELLED → advance `_finish(TASK_COMPLETED)` 覆盖状态，用户取消静默丢失；`_release_slot` 存在双重调用风险。
 - 修复：`update_task` 增加 `expected_status` 条件；cancel 纳入推进锁或 `_finish` 写终态前校验 `cancel_requested`。
@@ -93,6 +97,16 @@
 ### P1-13 任务级超时是死配置，PRD 承诺的能力不存在【QA】
 - `expected_xfail.py:141-156`：`core/config.py:211 plugin_task_timeout_seconds` 全文零读取、`engine.py:960` 写入后无消费方；PRD P0-P3-02③「单步超时自动失败」无实现可测（缺陷台账 P3-B22-02 open，due B30）。同类 P3-B22-01（超额软限制四项行为只接计费域）亦 open。
 - 修复：提升为迭代看板可见项；或按台账注销配置并在 PRD 标注不做。
+
+---
+
+### 追加登记（2026-10-26 第 0 波复验，QA 发现，不阻塞第 0 波放行）
+
+- **R-1（P2）** `_pause_for_confirm()` 与 `retry(continue/redo)` 的 `status=` 写仍为无条件写：极窄窗口（取消落在 `cancel_requested` 检查之后、写之前）可把已 `cancelled` 翻回 `waiting_confirm`；可自愈（`cancel_requested` 仍在行上，再点取消即收敛）。建议下一波统一补 `expected_status`。
+- **R-2（P3）** `cancel()` 在 peer 已写终态时返回 12003，但对客 message 仍是「任务已取消」，与真实状态（completed）不符；随 P3 文案批次评估。
+- **R-3（归入 B-06）** PG 真实库未验证：203 条 PG 用例 skip；`ANY(:expected_status)` 的 list→`text[]` 编码、并发行锁与 `RETURNING` 空行路径需预发 `--run-pg` 验证（含 `test_task_repo_pg.py` 28 条）。
+- **R-4（P3）** 0 字节文件先被 `_validate_document` 拦为 11002「暂不支持该格式」（既有行为，本次未改）；如需更准确文案另立。
+- **R-5（P3）** 架构文档 R3 仅记 `POST /v1/files/upload`，未记 multipart 文件字段 + `purpose`/`user` 文本字段；建议架构侧补一行，避免被改回 JSON。
 
 ---
 
