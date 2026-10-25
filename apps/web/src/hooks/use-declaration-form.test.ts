@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import type { PluginInputSpec } from '@/lib/types';
+import type { PluginInputFormat, PluginInputSpec } from '@/lib/types';
 
 import { collectFieldErrors, mergeMissingDefaults, validateField } from './use-declaration-form';
 
@@ -116,6 +116,66 @@ describe('collectFieldErrors（提交前跑完全部字段）', () => {
     const errors = collectFieldErrors([...SPECS.slice(0, 4), REQUIRED_EMAIL], values('dev@example.com'));
 
     expect(errors).toEqual({});
+  });
+});
+
+describe('候选值格式约束（W-08：空候选 + format）', () => {
+  /** 目标仓库：`select` 且**没有候选值**（取值由平台按身份提供） */
+  const REPO: PluginInputSpec = {
+    key: 'repo',
+    label: '目标仓库',
+    type: 'select',
+    required: true,
+    format: 'repo',
+  };
+
+  /** 所属部门：同上，另有 32 字上限 */
+  const DEPARTMENT: PluginInputSpec = {
+    key: 'department',
+    label: '所属部门',
+    type: 'select',
+    required: true,
+    max_length: 32,
+    format: 'department',
+  };
+
+  it('空候选择 + 仓库形状非法 → 提示「请填写有效的目标仓库」（不再放行任意文本）', () => {
+    expect(validateField(REPO, 'abc')).toBe('请填写有效的目标仓库');
+  });
+
+  it('仓库四类合法形态全部通过（含 #branch / ?ref= 后缀）', () => {
+    for (const value of [
+      'https://github.com/moy/web',
+      'ssh://git@git.example.com/moy/web.git',
+      'git@github.com:moy/web.git',
+      'moy/web',
+      'moy/web#feature/login',
+      'https://github.com/moy/web?ref=main',
+    ]) {
+      expect(validateField(REPO, value)).toBe('');
+    }
+  });
+
+  it('仓库含空白时判非法（复制粘贴带空格是最常见的手误）', () => {
+    expect(validateField(REPO, 'moy / web')).toBe('请填写有效的目标仓库');
+  });
+
+  it('部门 33 字 / 含换行 → 非法；正常部门名 → 通过', () => {
+    expect(validateField(DEPARTMENT, '研'.repeat(33))).toBe('请填写有效的所属部门');
+    expect(validateField(DEPARTMENT, '研发\n部')).toBe('请填写有效的所属部门');
+    expect(validateField(DEPARTMENT, '研发部')).toBe('');
+  });
+
+  it('未知 format 直接跳过（后端新增 format 不得让旧前端全红）', () => {
+    const future: PluginInputSpec = { ...REPO, format: 'bogus' as PluginInputFormat };
+
+    expect(validateField(future, 'abc')).toBe('');
+  });
+
+  it('未声明 format 的空候选择保持原行为（降级文本框，不做候选校验）', () => {
+    const plain: PluginInputSpec = { ...REPO, format: undefined };
+
+    expect(validateField(plain, 'abc')).toBe('');
   });
 });
 

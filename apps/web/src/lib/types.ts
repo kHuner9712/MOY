@@ -1179,6 +1179,22 @@ export interface OrgCapabilitySwitch {
 /** 输入控件类型（架构 §2.1，6 类，宿主据此渲染表单） */
 export type PluginInputType = 'text' | 'textarea' | 'select' | 'multi_select' | 'email' | 'file';
 
+/**
+ * 候选值的格式约束（W-08）。
+ *
+ * 用途：`select` / `multi_select` 允许 `options` 为空，此时取值由平台按身份提供
+ * （「目标仓库」来自已连接的代码仓库、「所属部门」来自通讯录）。空候选意味着
+ * 前端**没有候选表可校验**，只能靠 format 约束「一个值长什么样」：
+ *
+ * - `repo`：`https://…` / `ssh://…` / `git@host:path` / `owner/repo` 四类，容忍
+ *   `#branch` / `?ref=` 后缀，不含空白；
+ * - `department`：1–32 字（按 Unicode 码点计），不含换行。
+ *
+ * 宿主遇到**未知** format 一律跳过校验（不报错、不清空），这样将来后端新增 format
+ * 不会把旧前端变成「任何输入都不合法」。
+ */
+export type PluginInputFormat = 'repo' | 'department';
+
 /** 输入声明项（PL2 `inputs[]`） */
 export interface PluginInputSpec {
   key: string;
@@ -1189,6 +1205,12 @@ export interface PluginInputSpec {
   max_length?: number;
   /** select / multi_select 的候选值 */
   options?: string[];
+  /**
+   * 候选值的格式约束（空候选择用；由平台按身份给值）。
+   *
+   * 后端 `InputBriefItem.format`（W-08）。缺省/空串表示不约束。
+   */
+  format?: PluginInputFormat;
 }
 
 /** 插件产物声明（PL2 `outputs[]`，驱动结果区渲染） */

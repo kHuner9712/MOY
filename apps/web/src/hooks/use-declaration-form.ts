@@ -38,6 +38,76 @@ export interface UseDeclarationFormResult {
 /** 邮箱格式（与声明里的 email 控件配套，规则写在前端一处） */
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// ---------------------------------------------------------------------------
+// 候选值格式约束（W-08）：空候选择「平台按身份给值」，前端只能用形状兜底
+//
+// 规则与后端 `app/plugins/schema.py` 的 `InputSpec.format` 注释同源，改一处要改两处：
+// - repo：`https?://…` / `ssh://…` / `git@host:path` / `owner/repo`；容忍 `#branch`、
+//   `?ref=` 后缀；不含空白与换行。
+// - department：1–32 字（按 `Array.from` 计码点，避免代理对被算成 2）；不含换行。
+// 位置说明：这两个约束**不**替平台判「这个仓库/部门存不存在」，只判形状——
+// 存在性由平台按身份解析，前端拿不到数据源。
+// ---------------------------------------------------------------------------
+
+/** `repo` 的四类合法形态（`owner/repo` 那一支不含空白与冒号） */
+const REPO_PATTERN = /^(?:https?:\/\/\S+|ssh:\/\/\S+|git@[^\s:]+:\S+|[\w.-]+\/[\w.-]+)$/;
+
+/** `department` 的长度区间（按码点计） */
+const DEPARTMENT_MIN_LENGTH = 1;
+
+/** `department` 的长度上限（与 manifest 的 `max_length` 对齐） */
+const DEPARTMENT_MAX_LENGTH = 32;
+
+/**
+ * 判断「目标仓库」形状是否合法。
+ *
+ * @param value - 用户填写的值
+ * @returns 合法返回 true
+ */
+function isValidRepo(value: string): boolean {
+  if (value.trim() === '' || /\s/.test(value)) return false;
+  // 先剥掉 `#branch` / `?ref=…` 后缀，再匹配四类形态：
+  // `owner/repo#dev` 这种写法在 `[\w.-]+/[\w.-]+` 那一支里会因 `#` 直接失败。
+  const base = value.split('#')[0]?.split('?')[0] ?? '';
+  return REPO_PATTERN.test(base);
+}
+
+/**
+ * 判断「所属部门」形状是否合法。
+ *
+ * @param value - 用户填写的值
+ * @returns 合法返回 true
+ */
+function isValidDepartment(value: string): boolean {
+  if (/[\r\n]/.test(value)) return false;
+  const length = Array.from(value).length;
+  return length >= DEPARTMENT_MIN_LENGTH && length <= DEPARTMENT_MAX_LENGTH;
+}
+
+/**
+ * 按声明的 `format` 校验形状。
+ *
+ * **未知 format 直接放行**：后端将来新增 format 时，旧前端不能因此把任何输入都判成
+ * 不合法（那是"后端加字段、前端全红"的经典事故）。也不清空用户输入。
+ *
+ * @param spec - 声明项
+ * @param value - 当前值
+ * @returns 错误文案；通过或无需校验时返回空串
+ */
+function validateFormat(spec: PluginInputSpec, value: DeclarationValue): string {
+  const format = spec.format;
+  if (!format) return '';
+  const text = String(value ?? '');
+
+  if (format === 'repo') {
+    return isValidRepo(text) ? '' : `请填写有效的${spec.label}`;
+  }
+  if (format === 'department') {
+    return isValidDepartment(text) ? '' : `请填写有效的${spec.label}`;
+  }
+  return '';
+}
+
 /**
  * 单个声明项的默认值。
  *
@@ -102,6 +172,7 @@ function declarationSignature(inputs: PluginInputSpec[]): string {
         spec.required ? '1' : '0',
         typeof spec.max_length === 'number' ? String(spec.max_length) : '',
         (spec.options ?? []).join('\u0001'),
+        spec.format ?? '',
       ].join('\u0002'),
     )
     .join('\u0003');
@@ -181,6 +252,10 @@ export function validateField(spec: PluginInputSpec, value: DeclarationValue): s
   ) {
     return `${spec.label}最多 ${spec.max_length} 个字`;
   }
+  // 形状约束（`repo` / `department`）：空候选时前端没有候选表，只能靠它兜底。
+  // 放在候选表校验**之前**：两者都声明时，形状错更具体（「填错了」而不是「不在候选内」）。
+  const formatError = validateFormat(spec, value);
+  if (formatError) return formatError;
   if (spec.type === 'select' && spec.options && spec.options.length > 0) {
     // 只在「确实有候选值」时判有效性：候选为空说明声明数据不全，此时界面会降级成
     // 文本输入（见 declaration-form.tsx），再按空候选表校验就等于任何输入都不合法。

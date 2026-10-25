@@ -351,7 +351,8 @@
       ],
       "optional": [
         "max_length",
-        "options"
+        "options",
+        "format"
       ]
     }
   },

@@ -54,7 +54,8 @@
       "key": "repo",
       "label": "目标仓库",
       "type": "select",
-      "required": true
+      "required": true,
+      "format": "repo"
     },
     {
       "key": "branch_policy",

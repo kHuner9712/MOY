@@ -479,3 +479,52 @@ def test_max_items_allowed_on_file_and_multi_select() -> None:
     for input_type in ("file", "multi_select"):
         spec = InputSpec(key="items", label="条目", type=input_type, max_items=20)
         assert spec.max_items == 20
+
+
+# ---------------------------------------------------------------------------
+# W-08：空候选输入的格式约束（`InputSpec.format`）
+# ---------------------------------------------------------------------------
+
+
+def test_format_accepts_known_values_and_defaults_to_empty() -> None:
+    """`format` 缺省为空串；`repo` / `department` 为合法取值。"""
+    assert InputSpec(key="repo", label="目标仓库", type="select").format == ""
+    assert InputSpec(key="repo", label="目标仓库", type="select", format="repo").format == "repo"
+    assert (
+        InputSpec(key="department", label="所属部门", type="select", format="department").format
+        == "department"
+    )
+
+
+def test_unknown_format_is_rejected_at_load_time() -> None:
+    """未知 `format` → 加载期报错（负样本：manifest 写 `"format": "bogus"` 必须红）。
+
+    对外部可见的证据见验收命令：
+    `validate_plugins.py` 对该 manifest 退出非 0，而不是"加载成功、运行期不校验"。
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        InputSpec(key="repo", label="目标仓库", type="select", format="bogus")  # type: ignore[arg-type]
+
+    assert "format" in str(excinfo.value)
+
+
+def test_format_on_multi_value_input_is_rejected() -> None:
+    """`format` 只对单值输入有意义：多值输入上声明 → 加载期报错（防假护栏）。"""
+    for input_type in ("file", "multi_select"):
+        with pytest.raises(ValidationError) as excinfo:
+            InputSpec(key="items", label="条目", type=input_type, format="repo")
+        assert "多值输入" in str(excinfo.value)
+
+
+def test_bundled_manifests_declare_format_where_candidates_are_empty() -> None:
+    """两份内置声明按 W-08 落位：仓库 `repo`、部门 `department` + 32 字上限。"""
+    workbench = load_manifest("plg_dev_workbench")
+    repo = next(item for item in workbench.inputs if item.key == "repo")
+    assert repo.format == "repo"
+    assert repo.options == [], "空候选才需要 format 兜底（有候选表时按候选校验）"
+
+    hr = load_manifest("plg_hr_admin")
+    department = next(item for item in hr.inputs if item.key == "department")
+    assert department.format == "department"
+    assert department.max_length == 32
+    assert department.options == []

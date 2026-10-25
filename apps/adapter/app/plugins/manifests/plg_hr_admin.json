@@ -47,7 +47,9 @@
       "key": "department",
       "label": "所属部门",
       "type": "select",
-      "required": true
+      "required": true,
+      "max_length": 32,
+      "format": "department"
     },
     {
       "key": "duties",

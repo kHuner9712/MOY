@@ -5190,8 +5190,15 @@
         "type": "object"
       },
       "InputBriefItem": {
-        "description": "详情页展示的输入声明（PL2，驱动宿主表单）。\n\nAttributes:\n    key: 输入键（与任务 inputs 的键集合一致）。\n    label: 输入名称。\n    type: 控件类型（text/textarea/select/multi_select/email/file）。\n    required: 是否必填。\n    max_length: 文本类长度上限。\n    options: select / multi_select 候选值。",
+        "description": "详情页展示的输入声明（PL2，驱动宿主表单）。\n\nAttributes:\n    key: 输入键（与任务 inputs 的键集合一致）。\n    label: 输入名称。\n    type: 控件类型（text/textarea/select/multi_select/email/file）。\n    required: 是否必填。\n    max_length: 文本类长度上限。\n    options: select / multi_select 候选值。\n    format: 候选值的格式约束（`repo` / `department`；空串表示不约束）。",
         "properties": {
+          "format": {
+            "default": "",
+            "description": "候选值格式约束（repo/department）",
+            "maxLength": 16,
+            "title": "Format",
+            "type": "string"
+          },
           "key": {
             "default": "",
             "title": "Key",

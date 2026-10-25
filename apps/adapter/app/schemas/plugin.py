@@ -144,6 +144,7 @@ class InputBriefItem(BaseModel):
         required: 是否必填。
         max_length: 文本类长度上限。
         options: select / multi_select 候选值。
+        format: 候选值的格式约束（`repo` / `department`；空串表示不约束）。
     """
 
     key: str = ""
@@ -152,6 +153,7 @@ class InputBriefItem(BaseModel):
     required: bool = False
     max_length: int | None = None
     options: list[str] = Field(default_factory=list, description="候选值")
+    format: str = Field(default="", max_length=16, description="候选值格式约束（repo/department）")
 
 
 class SettingBriefItem(BaseModel):

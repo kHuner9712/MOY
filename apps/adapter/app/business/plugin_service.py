@@ -66,11 +66,11 @@ from app.schemas.plugin import (
     CapabilityPolicyItem,
     CapabilityPolicyRequest,
     CategoryCountItem,
+    InputBriefItem,
     InstallData,
     InstalledData,
     InstalledItem,
     InstallRequest,
-    InputBriefItem,
     MarketData,
     MarketDetailData,
     MarketItem,
@@ -352,6 +352,8 @@ class PluginService:
                     max_length=item.max_length,
                     # 显式复制：避免把 manifest 内部 list 共享进响应对象
                     options=list(item.options),
+                    # 同样必须显式复制：漏写就等于「manifest 改了、接口没下发、前端拿不到」
+                    format=item.format,
                 )
                 for item in (manifest.inputs if manifest is not None else [])
             ],

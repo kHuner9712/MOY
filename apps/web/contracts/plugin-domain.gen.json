@@ -155,7 +155,8 @@
         "type",
         "required",
         "max_length",
-        "options"
+        "options",
+        "format"
       ]
     },
     "PluginInstallResult": {
