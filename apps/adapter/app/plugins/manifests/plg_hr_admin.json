@@ -19,10 +19,6 @@
       "required": true
     },
     {
-      "key": "org.directory.read",
-      "required": true
-    },
-    {
       "key": "org.external.publish",
       "required": true
     }
