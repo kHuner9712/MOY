@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -234,6 +235,52 @@ class TestRagEndpoints:
         assert body["data"]["document_id"].startswith("doc_")
         assert body["data"]["index_status"] == "processing"
         assert body["data"]["progress"] == 0
+
+    def test_r3_upload_passes_file_bytes_to_service(
+        self,
+        client: TestClient,
+        auth_headers: dict[str, str],
+        idempotency_headers: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """P1-1：端点必须把 multipart 里的**文件字节**交给服务层。
+
+        修复前的实证：`payload` 只用来算幂等指纹与大小校验，然后被丢弃；
+        服务层在真实模式只能发 `{"filename", "purpose"}` 的 JSON，底座拿不到内容。
+        本用例把替身服务挂在路由上，直接断言"字节到达服务层的 `content`"。
+        """
+        from app.api.v1 import rag as rag_api
+        from app.schemas.rag import ChunkPolicy, DocumentStage, IndexStatus, UploadDocumentData
+
+        captured: dict[str, Any] = {}
+
+        class _CapturingService:
+            """只实现 `upload_document` 的替身服务（记录收到的入参）。"""
+
+            async def upload_document(self, **kwargs: Any) -> UploadDocumentData:
+                """记录入参并返回合法响应数据。"""
+                captured.update(kwargs)
+                return UploadDocumentData(
+                    document_id="doc_01K4Q8Z2X7M9B3N5P6R8T0V2W4",
+                    file_name=str(kwargs.get("file_name", "")),
+                    index_status=IndexStatus.PROCESSING,
+                    stage=DocumentStage.UPLOADED,
+                    chunk_policy=ChunkPolicy.DEFAULT,
+                    progress=0,
+                )
+
+        monkeypatch.setattr(rag_api, "get_rag_service", lambda: _CapturingService())
+        payload = b"%PDF-1.4 endpoint bytes"
+        response = client.post(
+            "/api/v1/knowledge/bases/kb_1/documents",
+            files={"file": ("员工手册.pdf", io.BytesIO(payload), "application/pdf")},
+            headers={**auth_headers, **idempotency_headers},
+        )
+        body = response.json()
+        assert body["code"] == 0
+        assert captured["content"] == payload, "端点没有把文件字节交给服务层"
+        assert captured["file_name"] == "员工手册.pdf"
+        assert captured["file_size"] == len(payload)
 
     def test_r3_unsupported_format_returns_11002(
         self, client: TestClient, auth_headers: dict[str, str], idempotency_headers: dict[str, str]

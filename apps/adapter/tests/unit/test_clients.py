@@ -235,6 +235,91 @@ async def test_post_stream_connect_error_maps_to_30001() -> None:
     await raw.aclose()
 
 
+# ---------------------------------------------------------------------------
+# P1-1：multipart 上传通路（`/v1/files/upload` 只认表单里的文件字段）
+#
+# 修复前的实证：`post()` 只发 JSON，`{"filename": ..., "purpose": ...}` 里没有
+# 文件字节；底座拿不到内容，文档永远停在"正在读取内容"。
+# ---------------------------------------------------------------------------
+
+
+async def test_post_multipart_sends_file_field_as_multipart() -> None:
+    """`post_multipart` 必须发出真正的 multipart 表单（含文件字段与文本字段）。
+
+    三个判据都对应过真实故障：① 不带 `files` → 底座收不到文件；
+    ② `Content-Type` 被写成 `application/json` → 网关直接判非法（boundary 丢失）；
+    ③ 文本字段丢失 → 底座不知道这次上传的用途。
+    """
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["content_type"] = request.headers.get("content-type", "")
+        captured["body"] = request.content.decode("utf-8", errors="replace")
+        return httpx.Response(200, json={"id": "file-1", "name": "员工手册.pdf"})
+
+    client, raw = _client_with_handler(handler)
+    response = await client.post_multipart(
+        "/v1/files/upload",
+        files={"file": ("员工手册.pdf", b"%PDF-1.4 test", "application/pdf")},
+        form_data={"purpose": "document", "user": "usr_1"},
+    )
+    await raw.aclose()
+
+    assert response.payload == {"id": "file-1", "name": "员工手册.pdf"}
+    # ① multipart + boundary 由 httpx 生成（不是手写的 application/json）
+    assert captured["content_type"].startswith("multipart/form-data; boundary=")
+    # ② 文件字段带文件名与内容类型，且字节内容确实在请求体里
+    assert 'name="file"; filename="' in captured["body"]
+    assert "%PDF-1.4 test" in captured["body"]
+    # ③ 文本字段一并发出
+    assert 'name="purpose"' in captured["body"]
+    assert "document" in captured["body"]
+    # ③b `user` 是 Dify 上传接口的**必填**字段：漏发即 400，
+    # 而桩模式下永远发现不了（这条断言就是防止它被顺手删掉）。
+    assert 'name="user"' in captured["body"]
+    assert "usr_1" in captured["body"]
+
+
+async def test_post_multipart_maps_business_error() -> None:
+    """multipart 请求的下游错误仍走既有错误映射（不另造一套错误形态）。
+
+    400 与 JSON 通路同码（`MODEL_GENERATE_FAILED`，见 `ErrorMapper.STATUS_MAP`），
+    报文一律不透出——两条通路共用同一个 `ErrorMapper`。
+    """
+    client, raw = _client_with_handler(
+        lambda request: httpx.Response(400, text="invalid upload payload")
+    )
+    with pytest.raises(ApiError) as exc_info:
+        await client.post_multipart(
+            "/v1/files/upload",
+            files={"file": ("a.pdf", b"x", "application/pdf")},
+            form_data={"purpose": "document"},
+        )
+    assert exc_info.value.code == ErrorCode.MODEL_GENERATE_FAILED
+    assert "invalid upload payload" not in exc_info.value.to_response().message
+    await raw.aclose()
+
+
+async def test_post_multipart_does_not_retry() -> None:
+    """上传是写操作：下游 5xx 不重试（避免重复落文件记录）。"""
+    attempts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return httpx.Response(503, text="unavailable")
+
+    client, raw = _client_with_handler(handler)
+    with pytest.raises(ApiError) as exc_info:
+        await client.post_multipart(
+            "/v1/files/upload",
+            files={"file": ("a.pdf", b"x", "application/pdf")},
+            form_data={"purpose": "document"},
+        )
+    assert exc_info.value.code == ErrorCode.DOWNSTREAM_UNAVAILABLE
+    assert len(attempts) == 1
+    await raw.aclose()
+
+
 class TestKeycloakClient:
     """身份底座客户端。"""
 
