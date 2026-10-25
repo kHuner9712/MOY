@@ -108,6 +108,51 @@ function declarationSignature(inputs: PluginInputSpec[]): string {
 }
 
 /**
+ * 把异步到达的声明默认值合并进已有表单值。
+ *
+ * 只做两类写入：
+ * 1. 字典里**不存在**的键；
+ * 2. `select` 且有候选值、当前值为空串的槽位（原生 select 在 `value=""` 时
+ *    视觉上会显示首项，但表单状态仍是空串，提交时被判「必填未填」）。
+ *
+ * 用户已填的任何值都不在写入范围内；无变化时返回原对象，让 React 跳过渲染。
+ *
+ * 抽成纯函数是为了能直接测「不覆盖用户输入」与「补齐默认值」两条规则，
+ * 不必把 React 组件渲染器拖进单元测试（monorepo 根目录另有一份 React 18，
+ * 渲染器会把两套 React 混在一起）。
+ *
+ * @param prev - 当前表单值
+ * @param inputs - 声明输入项
+ * @returns 合并后的表单值；无变化时返回 `prev` 本身
+ */
+export function mergeMissingDefaults(
+  prev: Record<string, DeclarationValue>,
+  inputs: PluginInputSpec[],
+): Record<string, DeclarationValue> {
+  const next: Record<string, DeclarationValue> = { ...prev };
+  let changed = false;
+
+  for (const spec of inputs) {
+    const exists = Object.prototype.hasOwnProperty.call(prev, spec.key);
+    if (!exists) {
+      next[spec.key] = defaultValueOf(spec);
+      changed = true;
+      continue;
+    }
+    if (
+      spec.type === 'select' &&
+      (spec.options?.length ?? 0) > 0 &&
+      isBlankValue(prev[spec.key])
+    ) {
+      next[spec.key] = defaultValueOf(spec);
+      changed = true;
+    }
+  }
+
+  return changed ? next : prev;
+}
+
+/**
  * 单个字段校验（规则全部来自声明）。
  *
  * @param spec - 声明项
@@ -183,28 +228,7 @@ export function useDeclarationForm(
   useEffect(() => {
     if (mergedSignatureRef.current === signature) return;
     mergedSignatureRef.current = signature;
-    setValues((prev) => {
-      const next: Record<string, DeclarationValue> = { ...prev };
-      let changed = false;
-      for (const spec of inputs) {
-        const exists = Object.prototype.hasOwnProperty.call(prev, spec.key);
-        if (!exists) {
-          // 缺失键才补默认值
-          next[spec.key] = defaultValueOf(spec);
-          changed = true;
-          continue;
-        }
-        // 下拉特例：有候选值但当前是空串 → 补首项。
-        // 这是「看着选了却被判未填」的唯一来源，补上后与界面显示一致。
-        // 注意只对「空值」生效，用户选过的任何值都不会被改写。
-        if (spec.type === 'select' && (spec.options?.length ?? 0) > 0 && isBlankValue(prev[spec.key])) {
-          next[spec.key] = defaultValueOf(spec);
-          changed = true;
-        }
-      }
-      // 无变化时返回原对象：React 会跳过一次渲染，避免「补值 → 重渲染 → 再补」的空转
-      return changed ? next : prev;
-    });
+    setValues((prev) => mergeMissingDefaults(prev, inputs));
   }, [inputs, signature]);
 
   // 已合入的预填值（去重：同一个 initial 只合入一次，换一个目标才再合入）
