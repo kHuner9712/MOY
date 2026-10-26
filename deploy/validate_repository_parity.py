@@ -197,6 +197,15 @@ R7_TABLE_TOLERANCE: Final[float] = 0.3
 #: R7：`record` 与表的列名重叠下限（低于它不认为配上了）。
 R7_MIN_OVERLAP: Final[int] = 3
 
+#: R7 覆盖率下限（**fail-closed**）：低于它就是"门禁没在看"，不是"没有缺口"。
+#:
+#: 为什么必须有：R7 的两处 `continue`（表不在 DDL / 配不上表）会让覆盖塌陷与
+#: "全部覆盖"在输出上完全一致——实测把 `usage_event` 在 DDL 里改个名，再删掉
+#: `units`，R7 会报 `WARN 0` 且 `--strict-r7` 也 exit 0。下限是唯一能红的信号。
+#: 实测基线：INSERT 37 条、配上 31 个 dataclass（2026-10-26）。
+R7_MIN_INSERTS: Final[int] = 30
+R7_MIN_PAIRED: Final[int] = 28
+
 #: R7：DDL 来源（缺任一来源都会把"后补列"误判成不存在）。
 R7_DDL_GLOBS: Final[tuple[str, ...]] = ("*.sql", "migrations/*.sql")
 
@@ -218,7 +227,9 @@ DDL_NON_COLUMN_KEYWORDS: Final[frozenset[str]] = frozenset(
         "CHECK",
         "FOREIGN",
         "REFERENCES",
-        "KEY",
+        # 注意：**不能把 `KEY` 放进来**——`PRIMARY KEY` / `FOREIGN KEY` 都以
+        # PRIMARY / FOREIGN 开头，而列名本身可能就叫 `key`（自检用例 23 抓到的真缺陷：
+        # 加上 `KEY` 会让 `key TEXT NOT NULL` 被当成约束行丢掉）。
         "LIKE",
         "EXCLUDE",
     }
@@ -410,6 +421,42 @@ class WriteFinding:
         return (self.unit, self.record, self.field)
 
 
+@dataclass(slots=True)
+class WriteStats:
+    """R7 的覆盖率计数（**fail-closed 的依据**：覆盖塌陷必须在数字上可见）。
+
+    Attributes:
+        dataclasses: 参与判定的 dataclass 总数（全部单元）。
+        paired: 配上表的 dataclass 数。
+        skipped: 配不上表而跳过的 dataclass 数（非行式：store/stats/patch/纯读）。
+        unevaluated: 所在单元没有任何 INSERT、整单元未评估的 dataclass 数。
+        statements: 扫描到的 `INSERT INTO <表> (...) VALUES` 语句数。
+        unresolved: 表名解析不出来而被丢弃的 SQL 语句数。
+        orphan_tables: 被 INSERT 写入、但 DDL 里找不到的表。
+    """
+
+    dataclasses: int = 0
+    paired: int = 0
+    skipped: int = 0
+    unevaluated: int = 0
+    statements: int = 0
+    unresolved: int = 0
+    orphan_tables: set[str] = field(default_factory=set)
+
+    def summary(self) -> str:
+        """渲染成一行覆盖率摘要。
+
+        Returns:
+            str: 覆盖率摘要（配上/未配上/未评估 + INSERT 条数与不可解析数 + DDL 缺表）。
+        """
+        orphan = "无" if not self.orphan_tables else "、".join(sorted(self.orphan_tables))
+        return (
+            f"dataclass {self.dataclasses} → 配上 {self.paired} / 未配上 {self.skipped} / "
+            f"未评估 {self.unevaluated}；INSERT {self.statements} 条"
+            f"（表名不可解析 {self.unresolved}）；DDL 缺表 {orphan}"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class BaselineEntry:
     """基线条目。
@@ -460,6 +507,7 @@ class ScanResult:
     r6: list[MapperFinding] = field(default_factory=list)
     r7: list[WriteFinding] = field(default_factory=list)
     r7_info: list[str] = field(default_factory=list)
+    r7_stats: WriteStats = field(default_factory=WriteStats)
 
 
 # ===========================================================================
@@ -1450,20 +1498,26 @@ def _sql_text(node: ast.expr, constants: dict[str, str]) -> str | None:
 def _insert_targets(
     modules: dict[Path, ast.Module],
     files: tuple[Path, ...],
-) -> dict[str, set[str]]:
+) -> tuple[dict[str, set[str]], int, int]:
     """收集某侧文件里所有 `INSERT INTO <表> (...) VALUES` 的「表 → 列并集」。
 
     **必须走 AST 而不是正则扫源码**：表名是 f-string 常量（`{USAGE_EVENT_TABLE}`），
     文本匹配 `INSERT INTO usage_event` 会 0 命中——这条坑在 2C-4 已经踩过一次。
+
+    **解析失败必须计数**：表名是局部变量或拼接出来的时候该语句会被丢弃，
+    若只 `continue`，门禁会安静地少看几句、然后报"0 缺口"——与它要防的
+    扫描范围缩水是同一族缺陷。
 
     Args:
         modules: 文件 → 语法树。
         files: 只扫这些文件（PG 侧）。
 
     Returns:
-        dict[str, set[str]]: 表名 → 出现过的列名并集。
+        tuple[dict[str, set[str]], int, int]: `(表 → 列并集, INSERT 语句数, 不可解析语句数)`。
     """
     targets: dict[str, set[str]] = {}
+    statements = 0
+    unresolved = 0
     wanted = set(files)
     for path, module in modules.items():
         if path not in wanted:
@@ -1473,17 +1527,26 @@ def _insert_targets(
             if not isinstance(node, ast.Constant | ast.JoinedStr):
                 continue
             text = _sql_text(node, constants)
-            if text is None or "INSERT INTO" not in text:
+            if text is None:
+                # 只有"确实包含 INSERT INTO 但表名解析不出"才算丢弃；普通字符串不算。
+                if isinstance(node, ast.JoinedStr) and any(
+                    isinstance(part, ast.Constant) and "INSERT INTO" in str(part.value)
+                    for part in node.values
+                ):
+                    unresolved += 1
+                continue
+            if "INSERT INTO" not in text:
                 continue
             for match in re.finditer(
                 r"INSERT\s+INTO\s+([a-z_][\w.]*)\s*\(([^)]*)\)\s*VALUES",
                 text,
                 re.DOTALL | re.IGNORECASE,
             ):
+                statements += 1
                 table = match.group(1).split(".")[-1]
                 columns = {item.strip() for item in match.group(2).split(",") if item.strip()}
                 targets.setdefault(table, set()).update(columns)
-    return targets
+    return targets, statements, unresolved
 
 
 def _candidate_tables(
@@ -1526,6 +1589,7 @@ def _check_write_coverage(
     classes: dict[str, ClassInfo],
     modules: dict[Path, ast.Module],
     ddl: dict[str, DdlTable],
+    stats: WriteStats,
 ) -> tuple[list[WriteFinding], list[str]]:
     """R7：写侧 INSERT 必须覆盖 record 的全部**表列**字段。
 
@@ -1550,6 +1614,7 @@ def _check_write_coverage(
         classes: 单元内全部类。
         modules: 文件 → 语法树。
         ddl: 表 → DDL 形状。
+        stats: 覆盖率计数（原地累加，供 fail-closed 下限与摘要行使用）。
 
     Returns:
         tuple[list[WriteFinding], list[str]]: `(缺失发现, INFO 说明)`。
@@ -1559,35 +1624,54 @@ def _check_write_coverage(
         for name, names in _dataclass_field_names(modules).items()
         if name in classes and classes[name].is_dataclass
     }
-    if not record_fields or not ddl:
+    if not record_fields:
         return [], []
-    targets = _insert_targets(modules, unit.postgres_files)
+    infos: list[str] = []
+    stats.dataclasses += len(record_fields)
+    targets, statements, unresolved = _insert_targets(modules, unit.postgres_files)
+    stats.statements += statements
+    stats.unresolved += unresolved
     if not targets:
-        return [], []
+        # 整单元没有可判定的 INSERT（如 `audit`：PG 写入故意留在 business 层）。
+        # 必须计数并说一句——否则这 N 个 dataclass 会从分母里消失，而输出看上去"全绿"。
+        stats.unevaluated += len(record_fields)
+        infos.append(
+            f"R7 {unit.name}：本单元没有 `INSERT INTO … (列) VALUES` 语句，"
+            f"{len(record_fields)} 个 dataclass 未评估（不是通过）"
+        )
+        return [], infos
+
+    orphan = sorted(set(targets) - set(ddl))
+    if orphan:
+        stats.orphan_tables.update(orphan)
+        infos.append(
+            f"R7 {unit.name}：表 {'、'.join(orphan)} 不在 DDL 中，"
+            f"写入这些表的语句不参与判定（**覆盖塌陷，不是通过**）"
+        )
 
     findings: list[WriteFinding] = []
-    infos: list[str] = []
     loose: list[str] = []
     ambiguous: list[str] = []
     reported: set[tuple[str, str]] = set()
     for record, fields in sorted(record_fields.items()):
         scored = _candidate_tables(fields, targets, ddl)
         if not scored:
-            # 不是行式 record（store / stats / patch / 无写路径的纯读 record）：
-            # 静默跳过。只有"本该配上但配不唯一"才值得说一句，否则是纯噪声。
+            # 不是行式 dataclass（store / stats / patch / 无写路径的纯读 record）。
+            stats.skipped += 1
             continue
         if len(scored) > 1 and scored[0][0] == scored[1][0]:
             ambiguous.append(f"{record}（{scored[0][1]} / {scored[1][1]} 并列）")
+            stats.skipped += 1
             continue
         table = scored[0][1]
         shape = ddl[table]
+        stats.paired += 1
         covered = targets[table] & fields
         non_column = sorted(fields - shape.columns)
         if non_column:
             loose.append(f"{record}: {', '.join(non_column)}")
         for column in sorted((fields & shape.columns) - covered - shape.omittable):
             reported.add((record, column))
-            note = R7_NOTES.get((unit.name, record, column))
             findings.append(
                 WriteFinding(
                     unit=unit.name,
@@ -1597,14 +1681,15 @@ def _check_write_coverage(
                     detail=(
                         f"`{record}.{column}` 是 `{table}` 的必填列（无 DEFAULT、非 NULL），"
                         f"但本单元没有任何 INSERT 写它"
-                        + (f"；注：{note}" if note else "")
                     ),
                 )
             )
     if ambiguous:
-        infos.append(f"R7 {unit.name}：对应表不唯一的 record（跳过）：{'；'.join(ambiguous)}")
+        infos.append(f"R7 {unit.name}：对应表不唯一的 dataclass（跳过）：{'；'.join(ambiguous)}")
     for (note_unit, note_record, note_field), note in sorted(R7_NOTES.items()):
-        if note_unit == unit.name and (note_record, note_field) not in reported:
+        if note_unit == unit.name and (note_unit, note_record, note_field) not in {
+            (unit.name, record, column) for record, column in reported
+        }:
             infos.append(f"R7 语义注记 {note_unit} `{note_record}.{note_field}`：{note}")
     if loose:
         infos.append(
@@ -1660,7 +1745,9 @@ def scan(repositories_root: Path, *, ddl: dict[str, DdlTable] | None = None) -> 
         # 那是一处"看着有判据、实际不执行"的假覆盖，2026-10-26 独立复核抓到的。
         result.r6.extend(_check_mapper_coverage(unit, classes, modules))
         # R7 同理：只依赖「INSERT 语句」与「record 字段集」，与协议三元组无关。
-        write_findings, write_notes = _check_write_coverage(unit, classes, modules, tables)
+        write_findings, write_notes = _check_write_coverage(
+            unit, classes, modules, tables, result.r7_stats
+        )
         result.r7.extend(write_findings)
         result.r7_info.extend(write_notes)
     result.violations.sort(key=lambda item: item.key())
@@ -1807,6 +1894,8 @@ def run(
     strict_r6: bool = False,
     strict_r7: bool = False,
     ddl: dict[str, DdlTable] | None = None,
+    r7_min_inserts: int = 0,
+    r7_min_paired: int = 0,
 ) -> int:
     """执行一次完整门禁。
 
@@ -1818,6 +1907,8 @@ def run(
         strict_r6: 是否把 R6 的 WARN 计入退出码（默认关闭，WARN-only）。
         strict_r7: 是否把 R7 的 WARN 计入退出码（默认关闭，WARN-only）。
         ddl: 表 → DDL 形状（默认读仓库自带 SQL；自检可注入）。
+        r7_min_inserts: R7 扫描到的 INSERT 条数下限（低于即 exit 2；自检传 0）。
+        r7_min_paired: R7 配上表的 dataclass 数下限（低于即 exit 2；自检传 0）。
 
     Returns:
         int: 退出码（0 / 1 / 2）。
@@ -1858,6 +1949,7 @@ def run(
     # R7：写侧 INSERT 字段覆盖（默认 WARN-only；只有 --strict-r7 才计入退出码）。
     for info in result.r7_info:
         print(f"[INFO] {info}")
+    print(f"[INFO] R7 覆盖：{result.r7_stats.summary()}")
     r7_warn = 0
     for finding in result.r7:
         r7_warn += 1
@@ -1866,6 +1958,25 @@ def run(
             f"（表 `{finding.table}`） -- {finding.detail}"
             f"（R7 只报不判红；要判红请用 --strict-r7）"
         )
+    if result.r7_stats.orphan_tables:
+        print(
+            f"[FAIL] R7 有 {len(result.r7_stats.orphan_tables)} 张被 INSERT 写入的表不在 DDL 里："
+            f"{'、'.join(sorted(result.r7_stats.orphan_tables))}"
+            f"——要么 SQL 会运行期失败，要么 DDL 解析漏表（两种都必须先查清，不能当通过）"
+        )
+        return 2
+    if result.r7_stats.statements < r7_min_inserts:
+        print(
+            f"[FAIL] R7 只扫描到 {result.r7_stats.statements} 条 INSERT"
+            f"（下限 {r7_min_inserts}）——扫描范围疑似缩水，结论不成立"
+        )
+        return 2
+    if result.r7_stats.paired < r7_min_paired:
+        print(
+            f"[FAIL] R7 只配上 {result.r7_stats.paired} 个 dataclass"
+            f"（下限 {r7_min_paired}）——覆盖塌陷（表名漂移/DDL 解析失效），结论不成立"
+        )
+        return 2
 
     if len(result.units) < min_units:
         print(
@@ -2838,6 +2949,98 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
             f"实际 {[(item.record, item.field) for item in r7_union.r7]}",
         )
 
+        # ---------------- 用例 23：真 DDL 解析器（ALTER 后补列 + 跨行 CHECK） ----------------
+        ddl_dir = tmp / "ddl"
+        ddl_dir.mkdir(exist_ok=True)
+        (ddl_dir / "schema.sql").write_text(
+            textwrap.dedent(
+                """
+                CREATE TABLE IF NOT EXISTS widget (
+                    key        TEXT        NOT NULL,
+                    value      TEXT        NOT NULL DEFAULT '',
+                    note       TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT ck_widget CHECK (length(key) > 0)
+                );
+
+                ALTER TABLE widget ADD COLUMN IF NOT EXISTS extra TEXT NOT NULL DEFAULT 'x';
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        parsed = load_ddl_tables(ddl_dir)
+        widget = parsed.get("widget")
+        failures += _case(
+            "R7 真解析器：CREATE TABLE + ALTER ADD COLUMN 都要进列集合",
+            widget is not None
+            and {"key", "value", "note", "created_at", "extra"} <= widget.columns,
+            f"实际列 {sorted(widget.columns) if widget else None}",
+        )
+        failures += _case(
+            "R7 真解析器：可省略列 = 有 DEFAULT 或可 NULL（NOT NULL 无默认必须排除）",
+            widget is not None
+            and {"value", "note", "created_at", "extra"} <= widget.omittable
+            and "key" not in widget.omittable,
+            f"实际可省略 {sorted(widget.omittable) if widget else None}",
+        )
+        failures += _case(
+            "R7 真解析器：跨行 CHECK 续行不得被当成新列",
+            widget is not None
+            and "CHECK" not in widget.columns
+            and "CONSTRAINT" not in widget.columns,
+            f"实际列 {sorted(widget.columns) if widget else None}",
+        )
+
+        # ---------------- 用例 24：_is_omittable 四种组合 ----------------
+        failures += _case(
+            "R7 _is_omittable：DEFAULT / 可 NULL / NOT NULL 无默认 三态判定正确",
+            _is_omittable("x TEXT NOT NULL DEFAULT ''")
+            and _is_omittable("x TEXT")
+            and not _is_omittable("x TEXT NOT NULL")
+            and _is_omittable("x BIGINT", " NOT NULL DEFAULT 0"),
+            "三态判定与预期不符",
+        )
+
+        # ---------------- 用例 25：表名解析失败必须计数（不是静默丢弃） ----------------
+        r7_unresolved_body = """
+        async def save(self, record: WidgetRecord) -> None:
+            table_name = WIDGET_TABLE
+            sql = f"INSERT INTO {table_name} (key, value, note) VALUES (:k, :v, :n)"
+            del sql
+            return None
+        """
+        r7_unresolved_root = tmp / "r7-unresolved"
+        _write_module(r7_unresolved_root / "widget_repo.py", _r7_repo_source(r7_unresolved_body))
+        r7_unresolved = scan(r7_unresolved_root, ddl=_R7_DDL)
+        failures += _case(
+            "R7：表名不可解析的 INSERT 必须计入 unresolved（不是静默丢弃）",
+            r7_unresolved.r7_stats.unresolved == 1,
+            f"实际 unresolved={r7_unresolved.r7_stats.unresolved}",
+        )
+
+        # ---------------- 用例 26：DDL 缺表必须可见（覆盖塌陷不能伪装成通过） ----------------
+        other_ddl = {
+            "other": DdlTable(columns=frozenset({"key", "value", "note"}), omittable=frozenset())
+        }
+        r7_orphan = scan(r7_full_root, ddl=other_ddl)
+        failures += _case(
+            "R7：INSERT 目标表不在 DDL 时必须报出来（而不是静默变绿）",
+            r7_orphan.r7_stats.orphan_tables == {"widget"}
+            and any("不在 DDL" in info for info in r7_orphan.r7_info),
+            f"实际 orphan={r7_orphan.r7_stats.orphan_tables} / INFO {r7_orphan.r7_info}",
+        )
+
+        # ---------------- 用例 27：覆盖率下限 fail-closed（覆盖塌陷的唯一硬信号） ----------------
+        code = run(r7_full_root, clean_baseline, 0, ddl=_R7_DDL, r7_min_paired=999)
+        failures += _case(
+            "R7：配上数低于下限 → exit 2（fail-closed）", code == 2, f"实际 exit {code}"
+        )
+        code = run(r7_full_root, clean_baseline, 0, ddl=_R7_DDL, r7_min_inserts=999)
+        failures += _case(
+            "R7：INSERT 条数低于下限 → exit 2（扫描缩水即判死）", code == 2, f"实际 exit {code}"
+        )
+
     if failures:
         for failure in failures:
             print(failure)
@@ -2881,6 +3084,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         show_units=args.show_units,
         strict_r6=args.strict_r6,
         strict_r7=args.strict_r7,
+        r7_min_inserts=R7_MIN_INSERTS,
+        r7_min_paired=R7_MIN_PAIRED,
     )
 
 
