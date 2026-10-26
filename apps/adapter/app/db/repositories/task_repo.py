@@ -743,7 +743,12 @@ class InMemoryTaskStore:
                 if window_start <= started < window_end:
                     scoped.append(record)
 
-        stats = TaskStats(total=len(scoped))
+        # 零值构造后累加，与 PG `_to_task_stats` 的两种形状（空窗口 `TaskStats()` /
+        # 满字段）保持一致：若写成 `TaskStats(total=...)`，内存侧就多出"只带 total"
+        # 的第三种形状，G-38 R4（逐形状对齐）会判红——而"某个代码路径少写字段"
+        # 正是它要拦的形态，故此处按零值构造而不是图省事只传 `total`。
+        stats = TaskStats()
+        stats.total = len(scoped)
         non_retry = [record for record in scoped if record.trigger_type != "retry"]
         durations: list[float] = []
         for record in scoped:

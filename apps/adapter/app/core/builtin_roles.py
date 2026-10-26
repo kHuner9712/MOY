@@ -3,8 +3,8 @@
 **为什么要下沉到 `core`**（审计 P1-4 / P1-7）：这份常量原先定义在
 `business/policy_service.py`，导致
 
-- `db/repositories/role_repo.py`（内置角色播种）与 `core/security.py`（令牌判权）
-  必须**反向依赖业务层**才能拿到矩阵——仓储和内核跟着业务服务一起漂移；
+- `db/repositories/role/records.py` 与同包 `{memory,postgres}.py`（目录种子与内置角色播种）、
+  `core/security.py`（令牌判权）必须**反向依赖业务层**才能拿到矩阵——仓储和内核跟着业务服务一起漂移；
 - 「判权用一套、播种用另一套」的双口径风险随每次改动放大。
 
 角色矩阵是**跨层共享的词汇表**（鉴权内核 / 角色播种 / 业务判权都用它），
