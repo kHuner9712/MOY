@@ -341,7 +341,7 @@ class PolicyService:
             str: 角色标识；业务库未登记或权限域不可用时为空串。
         """
         try:
-            from app.db.repositories.role_repo import get_role_store
+            from app.db.repositories.role import get_role_store
 
             return await get_role_store(self._settings).role_key_of_user(
                 auth.tenant_id, auth.user_id
@@ -360,7 +360,7 @@ class PolicyService:
             tuple[str, ...]: 角色 ID 元组；无角色或权限域不可用时为空。
         """
         try:
-            from app.db.repositories.role_repo import get_role_store
+            from app.db.repositories.role import get_role_store
 
             role_ids = await get_role_store(self._settings).role_ids_of_user(
                 auth.tenant_id, auth.user_id
@@ -396,7 +396,7 @@ class PolicyService:
         if business_role:
             points = set(BUILTIN_ROLE_PERMISSIONS.get(business_role, frozenset()))
             try:
-                from app.db.repositories.role_repo import get_role_store
+                from app.db.repositories.role import get_role_store
 
                 points.update(
                     await get_role_store(self._settings).permissions_of_user(

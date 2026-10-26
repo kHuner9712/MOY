@@ -39,7 +39,7 @@ from app.db.repositories.org import (
     get_org_store,
     normalize_department_id,
 )
-from app.db.repositories.role_repo import RoleStore, get_role_store
+from app.db.repositories.role import RoleStore, get_role_store
 from app.schemas.common import build_page
 from app.schemas.identity import ListMembersQuery, MemberItem, OrgRole
 from app.schemas.identity_ext import (

@@ -483,7 +483,7 @@ async def assert_tenant_membership(auth: AuthContext, tenant_id: str, settings: 
     # 在 core 层做模块级导入会成环。做法与 `require_permission` 引入
     # `business.policy_service` 一致。
     from app.db.repositories.org import get_org_store
-    from app.db.repositories.role_repo import get_role_store
+    from app.db.repositories.role import get_role_store
 
     user_id = (auth.user_id or "").strip()
     if not user_id:  # pragma: no cover - `AuthContext.resolve` 已保证非空

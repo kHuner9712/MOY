@@ -40,7 +40,7 @@ R-API-DB apps/adapter/app/api/v1/stats.py app.db.repositories.task module -- P1-
 R-CORE-BIZ apps/adapter/app/core/security.py app.business.audit_service deferred -- P1-7 core 内核依赖业务审计服务；改为组合根注入后消除（切片 2）
 R-CORE-BIZ apps/adapter/app/core/security.py app.business.policy_service deferred -- P1-7 core 内核依赖业务权限服务；改为注入权限判定后消除（切片 2）
 R-CORE-DB apps/adapter/app/core/security.py app.db.repositories.org deferred -- P1-7 core 内核依赖仓储实现；改为注入 Protocol 后消除（切片 2）
-R-CORE-DB apps/adapter/app/core/security.py app.db.repositories.role_repo deferred -- P1-7 core 内核依赖仓储实现；改为注入 Protocol 后消除（切片 2）
+R-CORE-DB apps/adapter/app/core/security.py app.db.repositories.role deferred -- P1-7 core 内核依赖仓储实现；改为注入 Protocol 后消除（切片 2）
 R-CORE-SCH apps/adapter/app/core/errors.py app.schemas.common module -- P1-7 core 内核依赖 schemas（错误码与公共模型同源）；切片 2 合并真源后消除
 
 # --- P2-9：business 反向依赖编排层 / workers -----------------------------

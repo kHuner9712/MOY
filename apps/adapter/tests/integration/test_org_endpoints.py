@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from app.business.audit_service import AuditService
 from app.core.config import Settings
 from app.db.repositories.org import get_org_store
-from app.db.repositories.role_repo import PERMISSION_CATALOG_SEED, get_role_store
+from app.db.repositories.role import PERMISSION_CATALOG_SEED, get_role_store
 from tests.conftest import make_token
 
 pytestmark = pytest.mark.integration
@@ -531,7 +531,7 @@ def _reset_org_state(app: FastAPI) -> None:
     """
     from app.business.kc_projection import reset_outbox_store
     from app.db.repositories.org import reset_org_store
-    from app.db.repositories.role_repo import reset_role_store
+    from app.db.repositories.role import reset_role_store
 
     for reset in (reset_org_store, reset_role_store, reset_outbox_store):
         reset()
@@ -597,7 +597,7 @@ async def test_postgres_org_role_audit_outbox_smoke(pg_dsn: str) -> None:
         MemberLink,
         PostgresOrgStore,
     )
-    from app.db.repositories.role_repo import PostgresRoleStore
+    from app.db.repositories.role import PostgresRoleStore
     from app.db.session import tenant_scope
 
     conf = Conf(

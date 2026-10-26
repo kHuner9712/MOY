@@ -40,7 +40,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
 from app.db.repositories.grant_repo import InMemoryGrantStore
 from app.db.repositories.knowledge_base_repo import InMemoryKnowledgeBaseStore
-from app.db.repositories.role_repo import InMemoryRoleStore, RoleRecord
+from app.db.repositories.role import InMemoryRoleStore, RoleRecord
 
 pytestmark = pytest.mark.unit
 

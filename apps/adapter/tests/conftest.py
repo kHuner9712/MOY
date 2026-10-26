@@ -60,7 +60,7 @@ from app.db.repositories.ops_repo import reset_ops_store
 from app.db.repositories.org import reset_org_store
 from app.db.repositories.plugin import reset_plugin_store
 from app.db.repositories.plugin_review_repo import reset_review_store
-from app.db.repositories.role_repo import reset_role_store
+from app.db.repositories.role import reset_role_store
 from app.db.repositories.segment_repo import reset_segment_store
 from app.db.repositories.tool_repo import reset_tool_store
 from app.db.repositories.usage import reset_usage_store
