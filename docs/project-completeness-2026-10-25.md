@@ -39,7 +39,7 @@
 
 | 项 | 值 | 口径与出处 |
 | --- | --- | --- |
-| 本机全量测试 | **2085 passed / 207 skipped / 0 failed**（切片 2A 后；切片 1 2083、第 1 波 2075、第 0 波 2066、审计时 2055） | 2026-10-26 `main @ 561ce02`，**无 PG**，`OA_BATCH=B21` + `--basetemp`（仓库外）；README §6.2 记 2030 passed，滞后（待更新） |
+| 本机全量测试 | **2101 passed / 207 skipped / 0 failed**（切片 2B 后；2A 2085、切片 1 2083、第 1 波 2075、第 0 波 2066、审计时 2055） | 2026-10-26 `main @ dca9fda`，**无 PG**，`OA_BATCH=B21` + `--basetemp`（仓库外）；README §6.2 记 2030 passed，滞后（待更新） |
 | 覆盖率（本机无 PG） | **85.52%**（15468/17729 语句）；分支 **77.16%**（2827/3664） | 本轮审计 §六实测；README 记 85.51%、「分支余量 0」叙事已过期失真（分支超门槛 +20 条） |
 | 全量口径（含 PG） | **本轮无证据**；历史基线 1573 passed / 89.81% 已严重过期（1573 ≪ 2258） | 本轮审计 §六；本机无常驻 PG → 203 条 PG 用例按设计 skip，**不计入断言有效性** |
 | 含 PG 历史实跑参考 | 1749 passed / 0 skipped；合并 90.94% / business+db 92.27% / 分支 86.13% | `docs/phase4-batch-log.md`（SHA `2699897`，**一次性 QA 容器** `moy-qa-pg` @127.0.0.1:55433，`--run-pg`）——证明 PG 口径可复现，但依赖一次性容器，非常态 |
@@ -141,8 +141,8 @@
 
 > **2026-10-26 状态：第 2 波切片 1 已闭环**（`384870c`）——依赖方向门禁 G-37 接入 CI（基线 28→24、fail-closed、stale 检测、12 类自检）；P1-4/P1-6/P1-7 三处搬迁、P2-4/5/6 小修、P2-12 文档登记完成；全量 2083 passed / 207 skipped / 0 failed。**切片 2 待启动**：仓储拆文件（P1-8）、task_service 三拆（P1-9）、engine 合规规则声明化 + P2-13 关键词声明化（合并一次改 schema）、基线剩余 24 条（api→db 6 / services→db 6 / core→business/db 5 / db→plugins 3 / business→services 2 / business→workers 1 / core→schemas 1）。
 
-> **2026-10-26 状态：第 2 波切片 2A 已闭环**（`561ce02`）——**G-38 仓储双实现一致性门禁**落地（20 单元 / 3 WARN / 0 FAIL；R1-R5、fail-closed、stale、14 组自检；R4 v2 无映射器豁免、按构造形状集合逐点对齐），`role_repo` 拆为 `role/` 包作为样板（944→67 行 shim、20 处调用点零改动），并修正 `RoleRecord.member_count` 与 billing/task 两处形状漂移。全量 2085 passed / 207 skipped / 0 failed。
-> **剩余（切片 2B/2C）**：2B = P1-10 engine 合规规则声明化 + P2-13 match_hints（合并一次 manifest schema 变更）；2C = 其余 7 个仓储按 `role` 样板拆分（顺序 usage→memory→task→plugin→conversation→org→billing，每个一个 commit，`conversation` 双协议须同批、`billing` 须同批核对 `ops_repo`）+ P1-9 `task_service` 三拆（放最后，依赖 task_repo 最终形态）；2C 收口时删 7 个 shim、改调用点、删 G-37 基线第 43 行。
+> **2026-10-26 状态：第 2 波切片 2A/2B 已闭环**（`dca9fda`）——2A：G-38 仓储双实现一致性门禁 + `role_repo` 样板拆分 + 漂移修正；2B：P1-10 合规规则声明化（engine 1543→895 行，新增合规规则不改 engine）+ P2-13 match_hints 进 manifest（47 词含同义改写）。全量 2101 passed / 207 skipped / 0 failed；合规语义 68 样本等价、AC-B1 零回归、契约零泄漏。
+> **剩余（切片 2C）**：其余 7 个仓储按 `role` 样板拆分（顺序 usage→memory→task→plugin→conversation→org→billing，每个一个 commit，`conversation` 双协议须同批、`billing` 须同批核对 `ops_repo`）+ P1-9 `task_service` 三拆（放最后，依赖 task_repo 最终形态）；2C 收口时删 7 个 shim、改调用点、删 G-37 基线对应行。**已知语义缺口（既有）**：match_hints 同义词（如「写信」）单独作 goal 时打分走兜底，新旧行为一致，产品侧若要求命中需调打分逻辑。
 
 ### 第 3 波 · 阶段四内（收尾与防漂移）
 
