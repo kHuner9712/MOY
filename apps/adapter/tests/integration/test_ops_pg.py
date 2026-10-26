@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from app.core.config import Settings, reset_settings_cache
-from app.db.repositories.billing_repo import (
+from app.db.repositories.billing import (
     PLAN_PROFESSIONAL,
     OrderRecord,
     PostgresBillingStore,

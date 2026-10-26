@@ -22,7 +22,7 @@ from app.business.subscription_service import SubscriptionService
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
-from app.db.repositories.billing_repo import InMemoryBillingStore, get_billing_store
+from app.db.repositories.billing import InMemoryBillingStore, get_billing_store
 from app.db.repositories.plugin import (
     STATUS_ENABLED,
     InMemoryPluginStore,

@@ -49,7 +49,7 @@ from app.business.subscription_service import SubscriptionService
 from app.business.usage_service import UsageService
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ERROR_REGISTRY, ErrorCode
-from app.db.repositories.billing_repo import (
+from app.db.repositories.billing import (
     PLAN_FREE,
     PLAN_PROFESSIONAL,
     get_billing_store,

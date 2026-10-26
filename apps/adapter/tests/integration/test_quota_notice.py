@@ -25,7 +25,7 @@ from app.business.subscription_service import SubscriptionService
 from app.business.usage_service import UsageService, get_usage_service
 from app.core.config import Settings
 from app.core.errors import ERROR_REGISTRY, ErrorCode
-from app.db.repositories.billing_repo import get_billing_store
+from app.db.repositories.billing import get_billing_store
 from app.db.repositories.usage import get_usage_store
 from app.schemas.billing import ChangeSubscriptionRequest
 from tests.conftest import TEST_USER_ID

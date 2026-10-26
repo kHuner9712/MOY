@@ -45,7 +45,7 @@ from app.business.task_service import reset_task_service
 from app.core.config import Settings, get_settings, reset_settings_cache
 from app.db.engine import dispose_engine
 from app.db.repositories.artifact_repo import get_artifact_store, reset_artifact_store
-from app.db.repositories.billing_repo import get_billing_store
+from app.db.repositories.billing import get_billing_store
 from app.db.repositories.task import get_task_store, reset_task_store
 from app.db.session import platform_scope
 from app.main import create_app

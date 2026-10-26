@@ -179,7 +179,7 @@ async def main() -> int:
 
     from app.business.subscription_service import SubscriptionService
     from app.core.config import Settings
-    from app.db.repositories.billing_repo import get_billing_store
+    from app.db.repositories.billing import get_billing_store
     from app.main import create_app
     from app.plugins.actions import ORG_CAPABILITIES
     from app.schemas.billing import ChangeSubscriptionRequest

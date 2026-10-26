@@ -198,7 +198,7 @@ class InMemoryUsageStore:
         Returns:
             QuotaRecord: 额度快照。
         """
-        from app.db.repositories.billing_repo import get_memory_billing_store
+        from app.db.repositories.billing import get_memory_billing_store
 
         store = get_memory_billing_store()
         if store is None:

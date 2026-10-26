@@ -357,7 +357,7 @@ async def test_c1_pl05_reinstall_does_not_touch_grants_or_audit() -> None:
     from app.business.subscription_service import SubscriptionService
     from app.core.config import Settings, reset_settings_cache
     from app.core.security import AuthContext
-    from app.db.repositories.billing_repo import get_billing_store
+    from app.db.repositories.billing import get_billing_store
     from app.db.repositories.plugin import InMemoryPluginStore
     from app.plugins.loader import PluginRegistry
     from app.schemas.billing import ChangeSubscriptionRequest

@@ -19,7 +19,7 @@ import pytest
 from app.business.subscription_service import SubscriptionService, add_one_month
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ApiError, ErrorCode
-from app.db.repositories.billing_repo import (
+from app.db.repositories.billing import (
     FREE_PLAN_SEATS,
     PLAN_AVAILABLE,
     PLAN_ENTERPRISE,
