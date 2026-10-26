@@ -24,7 +24,7 @@ import pytest
 from app.business.memory_service import MemoryService
 from app.core.config import Settings
 from app.core.errors import ApiError
-from app.db.repositories.conversation_repo import InMemoryMessageStore, MessageRecord
+from app.db.repositories.conversation import InMemoryMessageStore, MessageRecord
 from app.db.repositories.job_repo import InMemoryJobStore, JobRecord
 from app.db.repositories.memory import (
     MEMORY_CATEGORIES,

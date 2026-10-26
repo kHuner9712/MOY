@@ -44,7 +44,7 @@ from app.core.metrics import (
     MEMORY_RECALL_DEGRADED_TOTAL,
     MEMORY_RECALL_DURATION_SECONDS,
 )
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     MessageStore,
     get_message_store,
 )

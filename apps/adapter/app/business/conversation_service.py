@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     ConversationRecord,
     ConversationStore,
     MessageRecord,

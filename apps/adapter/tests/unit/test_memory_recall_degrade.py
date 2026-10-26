@@ -24,7 +24,7 @@ from app.business.context_assembler import MEMORY_HEADER, ContextAssembler
 from app.business.memory_service import MemoryService
 from app.core.config import Settings
 from app.core.metrics import MEMORY_INJECTED_TOTAL, MEMORY_RECALL_DEGRADED_TOTAL
-from app.db.repositories.conversation_repo import InMemoryMessageStore, MessageRecord
+from app.db.repositories.conversation import InMemoryMessageStore, MessageRecord
 from app.db.repositories.memory import (
     InMemoryMemoryStore,
     MemoryRecord,

@@ -20,7 +20,7 @@ from app.business.conversation_service import reset_conversation_service
 from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     InMemoryConversationStore,
     InMemoryMessageStore,
     reset_conversation_stores,

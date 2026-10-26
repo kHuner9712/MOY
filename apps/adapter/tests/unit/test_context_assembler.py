@@ -27,7 +27,7 @@ from app.business.context_assembler import (
 from app.business.conversation_service import ConversationService
 from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     InMemoryConversationStore,
     InMemoryMessageStore,
     new_conversation_id,

@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 from app.business.context_assembler import reset_context_assembler
 from app.business.conversation_service import reset_conversation_service
 from app.core.config import Settings
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     InMemoryConversationStore,
     InMemoryMessageStore,
     MessageRecord,
@@ -148,7 +148,7 @@ async def _seed(
     Returns:
         str: 会话 ID。
     """
-    from app.db.repositories.conversation_repo import ConversationRecord
+    from app.db.repositories.conversation import ConversationRecord
 
     conversation_id = new_conversation_id()
     await conversations.create(
@@ -407,7 +407,7 @@ def test_mc4_rejects_extra_fields(
 # ===========================================================================
 def test_cursor_is_opaque_base64url_json() -> None:
     """`next_cursor` 是 `base64url({"seq":n})`，不含 padding（可直接进 query）。"""
-    from app.db.repositories.conversation_repo import decode_cursor, encode_cursor
+    from app.db.repositories.conversation import decode_cursor, encode_cursor
 
     token = encode_cursor(42)
     raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
@@ -418,7 +418,7 @@ def test_cursor_is_opaque_base64url_json() -> None:
 
 def test_recoverable_window_matches_configuration() -> None:
     """软删可恢复窗口 = 删除时间 + `conversation_soft_delete_recover_days`（默认 30 天）。"""
-    from app.db.repositories.conversation_repo import recoverable_until
+    from app.db.repositories.conversation import recoverable_until
 
     stamp = datetime(2026, 11, 1, 8, 0, tzinfo=UTC).isoformat().replace("+00:00", "Z")
 
@@ -427,7 +427,7 @@ def test_recoverable_window_matches_configuration() -> None:
 
 def test_soft_delete_window_is_configurable() -> None:
     """窗口可配（私有化客户合同里会写具体天数）。"""
-    from app.db.repositories.conversation_repo import recoverable_until
+    from app.db.repositories.conversation import recoverable_until
 
     stamp = (
         (datetime(2026, 11, 1, 8, 0, tzinfo=UTC) + timedelta(0)).isoformat().replace("+00:00", "Z")

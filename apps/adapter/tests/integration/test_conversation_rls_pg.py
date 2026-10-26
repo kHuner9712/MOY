@@ -25,7 +25,7 @@ import pytest
 
 from app.core.config import Settings
 from app.db.engine import dispose_engine
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     ConversationRecord,
     MessageRecord,
     PostgresConversationStore,

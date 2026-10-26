@@ -21,7 +21,7 @@ import pytest
 from tests.security.conftest import USER_B, issue_token, write_headers
 
 from app.core.config import get_settings
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     ConversationRecord,
     MessageRecord,
     get_conversation_store,

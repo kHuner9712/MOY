@@ -30,7 +30,7 @@
 
 # --- P1-3：api 直接使用仓储/引擎（绕过业务层） ---------------------------
 R-API-DB apps/adapter/app/api/v1/artifact_files.py app.db.repositories.artifact_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
-R-API-DB apps/adapter/app/api/v1/conversation.py app.db.repositories.conversation_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
+R-API-DB apps/adapter/app/api/v1/conversation.py app.db.repositories.conversation module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/identity_ext.py app.db.repositories.audit_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/memory.py app.db.repositories.memory module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/router.py app.db.engine module -- P1-3 api 直接使用 db 引擎（健康探针），改为 services 暴露探针后消除

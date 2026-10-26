@@ -49,7 +49,7 @@ from app.core.logging import configure_logging, reset_logging_for_test
 from app.core.metrics import reset_counters
 from app.core.ratelimit import RateLimiter, reset_rate_limiter
 from app.db.repositories.billing_repo import reset_billing_store
-from app.db.repositories.conversation_repo import reset_conversation_stores
+from app.db.repositories.conversation import reset_conversation_stores
 from app.db.repositories.credential_repo import reset_credential_stores
 from app.db.repositories.document_repo import reset_document_store
 from app.db.repositories.grant_repo import reset_grant_store
