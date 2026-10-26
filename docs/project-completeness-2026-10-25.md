@@ -144,6 +144,9 @@
 > **2026-10-26 状态：第 2 波 2A/2B/2C-1/2C-2/2C-3a/2C-3b 已闭环**（`215454a`）——8 个巨型仓储全部拆包 + G-38 门禁；2B 合规声明化（engine 1543→895）；2C-3b `task_service` 三拆（1765→89 行门面 + Runner/Query/Resolver/access，锁恰 2 处、32 方法归一化逐字相同）。全量 2101 passed / 207 skipped / 0 failed。
 > **剩余：2C-4（纯结构收口）**——8 笔提交（每包：调用点迁移 + 该包基线 `imported_module` 改写 + 删该包 shim），前置断言「该包 `ImportFrom` 计数 = 0」；有界测试豁免 4 行 import + 生产 `plugin_review_repo.py:338` 1 行；`scripts/demo_phase3.sh:182` 随 billing 一笔。**2C-5（门禁/测试加固）**：G-39 接入 + R6（`_to_*` 字段覆盖，WARN + 豁免清单）+ seed↔`default_plans` 常驻单测 + G-37 `--baseline` 默认值修复 + `_summary_text` 类型收回 + 10 个 R4 跳过 record 往返用例。
 
+> **2026-10-26 状态：第 2 波 2A/2B/2C-1/2C-2/2C-3a/2C-3b/2C-4 已全部闭环**（`39a544a`）——8 个巨型仓储拆包 + G-38 门禁；2B 合规声明化（engine 1543→895）；2C-3b task_service 三拆（1765→89 行门面）；**2C-4 完成 shim 收口：8 个兼容层全删、158 处调用点迁至包路径、基线 6 行改列、G-37 24/24/0 扫 200、G-38 20/8/3/0/0、清单 119/91、全量 2101/207/0**。第二波结构治理结束。
+> **剩余：2C-5（门禁/测试加固，独立切片）**——① `deploy/init-schema-phase2.sql` ↔ `billing/records.py::default_plans()` 语义等价单测（不连 PG）；② 10 个 R4 跳过 record 的内存往返用例（`asdict` 全字段）；③ R6 `_to_*` kwarg 集合 == dataclass 字段集合（WARN-only + `(unit,record,field)` 豁免表含 `reason/expire_when` + can-red 负样本）；④ `MessageRecord.history` 处置（保留+豁免或删字段，待架构师定）；⑤ G-39 接入（`validate_package_imports.py` 739 行、6 判据、15 夹具，仓库外草稿已交付）；⑥ G-37 `--baseline` 默认值修复；⑦ `gen_delivery_manifest` 全局 `seen` 改任务内去重 + can-red；⑧ `_summary_text` 类型收回。**第 3 波**：`deploy/` 纳入 CI lint、生产代码流程词汇清理、`TaskArtifactWriter` 四拆评估。
+
 ### 第 3 波 · 阶段四内（收尾与防漂移）
 
 | 要点 | 审计编号 |
