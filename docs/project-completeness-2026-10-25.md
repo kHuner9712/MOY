@@ -39,7 +39,7 @@
 
 | 项 | 值 | 口径与出处 |
 | --- | --- | --- |
-| 本机全量测试 | **2101 passed / 207 skipped / 0 failed**（切片 2C-1 后；2B 2101、2A 2085、切片 1 2083、第 1 波 2075、第 0 波 2066、审计时 2055） | 2026-10-26 `main @ 9b499f5`，**无 PG**，`OA_BATCH=B21` + `--basetemp`（仓库外）；README §6.2 记 2030 passed，滞后（待更新） |
+| 本机全量测试 | **2101 passed / 207 skipped / 0 failed**（切片 2C-2 后；2C-1/2B 2101、2A 2085、切片 1 2083、第 1 波 2075、第 0 波 2066、审计时 2055） | 2026-10-26 `main @ b47856d`，**无 PG**，`OA_BATCH=B21` + `--basetemp`（仓库外）；README §6.2 记 2030 passed，滞后（待更新） |
 | 覆盖率（本机无 PG） | **85.52%**（15468/17729 语句）；分支 **77.16%**（2827/3664） | 本轮审计 §六实测；README 记 85.51%、「分支余量 0」叙事已过期失真（分支超门槛 +20 条） |
 | 全量口径（含 PG） | **本轮无证据**；历史基线 1573 passed / 89.81% 已严重过期（1573 ≪ 2258） | 本轮审计 §六；本机无常驻 PG → 203 条 PG 用例按设计 skip，**不计入断言有效性** |
 | 含 PG 历史实跑参考 | 1749 passed / 0 skipped；合并 90.94% / business+db 92.27% / 分支 86.13% | `docs/phase4-batch-log.md`（SHA `2699897`，**一次性 QA 容器** `moy-qa-pg` @127.0.0.1:55433，`--run-pg`）——证明 PG 口径可复现，但依赖一次性容器，非常态 |
@@ -141,8 +141,8 @@
 
 > **2026-10-26 状态：第 2 波切片 1 已闭环**（`384870c`）——依赖方向门禁 G-37 接入 CI（基线 28→24、fail-closed、stale 检测、12 类自检）；P1-4/P1-6/P1-7 三处搬迁、P2-4/5/6 小修、P2-12 文档登记完成；全量 2083 passed / 207 skipped / 0 failed。**切片 2 待启动**：仓储拆文件（P1-8）、task_service 三拆（P1-9）、engine 合规规则声明化 + P2-13 关键词声明化（合并一次改 schema）、基线剩余 24 条（api→db 6 / services→db 6 / core→business/db 5 / db→plugins 3 / business→services 2 / business→workers 1 / core→schemas 1）。
 
-> **2026-10-26 状态：第 2 波切片 2A/2B/2C-1 已闭环**（`9b499f5`）——2A：G-38 门禁 + `role` 样板；2B：合规声明化 + match_hints（engine 1543→895）；2C-1：`usage`/`memory`/`task` 三仓储拆包（包形态 4 单元，shim 保留、调用点零改动）。全量 2101 passed / 207 skipped / 0 failed。
-> **剩余（切片 2C-2/2C-3/2C-4）**：2C-2 = `plugin`(1633)→`conversation`(1294，双协议须同批)→`org`(1157，26 处调用点)；2C-3 = `billing`(2272，须同批核对 `ops_repo`)+ P1-9 `task_service` 三拆；2C-4 收口 = 删 7 个 shim、调用点切新路径、清 G-37 对应基线行、转出私有符号的兼容约束解除。
+> **2026-10-26 状态：第 2 波切片 2A/2B/2C-1/2C-2 已闭环**（`b47856d`）——2A：G-38 门禁 + `role` 样板；2B：合规声明化 + match_hints（engine 1543→895）；2C-1：`usage`/`memory`/`task` 拆包；2C-2：`plugin`/`conversation`（双协议）/`org` 拆包（包形态 7 单元）。全量 2101 passed / 207 skipped / 0 failed。
+> **剩余（2C-3/2C-4）**：2C-3 = `billing`(2272，最高风险，须同批核对 `ops_repo` 的 6 符号 import 面)+ P1-9 `task_service` 三拆（Runner/Query/ManifestResolver，放最后）；2C-4 收口 = 删 7 个 shim（role/usage/memory/task/plugin/conversation/org）、16/15/16/17/19/26 处调用点一次性切新路径、清 G-37 对应基线行、解除 shim 私有符号转出的兼容约束。
 
 ### 第 3 波 · 阶段四内（收尾与防漂移）
 
