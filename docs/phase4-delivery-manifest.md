@@ -22,8 +22,8 @@
 
 ## 汇总
 
-- 合计 **116** 行：**已建 88** / **待建 28** / **不适用 0**
-- 按批次：W1 28 / W2 21 / W3 36 / W4 31
+- 合计 **119** 行：**已建 91** / **待建 28** / **不适用 0**
+- 按批次：W1 30 / W2 21 / W3 37 / W4 31
 
 ## 清单
 
@@ -48,6 +48,7 @@
 | `T4-01.4` | `deploy/init-schema-phase3.sql` | T4-01.4 | W1 | 代码 | 已建 | 010db32 | — |
 | `T4-01.4` | `deploy/migrations/rollback/` | T4-01.4 | W1 | 迁移 | 已建 | 8e9f43f | — |
 | `T4-01.5` | `apps/adapter/app/db/repositories/artifact_repo.py` | T4-01.5 | W1 | 代码 | 已建 | b6effcf | — |
+| `T4-01.5` | `apps/adapter/app/db/repositories/usage/__init__.py` | T4-01.5 | W1 | 代码 | 已建 | 6d82160 | — |
 | `T4-01.5` | `deploy/migrations/0006_*.sql` | T4-01.5 | W1 | 迁移 | 已建 | 2699897 | — |
 | `T4-01.5` | `deploy/migrations/0007_*.sql` | T4-01.5 | W1 | 迁移 | 已建 | 2699897 | — |
 | `T4-01.5` | `deploy/migrations/rollback/0006_*.down.sql` | T4-01.5 | W1 | 迁移 | 已建 | 2699897 | — |
@@ -55,6 +56,7 @@
 | `T4-02.1` | `apps/adapter/tests/integration/test_conversation_rls_pg.py` | T4-02.1 | W1 | 测试 | 已建 | d4ba2c0 | — |
 | `T4-02.1` | `deploy/migrations/0008_conversation_message.sql` | T4-02.1 | W1 | 迁移 | 已建 | d4ba2c0 | — |
 | `T4-02.1` | `deploy/migrations/rollback/0008_*.down.sql` | T4-02.1 | W1 | 迁移 | 已建 | d4ba2c0 | — |
+| `T4-02.2` | `apps/adapter/app/db/repositories/conversation/__init__.py` | T4-02.2 | W1 | 代码 | 已建 | 70844a8 | — |
 | `T4-02.2` | `apps/adapter/app/schemas/conversation.py` | T4-02.2 | W1 | 代码 | 已建 | d4ba2c0 | — |
 | `T4-02.2` | `apps/adapter/tests/unit/test_conversation_repo.py` | T4-02.2 | W1 | 测试 | 已建 | d4ba2c0 | — |
 | `T4-02.3` | `apps/adapter/app/api/v1/model.py` | T4-02.3 | W2 | 代码 | 已建 | f46544f | — |
@@ -79,6 +81,7 @@
 | `T4-03.2` | `apps/adapter/app/workers/job_runner.py` | T4-03.2 | W2 | 代码 | 已建 | 79250db | — |
 | `T4-03.2` | `apps/adapter/tests/unit/test_job_runner.py` | T4-03.2 | W2 | 测试 | 已建 | 79250db | — |
 | `T4-03.3` | `apps/adapter/app/business/memory_service.py` | T4-03.3 | W3 | 代码 | 已建 | 79250db | — |
+| `T4-03.3` | `apps/adapter/app/db/repositories/memory/__init__.py` | T4-03.3 | W3 | 代码 | 已建 | 4e8c36c | — |
 | `T4-03.3` | `apps/adapter/app/services/memory_extractor.py` | T4-03.3 | W3 | 代码 | 已建 | 79250db | — |
 | `T4-03.3` | `apps/adapter/tests/e2e/test_memory_recall.py` | T4-03.3 | W3 | 测试 | 待建 | — | — |
 | `T4-03.3` | `apps/adapter/tests/unit/test_memory_extract.py` | T4-03.3 | W3 | 测试 | 已建 | 79250db | — |
