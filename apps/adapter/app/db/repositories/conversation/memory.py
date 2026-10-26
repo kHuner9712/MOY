@@ -6,7 +6,8 @@ record 构造点，差异只能通过 `TEST_HOOKS`（`clear`）这类显式白�
 
 **个人边界在这里也要守**（不能只靠 PG 的 RLS）：所有查询都带 `user_id` 过滤
 （`get_any` 这类"跨用户"出口只给内部对账用，签名上就与 `get` 分开）。
-游标同样走 `shared.decode_cursor`，与 PG 侧共用一份编解码。
+游标编解码在 `shared.py` 单点定义、由 API 层消费；本层只接收已解码的
+`before_seq`，与 PG 侧同一口径。
 """
 
 from __future__ import annotations
