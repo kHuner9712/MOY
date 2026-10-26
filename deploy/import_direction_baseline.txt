@@ -57,7 +57,7 @@ R-SVC-DB apps/adapter/app/services/rag_service.py app.db.tenant module -- P2-10 
 R-SVC-DB apps/adapter/app/services/tool_service.py app.db.repositories.tool_repo module -- P2-10 服务层直接读仓储；由 business 暴露查询入口后消除（切片 2）
 
 # --- P2-11：db 依赖 plugins / services 实现 ------------------------------
-R-DB-PLG apps/adapter/app/db/repositories/plugin_repo.py app.plugins.actions module -- P2-11 仓储依赖插件动作契约；切片 2 移至 core/schemas 后消除
-R-DB-PLG apps/adapter/app/db/repositories/plugin_repo.py app.plugins.loader module -- P2-11 仓储依赖插件加载器；切片 2 改为依赖 registry 契约后消除
-R-DB-PLG apps/adapter/app/db/repositories/plugin_repo.py app.plugins.loader deferred -- P2-11 仓储延迟 import 插件加载器；切片 2 改为依赖 registry 契约后消除
+R-DB-PLG apps/adapter/app/db/repositories/plugin/records.py app.plugins.actions module -- P2-11 仓储依赖插件动作契约；切片 2 移至 core/schemas 后消除；切片 2C-2 拆包后位置从 plugin_repo.py 移到 plugin/records.py（同一处违规，条数不变）
+R-DB-PLG apps/adapter/app/db/repositories/plugin/records.py app.plugins.loader module -- P2-11 仓储依赖插件加载器；切片 2 改为依赖 registry 契约后消除；切片 2C-2 拆包后位置从 plugin_repo.py 移到 plugin/records.py（同一处违规，条数不变）
+R-DB-PLG apps/adapter/app/db/repositories/plugin/memory.py app.plugins.loader deferred -- P2-11 仓储延迟 import 插件加载器；切片 2 改为依赖 registry 契约后消除；切片 2C-2 拆包后位置从 plugin_repo.py 移到 plugin/memory.py（`list_versions` 内的 `version_tuple`，同一处违规，条数不变）
 R-DB-SVC apps/adapter/app/db/repositories/memory/memory.py app.services.memory_embedding deferred -- P2-11 仓储延迟 import 服务实现（向量化）；切片 2 改为注入后消除；切片 2C-1 拆包后位置从 memory_repo.py 移到 memory/memory.py（同一处违规，条数不变）
