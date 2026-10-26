@@ -59,8 +59,36 @@ _INSERT_HEAD: Final[re.Pattern[str]] = re.compile(
     r"INSERT\s+INTO\s+([a-z_][\w.]*)\s*\(", re.IGNORECASE
 )
 
-#: 纯字面量 SQL 里的表名（`INSERT INTO schema_migration (...)`）。
-_LITERAL_TABLE: Final[re.Pattern[str]] = re.compile(r"INSERT\s+INTO\s+([a-z_][\w.]*)\s*\(")
+#: 严格形态：与解析器完全同口径（`INSERT` + 任意空白 + `INTO`）。
+_STRICT_MENTION: Final[re.Pattern[str]] = re.compile(r"INSERT\s+INTO", re.IGNORECASE)
+
+#: 宽松形态：容忍短语被"短间隔"切断（换行 / 多空格 / `{}` / `%s` / `{KW}`）。
+#: **只在文本里出现 `VALUES` 时启用**——否则英文散文里的 "insert … into …" 会被误算，
+#: 那是假红的来源；而真正被切断的 INSERT 语句几乎必然带 VALUES。
+_LOOSE_MENTION: Final[re.Pattern[str]] = re.compile(r"INSERT[\s\S]{0,12}?INTO", re.IGNORECASE)
+
+#: 宽松形态的启用条件（"这段文本像不像 SQL"）。
+_SQL_CONTEXT: Final[re.Pattern[str]] = re.compile(r"\bVALUES\b", re.IGNORECASE)
+
+
+def _count_mentions(text: str) -> int:
+    """数一段文本里"在说一条 INSERT"的次数（与解析器同口径，并容忍短语被切断）。
+
+    口径必须与 `_INSERT_HEAD`（`INSERT\\s+INTO`）对齐：计数若只认字面的 `"INSERT INTO"`
+    （单空格），`INSERT\\n INTRO …` 这种排版会被解析器认、却被计数判成 0 提及，
+    语句于是**凭空消失**（既不进 `insert_statements()` 也不进 `unresolved_inserts()`）——
+    这正是本判据要防的"看不见就没了"。
+
+    Args:
+        text: 待检查文本。
+
+    Returns:
+        int: 提及次数。
+    """
+    strict = len(_STRICT_MENTION.findall(text))
+    if not _SQL_CONTEXT.search(text):
+        return strict
+    return max(strict, len(_LOOSE_MENTION.findall(text)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,16 +345,16 @@ def _iter_sql_texts(node: ast.AST, local: dict[str, str], skip: set[int]) -> Any
         return
     if isinstance(node, ast.JoinedStr):
         text = _resolve_fstring(node, local)
-        mentions = _joined_constants(node).upper().count("INSERT INTO")
+        mentions = _count_mentions(_joined_constants(node))
         if text is not None:
-            mentions = max(mentions, text.upper().count("INSERT INTO"))
+            mentions = max(mentions, _count_mentions(text))
         yield text, node.lineno, mentions
         return
     if isinstance(node, ast.BinOp):
-        yield None, node.lineno, _joined_constants(node).upper().count("INSERT INTO")
+        yield None, node.lineno, _count_mentions(_joined_constants(node))
         return
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        yield node.value, node.lineno, node.value.upper().count("INSERT INTO")
+        yield node.value, node.lineno, _count_mentions(node.value)
         return
     for child in ast.iter_child_nodes(node):
         yield from _iter_sql_texts(child, local, skip)
