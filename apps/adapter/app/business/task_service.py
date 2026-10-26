@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from typing import Any, Final
 
@@ -544,7 +544,9 @@ class TaskService:
             )
             record.current_step_seq = spec.seq
             step_ctx = replace(ctx, step_seq=spec.seq, outputs=dict(outputs))
-            outcome = await self._run_step_with_timeout(step_ctx, plan, record.inputs)
+            outcome = await self._run_step_with_timeout(
+                step_ctx, plan, record.inputs, manifest.guards
+            )
             await self._persist_step(record, step, outcome)
             new_artifacts = await self._save_artifacts(record, step, outcome)
             artifacts.extend(new_artifacts)
@@ -586,7 +588,11 @@ class TaskService:
         await self._finish(record, steps, TASK_COMPLETED, artifacts)
 
     async def _run_step_with_timeout(
-        self, step_ctx: RunContext, plan: Any, inputs: dict[str, Any]
+        self,
+        step_ctx: RunContext,
+        plan: Any,
+        inputs: dict[str, Any],
+        guard_specs: Sequence[Any] = (),
     ) -> StepOutcome:
         """单步执行，**每步**都有独立超时（阶段四 T4-04.4，架构 §2.6）。
 
@@ -601,6 +607,7 @@ class TaskService:
             step_ctx: 本步上下文。
             plan: 本步计划（`StepPlan`）。
             inputs: 任务入参。
+            guard_specs: 合规规则声明（`manifest.guards`，P1-10 声明式分派）。
 
         Returns:
             StepOutcome: 步骤结果（超时也返回一个 outcome，不抛异常）。
@@ -609,7 +616,8 @@ class TaskService:
         started = time.perf_counter()
         try:
             return await asyncio.wait_for(
-                self._engine.run_step(step_ctx, plan, inputs), timeout=timeout
+                self._engine.run_step(step_ctx, plan, inputs, guard_specs=guard_specs),
+                timeout=timeout,
             )
         except TimeoutError:
             logger.warning(

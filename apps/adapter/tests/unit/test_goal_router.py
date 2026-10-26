@@ -6,8 +6,8 @@
 2. **权重**：`name×3 / summary×2 / category×1 / inputs.label×1 / operations×1`，
    同词命中多字段可叠加；
 3. **排序确定性**：同分 → plugin 优先 → id 升序；
-4. **关键词表防漂移**：`_KEYWORD_TERMS` 的每个 id 必须存在于真实目录
-   （插件声明 / 工具注册表单例）。
+4. **匹配提示防漂移**（P2-13）：目录 11 条 `match_hints` 全非空、形态合规，
+   功能字表单源（`schema.FUNCTION_CHARS`）。
 
 另覆盖空目标与无命中兜底两种形态（AC-B3/B4）。
 """
@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import pytest
 
+from app.plugins.schema import FUNCTION_CHARS
 from app.services.capability_catalog import (
     CapabilityEntry,
     CapabilityInputBrief,
     build_catalog,
 )
 from app.services.goal_router import (
-    _KEYWORD_TERMS,
+    _STOP_CHARS,
     FALLBACK_HINT,
     GoalMatchResult,
     recommend,
@@ -210,33 +211,34 @@ def test_limit_truncates_and_keeps_order() -> None:
 
 
 # ===========================================================================
-# 4. 关键词表防漂移（id 必须存在于目录）
+# 4. 匹配提示防漂移（P2-13：目录 11 条全非空 + 功能字单源）
 # ===========================================================================
-def test_keyword_table_ids_all_exist_in_catalog() -> None:
-    """关键词表引用的每个能力 id 都必须存在于真实目录（防漂移）。"""
+def test_all_catalog_entries_have_non_empty_match_hints() -> None:
+    """目录 11 条 `match_hints` 全非空（防漂移：声明数据落盘后不得再有空条目）。"""
     catalog = build_catalog()
-    catalog_ids = {entry.id for entry in catalog}
-    missing = sorted(set(_KEYWORD_TERMS) - catalog_ids)
-    assert missing == [], f"关键词表引用了目录中不存在的能力：{missing}"
-    assert catalog_ids, "目录为空（注册表没加载？）"
+    assert len(catalog) == 11, f"能力目录条数应为 11，实际 {len(catalog)}"
+    for entry in catalog:
+        assert entry.match_hints, f"{entry.id} 的 match_hints 为空（声明里漏写了）"
+        assert 1 <= len(entry.match_hints) <= 12, (
+            f"{entry.id} match_hints 条数 {len(entry.match_hints)} 越界（应 1-12）"
+        )
+        assert all(term.strip() for term in entry.match_hints), f"{entry.id} 存在空提示词"
+        assert len(set(entry.match_hints)) == len(entry.match_hints), (
+            f"{entry.id} match_hints 有重复词"
+        )
 
 
-def test_keyword_terms_are_all_non_empty_strings() -> None:
-    """每个能力都有领域词且无空词。
+def test_function_chars_is_single_sourced() -> None:
+    """功能字表只有一个真源：`goal_router._STOP_CHARS is schema.FUNCTION_CHARS`。
 
-    设计 §1.5.3 的指导值是「每能力 5-12 个」，但其示例表自身就有
-    4 词（plg_weekly_report）与 3 词（plg_meeting_minutes）的能力——
-    以表为准，这里只硬断言「非空且不超过 12」（防漂移看 id 与空词，
-    词数是风格约束，不是正确性约束）。
+    两处各存一份必然漂移——声明层放进来的提示词推荐层却过滤掉，
+    是最难发现的一类假护栏。
     """
-    for entry_id, terms in _KEYWORD_TERMS.items():
-        assert 1 <= len(terms) <= 12, f"{entry_id} 关键词数 {len(terms)} 越界（应 1-12）"
-        assert all(term.strip() for term in terms), f"{entry_id} 存在空关键词"
-        assert len(set(terms)) == len(terms), f"{entry_id} 关键词表有重复词"
+    assert _STOP_CHARS is FUNCTION_CHARS
 
 
 def test_multi_char_keyword_extends_matching_beyond_bigrams() -> None:
-    """「代码仓库」是 4 字词，不是任何 goal 的 2-gram，靠关键词表命中。"""
+    """「代码仓库」是 4 字词，不是任何 goal 的 2-gram，靠 match_hints 命中。"""
     catalog = build_catalog()
     result = recommend("把代码仓库里的议题处理一下", limit=3, catalog=catalog)
     assert result.items[0].entry.id == "tool:github"

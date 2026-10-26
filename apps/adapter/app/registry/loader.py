@@ -42,6 +42,16 @@ VALID_CATEGORIES: Final[frozenset[str]] = frozenset(
 #: 合法的授权方式枚举
 VALID_AUTH_TYPES: Final[frozenset[str]] = frozenset({"oauth2", "token", "none"})
 
+#: 匹配提示的字数范围与条数上限。
+#:
+#: 与 `app.plugins.schema.MATCH_HINT_*` **同口径**（P2-13）。这里用字面量
+#: 而不是 import：G-37 允许矩阵里 `registry` 只能依赖 `core`，反向依赖
+#: `plugins` 会制造一条新的方向倒挂；三处整数的口径由
+#: `tests/unit/test_match_hints.py` 统一钉住，漂移会立刻变红。
+MATCH_HINT_MIN_LEN: Final[int] = 2
+MATCH_HINT_MAX_LEN: Final[int] = 8
+MATCH_HINT_MAX_COUNT: Final[int] = 12
+
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     """读取并解析 YAML 文件。
@@ -173,6 +183,7 @@ class ToolSpecModel:
         timeout_ms: 超时声明（毫秒）。
         connector_impl: 连接器实现标识。
         operations: 能力清单（operation → params_schema）。
+        match_hints: 目标匹配提示（goal_router 打分用的领域词，可缺省）。
     """
 
     tool_type: str
@@ -183,6 +194,7 @@ class ToolSpecModel:
     timeout_ms: int
     connector_impl: str
     operations: tuple[dict[str, Any], ...]
+    match_hints: tuple[str, ...] = ()
 
     def operation_names(self) -> tuple[str, ...]:
         """全部操作标识。"""
@@ -296,6 +308,47 @@ def _parse_profile_routes(raw: dict[str, Any]) -> ProfileRouteTable:
     )
 
 
+def _parse_match_hints(raw: object, *, owner: str) -> tuple[str, ...]:
+    """解析并校验匹配提示（2-8 字、去重、≤12 条）。
+
+    Args:
+        raw: YAML 里的 `match_hints` 值（缺失/None 视为空元组）。
+        owner: 归属标识（报错定位用，如工具类型）。
+
+    Returns:
+        tuple[str, ...]: 匹配提示元组。
+
+    Raises:
+        ApiError: 形态不合法（30004）。
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ApiError(ErrorCode.CONFIG_ERROR, internal_detail=f"match_hints not a list: {owner}")
+    if len(raw) > MATCH_HINT_MAX_COUNT:
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=f"match_hints too many ({len(raw)}>{MATCH_HINT_MAX_COUNT}): {owner}",
+        )
+    hints: list[str] = []
+    for item in raw:
+        hint = str(item).strip()
+        if not (MATCH_HINT_MIN_LEN <= len(hint) <= MATCH_HINT_MAX_LEN):
+            raise ApiError(
+                ErrorCode.CONFIG_ERROR,
+                internal_detail=(
+                    f"match_hint length {len(hint)} "
+                    f"not in {MATCH_HINT_MIN_LEN}..{MATCH_HINT_MAX_LEN}: {owner}"
+                ),
+            )
+        if hint in hints:
+            raise ApiError(
+                ErrorCode.CONFIG_ERROR, internal_detail=f"duplicated match_hint: {owner}"
+            )
+        hints.append(hint)
+    return tuple(hints)
+
+
 def _parse_tool_registry(raw: dict[str, Any]) -> ToolRegistry:
     """解析工具类型注册表 YAML。
 
@@ -357,6 +410,7 @@ def _parse_tool_registry(raw: dict[str, Any]) -> ToolRegistry:
                 timeout_ms=int(entry.get("timeout_ms", 10_000)),
                 connector_impl=str(entry.get("connector_impl", "")),
                 operations=operations,
+                match_hints=_parse_match_hints(entry.get("match_hints"), owner=tool_type),
             )
         )
 

@@ -6,11 +6,12 @@
 规则（与设计逐条对应）：
 
 - **切分**：CJK 连续段逐 2 字滑窗 + ASCII 小词；不引 jieba（依赖门禁），
-  领域词覆盖靠关键词表；**两字均为功能字的 2-gram 直接丢弃**
+  领域词覆盖靠**声明里的 `match_hints`**（P2-13：与插件/工具声明同源，
+  不再维护第二份关键词表）；**两字均为功能字的 2-gram 直接丢弃**
   （「一个」「什么」「我们」不携带领域信号——否则内容运营摘要里的
   「一个主题」足以把弱命中能力的分数顶上去，AC-B1 的易混词判据会假红）；
-- **关键词表**：每能力 5-12 个领域词，是**匹配辅助**——只进打分、
-  不进展示文案；配防漂移测试（关键词 id 必须存在于目录）；
+- **匹配提示**：每条目 0-12 个领域词（声明 `match_hints`），是**匹配辅助**——
+  只进打分、不进展示文案；配防漂移测试（目录 11 条全非空 + 形态校验）；
 - **打分**：词命中字段 = 词是字段文本的子串（大小写不敏感）；
   每个「词 × 字段」计一次权重分，同词命中多字段可叠加
   （如「周报」命中 name+summary = 3+2=5）；
@@ -29,6 +30,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
+from app.plugins.schema import FUNCTION_CHARS
 from app.services.capability_catalog import CapabilityEntry, build_catalog
 
 #: 字段权重（name 最重：用户说的多半就是能力名）
@@ -40,43 +42,12 @@ FIELD_WEIGHTS: Final[dict[str, int]] = {
     "operations": 1,
 }
 
-#: 领域关键词表（按 entry id 索引；匹配辅助，不进展示文案）。
-#:
-#: 为什么需要它：2-gram 只覆盖「 goal 里连续出现的两字」，多字领域词
-#: （如「代码仓库」「企业微信」）与同义改写（如「写信」对「邮件」）
-#: 靠本表补。词只有在**出现在 goal 里**时才参与打分——否则每个条目
-#: 都会被自己的关键词永久命中，「无命中兜底」将永不触发。
-_KEYWORD_TERMS: Final[dict[str, tuple[str, ...]]] = {
-    "plg_weekly_report": ("周报", "汇报", "本周", "工作总结"),
-    "plg_mail_draft": ("邮件", "写信", "起草", "回复"),
-    "plg_meeting_minutes": ("会议", "纪要", "待办"),
-    "plg_dev_workbench": ("代码", "仓库", "提交", "研发", "需求", "分支"),
-    "plg_content_ops": ("内容", "运营", "稿件", "发布", "排期", "公众号", "文章"),
-    "plg_hr_admin": ("招聘", "人事", "行政", "公文", "岗位", "入职"),
-    "tool:email": ("邮件", "发送", "邮箱"),
-    "tool:wecom": ("企业微信", "消息", "群聊", "通讯录"),
-    "tool:feishu": ("飞书", "日程", "文档"),
-    "tool:github": ("代码仓库", "议题", "合并请求"),
-    "tool:wechat_mp": ("公众号", "文章", "发布", "素材"),
-}
-
 #: 无命中兜底引导文案（给明确引导；**禁占位词**：暂不支持/开发中/即将上线/敬请期待）
 FALLBACK_HINT: Final[str] = "没有找到完全匹配的能力，可以换种说法，或去插件市场浏览全部能力"
 
-#: 中文功能字（虚词 / 量词 / 代词）：**两字均为功能字**的 2-gram 不携带
-#: 领域信号（「一个」「什么」「我们」），切分时直接丢弃。
-#:
-#: 为什么需要它：内容运营的摘要以「一个主题」开头，用户目标里的
-#: 「一个」会凭空给它 +2 分，把「写一个招聘说明」这类弱命中目标
-#: 顶到行政人事前面（AC-B1 要求各类目标命中正确插件）。
-#: 保守口径：只在**全部字符都是功能字**时丢弃——「本周」「整理」
-#: 「报告」这类领域词两字不都在表里，不受影响。
-_STOP_CHARS: Final[frozenset[str]] = frozenset(
-    "的一了是把被让向从到和与及或在是有没不也就都还再又着过吗呢吧啊"
-    "你我他她它们这那哪谁什么怎样请帮想只要能会可以给为于按据跟同比"
-    "起来去得地如若虽但而且因所之则等各每该此其"
-    "个些"
-)
+#: 中文功能字：**唯一真源在 `app.plugins.schema.FUNCTION_CHARS`**（P2-13）。
+#: 本别名只保留旧名以缩小调用点 diff；行为不变。
+_STOP_CHARS: Final[frozenset[str]] = FUNCTION_CHARS
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +170,7 @@ def _entry_terms(goal_lower: str, entry: CapabilityEntry) -> list[str]:
     """
     terms = tokenize(goal_lower)
     known = set(terms)
-    for keyword in _KEYWORD_TERMS.get(entry.id, ()):
+    for keyword in entry.match_hints:
         needle = keyword.lower()
         if needle in goal_lower and needle not in known:
             known.add(needle)

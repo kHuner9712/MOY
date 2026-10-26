@@ -108,6 +108,11 @@
       "source_step": 3
     }
   ],
+  "match_hints": [
+  "会议",
+  "纪要",
+  "待办"
+],
   "ui_extension": {
     "layout": "task_workspace",
     "nav_label": "会议纪要",

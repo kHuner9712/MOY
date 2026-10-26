@@ -87,10 +87,10 @@ class TestStepTimeout:
         service, tasks, _artifacts, _usage = build_service(load_manifest(PLUGIN_ID))
         original = service._engine.run_step  # noqa: SLF001
 
-        async def _patched(step_ctx: Any, plan: Any, inputs: Any) -> Any:
+        async def _patched(step_ctx: Any, plan: Any, inputs: Any, **kwargs: Any) -> Any:
             if plan.spec.seq >= 1:
                 await asyncio.sleep(10)  # 比 0.2s 预算大得多
-            return await original(step_ctx, plan, inputs)
+            return await original(step_ctx, plan, inputs, **kwargs)
 
         monkeypatch.setattr(service._engine, "run_step", _patched)  # noqa: SLF001
         service._step_timeout_seconds = 0.2  # noqa: SLF001 - 注入测试量级
@@ -120,11 +120,11 @@ class TestStepTimeout:
         original = service._engine.run_step  # noqa: SLF001
         seen: list[int] = []
 
-        async def _patched(step_ctx: Any, plan: Any, inputs: Any) -> Any:
+        async def _patched(step_ctx: Any, plan: Any, inputs: Any, **kwargs: Any) -> Any:
             seen.append(plan.spec.seq)
             if plan.spec.seq > 1:
                 await asyncio.sleep(10)
-            return await original(step_ctx, plan, inputs)
+            return await original(step_ctx, plan, inputs, **kwargs)
 
         monkeypatch.setattr(service._engine, "run_step", _patched)  # noqa: SLF001
         service._step_timeout_seconds = 0.3  # noqa: SLF001
@@ -152,10 +152,10 @@ class TestAdvanceLock:
         original = service._engine.run_step  # noqa: SLF001
         calls: list[int] = []
 
-        async def _slow(step_ctx: Any, plan: Any, inputs: Any) -> Any:
+        async def _slow(step_ctx: Any, plan: Any, inputs: Any, **kwargs: Any) -> Any:
             calls.append(plan.spec.seq)
             await asyncio.sleep(0.05)
-            return await original(step_ctx, plan, inputs)
+            return await original(step_ctx, plan, inputs, **kwargs)
 
         service._engine.run_step = _slow  # type: ignore[method-assign]  # noqa: SLF001
 
@@ -238,13 +238,13 @@ class TestCancelRace:
         original = service._engine.run_step  # noqa: SLF001
         fired: list[int] = []
 
-        async def _cancel_on_last_step(step_ctx: Any, plan: Any, inputs: Any) -> Any:
+        async def _cancel_on_last_step(step_ctx: Any, plan: Any, inputs: Any, **kwargs: Any) -> Any:
             # 推进锁此刻由**推进方**持有：取消必须能立刻写入（不排队等锁），
             # 否则用户点"取消"要等到当前步骤跑完才生效——这就是原来卡住的地方。
             if plan.spec.seq == last_seq and not fired:
                 fired.append(plan.spec.seq)
                 await service.cancel(step_ctx.task_id, auth())
-            return await original(step_ctx, plan, inputs)
+            return await original(step_ctx, plan, inputs, **kwargs)
 
         service._engine.run_step = _cancel_on_last_step  # type: ignore[method-assign]  # noqa: SLF001
 

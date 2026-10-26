@@ -63,6 +63,8 @@ class CapabilityEntry:
         match_texts: 打分料源（字段名 → 文本；键为契约字段名
             `name` / `summary` / `category` / `inputs.label` / `operations`）。
         sort_key: 目录稳定序（插件 `(ui_extension.order, id)`；工具 `(999, id)`）。
+        match_hints: 目标匹配提示（P2-13：插件读 manifest、工具读 spec；
+            缺省空元组 = goal_router 退化为 tokenize + 字段权重打分）。
     """
 
     id: str
@@ -73,6 +75,7 @@ class CapabilityEntry:
     inputs: tuple[CapabilityInputBrief, ...]
     match_texts: dict[str, str]
     sort_key: tuple[int, str]
+    match_hints: tuple[str, ...] = ()
 
 
 def _join_display_names(operations: Sequence[Mapping[str, Any]]) -> str:
@@ -136,6 +139,7 @@ def build_catalog(
                     "inputs.label": "、".join(item.label for item in manifest.inputs),
                 },
                 sort_key=(manifest.ui_extension.order, manifest.plugin_id),
+                match_hints=tuple(manifest.match_hints),
             )
         )
     for spec in tools.tools:
@@ -156,6 +160,7 @@ def build_catalog(
                     "operations": operation_text,
                 },
                 sort_key=(_TOOL_SORT_ORDER, entry_id),
+                match_hints=tuple(spec.match_hints),
             )
         )
     entries.sort(key=lambda entry: entry.sort_key)

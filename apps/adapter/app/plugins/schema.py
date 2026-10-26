@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -77,6 +77,30 @@ MAX_TITLE_LENGTH: Final[int] = 32
 #: 插件描述长度下限（PRD P0-P3-07 要求 ≥120 字）与上限
 MIN_DESCRIPTION_LENGTH: Final[int] = 120
 MAX_DESCRIPTION_LENGTH: Final[int] = 800
+
+#: 中文功能字（虚词 / 量词 / 代词）：**两字均为功能字**的 2-gram 不携带
+#: 领域信号（「一个」「什么」「我们」），goal 切分时直接丢弃；
+#: `match_hints` 也不接受纯功能字提示（那不携带任何领域信号）。
+#:
+#: 为什么住在 schema 而不是 `goal_router`：功能字表同时约束**声明层**
+#: （`match_hints` 形态校验）与**推荐层**（tokenize 过滤），两处各存一份
+#: 必然漂移——声明放进来的提示词推荐层却过滤掉，是最难发现的一类假护栏。
+#: 保守口径：只在**全部字符都是功能字**时丢弃——「本周」「整理」
+#: 「报告」这类领域词两字不都在表里，不受影响。
+FUNCTION_CHARS: Final[frozenset[str]] = frozenset(
+    "的一了是把被让向从到和与及或在是有没不也就都还再又着过吗呢吧啊"
+    "你我他她它们这那哪谁什么怎样请帮想只要能会可以给为于按据跟同比"
+    "起来去得地如若虽但而且因所之则等各每该此其"
+    "个些"
+)
+
+#: 匹配提示（`match_hints`）单条字数范围与条数上限（插件声明与工具注册表同口径）
+MATCH_HINT_MIN_LEN: Final[int] = 2
+MATCH_HINT_MAX_LEN: Final[int] = 8
+MATCH_HINT_MAX_COUNT: Final[int] = 12
+
+#: 合规规则声明数上限（P1-10：一插件最多 8 条护栏声明）
+MAX_GUARDS: Final[int] = 8
 
 #: 禁止出现的字段名（**字段级不存在**清单 §4.5 的机械兜底）。
 #:
@@ -487,6 +511,25 @@ class ChecklistItem(_StrictModel):
     source_step: int = Field(ge=1, le=MAX_STEPS, description="来源步骤序号")
 
 
+class GuardSpec(_StrictModel):
+    """合规规则声明（P1-10：把「产出什么键要过哪道门」从代码挪进声明）。
+
+    **只声明"跑哪条规则"，不声明"判据是什么"**：语义硬约束（排期认不出的
+    时间不判失败、评分表缺「风险」列整表判失败）写死在规则模块里，
+    `params` 只允许收紧词表 / 列名 / 文案，`validate_params` 拒绝把判据
+    关闭的布尔项——否则"改个参数就能把合规门关掉"会变成一条后门。
+
+    Attributes:
+        output_key: 产物键（必须 ∈ `outputs[].key`，由 `_check_structure` 校验）。
+        rule: 规则名（必须已由 `app.plugins.guards` 注册，加载器校验）。
+        params: 规则参数（缺省 `{}` = 规则内置基线取值）。
+    """
+
+    output_key: str = Field(min_length=1, max_length=64, description="产物键")
+    rule: str = Field(min_length=2, max_length=64, description="规则名")
+    params: dict[str, Any] = Field(default_factory=dict, description="规则参数")
+
+
 class PluginManifest(_StrictModel):
     """插件完整声明（6 段，`extra="forbid"`）。
 
@@ -509,6 +552,8 @@ class PluginManifest(_StrictModel):
         ui_extension: 界面扩展。
         steps: 步骤定义（1-8 步）。
         checklist: 核查清单（2-5 项）。
+        match_hints: 目标匹配提示（goal_router 打分用的领域词，可缺省）。
+        guards: 合规规则声明（可缺省；产出受管产物键时由加载器强制覆盖）。
     """
 
     plugin_id: str = Field(min_length=6, max_length=44, description="插件标识")
@@ -538,6 +583,12 @@ class PluginManifest(_StrictModel):
     steps: list[StepSpec] = Field(min_length=1, max_length=MAX_STEPS, description="步骤定义")
     checklist: list[ChecklistItem] = Field(
         min_length=MIN_CHECKLIST, max_length=MAX_CHECKLIST, description="核查清单"
+    )
+    match_hints: list[str] = Field(
+        default_factory=list, max_length=MATCH_HINT_MAX_COUNT, description="匹配提示"
+    )
+    guards: list[GuardSpec] = Field(
+        default_factory=list, max_length=MAX_GUARDS, description="合规规则声明"
     )
 
     # ------------------------------------------------------------------
@@ -604,6 +655,8 @@ class PluginManifest(_StrictModel):
     def _check_structure(self) -> PluginManifest:
         """校验步骤序号连续、产物/依赖引用闭合、清单指向合法步骤。
 
+        追加（P1-10 / P2-13）：`match_hints` 形态与 `guards` 引用闭合。
+
         Returns:
             PluginManifest: 自身。
 
@@ -645,7 +698,48 @@ class PluginManifest(_StrictModel):
                 raise ValueError(f"核查项 {item.key} 指向不存在的步骤 {item.source_step}")
             if item.key not in output_keys:
                 raise ValueError(f"核查项 {item.key} 不是已声明的产物")
+
+        self._check_match_hints()
+        self._check_guards(output_keys)
         return self
+
+    def _check_match_hints(self) -> None:
+        """校验匹配提示形态：逐条 2–8 字、去重、非纯功能字。
+
+        Raises:
+            ValueError: 提示词形态不合规。
+        """
+        seen: set[str] = set()
+        for hint in self.match_hints:
+            if not (MATCH_HINT_MIN_LEN <= len(hint) <= MATCH_HINT_MAX_LEN):
+                raise ValueError(
+                    f"匹配提示「{hint}」长度为 {len(hint)}，应在 "
+                    f"{MATCH_HINT_MIN_LEN}-{MATCH_HINT_MAX_LEN} 字之间"
+                )
+            if hint in seen:
+                raise ValueError(f"匹配提示重复：{hint}")
+            seen.add(hint)
+            # 纯功能字（「一个」「什么」）不携带领域信号，进不了打分也换不来召回
+            if not any(char not in FUNCTION_CHARS for char in hint):
+                raise ValueError(f"匹配提示「{hint}」全是功能字，不携带领域信号")
+
+    def _check_guards(self, output_keys: set[str]) -> None:
+        """校验合规规则声明：产物键闭合、`(output_key, rule)` 不重复。
+
+        Args:
+            output_keys: 已声明的产物键集合。
+
+        Raises:
+            ValueError: 规则声明不自洽。
+        """
+        seen: set[tuple[str, str]] = set()
+        for guard in self.guards:
+            if guard.output_key not in output_keys:
+                raise ValueError(f"合规规则指向未声明的产物：{guard.output_key}")
+            pair = (guard.output_key, guard.rule)
+            if pair in seen:
+                raise ValueError(f"合规规则重复声明：{guard.output_key} × {guard.rule}")
+            seen.add(pair)
 
     # ------------------------------------------------------------------
     # 便捷访问
@@ -782,8 +876,13 @@ __all__: list[str] = [
     "BANNED_TERMS",
     "CATEGORIES",
     "FORBIDDEN_KEYS",
+    "FUNCTION_CHARS",
     "INPUT_TYPES",
+    "MATCH_HINT_MAX_COUNT",
+    "MATCH_HINT_MAX_LEN",
+    "MATCH_HINT_MIN_LEN",
     "MAX_CHECKLIST",
+    "MAX_GUARDS",
     "MAX_STEPS",
     "MIN_CHECKLIST",
     "MIN_DESCRIPTION_LENGTH",
@@ -797,6 +896,7 @@ __all__: list[str] = [
     "CapabilityClaim",
     "ChecklistItem",
     "ConfirmSpec",
+    "GuardSpec",
     "InputSpec",
     "OutputSpec",
     "PluginManifest",
