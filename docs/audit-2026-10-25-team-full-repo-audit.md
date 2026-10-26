@@ -104,6 +104,8 @@
 
 > **2026-10-26 第 2 波切片 1 闭环**（`384870c`）：**P1-4**（db→business 归零：审计词表 `core/audit_actions.py`、内置角色 `core/builtin_roles.py`、记录器 `db/repositories/audit_recorder.py`）、**P1-6**（business→api 归零：`TaskService` 改 `gateway_factory` 组合根注入）、**P1-7**（schemas→business 归零：`EXPORT_SCOPES` 下沉 core）、**P2-4**（排期判定 UTC aware，`datetime.now()` 全仓归零）、**P2-5**（zip 500 行分块 `to_thread`）、**P2-6**（插件目录/占用计数批量查询，21→2 次）、**P2-12**（qa_probe 豁免登记）已闭环。新增 **G-37 依赖方向门禁**：层对 12×12 矩阵、module/deferred/type_checking 三分类、基线只许减不许增、fail-closed（app-root 异常/文件数<100 → exit 2）、12 类正负自检；基线 **28→24**（`services→db` 6 条与 `core→schemas` 1 条经门禁判定入基线，编号 P2-10/P1-7）。全量 **2083 passed / 207 skipped / 0 failed**；QA 独立验证 IS_PASS: YES。
 
+> **2026-10-26 第 2 波切片 2A 闭环**（`561ce02`）：**P1-8 部分闭环**——新增 **G-38 仓储双实现一致性门禁**（R1 协议⊆双实现 / R2 双实现方法集相等 / R3 签名兼容 / R4 record 构造形状逐点对齐 / R5 协议未声明只提示；fail-closed、stale、14 组自检；实测 **20 单元 / 3 WARN / 0 FAIL**），并把 `role_repo` 拆为 `role/` 包作为样板（944→67 行纯 shim，19 项 `__all__` 顺序不变，**20 处调用点零改动**）。**口径校正**：审计原文「181 vs 177 / PG 侧多 4 个方法」不成立——实测协议 181 个 async 方法被双实现全覆盖，真实不一致只有 3 处内存侧测试注入缝（**P1-8a**，入基线）、1 处 `RoleRecord.member_count` 构造漂移（**P1-8b**，已修：`count_members`/`get_role`/`list_roles`/`ensure_builtin_roles` 四出口同数）、1 处 `OpsStore.billing` 协议未声明（**P1-8d**，R5 只提示）。R4 v2 另抓到 billing/task 各一处历史形状不一致（已做语义等价对齐）。剩余 7 个仓储拆分与 P1-9 留切片 2C。全量 **2085 passed / 207 skipped / 0 failed**；QA 两轮独立验证（含两条洗白攻击复现）IS_PASS: YES。
+
 ### 追加登记（2026-10-26 第 0 波复验，QA 发现，不阻塞第 0 波放行）
 
 - **R-1（P2）** `_pause_for_confirm()` 与 `retry(continue/redo)` 的 `status=` 写仍为无条件写：极窄窗口（取消落在 `cancel_requested` 检查之后、写之前）可把已 `cancelled` 翻回 `waiting_confirm`；可自愈（`cancel_requested` 仍在行上，再点取消即收敛）。建议下一波统一补 `expected_status`。
