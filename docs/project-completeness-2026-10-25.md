@@ -39,7 +39,7 @@
 
 | 项 | 值 | 口径与出处 |
 | --- | --- | --- |
-| 本机全量测试 | **2101 passed / 207 skipped / 0 failed**（切片 2C-4 后；2C-3b/2C-3a/2C-2/2C-1/2B 2101、2A 2085、切片 1 2083、第 1 波 2075、第 0 波 2066、审计时 2055） | 2026-10-26 `main @ f0d57ca`，**无 PG**，`OA_BATCH=B21` + `--basetemp`（仓库外）；README §6.2 记 2030 passed，滞后（待更新） |
+| 本机全量测试 | **2114 passed / 207 skipped / 0 failed**（切片 2C-5a 后，收集 2321；2C-4 及之前 2101、2A 2085、切片 1 2083、第 1 波 2075、第 0 波 2066、审计时 2055） | 2026-10-26 `main @ f0d57ca`+2C-5a，**无 PG**，`OA_BATCH=B21`；README §6.2 记 2030 passed，滞后（待更新） |
 | 覆盖率（本机无 PG） | **85.52%**（15468/17729 语句）；分支 **77.16%**（2827/3664） | 本轮审计 §六实测；README 记 85.51%、「分支余量 0」叙事已过期失真（分支超门槛 +20 条） |
 | 全量口径（含 PG） | **本轮无证据**；历史基线 1573 passed / 89.81% 已严重过期（1573 ≪ 2258） | 本轮审计 §六；本机无常驻 PG → 203 条 PG 用例按设计 skip，**不计入断言有效性** |
 | 含 PG 历史实跑参考 | 1749 passed / 0 skipped；合并 90.94% / business+db 92.27% / 分支 86.13% | `docs/phase4-batch-log.md`（SHA `2699897`，**一次性 QA 容器** `moy-qa-pg` @127.0.0.1:55433，`--run-pg`）——证明 PG 口径可复现，但依赖一次性容器，非常态 |
@@ -145,6 +145,8 @@
 > **剩余：2C-4（纯结构收口）**——8 笔提交（每包：调用点迁移 + 该包基线 `imported_module` 改写 + 删该包 shim），前置断言「该包 `ImportFrom` 计数 = 0」；有界测试豁免 4 行 import + 生产 `plugin_review_repo.py:338` 1 行；`scripts/demo_phase3.sh:182` 随 billing 一笔。**2C-5（门禁/测试加固）**：G-39 接入 + R6（`_to_*` 字段覆盖，WARN + 豁免清单）+ seed↔`default_plans` 常驻单测 + G-37 `--baseline` 默认值修复 + `_summary_text` 类型收回 + 10 个 R4 跳过 record 往返用例。
 
 > **2026-10-26 状态：第 2 波 2A/2B/2C-1/2C-2/2C-3a/2C-3b/2C-4 已全部闭环**（`39a544a`）——8 个巨型仓储拆包 + G-38 门禁；2B 合规声明化（engine 1543→895）；2C-3b task_service 三拆（1765→89 行门面）；**2C-4 完成 shim 收口：8 个兼容层全删、158 处调用点迁至包路径、基线 6 行改列、G-37 24/24/0 扫 200、G-38 20/8/3/0/0、清单 119/91、全量 2101/207/0**。第二波结构治理结束。
+
+> **2026-10-26 状态：2C-5a 已闭环**（门禁与测试补强，生产代码零改动）——① SQL 种子 ↔ `default_plans()` 等价单测（11 列 × 3 行 = 33 字段逐列对账 + 两列默认值显式断言）；② 内存侧 record 往返 **11 条真往返 + 1 条 usage 聚合等价**（`UsageEventRecord` 无读回路径，缺口显式文档化）；③ **R6 映射器字段覆盖**（按返回注解配对 33 个映射器，WARN-only + `--strict-r6`，R6 WARN 0，`history` 走 INFO 豁免）。数值：收集 2321（+13）、全量 **2114/207/0**、format 360→**362**、mypy 202 不变、G-37 24/24/0 扫 200、G-38 20/8/3 WARN/0 FAIL/R6 WARN 0、G-32 26/26、台账 119/91。**待办**：`usage` 写侧 INSERT 列覆盖（R7）归 2C-5b；`occurred_at` 语义差异已文档化豁免。
 > **剩余：2C-5（门禁/测试加固，独立切片）**——① `deploy/init-schema-phase2.sql` ↔ `billing/records.py::default_plans()` 语义等价单测（不连 PG）；② 10 个 R4 跳过 record 的内存往返用例（`asdict` 全字段）；③ R6 `_to_*` kwarg 集合 == dataclass 字段集合（WARN-only + `(unit,record,field)` 豁免表含 `reason/expire_when` + can-red 负样本）；④ `MessageRecord.history` 处置（保留+豁免或删字段，待架构师定）；⑤ G-39 接入（`validate_package_imports.py` 739 行、6 判据、15 夹具，仓库外草稿已交付）；⑥ G-37 `--baseline` 默认值修复；⑦ `gen_delivery_manifest` 全局 `seen` 改任务内去重 + can-red；⑧ `_summary_text` 类型收回。**第 3 波**：`deploy/` 纳入 CI lint、生产代码流程词汇清理、`TaskArtifactWriter` 四拆评估。
 
 ### 第 3 波 · 阶段四内（收尾与防漂移）

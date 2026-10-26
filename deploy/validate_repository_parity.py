@@ -119,7 +119,7 @@ import sys
 import tempfile
 import textwrap
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
@@ -168,6 +168,21 @@ MEMORY_MODULE: Final[str] = "memory.py"
 
 #: PG 形态必须具备的文件。
 POSTGRES_MODULE: Final[str] = "postgres.py"
+
+#: R6 豁免表：`(unit, record, field) → (原因, 失效条件)`。
+#:
+#: 只登记**已核实无读写点**的字段。每条都必须写清"什么情况下必须删掉本豁免"，
+#: 否则豁免会变成永久后门。新增条目必须同时给出"为什么不能补映射"的证据。
+R6_EXEMPTIONS: Final[dict[tuple[str, str, str], tuple[str, str]]] = {
+    ("conversation", "MessageRecord", "history"): (
+        "预留字段（消息编辑/多轮回放待落地）：app/ 与 tests/ 里对 `.history` 的读写为 0 处，"
+        "`conversation_service` 两处构造均未传该参数，`app/schemas/` 也无对应字段",
+        "消息编辑或多轮回放功能合入时必须补 `_to_message` 映射并删掉本豁免",
+    ),
+}
+
+#: R6 只看 PG 侧的映射器（内存侧直接构造，由 R4 的形状比对覆盖）。
+R6_MAPPER_PREFIX: Final[str] = "_to_"
 
 
 # ===========================================================================
@@ -272,6 +287,49 @@ class Violation:
 
 
 @dataclass(frozen=True, slots=True)
+class MapperFinding:
+    """R6 的一条发现：`_to_*` 映射器没有覆盖 record 的某个字段。
+
+    Attributes:
+        unit: 单元名。
+        record: record 类名。
+        field: 未被任何构造点写入的字段名。
+        mapper: 映射器函数名。
+        path: 映射器所在文件。
+        lineno: 映射器定义行号。
+        exempt: 豁免原因（None 表示未豁免，属真 WARN）。
+        expire_when: 豁免失效条件（未豁免时为 None）。
+    """
+
+    unit: str
+    record: str
+    field: str
+    mapper: str
+    path: Path
+    lineno: int
+    exempt: str | None = None
+    expire_when: str | None = None
+
+    @property
+    def is_exempt(self) -> bool:
+        """是否命中豁免表。
+
+        Returns:
+            bool: 命中豁免返回 True。
+        """
+        return self.exempt is not None
+
+    def describe(self) -> str:
+        """渲染成一行人类可读说明。
+
+        Returns:
+            str: `R6 <unit> <record>.<field>（file:line，mapper）`。
+        """
+        where = f"{self.path.name}:{self.lineno}"
+        return f"R6 {self.unit} `{self.record}.{self.field}`（{where}，mapper `{self.mapper}`）"
+
+
+@dataclass(frozen=True, slots=True)
 class BaselineEntry:
     """基线条目。
 
@@ -309,12 +367,14 @@ class ScanResult:
         violations: 判红级违规（R1 ~ R4）。
         infos: 只提示不判红的说明（R5 / 映射器跳过 / 单侧无构造点）。
         problems: 结构性问题（出现任一即 exit 2）。
+        r6: R6 的映射器字段覆盖发现（默认 WARN-only，`--strict-r6` 才计入退出码）。
     """
 
     units: list[Unit]
     violations: list[Violation]
     infos: list[str]
     problems: list[str]
+    r6: list[MapperFinding] = field(default_factory=list)
 
 
 # ===========================================================================
@@ -1004,6 +1064,160 @@ def _check_records(
     return violations, infos
 
 
+def _dataclass_field_names(modules: dict[Path, ast.Module]) -> dict[str, tuple[str, ...]]:
+    """收集单元内全部 dataclass 的字段名（只取类体里的 `AnnAssign`）。
+
+    Args:
+        modules: 文件 → 语法树。
+
+    Returns:
+        dict[str, tuple[str, ...]]: `类名 → 字段名序列`（保持声明顺序）。
+    """
+    result: dict[str, tuple[str, ...]] = {}
+    for module in modules.values():
+        for node in ast.walk(module):
+            if not isinstance(node, ast.ClassDef) or not _has_decorator(node, "dataclass"):
+                continue
+            names = tuple(
+                statement.target.id
+                for statement in node.body
+                if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name)
+            )
+            if names:
+                result[node.name] = names
+    return result
+
+
+def _annotation_record_name(annotation: ast.expr | None) -> str | None:
+    """取返回注解里的 record 类名。
+
+    映射器常用三种写法：`-> PlanRecord`、`-> "PlanRecord"`、`-> records.PlanRecord`。
+    三种都归一化成裸类名，**不看函数名**——`memory._to_setting → MemorySettingRecord`
+    证明按名字配对会漏也会错。
+
+    Args:
+        annotation: 返回注解节点（可能为 None）。
+
+    Returns:
+        str | None: 类名；无法识别时返回 None。
+    """
+    if annotation is None:
+        return None
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        return annotation.value.split(".")[-1].strip("'\"[] ")
+    if isinstance(annotation, ast.Name):
+        return annotation.id
+    if isinstance(annotation, ast.Attribute):
+        return annotation.attr
+    if isinstance(annotation, ast.Subscript):
+        inner = annotation.value
+        return _annotation_record_name(inner) if isinstance(inner, ast.Attribute) else None
+    return None
+
+
+def _mapper_kwarg_shapes(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    record: str,
+) -> list[set[str]]:
+    """收集映射器函数体里对 `record(...)` 的每个构造点的关键字集合。
+
+    Args:
+        function: 映射器函数节点。
+        record: record 类名。
+
+    Returns:
+        list[set[str]]: 每个构造点的 kwarg 集合（保持出现顺序）。
+    """
+    shapes: list[set[str]] = []
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        target = node.func
+        called = target.id if isinstance(target, ast.Name) else None
+        if called != record:
+            continue
+        shapes.append({keyword.arg for keyword in node.keywords if keyword.arg is not None})
+    return shapes
+
+
+def _check_mapper_coverage(
+    unit: Unit,
+    classes: dict[str, ClassInfo],
+    modules: dict[Path, ast.Module],
+) -> list[MapperFinding]:
+    """R6：`_to_*` 映射器必须覆盖其返回 record 的全部字段。
+
+    为什么需要它：R4 只比对**两侧直接构造点**，一侧走映射器时整条 record 会被
+    `[INFO]` 跳过；映射器少写一个字段，两侧都不会报，运行期表现为"某字段恒为默认值"。
+
+    判据（三条，缺都会漏）：
+
+    1. **按返回注解配对**，不按函数名——`_to_setting → MemorySettingRecord` 是反例；
+    2. 取该函数体内所有 `record(...)` 构造点的 kwarg **并集**；
+    3. **排除 kwarg 为空的零值构造**（`TaskStats()` 这类"全默认"形状与字段集合不相交，
+       不排除会把"某字段只在另一处构造点写"误判成已覆盖）。
+
+    已知边界：**并集口径抓不到"某条分支少写字段"**（与 R4 逐形状不同）。这是刻意取舍——
+    R6 的目标是"字段级完全失联"，分支级覆盖由 R4 的形状集合负责。
+
+    Args:
+        unit: 仓储单元。
+        classes: 单元内全部类（用于确认 record 是 dataclass）。
+        modules: 文件 → 语法树。
+
+    Returns:
+        list[MapperFinding]: 未覆盖字段的发现列表（含豁免项）。
+    """
+    record_fields = {
+        name: names
+        for name, names in _dataclass_field_names(modules).items()
+        if name in classes and classes[name].is_dataclass
+    }
+    if not record_fields:
+        return []
+
+    targets = set(unit.postgres_files)
+    findings: list[MapperFinding] = []
+    for path, module in modules.items():
+        if path not in targets:
+            continue
+        for node in module.body:
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            returned = _annotation_record_name(node.returns)
+            if returned is None or returned not in record_fields:
+                continue
+            shapes = _mapper_kwarg_shapes(node, returned)
+            if not shapes:
+                # 完全没有直接构造点（如 `default_ops_settings` 逐个字段拼默认值、或委托给
+                # 另一个 helper）：与 R4 的"单侧无构造点"同口径，不制造噪声。
+                continue
+            covered: set[str] = set()
+            for shape in shapes:
+                covered |= shape
+            # 零值构造（`X()`）的 kwarg 集为空，对并集无贡献，天然被排除；
+            # 但若**全部**构造点都是零值构造，covered 为空 → 全部字段都会被报出来，
+            # 这是正确的（该映射器把整个 record 留成默认值，属最严重的字段失联）。
+            for name in record_fields[returned]:
+                if name in covered:
+                    continue
+                reason, expire_when = R6_EXEMPTIONS.get((unit.name, returned, name), (None, None))
+                findings.append(
+                    MapperFinding(
+                        unit=unit.name,
+                        record=returned,
+                        field=name,
+                        mapper=node.name,
+                        path=path,
+                        lineno=node.lineno,
+                        exempt=reason,
+                        expire_when=expire_when,
+                    )
+                )
+    findings.sort(key=lambda item: (item.unit, item.record, item.field))
+    return findings
+
+
 def scan(repositories_root: Path) -> ScanResult:
     """扫描仓储目录，产出全部判定结果。
 
@@ -1032,6 +1246,7 @@ def scan(repositories_root: Path) -> ScanResult:
             violations, infos = _check_records(unit, classes, modules)
             result.violations.extend(violations)
             result.infos.extend(infos)
+            result.r6.extend(_check_mapper_coverage(unit, classes, modules))
     result.violations.sort(key=lambda item: item.key())
     return result
 
@@ -1173,6 +1388,7 @@ def run(
     baseline_path: Path,
     min_units: int,
     show_units: bool = False,
+    strict_r6: bool = False,
 ) -> int:
     """执行一次完整门禁。
 
@@ -1181,6 +1397,7 @@ def run(
         baseline_path: 基线路径。
         min_units: 可判定单元数下限。
         show_units: 是否打印单元明细。
+        strict_r6: 是否把 R6 的 WARN 计入退出码（默认关闭，WARN-only）。
 
     Returns:
         int: 退出码（0 / 1 / 2）。
@@ -1202,6 +1419,21 @@ def run(
         _print_unit_table(result.units)
     for info in result.infos:
         print(f"[INFO] {info}")
+
+    # R6：映射器字段覆盖（默认 WARN-only；只有 --strict-r6 才计入退出码）。
+    r6_warn = 0
+    for finding in result.r6:
+        if finding.is_exempt:
+            print(
+                f"[INFO] {finding.describe()} -- 豁免：{finding.exempt}"
+                f"（失效条件：{finding.expire_when}）"
+            )
+            continue
+        r6_warn += 1
+        print(
+            f"[WARN] {finding.describe()} -- 映射器未写该字段，"
+            f"读回时恒为 record 默认值（R6 只报不判红；要判红请用 --strict-r6）"
+        )
 
     if len(result.units) < min_units:
         print(
@@ -1253,10 +1485,13 @@ def run(
 
     print(f"[INFO] {_format_unit_summary(result.units)}")
     code = 0 if fail == 0 and stale == 0 else 1
+    if strict_r6 and r6_warn:
+        code = 1
     tag = "[OK]" if code == 0 else "[FAIL]"
     print(
         f"{tag} 仓储双实现一致性：{len(result.units)} 单元 / "
-        f"{len(result.violations)} 条判定 / {warn} WARN / {fail} FAIL / {stale} stale → exit {code}"
+        f"{len(result.violations)} 条判定 / {warn} WARN / {fail} FAIL / {stale} stale / "
+        f"R6 WARN {r6_warn} → exit {code}"
     )
     return code
 
@@ -1300,6 +1535,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--self-test",
         action="store_true",
         help="在临时目录合成最小仓储样本，逐条证明门禁能红、能白、会 fail-closed",
+    )
+    parser.add_argument(
+        "--strict-r6",
+        action="store_true",
+        help="把 R6（映射器字段覆盖）的 WARN 计入退出码（默认 WARN-only，不入基线）",
     )
     return parser.parse_args(argv)
 
@@ -1388,6 +1628,55 @@ _R4_PARTIAL_SITE_SAMPLE: Final[str] = (
     "        cached = WidgetRecord(key=key)\n"
     "        del cached\n"
     "        return WidgetRecord(key=key, value=key)\n"
+)
+
+
+#: R6 自检样例：PG 侧映射器 `_to_widget` 覆盖 `WidgetRecord` 的全部字段。
+#: 变体由替换 `_R6_MAPPER_FULL_BODY` 得到，保证「只改映射器」这一处变量。
+_R6_MAPPER_FULL_BODY: Final[str] = (
+    "def _to_widget(key: str) -> WidgetRecord:\n    return WidgetRecord(key=key, value=key)\n"
+)
+
+#: R6 变体 1：映射器少写 `value`（字段失联的最常见形态）。
+_R6_MAPPER_PARTIAL_BODY: Final[str] = (
+    "def _to_widget(key: str) -> WidgetRecord:\n    return WidgetRecord(key=key)\n"
+)
+
+#: R6 变体 2：映射器只做零值构造（最严重的失联，全部字段都会被报）。
+_R6_MAPPER_ZERO_BODY: Final[str] = (
+    "def _to_widget(key: str) -> WidgetRecord:\n    del key\n    return WidgetRecord()\n"
+)
+
+#: R6 自检样例的完整模块（record + 协议 + 双实现 + 映射器）。
+_R6_MAPPER_SAMPLE: Final[str] = (
+    "# 自检样例：PG 映射器的字段覆盖（R6）。\n"
+    "from __future__ import annotations\n"
+    "\n"
+    "from dataclasses import dataclass\n"
+    "from typing import Protocol\n"
+    "\n"
+    "\n"
+    "@dataclass(frozen=True, slots=True)\n"
+    "class WidgetRecord:\n"
+    "    key: str\n"
+    '    value: str = ""\n'
+    "\n"
+    "\n"
+    "class WidgetStore(Protocol):\n"
+    "    async def get(self, key: str) -> WidgetRecord | None:\n"
+    "        ...\n"
+    "\n"
+    "\n"
+    "class InMemoryWidgetStore:\n"
+    "    async def get(self, key: str) -> WidgetRecord | None:\n"
+    "        return WidgetRecord(key=key, value=key)\n"
+    "\n"
+    "\n"
+    "class PostgresWidgetStore:\n"
+    "    async def get(self, key: str) -> WidgetRecord | None:\n"
+    "        return WidgetRecord(key=key, value=key)\n"
+    "\n"
+    "\n" + _R6_MAPPER_FULL_BODY
 )
 
 
@@ -1908,6 +2197,77 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
         code = run(partial_root, clean_baseline, 0)
         failures += _case("R4 v2：同侧少字段场景 exit 1", code == 1, f"实际 exit {code}")
 
+        # ---------------- 用例 15：R6 映射器全覆盖 → 零发现 ----------------
+        r6_full_root = tmp / "r6-full"
+        _write_module(r6_full_root / "widget_repo.py", _R6_MAPPER_SAMPLE)
+        r6_full = scan(r6_full_root)
+        failures += _case(
+            "R6：映射器覆盖全部字段 → 零发现",
+            r6_full.r6 == [],
+            f"实际 {[finding.describe() for finding in r6_full.r6]}",
+        )
+        code = run(r6_full_root, clean_baseline, 0)
+        failures += _case("R6：全覆盖场景 exit 0", code == 0, f"实际 exit {code}")
+
+        # ---------------- 用例 16：映射器少写一个字段 → 必须报（可红） ----------------
+        r6_partial_root = tmp / "r6-partial"
+        _write_module(
+            r6_partial_root / "widget_repo.py",
+            _R6_MAPPER_SAMPLE.replace(_R6_MAPPER_FULL_BODY, _R6_MAPPER_PARTIAL_BODY),
+        )
+        r6_partial = scan(r6_partial_root)
+        failures += _case(
+            "R6：映射器少写 value → 报出 (WidgetRecord, value)",
+            [(item.record, item.field) for item in r6_partial.r6]
+            == [("WidgetRecord", "value")],
+            f"实际 {[(item.record, item.field) for item in r6_partial.r6]}",
+        )
+        failures += _case(
+            "R6：发现里必须带 mapper 名与行号（可定位）",
+            bool(r6_partial.r6)
+            and r6_partial.r6[0].mapper == "_to_widget"
+            and r6_partial.r6[0].lineno > 0,
+            f"实际 {[item.describe() for item in r6_partial.r6]}",
+        )
+        code = run(r6_partial_root, clean_baseline, 0)
+        failures += _case("R6：WARN-only 默认不改变 exit（0）", code == 0, f"实际 exit {code}")
+        code = run(r6_partial_root, clean_baseline, 0, strict_r6=True)
+        failures += _case("R6：--strict-r6 计入 exit（1）", code == 1, f"实际 exit {code}")
+
+        # ---------------- 用例 17：只做零值构造 → 全部字段都报 ----------------
+        r6_zero_root = tmp / "r6-zero"
+        _write_module(
+            r6_zero_root / "widget_repo.py",
+            _R6_MAPPER_SAMPLE.replace(_R6_MAPPER_FULL_BODY, _R6_MAPPER_ZERO_BODY),
+        )
+        r6_zero = scan(r6_zero_root)
+        failures += _case(
+            "R6：只做零值构造 → 全部字段都报（不是「无可判定」）",
+            [(item.record, item.field) for item in r6_zero.r6]
+            == [("WidgetRecord", "key"), ("WidgetRecord", "value")],
+            f"实际 {[(item.record, item.field) for item in r6_zero.r6]}",
+        )
+
+        # ---------------- 用例 18：命中豁免 → 降级为 INFO（不是消失） ----------------
+        R6_EXEMPTIONS[("widget", "WidgetRecord", "value")] = (
+            "自检注入的豁免",
+            "自检结束立即删除",
+        )
+        try:
+            r6_exempt = scan(r6_partial_root)
+        finally:
+            R6_EXEMPTIONS.pop(("widget", "WidgetRecord", "value"), None)
+        failures += _case(
+            "R6：命中豁免 → 发现仍在但标记为豁免",
+            len(r6_exempt.r6) == 1 and r6_exempt.r6[0].is_exempt,
+            f"实际 {[(item.describe(), item.is_exempt) for item in r6_exempt.r6]}",
+        )
+        failures += _case(
+            "R6：豁免失效后恢复为真 WARN（不是永久后门）",
+            bool(r6_partial.r6) and not r6_partial.r6[0].is_exempt,
+            f"实际 {[(item.describe(), item.is_exempt) for item in r6_partial.r6]}",
+        )
+
     if failures:
         for failure in failures:
             print(failure)
@@ -1920,7 +2280,9 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
         "sync↔async R3 / 基线命中 WARN exit 0 / 基线外 exit 1 / 条目消失 stale exit 1 / "
         "基线缺失=空基线 exit 1 / 基线格式错误 5 态 exit 2 / 目录不存在-非目录-单元数不足 exit 2 / "
         "包形态召回（三文件 + 纯 shim 识别为 1 单元且判定生效）/ shim 内含 ClassDef exit 2 / "
-        "R4 v2：空 `_to_xxx` 不洗白（仍红）/ R4 v2：同侧一处少字段（并集含该字段）仍红"
+        "R4 v2：空 `_to_xxx` 不洗白（仍红）/ R4 v2：同侧一处少字段（并集含该字段）仍红 / "
+        "R6：全覆盖零发现 / R6：少写字段可红（含 mapper 与行号）/ R6：WARN-only 不改 exit、"
+        "--strict-r6 计入 exit / R6：只做零值构造时全字段都报 / R6：豁免降级为 INFO 且可恢复为 WARN"
     )
     return 0
 
@@ -1942,6 +2304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         baseline_path=args.baseline,
         min_units=args.min_units,
         show_units=args.show_units,
+        strict_r6=args.strict_r6,
     )
 
 
