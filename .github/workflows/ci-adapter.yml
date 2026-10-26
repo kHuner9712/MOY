@@ -229,6 +229,30 @@ jobs:
         run: python deploy/validate_import_directions.py --self-test
 
       # ------------------------------------------------------------------
+      # 门禁 4c-2：仓储双实现一致性（G-38，审计 P1-8 / P1-8b）
+      #
+      # 每个仓储单元都是「内存实现 + PG 实现」，测试只跑内存、生产只跑 PG——两条路径
+      # 只在线上才分叉。协议新增方法只补一侧、同名方法参数名/默认值不一致、同一 record
+      # 在一侧少写字段，都**不会让任何用例变红**（实测 P1-8b：内存 `get_role` 的
+      # `member_count` 恒 0，PG 返回真实计数）。本门禁把"形状一致"变成可执行的判据。
+      #
+      # 基线 `deploy/repository_parity_baseline.txt` 只许减不许增、无 --update-baseline；
+      # 基线外违规与 stale 条目都判红。脚本自带 fail-closed（目录不存在 / 单元数 < 15
+      # → exit 2），避免目录被移动后打印"违规 0 条"变绿。
+      # ------------------------------------------------------------------
+      - name: 仓储双实现一致性（P1-8）
+        working-directory: .
+        run: python deploy/validate_repository_parity.py --baseline deploy/repository_parity_baseline.txt
+
+      # 同 G-37 的口径：自检成功 = exit 0（内部已逐条验证会红/会白/fail-closed），
+      # 不要套 `-ne 1`。自检覆盖 12 类样本：三方一致、协议缺方法（两侧）、PG 多方法、
+      # 内存多 clear 放行、PG 出现 clear、参数名/默认值/同步性不一致、基线三态、
+      # 基线格式错 5 态、fail-closed 3 态、包形态召回与「壳里长类」拦截。
+      - name: 双实现一致性门禁自检（可红证明）
+        working-directory: .
+        run: python deploy/validate_repository_parity.py --self-test
+
+      # ------------------------------------------------------------------
       # 门禁 4d：交付清单与磁盘/任务表一致（阶段四 D-28 / LED-043）
       #
       # 曾出现 9 个已建交付物被标"待建"。清单由脚本从任务表生成，`--check`

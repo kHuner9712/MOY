@@ -280,3 +280,79 @@ async def test_role_rank_orders_builtin_roles() -> None:
     assert ranks["org_admin"] > ranks["member"]
     assert ranks["member"] > ranks["guest"]
     assert ranks["reviewer"] == ranks["member"]
+
+
+@pytest.mark.asyncio
+async def test_get_role_reports_real_member_count() -> None:
+    """P1-8b：内存实现 `get_role` 的 `member_count` 必须是**真实计数**（此前恒 0）。
+
+    双实现漂移的机械证据见 `deploy/validate_repository_parity.py`（G-38 的 R4：
+    `RoleRecord` 的构造点关键字集合在内存侧与 PG 侧不对称——PG 的 `get_role` 写了
+    `member_count=await self.count_members(...)`，内存侧整字段缺席，于是恒为默认值 0）。
+    本地单测只跑内存实现、PG 用例默认 skip，所以这个漂移**任何用例都不会红**。
+
+    本用例把语义钉成三条：
+    1. 没有任何成员时是 `0`（不是 None、不是缺省哨兵）；
+    2. 分配两名成员后与 `count_members` 逐个相等（同一个口径，不是一个看起来像的数字）；
+    3. 只统计本租户（跨租户串味是"看起来对"的最常见形态）。
+    """
+    store = InMemoryRoleStore()
+    roles = await store.ensure_builtin_roles(TENANT, ORG)
+    member_role = next(item for item in roles if item.role_key == "member")
+
+    fresh = await store.get_role(TENANT, member_role.role_id)
+    assert fresh is not None
+    assert fresh.member_count == 0
+    assert fresh.member_count == await store.count_members(TENANT, member_role.role_id)
+
+    await store.assign_role(TENANT, ORG, "usr_a", member_role.role_id)
+    await store.assign_role(TENANT, ORG, "usr_b", member_role.role_id)
+    # 另一租户引用同一个 role_id 不得被计入本租户的计数。
+    await store.ensure_builtin_roles("tnt_role_other", ORG)
+    await store.assign_role("tnt_role_other", ORG, "usr_c", member_role.role_id)
+
+    record = await store.get_role(TENANT, member_role.role_id)
+    assert record is not None
+    counted = await store.count_members(TENANT, member_role.role_id)
+    assert counted == 2
+    assert record.member_count == counted
+
+
+@pytest.mark.asyncio
+async def test_ensure_builtin_roles_reports_real_member_count() -> None:
+    """P1-8b 第二处：`ensure_builtin_roles` 的 `member_count` 也必须是**真实计数**。
+
+    QA 实测同一个 Protocol 方法的三个出口答案不一致：内存实现
+    `ensure_builtin_roles` 返回 0、`list_roles` / `get_role` 返回真实计数；PG 实现的
+    `ensure_builtin_roles` 走 `list_roles`，返回真实计数。单测只跑内存实现，所以
+    "同一状态、多个出口、各算各的"这类漂移**任何用例都不会红**。
+
+    本用例把四个出口钉在同一口径（`_count_locked` 是它们的唯一实现）：
+    `ensure_builtin_roles` / `list_roles` / `get_role` / `count_members` 同数；
+    无成员时为 0（不是 None）；跨租户引用同一 `role_id` 不计入。
+    """
+    store = InMemoryRoleStore()
+    await store.ensure_builtin_roles(TENANT, ORG)
+    # 先分配再播种：角色已存在时 ensure 走的是"已存在"分支，正是漏算的那条路径。
+    await store.assign_role(TENANT, ORG, "usr_a", "role_member")
+    await store.assign_role(TENANT, ORG, "usr_b", "role_member")
+    await store.ensure_builtin_roles("tnt_role_other2", ORG)
+    await store.assign_role("tnt_role_other2", ORG, "usr_c", "role_member")
+
+    seeded = {
+        item.role_id: item.member_count for item in await store.ensure_builtin_roles(TENANT, ORG)
+    }
+    listed = {item.role_id: item.member_count for item in await store.list_roles(TENANT, ORG)}
+    counted = await store.count_members(TENANT, "role_member")
+    record = await store.get_role(TENANT, "role_member")
+
+    assert counted == 2
+    assert seeded["role_member"] == counted
+    assert listed["role_member"] == counted
+    assert record is not None
+    assert record.member_count == counted
+
+    # 无成员的角色四个出口同为 0（不是 None、不是缺省哨兵）。
+    assert seeded["role_owner"] == 0
+    assert listed["role_owner"] == 0
+    assert await store.count_members(TENANT, "role_owner") == 0

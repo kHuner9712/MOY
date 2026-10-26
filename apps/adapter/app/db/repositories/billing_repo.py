@@ -708,11 +708,17 @@ class InMemoryBillingStore:
                     return updated
                 return current
             stamp = now_iso()
+            # 8 个字段**全部显式写出**：与 `_to_tenant`（PG 侧行映射，同样写齐 8 个）保持
+            # 同一"构造点形状"（G-38 R4 按形状集合逐一对齐，缺字段即判红）。
+            # 语义与 PG 等价：DDL 的 `deploy_mode` 默认 'saas'、`suspended_reason` 可空
+            # （`_to_tenant` 对 NULL 归一为 ""），此处写出的就是这两个默认值。
             created = TenantRecord(
                 tenant_id=tenant_id,
                 name=name or tenant_id,
                 status=TENANT_ACTIVE,
+                deploy_mode="saas",
                 plan_code=PLAN_FREE,
+                suspended_reason="",
                 created_at=stamp,
                 updated_at=stamp,
             )

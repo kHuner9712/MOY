@@ -1589,6 +1589,41 @@ graph LR
   > **编号说明**：本门禁原计划登记为 G-36，但 G-36 已被 `deploy/validate_config_names.py` 的
   > 「前端构建参数同名 ARG」占用，故取 **G-37**。
 
+- **切片 2 新增门禁（G-38：仓储双实现一致性，审计 P1-8 / P1-8b）**：
+
+  | 门禁 | 判据 | 命令 |
+  | --- | --- | --- |
+  | **G-38 仓储双实现一致性** | `app/db/repositories/` 每个单元按协议配成 `(XxxStore, InMemoryXxxStore, PostgresXxxStore)` 三元组，逐条判定：**R1** 协议公开方法 ⊆ 双实现；**R2** `(内存公开 − TEST_HOOKS) == (PG 公开 − TEST_HOOKS)`，`TEST_HOOKS={clear,counts}` 只许在内存侧；**R3** 同名方法位置/kw-only 参数名序列、`*args`/`**kwargs` 名、共同参数默认值（`ast.unparse`）、同步性、`@property` 属性性一致（**返回注解不判**）；**R4** 每侧把 record 的**直接构造点**关键字集合收成 `set[frozenset[str]]`（同形构造去重），两侧**逐集合相等**才通过；任一侧无直接构造点 → 只 `[INFO]` 跳过（该侧经映射器/服务层构造，无可比对象）；**不做映射器名字豁免**；**R5** 双实现都有但协议未声明 → 只 `[INFO]`，不入基线 | `python deploy/validate_repository_parity.py --baseline deploy/repository_parity_baseline.txt` |
+  | **G-38 可红证明** | `--self-test` 在临时目录合成最小仓储样本，逐条验证：三方一致 exit 0 / 协议缺方法（内存侧·PG 侧各一）R1 / PG 多公开方法 R2 / 内存多 `clear` 白名单放行 / PG 出现 `clear` R2 / 参数名不同·默认值不同·sync↔async R3 / 基线命中 WARN exit 0 / 基线外 exit 1 / 条目消失 stale exit 1 / 基线缺失=空基线 exit 1 / 基线格式错 5 态 exit 2 / **目录不存在-非目录-单元数不足 exit 2（fail-closed 护栏）** / **包形态召回（`<name>/` 三文件 + 纯 shim 识别为 1 单元且判定生效）** / shim 内含 `ClassDef` exit 2 / **R4 v2：空 `_to_xxx` 不洗白（漂移仍判红）** / **R4 v2：同侧两个构造点其中一处少字段（并集仍含该字段）仍判红** | `python deploy/validate_repository_parity.py --self-test` |
+
+  > **为什么需要它**：每个仓储都是「内存实现（测试跑）+ PG 实现（生产跑）」，两条路径
+  > 只在生产分叉。协议新增方法只补一侧、同名方法参数名/默认值不一致、同一 record 在一侧
+  > 少写字段，**任何用例都不会红**——P1-8b 就是实例：内存 `get_role` / `ensure_builtin_roles`
+  > 的 `member_count` 恒 0，PG 返回真实计数（已在本切片按 R4 命中并修复）。
+  > **R4 为什么按「形状集合」逐点对齐、且不给映射器豁免（v2 收紧）**：v1 有两条洗白通道，
+  > QA 各实证一次——① 按映射器名字整体跳过：在实现里加一个与实现无关的空 `_to_role`，
+  > 真实漂移就从 `[FAIL]` 变 `[INFO] 跳过`、exit 0；② 同侧关键字取**并集**再比对：
+  > "PG 有两个构造点、删掉其中一个的 `member_count`"并集仍含该字段 → 假绿。
+  > 故删除映射器识别、改为**逐形状对齐**：一侧多出/缺少任何一种形状都判红（"某个代码路径
+  > 少写字段"正是在**单个构造点**上发生的）。代价是"一侧直接构造、另一侧走映射器"的
+  > record 无法比对 → `[INFO]` 跳过（是"看不到"而非"没问题"，故逐条打印供人工确认）。
+  > **单元形态**：`<name>_repo.py`（文件）与 `<name>/`（包，必须含 `memory.py` + `postgres.py`）两种；
+  > 同名并存时取包形态，且 `*_repo.py` 必须是**纯 re-export 壳**（出现类/函数定义即 exit 2），
+  > 防止"薄兼容层"重新长成第二份实现。配不上三元组即 exit 2，例外只有 `NO_PROTOCOL_UNITS={"audit"}`
+  > （该单元只有查询函数，PG 写入实现故意留在 `business/audit_service.py`）。
+  > **基线 `deploy/repository_parity_baseline.txt` 只许减不许增**：脚本**不提供** `--update-baseline`；
+  > 格式 `<rule> <unit> <subject> -- <审计编号> <理由>`，列数/rule 白名单/unit 不在实测集/
+  > 编号不以 `P0-`/`P1-`/`P2-` 开头/重复行一律 exit 2；违规消失未删行报 `[FAIL] stale`。
+  > **fail-closed**：`--repositories-root` 不存在/非目录、或可判定单元数 < `MIN_UNITS`（默认 15，实测 20）
+  > 即 exit 2；`--min-units` 仅供 `--self-test` 下调，**CI 不得传**。
+  > **盲区**：`setattr` / `__getattr__` 动态代理、`typing.cast` 绕过签名的实现判不出来，
+  > 跨文件的 record 构造也不在 R4 范围内——仍需 code review 收口。
+  > **R4 v2 落地时顺带对齐的两处历史形状不一致**：`billing.TenantRecord`（内存 `ensure_tenant`
+  > 只写 6 个字段、依赖 dataclass 默认值）与 `task.TaskStats`（内存聚合累加器写成
+  > `TaskStats(total=...)` 的第三种形状）。前者补出 `deploy_mode`/`suspended_reason`
+  > 的显式默认值（与 DDL 默认 `'saas'`、`_to_tenant` 对 NULL 归一为 `""` 保持一致），
+  > 后者改为零值构造后赋值——语义不变，形状对齐。
+
 ---
 
 # 10. 待明确事项

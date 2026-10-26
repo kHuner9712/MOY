@@ -75,7 +75,8 @@ DEPARTMENT_ID_PREFIX: Final[str] = "dept_"
 # 角色与权限点矩阵（审计 P1-4 / P1-7：已下沉 `app.core.builtin_roles`）
 #
 # 为什么下沉：这份矩阵是三处共用的**词汇表**——`core/security.py`（令牌判权）、
-# `db/repositories/role_repo.py`（内置角色播种）、本模块（对象级判定）全都要用。
+# `db/repositories/role/records.py` 与同包 `{memory,postgres}.py`（目录种子与内置角色播种）、
+# 本模块（对象级判定）全都要用。
 # 留在业务层，鉴权内核与仓储就得反向依赖业务服务（P1-4 / P1-7 实测）。
 #
 # 为什么继续在这里 re-export：本模块是「可见性/权限判定」的业务入口，

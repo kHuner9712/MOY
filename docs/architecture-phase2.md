@@ -1680,7 +1680,8 @@ curl "localhost:8000/api/v1/billing/usage?period=2026-11" -H "Authorization: Bea
 **涉及文件**
 1. `apps/adapter/app/schemas/identity_ext.py`
 2. `apps/adapter/app/db/repositories/org_repo.py`
-3. `apps/adapter/app/db/repositories/role_repo.py`
+3. `apps/adapter/app/db/repositories/role/`（切片 2A：原 `role_repo.py` 三拆为
+   `records.py` / `protocol.py` / `memory.py` / `postgres.py`；`role_repo.py` 保留为纯 re-export 兼容层）
 4. `apps/adapter/app/db/repositories/audit_repo.py`
 5. `apps/adapter/app/business/department_service.py`
 6. `apps/adapter/app/business/role_service.py`
