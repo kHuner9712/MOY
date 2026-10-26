@@ -51,7 +51,7 @@ from app.db.repositories.plugin_repo import (
     now_iso,
     version_records_from_registry,
 )
-from app.db.repositories.task_repo import TaskStore, get_task_store
+from app.db.repositories.task import TaskStore, get_task_store
 from app.plugins.actions import (
     CAPABILITY_CATALOG,
     CAPABILITY_KEYS,

@@ -34,7 +34,7 @@ R-API-DB apps/adapter/app/api/v1/conversation.py app.db.repositories.conversatio
 R-API-DB apps/adapter/app/api/v1/identity_ext.py app.db.repositories.audit_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/memory.py app.db.repositories.memory module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/router.py app.db.engine module -- P1-3 api 直接使用 db 引擎（健康探针），改为 services 暴露探针后消除
-R-API-DB apps/adapter/app/api/v1/stats.py app.db.repositories.task_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
+R-API-DB apps/adapter/app/api/v1/stats.py app.db.repositories.task module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 
 # --- P1-7：core 依赖上层（内核不再可独立复用） ---------------------------
 R-CORE-BIZ apps/adapter/app/core/security.py app.business.audit_service deferred -- P1-7 core 内核依赖业务审计服务；改为组合根注入后消除（切片 2）

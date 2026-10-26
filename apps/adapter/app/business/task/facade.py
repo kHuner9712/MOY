@@ -32,7 +32,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
 from app.db.repositories.artifact_repo import ArtifactRecord, ArtifactStore, get_artifact_store
-from app.db.repositories.task_repo import StepRecord, TaskRecord, TaskStore, get_task_store
+from app.db.repositories.task import StepRecord, TaskRecord, TaskStore, get_task_store
 from app.plugins.actions import ActionGateway
 from app.plugins.engine import PluginEngine
 from app.plugins.loader import PluginRegistry, get_registry

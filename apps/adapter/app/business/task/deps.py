@@ -27,7 +27,7 @@ from app.business.plugin_service import PluginService
 from app.business.usage_service import UsageService
 from app.core.config import Settings
 from app.db.repositories.artifact_repo import ArtifactStore
-from app.db.repositories.task_repo import TaskStore
+from app.db.repositories.task import TaskStore
 from app.plugins.engine import PluginEngine
 from app.plugins.loader import PluginRegistry
 from app.plugins.sanitizer import ArtifactSanitizer

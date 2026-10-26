@@ -32,7 +32,7 @@ from app.db.repositories.memory import (
     MemoryRecord,
     get_memory_store,
 )
-from app.db.repositories.task_repo import (
+from app.db.repositories.task import (
     InMemoryTaskStore,
     TaskRecord,
     get_task_store,

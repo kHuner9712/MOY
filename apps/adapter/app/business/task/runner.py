@@ -45,7 +45,7 @@ from app.db.repositories.artifact_repo import (
     ArtifactRecord,
     assert_editable,
 )
-from app.db.repositories.task_repo import StepRecord, TaskRecord, now_iso
+from app.db.repositories.task import StepRecord, TaskRecord, now_iso
 from app.plugins.actions import RunContext
 from app.plugins.engine import (
     STEP_COMPLETED,

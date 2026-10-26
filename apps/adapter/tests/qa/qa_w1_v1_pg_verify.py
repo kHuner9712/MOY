@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from jose import jwt
 
 from app.core.config import Settings, reset_settings_cache
-from app.db.repositories.task_repo import (
+from app.db.repositories.task import (
     InMemoryTaskStore,
     PostgresTaskStore,
     TaskRecord,

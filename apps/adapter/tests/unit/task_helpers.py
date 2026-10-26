@@ -19,7 +19,7 @@ from app.business.task_service import TaskService
 from app.core.config import Settings
 from app.core.security import AuthContext
 from app.db.repositories.artifact_repo import InMemoryArtifactStore
-from app.db.repositories.task_repo import InMemoryTaskStore
+from app.db.repositories.task import InMemoryTaskStore
 from app.plugins.actions import ActionResult, ArtifactDraft, RunContext
 from app.plugins.engine import PluginEngine
 from app.plugins.loader import PluginRegistry, default_manifests_dir

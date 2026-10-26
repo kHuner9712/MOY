@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
-from app.db.repositories.task_repo import TaskRecord
+from app.db.repositories.task import TaskRecord
 
 
 def assert_task_visible(record: TaskRecord, auth: AuthContext) -> None:

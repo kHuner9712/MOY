@@ -35,13 +35,13 @@ from app.db.repositories.artifact_repo import (
     ArtifactRecord,
     PostgresArtifactStore,
 )
-from app.db.repositories.task_repo import (
-    STATUS_QUEUED,
+from app.db.repositories.task import (
     PostgresTaskStore,
     StepRecord,
     TaskRecord,
     now_iso,
 )
+from app.db.repositories.task.records import STATUS_QUEUED
 from app.db.session import platform_scope
 
 pytestmark = [pytest.mark.integration, pytest.mark.pg]
