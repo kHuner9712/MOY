@@ -28,7 +28,7 @@ from app.db.repositories.conversation_repo import (
     get_message_store,
     new_message_id,
 )
-from app.db.repositories.memory_repo import (
+from app.db.repositories.memory import (
     MemoryRecord,
     get_memory_store,
 )

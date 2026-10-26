@@ -25,7 +25,7 @@ from app.business.memory_service import MemoryService
 from app.core.config import Settings
 from app.core.metrics import MEMORY_INJECTED_TOTAL, MEMORY_RECALL_DEGRADED_TOTAL
 from app.db.repositories.conversation_repo import InMemoryMessageStore, MessageRecord
-from app.db.repositories.memory_repo import (
+from app.db.repositories.memory import (
     InMemoryMemoryStore,
     MemoryRecord,
     MemorySettingRecord,
@@ -405,7 +405,7 @@ class TestInjectionShape:
         self, client: Any, auth_headers: dict[str, str], make_idempotency_headers: Any
     ) -> None:
         """记忆正文只进上游 prompt，**不出现在用户可见的 `data` 里**。"""
-        from app.db.repositories.memory_repo import get_memory_store
+        from app.db.repositories.memory import get_memory_store
         from app.db.tenant import PRIVATE_TENANT
 
         store = get_memory_store()

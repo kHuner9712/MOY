@@ -55,7 +55,7 @@ from app.db.repositories.document_repo import reset_document_store
 from app.db.repositories.grant_repo import reset_grant_store
 from app.db.repositories.job_repo import reset_job_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
-from app.db.repositories.memory_repo import reset_memory_store
+from app.db.repositories.memory import reset_memory_store
 from app.db.repositories.ops_repo import reset_ops_store
 from app.db.repositories.org_repo import reset_org_store
 from app.db.repositories.plugin_repo import reset_plugin_store

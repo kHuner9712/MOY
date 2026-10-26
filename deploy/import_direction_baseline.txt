@@ -32,7 +32,7 @@
 R-API-DB apps/adapter/app/api/v1/artifact_files.py app.db.repositories.artifact_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/conversation.py app.db.repositories.conversation_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/identity_ext.py app.db.repositories.audit_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
-R-API-DB apps/adapter/app/api/v1/memory.py app.db.repositories.memory_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
+R-API-DB apps/adapter/app/api/v1/memory.py app.db.repositories.memory module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/router.py app.db.engine module -- P1-3 api 直接使用 db 引擎（健康探针），改为 services 暴露探针后消除
 R-API-DB apps/adapter/app/api/v1/stats.py app.db.repositories.task_repo module -- P1-3 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 
@@ -50,7 +50,7 @@ R-BIZ-WRK apps/adapter/app/business/tenant_data_service.py app.workers.tasks.ret
 
 # --- P2-10：services 直接使用仓储（本波新发现） --------------------------
 R-SVC-DB apps/adapter/app/services/identity_service.py app.db.repositories.audit_repo deferred -- P2-10 服务层直接读仓储；由 business 暴露查询入口后消除（切片 2）
-R-SVC-DB apps/adapter/app/services/memory_extractor.py app.db.repositories.memory_repo module -- P2-10 服务层直接读仓储；由 business 暴露查询入口后消除（切片 2）
+R-SVC-DB apps/adapter/app/services/memory_extractor.py app.db.repositories.memory module -- P2-10 服务层直接读仓储；由 business 暴露查询入口后消除（切片 2）
 R-SVC-DB apps/adapter/app/services/model_service.py app.db.repositories.knowledge_base_repo module -- P2-10 服务层直接读仓储；由 business 暴露查询入口后消除（切片 2）
 R-SVC-DB apps/adapter/app/services/model_service.py app.db.tenant module -- P2-10 服务层直接读租户上下文工具；切片 2 移入 core 后消除
 R-SVC-DB apps/adapter/app/services/rag_service.py app.db.tenant module -- P2-10 服务层直接读租户上下文工具；切片 2 移入 core 后消除

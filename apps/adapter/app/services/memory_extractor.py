@@ -36,7 +36,7 @@ from typing import Any, Final, Protocol
 from app.clients.dify_client import DifyClient
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
-from app.db.repositories.memory_repo import MEMORY_CATEGORIES
+from app.db.repositories.memory import MEMORY_CATEGORIES
 
 logger = get_logger(__name__)
 

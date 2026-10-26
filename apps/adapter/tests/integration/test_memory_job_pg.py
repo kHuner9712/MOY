@@ -25,7 +25,7 @@ import pytest
 from app.core.config import Settings
 from app.db.engine import dispose_engine
 from app.db.repositories.job_repo import JobRecord, PostgresJobStore
-from app.db.repositories.memory_repo import (
+from app.db.repositories.memory import (
     MemoryRecord,
     MemorySettingRecord,
     PostgresMemoryStore,

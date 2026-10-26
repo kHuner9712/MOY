@@ -30,7 +30,7 @@ from app.db.repositories.conversation_repo import (
     MessageRecord,
 )
 from app.db.repositories.job_repo import InMemoryJobStore, get_job_store
-from app.db.repositories.memory_repo import (
+from app.db.repositories.memory import (
     InMemoryMemoryStore,
     MemorySettingRecord,
 )

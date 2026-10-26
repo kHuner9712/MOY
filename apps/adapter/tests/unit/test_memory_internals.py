@@ -26,7 +26,7 @@ from app.core.config import Settings
 from app.core.errors import ApiError
 from app.db.repositories.conversation_repo import InMemoryMessageStore, MessageRecord
 from app.db.repositories.job_repo import InMemoryJobStore, JobRecord
-from app.db.repositories.memory_repo import (
+from app.db.repositories.memory import (
     MEMORY_CATEGORIES,
     InMemoryMemoryStore,
     MemoryRecord,
@@ -677,7 +677,7 @@ class TestDatetimeRowParsing:
         store = InMemoryMemoryStore()
         assert store is not None  # 仅用于保持导入被使用
         stamp = datetime(2026, 11, 1, 9, 0, 0, tzinfo=UTC)
-        from app.db.repositories.memory_repo import _timestamp
+        from app.db.repositories.memory.postgres import _timestamp
 
         assert _timestamp(stamp) == "2026-11-01T09:00:00Z"
         assert _timestamp(None) == ""
@@ -1072,7 +1072,7 @@ class TestRepoBoundaries:
 
     def test_switch_json_parsing_variants(self) -> None:
         """JSONB 开关列的三种形态：字典、JSON 串、非法串（忽略非法键）。"""
-        from app.db.repositories.memory_repo import _json_switches
+        from app.db.repositories.memory.postgres import _json_switches
 
         assert _json_switches({"org": True, "salary": False}) == {"org": True}
         assert _json_switches('{"preference": false}') == {"preference": False}
@@ -1082,7 +1082,7 @@ class TestRepoBoundaries:
 
     def test_vector_text_parsing_variants(self) -> None:
         """pgvector 文本解析：带/不带方括号、空串、脏值。"""
-        from app.db.repositories.memory_repo import _parse_vector_text
+        from app.db.repositories.memory.postgres import _parse_vector_text
 
         assert _parse_vector_text("[0.1,0.2]") == pytest.approx([0.1, 0.2])
         assert _parse_vector_text("0.1,0.2") == pytest.approx([0.1, 0.2])
@@ -1092,7 +1092,7 @@ class TestRepoBoundaries:
 
     async def test_postgres_store_early_returns_without_db(self) -> None:
         """空键/空列表在**连库之前**就返回（避免为一次空操作开事务）。"""
-        from app.db.repositories.memory_repo import PostgresMemoryStore
+        from app.db.repositories.memory import PostgresMemoryStore
 
         store = PostgresMemoryStore(
             _settings(business_store="postgres", database_url="postgresql://u:p@127.0.0.1:1/db")
