@@ -119,7 +119,7 @@ import re
 import sys
 import tempfile
 import textwrap
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -205,6 +205,26 @@ R7_MIN_OVERLAP: Final[int] = 3
 #: 实测基线：INSERT 37 条、配上 31 个 dataclass（2026-10-26）。
 R7_MIN_INSERTS: Final[int] = 30
 R7_MIN_PAIRED: Final[int] = 28
+
+#: R7 允许"配不上表"的 dataclass 白名单（`(unit, dataclass)`）。
+#:
+#: 只是"计数"不够：**新冒出来一个 skipped 就是覆盖塌陷的信号**（某张表漂移 →
+#: 它的 record 配不上 → 静默进 skipped，而 paired 只掉 1、仍在余量内）。
+#: 所以 skipped 必须与这张白名单**逐项相等**，多一个即 exit 2。
+#: 新增非行式 dataclass（store / stats / patch / 纯读）时必须显式登记并说明理由。
+R7_SKIPPED_ALLOWLIST: Final[frozenset[tuple[str, str]]] = frozenset(
+    {
+        ("billing", "PlanRecord"),  # 套餐目录由 SQL 种子写入，代码无 INSERT
+        ("knowledge_base", "KnowledgeBaseViewer"),  # 视图 DTO，非表行
+        ("ops", "OpsSettings"),  # 单行设置，由 save_settings 逐字段拼装
+        ("plugin", "CatalogRecord"),  # 目录来自插件注册表，非表行
+        ("plugin_review", "InMemoryReviewStore"),  # 内存存储类（@dataclass），非 record
+        ("role", "PermissionCatalogEntry"),  # 权限目录为常量种子（PERMISSION_CATALOG_SEED）
+        ("task", "TaskStats"),  # 聚合结果，非表行
+        ("usage", "QuotaRecord"),  # 由订阅/聚合推导，非表行
+        ("usage", "RangeEventStats"),  # 聚合结果，非表行
+    }
+)
 
 #: R7：DDL 来源（缺任一来源都会把"后补列"误判成不存在）。
 R7_DDL_GLOBS: Final[tuple[str, ...]] = ("*.sql", "migrations/*.sql")
@@ -442,6 +462,7 @@ class WriteStats:
     statements: int = 0
     unresolved: int = 0
     orphan_tables: set[str] = field(default_factory=set)
+    unexpected_skips: set[tuple[str, str]] = field(default_factory=set)
 
     def summary(self) -> str:
         """渲染成一行覆盖率摘要。
@@ -1427,7 +1448,14 @@ def load_ddl_tables(deploy_root: Path) -> dict[str, DdlTable]:
             ):
                 table = match.group(1).split(".")[-1]
                 column, rest = match.group(2), match.group(3)
-                columns, omittable = tables.setdefault(table, (set(), set()))
+                existing = tables.get(table)
+                if existing is None:
+                    # **ALTER 不得凭空造表**：否则"CREATE 改了名、ALTER 还留着"时，
+                    # 漂移的表会以"只有后补列"的形态继续存在 → `set(targets)-set(ddl)`
+                    # 不报 orphan、dataclass 静默转 skipped，门禁于是"覆盖塌陷但全绿"。
+                    # 宁可让这张表不存在（INSERT 它就会撞 orphan 判据、exit 2）。
+                    continue
+                columns, omittable = existing
                 columns.add(column)
                 if _is_omittable(rest):
                     omittable.add(column)
@@ -1495,6 +1523,50 @@ def _sql_text(node: ast.expr, constants: dict[str, str]) -> str | None:
     return "".join(parts)
 
 
+def _iter_sql_texts(node: ast.AST, constants: dict[str, str]) -> Iterator[tuple[str | None, int]]:
+    """遍历"最外层"的字符串表达式，产出 `(可解析文本 | None, INSERT 提及次数)`。
+
+    - **只看最外层**：f-string 内部的 `Constant` 片段不会再被单独产出，否则一次
+      `INSERT INTO` 会被数成两次；
+    - **函数调用不算叶子**：SQL 是 `fetch_one(f"...")` 的实参，把 `Call` 当叶子会
+      直接漏掉全部语句；
+    - **解析不出的形态也要计数**（`"INSERT INTO " + table`、`"INSERT INTO {} ".format(...)`）：
+      提及次数从它的字符串常量里数，这样"有 INSERT 但门禁看不见"必然进 `unresolved`，
+      而不是安静少看几句。
+
+    Args:
+        node: 语法树节点。
+        constants: 模块级字符串常量（表名解析用）。
+
+    Yields:
+        tuple[str | None, int]: `(可解析文本, INSERT 提及次数)`；不可解析时第一项为 None。
+    """
+    if isinstance(node, ast.JoinedStr):
+        text = _sql_text(node, constants)
+        mentions = sum(
+            inner.value.upper().count("INSERT INTO")
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
+        )
+        if text is not None:
+            mentions = max(mentions, text.upper().count("INSERT INTO"))
+        yield text, mentions
+        return
+    if isinstance(node, ast.BinOp):
+        mentions = sum(
+            inner.value.upper().count("INSERT INTO")
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
+        )
+        yield None, mentions
+        return
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        yield node.value, node.value.upper().count("INSERT INTO")
+        return
+    for child in ast.iter_child_nodes(node):
+        yield from _iter_sql_texts(child, constants)
+
+
 def _insert_targets(
     modules: dict[Path, ast.Module],
     files: tuple[Path, ...],
@@ -1504,16 +1576,16 @@ def _insert_targets(
     **必须走 AST 而不是正则扫源码**：表名是 f-string 常量（`{USAGE_EVENT_TABLE}`），
     文本匹配 `INSERT INTO usage_event` 会 0 命中——这条坑在 2C-4 已经踩过一次。
 
-    **解析失败必须计数**：表名是局部变量或拼接出来的时候该语句会被丢弃，
-    若只 `continue`，门禁会安静地少看几句、然后报"0 缺口"——与它要防的
-    扫描范围缩水是同一族缺陷。
+    **解析失败必须计数**：表名是局部变量、或 SQL 用 `+` / `.format()` 拼出来时，
+    该语句无法参与判定；若只 `continue`，门禁会安静地少看几句、然后报"0 缺口"——
+    与它要防的扫描范围缩水是同一族缺陷。
 
     Args:
         modules: 文件 → 语法树。
         files: 只扫这些文件（PG 侧）。
 
     Returns:
-        tuple[dict[str, set[str]], int, int]: `(表 → 列并集, INSERT 语句数, 不可解析语句数)`。
+        tuple[dict[str, set[str]], int, int]: `(表 → 列并集, 可判定语句数, 不可解析语句数)`。
     """
     targets: dict[str, set[str]] = {}
     statements = 0
@@ -1523,29 +1595,22 @@ def _insert_targets(
         if path not in wanted:
             continue
         constants = _module_constants(module)
-        for node in ast.walk(module):
-            if not isinstance(node, ast.Constant | ast.JoinedStr):
+        for text, mentions in _iter_sql_texts(module, constants):
+            if not mentions:
                 continue
-            text = _sql_text(node, constants)
-            if text is None:
-                # 只有"确实包含 INSERT INTO 但表名解析不出"才算丢弃；普通字符串不算。
-                if isinstance(node, ast.JoinedStr) and any(
-                    isinstance(part, ast.Constant) and "INSERT INTO" in str(part.value)
-                    for part in node.values
+            matched = 0
+            if text is not None:
+                for match in re.finditer(
+                    r"INSERT\s+INTO\s+([a-z_][\w.]*)\s*\(([^)]*)\)\s*VALUES",
+                    text,
+                    re.DOTALL | re.IGNORECASE,
                 ):
-                    unresolved += 1
-                continue
-            if "INSERT INTO" not in text:
-                continue
-            for match in re.finditer(
-                r"INSERT\s+INTO\s+([a-z_][\w.]*)\s*\(([^)]*)\)\s*VALUES",
-                text,
-                re.DOTALL | re.IGNORECASE,
-            ):
-                statements += 1
-                table = match.group(1).split(".")[-1]
-                columns = {item.strip() for item in match.group(2).split(",") if item.strip()}
-                targets.setdefault(table, set()).update(columns)
+                    matched += 1
+                    table = match.group(1).split(".")[-1]
+                    columns = {item.strip() for item in match.group(2).split(",") if item.strip()}
+                    targets.setdefault(table, set()).update(columns)
+            statements += matched
+            unresolved += max(0, mentions - matched)
     return targets, statements, unresolved
 
 
@@ -1624,13 +1689,14 @@ def _check_write_coverage(
         for name, names in _dataclass_field_names(modules).items()
         if name in classes and classes[name].is_dataclass
     }
+    # 先统计 INSERT：即便本单元没有 dataclass，语句数也是覆盖率下限的依据（N4）。
+    targets, statements, unresolved = _insert_targets(modules, unit.postgres_files)
+    stats.statements += statements
+    stats.unresolved += unresolved
     if not record_fields:
         return [], []
     infos: list[str] = []
     stats.dataclasses += len(record_fields)
-    targets, statements, unresolved = _insert_targets(modules, unit.postgres_files)
-    stats.statements += statements
-    stats.unresolved += unresolved
     if not targets:
         # 整单元没有可判定的 INSERT（如 `audit`：PG 写入故意留在 business 层）。
         # 必须计数并说一句——否则这 N 个 dataclass 会从分母里消失，而输出看上去"全绿"。
@@ -1658,10 +1724,13 @@ def _check_write_coverage(
         if not scored:
             # 不是行式 dataclass（store / stats / patch / 无写路径的纯读 record）。
             stats.skipped += 1
+            if (unit.name, record) not in R7_SKIPPED_ALLOWLIST:
+                stats.unexpected_skips.add((unit.name, record))
             continue
         if len(scored) > 1 and scored[0][0] == scored[1][0]:
             ambiguous.append(f"{record}（{scored[0][1]} / {scored[1][1]} 并列）")
             stats.skipped += 1
+            stats.unexpected_skips.add((unit.name, record))
             continue
         table = scored[0][1]
         shape = ddl[table]
@@ -1958,6 +2027,23 @@ def run(
             f"（表 `{finding.table}`） -- {finding.detail}"
             f"（R7 只报不判红；要判红请用 --strict-r7）"
         )
+    if result.r7_stats.unresolved:
+        print(
+            f"[FAIL] R7 有 {result.r7_stats.unresolved} 条 INSERT 的语句形态无法静态解析"
+            f"（表名用局部变量 / `+` 拼接 / `.format()`）——这些语句不参与判定，"
+            f"结论不成立。请改成表名取模块常量的 f-string，或登记豁免"
+        )
+        return 2
+    if result.r7_stats.unexpected_skips:
+        pairs = "、".join(
+            f"{unit}.{record}" for unit, record in sorted(result.r7_stats.unexpected_skips)
+        )
+        print(
+            f"[FAIL] R7 有 {len(result.r7_stats.unexpected_skips)} 个 dataclass "
+            f"配不上表且不在白名单：{pairs}——要么发生了表名漂移（覆盖塌陷），"
+            f"要么新增了非行式 dataclass（须登进 R7_SKIPPED_ALLOWLIST 并说明理由）"
+        )
+        return 2
     if result.r7_stats.orphan_tables:
         print(
             f"[FAIL] R7 有 {len(result.r7_stats.orphan_tables)} 张被 INSERT 写入的表不在 DDL 里："
@@ -2230,11 +2316,12 @@ _R6_MAPPER_SAMPLE: Final[str] = (
 )
 
 
-def _r7_repo_source(postgres_body: str) -> str:
+def _r7_repo_source(postgres_body: str, extra_dataclass: str = "") -> str:
     """拼一个"带 INSERT"的自检仓储模块（R7 用）。
 
     Args:
         postgres_body: PG 实现类的方法体（内含 INSERT）。
+        extra_dataclass: 额外插入的 dataclass 源码（用于"非行式 dataclass"用例）。
 
     Returns:
         str: 模块源码。
@@ -2256,8 +2343,7 @@ def _r7_repo_source(postgres_body: str) -> str:
         '    note: str = ""\n'
         '    computed: str = ""\n'
         "\n"
-        "\n"
-        "class WidgetStore(Protocol):\n"
+        "\n" + extra_dataclass + "class WidgetStore(Protocol):\n"
         "    async def save(self, record: WidgetRecord) -> None:\n"
         "        ...\n"
         "\n"
@@ -3039,6 +3125,42 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
         code = run(r7_full_root, clean_baseline, 0, ddl=_R7_DDL, r7_min_inserts=999)
         failures += _case(
             "R7：INSERT 条数低于下限 → exit 2（扫描缩水即判死）", code == 2, f"实际 exit {code}"
+        )
+
+        # ---------------- 用例 28：不可解析的语句形态必须判死（不是"记个数就算") ----------------
+        code = run(r7_unresolved_root, clean_baseline, 0, ddl=_R7_DDL)
+        failures += _case(
+            "R7：表名不可解析 → exit 2（看不见 ≠ 没问题）", code == 2, f"实际 exit {code}"
+        )
+
+        # ---------------- 用例 29：非白名单的 skipped 必须判死 ----------------
+        ghost = textwrap.dedent(
+            """
+            @dataclass(frozen=True, slots=True)
+            class GhostRecord:
+                alpha: int = 0
+                beta: int = 0
+                gamma: int = 0
+
+
+            """
+        ).lstrip()
+        r7_ghost_root = tmp / "r7-ghost"
+        _write_module(
+            r7_ghost_root / "widget_repo.py",
+            _r7_repo_source(r7_full_body, extra_dataclass=ghost),
+        )
+        r7_ghost = scan(r7_ghost_root, ddl=_R7_DDL)
+        failures += _case(
+            "R7：新增非行式 dataclass 会被记为 unexpected_skips",
+            r7_ghost.r7_stats.unexpected_skips == {("widget", "GhostRecord")},
+            f"实际 {r7_ghost.r7_stats.unexpected_skips}",
+        )
+        code = run(r7_ghost_root, clean_baseline, 0, ddl=_R7_DDL)
+        failures += _case(
+            "R7：非白名单 skipped → exit 2（单表漂移不能藏在计数余量里）",
+            code == 2,
+            f"实际 exit {code}",
         )
 
     if failures:
