@@ -74,10 +74,10 @@ def conversations(settings: Settings) -> InMemoryConversationStore:
     Returns:
         InMemoryConversationStore: 存储。
     """
-    from app.db.repositories import conversation_repo
+    from app.db.repositories import conversation
 
     store = InMemoryConversationStore()
-    conversation_repo._conversation_store = store  # noqa: SLF001 - 测试注入单例
+    conversation._conversation_store = store  # noqa: SLF001 - 测试注入单例
     return store
 
 
@@ -91,10 +91,10 @@ def messages(settings: Settings) -> InMemoryMessageStore:
     Returns:
         InMemoryMessageStore: 存储。
     """
-    from app.db.repositories import conversation_repo
+    from app.db.repositories import conversation
 
     store = InMemoryMessageStore()
-    conversation_repo._message_store = store  # noqa: SLF001 - 测试注入单例
+    conversation._message_store = store  # noqa: SLF001 - 测试注入单例
     return store
 
 
