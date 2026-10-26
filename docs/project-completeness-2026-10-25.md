@@ -150,6 +150,8 @@
 
 > **2026-10-26 状态：2C-5b 已闭环**（R7 写侧字段覆盖 + G-SQL 扫描范围修复，生产代码零改动）——① **R7**：解析 16 个 DDL 文件（41 表 / 279 个可省略列，含 `ALTER … ADD COLUMN` 后补列），dataclass→表按**表列重叠**最佳匹配（容差 30%、下限 3），`covered` = 同表 INSERT 列并集；覆盖率 **43 个 dataclass → 配上 31 / 未配上 9 / 未评估 3；INSERT 37 条（不可解析 0）；DDL 缺表 0**，R7 WARN 0；6 个 dataclass / 7 处字段属非表列，`occurred_at` 走 INFO 语义注记。**fail-closed**：`R7_MIN_INSERTS=30` / `R7_MIN_PAIRED=28` 低于即 exit 2，且「被 INSERT 但不在 DDL 的表」直接 exit 2；自检补真 DDL 解析器 / `_is_omittable` / unresolved / 缺表 / 下限共 5 组用例（当场抓到 `KEY` 关键字吞列的潜伏缺陷）。② **修 G-SQL 盲区**：`test_sql_insert_consistency` 原用 `glob("*.py")` 只扫顶层，拆包后 **37 条 INSERT 漏 25 条（68%）**；已改 `rglob` + `MIN_INSERT_STATEMENTS=30` 下限（两种触发都验过真红）。**范围**：R7 只覆盖 `app/db/repositories/**`；业务层 4 条写路径（audit_log / outbox / plugin_task / schema_migration）不在视野，已登记 2C-6 候选。数值：收集 2321、全量 **2114/207/0**、format 362、mypy 202、G-37 24/24/0 扫 200、G-38 20/8/3 WARN/0 FAIL/R6 WARN 0/R7 WARN 0、G-32 26/26、台账 119/91。
 
+> **2026-10-27 状态：2C-6 已闭环**（业务层 INSERT 对账，生产代码零改动）——G-SQL 升级为**全 `app/` AST 扫描**：f-string 表名按「本模块优先 + 全仓唯一名兜底」解析、相邻字面量由解析期折叠、列/值清单用配对括号扫描；判据 4 条（arity / **列必须属于该表**（旧口径是全仓列并集 → 跨表假绿）/ 目标表在 DDL / 不可解析恒为 0）+ 条数下限 38。实测 **41 条语句（仓储 37 + 业务 3 + 迁移 1）/ 0 不可解析 / 38 张表**，业务层四条写路径（audit_log / integration_outbox / plugin_task / schema_migration）全部纳入，**未发现新缺陷**；can-red 5 条（arity / 跨表列 / 表不在 DDL / `+` 拼接 / 下限）。用例 4 → 8（+4），收集 2321 → **2325**，全量 2114 → **2118/207/0**。
+
 ### 第 3 波 · 阶段四内（收尾与防漂移）
 
 | 要点 | 审计编号 |
