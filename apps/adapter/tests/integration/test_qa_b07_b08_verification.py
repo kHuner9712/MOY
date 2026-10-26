@@ -54,7 +54,7 @@ from app.db.repositories.knowledge_base_repo import (
     get_knowledge_base_store,
     reset_knowledge_base_store,
 )
-from app.db.repositories.usage_repo import (
+from app.db.repositories.usage import (
     current_period,
     get_usage_store,
     reset_usage_store,
@@ -275,7 +275,7 @@ def _event(*, capability: str, idem_key: str, user_id: str, units: int) -> Any:
     Returns:
         UsageEventRecord: 事件记录。
     """
-    from app.db.repositories.usage_repo import UsageEventRecord
+    from app.db.repositories.usage import UsageEventRecord
 
     return UsageEventRecord(
         tenant_id=TENANT,

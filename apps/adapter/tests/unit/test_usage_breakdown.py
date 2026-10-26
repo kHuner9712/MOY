@@ -19,7 +19,7 @@ import pytest
 
 from app.business.usage_service import UsageService
 from app.core.config import Settings
-from app.db.repositories.usage_repo import (
+from app.db.repositories.usage import (
     CAPABILITY_CHAT,
     CAPABILITY_DOC_PROCESS,
     CAPABILITY_DOC_QA,

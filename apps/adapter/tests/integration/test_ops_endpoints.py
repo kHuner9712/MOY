@@ -24,7 +24,7 @@ from app.db.repositories.billing_repo import (
     PLAN_PROFESSIONAL,
     get_billing_store,
 )
-from app.db.repositories.usage_repo import UsageEventRecord, get_usage_store
+from app.db.repositories.usage import UsageEventRecord, get_usage_store
 from app.main import create_app
 from app.schemas.billing import ChangeSubscriptionRequest
 from tests.conftest import make_token

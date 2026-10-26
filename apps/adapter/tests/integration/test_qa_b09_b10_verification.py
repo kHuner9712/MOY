@@ -66,7 +66,7 @@ from app.db.repositories.org_repo import (
     get_org_store,
     reset_org_store,
 )
-from app.db.repositories.usage_repo import UsageEventRecord, get_usage_store
+from app.db.repositories.usage import UsageEventRecord, get_usage_store
 from app.main import create_app
 from tests.conftest import make_token
 

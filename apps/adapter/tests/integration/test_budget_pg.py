@@ -23,7 +23,7 @@ from app.db.repositories.budget_repo import (
     PostgresBudgetStore,
     TenantBudgetRecord,
 )
-from app.db.repositories.usage_repo import PostgresUsageStore, UsageEventRecord
+from app.db.repositories.usage import PostgresUsageStore, UsageEventRecord
 
 pytestmark = [pytest.mark.integration, pytest.mark.pg]
 

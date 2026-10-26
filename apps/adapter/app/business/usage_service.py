@@ -36,7 +36,7 @@ from app.db.repositories.budget_repo import (
     BudgetStore,
     get_budget_store,
 )
-from app.db.repositories.usage_repo import (
+from app.db.repositories.usage import (
     CAPABILITY_AUTOMATION,
     CAPABILITY_CHAT,
     CAPABILITY_DOC_PROCESS,

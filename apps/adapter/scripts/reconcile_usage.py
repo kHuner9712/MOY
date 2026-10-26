@@ -49,7 +49,7 @@ if str(ADAPTER_ROOT) not in sys.path:
 
 from app.business.audit_service import AuditService  # noqa: E402 - 需先补 sys.path
 from app.core.config import Settings  # noqa: E402
-from app.db.repositories.usage_repo import (  # noqa: E402
+from app.db.repositories.usage import (  # noqa: E402
     CAPABILITIES,
     SCOPE_MEMBER,
     SCOPE_TENANT,

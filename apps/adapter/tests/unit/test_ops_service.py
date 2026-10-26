@@ -26,7 +26,7 @@ from app.db.repositories.billing_repo import (
     InMemoryBillingStore,
 )
 from app.db.repositories.ops_repo import InMemoryOpsStore
-from app.db.repositories.usage_repo import UsageEventRecord, get_usage_store
+from app.db.repositories.usage import UsageEventRecord, get_usage_store
 from app.schemas.billing import ChangeSubscriptionRequest, CreateOrderRequest
 from app.schemas.ops import (
     ConfirmOrderRequest,

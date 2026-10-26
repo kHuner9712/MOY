@@ -20,7 +20,7 @@ from scripts.reconcile_usage import reconcile, relative_deviation
 
 from app.business.usage_service import UsageService, get_usage_service, reset_usage_service
 from app.core.config import Settings
-from app.db.repositories.usage_repo import (
+from app.db.repositories.usage import (
     current_period,
     get_usage_store,
     reset_usage_store,
@@ -276,7 +276,7 @@ def _reset_usage(app: FastAPI) -> None:
 async def test_postgres_usage_store_smoke(pg_dsn: str) -> None:
     """真实库：幂等写入、三行聚合、按日汇总、额度读取。"""
     from app.core.config import Settings as Conf
-    from app.db.repositories.usage_repo import (
+    from app.db.repositories.usage import (
         SCOPE_MEMBER,
         SCOPE_TENANT,
         SOURCE_SETTLED,

@@ -21,7 +21,7 @@ from app.business.usage_service import (
     reset_usage_service,
 )
 from app.core.config import Settings
-from app.db.repositories.usage_repo import (
+from app.db.repositories.usage import (
     CAPABILITY_CHAT,
     CAPABILITY_DOC_PROCESS,
     SCOPE_MEMBER,

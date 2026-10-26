@@ -23,7 +23,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
 from app.db import schema_guard
 from app.db.repositories.budget_repo import InMemoryBudgetStore, TenantBudgetRecord
-from app.db.repositories.usage_repo import (
+from app.db.repositories.usage import (
     SOURCE_SETTLED,
     InMemoryUsageStore,
     UsageEventRecord,

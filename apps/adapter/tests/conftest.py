@@ -63,7 +63,7 @@ from app.db.repositories.plugin_review_repo import reset_review_store
 from app.db.repositories.role_repo import reset_role_store
 from app.db.repositories.segment_repo import reset_segment_store
 from app.db.repositories.tool_repo import reset_tool_store
-from app.db.repositories.usage_repo import reset_usage_store
+from app.db.repositories.usage import reset_usage_store
 from app.main import create_app
 from app.plugins.loader import reset_registry
 from app.registry.loader import reset_registry_cache
