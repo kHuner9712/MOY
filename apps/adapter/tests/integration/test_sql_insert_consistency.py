@@ -62,10 +62,14 @@ _INSERT_HEAD: Final[re.Pattern[str]] = re.compile(
 #: 严格形态：与解析器完全同口径（`INSERT` + 任意空白 + `INTO`）。
 _STRICT_MENTION: Final[re.Pattern[str]] = re.compile(r"INSERT\s+INTO", re.IGNORECASE)
 
-#: 宽松形态：容忍短语被"短间隔"切断（换行 / 多空格 / `{}` / `%s` / `{KW}`）。
-#: **只在文本里出现 `VALUES` 时启用**——否则英文散文里的 "insert … into …" 会被误算，
-#: 那是假红的来源；而真正被切断的 INSERT 语句几乎必然带 VALUES。
-_LOOSE_MENTION: Final[re.Pattern[str]] = re.compile(r"INSERT[\s\S]{0,12}?INTO", re.IGNORECASE)
+#: 宽松形态：短语被"任意间隔"切断（换行 / `{}` / `%s` / `{conflict_clause}` / `+` / `join`）。
+#: **只在文本里出现 `VALUES` 时启用**——否则英文散文里的 insert-the-row-into 会被误算。
+#: 不用"间隔长度上限"：`{conflict_clause}` 这种长占位符会把魔数撑爆（12/13 字符悬崖），
+#: 而"两个词都在 + 有 VALUES"本身就是足够强的信号。
+_INSERT_WORD: Final[re.Pattern[str]] = re.compile(r"\bINSERT\b", re.IGNORECASE)
+
+#: 宽松形态的另一半。
+_INTO_WORD: Final[re.Pattern[str]] = re.compile(r"\bINTO\b", re.IGNORECASE)
 
 #: 宽松形态的启用条件（"这段文本像不像 SQL"）。
 _SQL_CONTEXT: Final[re.Pattern[str]] = re.compile(r"\bVALUES\b", re.IGNORECASE)
@@ -86,9 +90,11 @@ def _count_mentions(text: str) -> int:
         int: 提及次数。
     """
     strict = len(_STRICT_MENTION.findall(text))
-    if not _SQL_CONTEXT.search(text):
+    if strict or not _SQL_CONTEXT.search(text):
         return strict
-    return max(strict, len(_LOOSE_MENTION.findall(text)))
+    if _INSERT_WORD.search(text) and _INTO_WORD.search(text):
+        return 1
+    return 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,7 +222,10 @@ def _global_constants() -> tuple[dict[str, str], set[str]]:
     values: dict[str, str] = {}
     ambiguous: set[str] = set()
     for path in sorted(APP_ROOT.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue  # 解析不了的骨架文件由 _scan() 记为不可解析，这里跳过即可
         for name, value in _module_constants(tree).items():
             if name in values and values[name] != value:
                 ambiguous.add(name)
@@ -281,23 +290,31 @@ def _resolve_fstring(node: ast.JoinedStr, local: dict[str, str]) -> str | None:
     return "".join(parts)
 
 
-def _joined_constants(node: ast.AST) -> str:
-    """把节点内全部字符串常量**按出现顺序拼接**（用于数 `INSERT INTO` 提及次数）。
+def _joined_constants(node: ast.AST, local: dict[str, str]) -> str:
+    """把节点内的字符串常量与**常量名引用**按出现顺序拼接（用于数提及次数）。
 
-    必须拼起来再数：`"INSERT" + " INTO t (...)"` 这种把短语拆到两个字面量的写法，
-    逐字面量数会得到 0 提及 → 语句凭空蒸发（漏报）。拼接后数才能把它抓成"不可解析"。
+    必须拼起来再数，否则三种写法都会让语句凭空蒸发（漏报）：
+    - `"INSERT" + " INTO t (...)"`：短语被拆到两个字面量；
+    - `PREFIX + " INTO t (...)"`：关键字在常量里（`PREFIX = "INSERT"`）；
+    - `"".join(["INSERT ", "INTO t (...)"])`：短语在列表元素里。
 
     Args:
         node: 语法树节点。
+        local: 本模块常量（再兜底全仓唯一名）。
 
     Returns:
         str: 拼接后的文本。
     """
-    pieces = sorted(
-        (inner.lineno, inner.col_offset, inner.value)
-        for inner in ast.walk(node)
-        if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
-    )
+    unique, _ = _global_constants()
+    pieces: list[tuple[int, int, str]] = []
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+            pieces.append((inner.lineno, inner.col_offset, inner.value))
+        elif isinstance(inner, ast.Name):
+            resolved = local.get(inner.id, unique.get(inner.id))
+            if resolved is not None:
+                pieces.append((inner.lineno, inner.col_offset, resolved))
+    pieces.sort()
     return "".join(piece for _, _, piece in pieces)
 
 
@@ -345,19 +362,29 @@ def _iter_sql_texts(node: ast.AST, local: dict[str, str], skip: set[int]) -> Any
         return
     if isinstance(node, ast.JoinedStr):
         text = _resolve_fstring(node, local)
-        mentions = _count_mentions(_joined_constants(node))
+        mentions = _count_mentions(_joined_constants(node, local))
         if text is not None:
             mentions = max(mentions, _count_mentions(text))
         yield text, node.lineno, mentions
         return
     if isinstance(node, ast.BinOp):
-        yield None, node.lineno, _count_mentions(_joined_constants(node))
+        yield None, node.lineno, _count_mentions(_joined_constants(node, local))
         return
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         yield node.value, node.lineno, _count_mentions(node.value)
         return
-    for child in ast.iter_child_nodes(node):
-        yield from _iter_sql_texts(child, local, skip)
+    children = [
+        item for child in ast.iter_child_nodes(node) for item in _iter_sql_texts(child, local, skip)
+    ]
+    yield from children
+    if isinstance(node, ast.Call | ast.List | ast.Tuple | ast.Dict | ast.Subscript):
+        # `"".join(["INSERT ", "INTO t (...)"])` 这类"短语跨元素"的写法：子树里每个
+        # 字面量单独看都不含完整的 INSERT，但拼起来是。用"聚合计数的增量"补一条
+        # 不可解析记录——否则语句会从两个入口同时消失。
+        own = _count_mentions(_joined_constants(node, local))
+        seen = sum(item[2] for item in children)
+        if own > seen:
+            yield None, node.lineno, own - seen
 
 
 def _parse_statements(text: str) -> list[tuple[str, list[str], list[str]]]:
@@ -404,10 +431,15 @@ def _scan() -> tuple[tuple[InsertStatement, ...], tuple[tuple[str, int], ...]]:
     unresolved: list[tuple[str, int]] = []
     for path in sorted(APP_ROOT.rglob("*.py")):
         source = path.read_text(encoding="utf-8", errors="ignore")
-        tree = ast.parse(source)
+        relative = str(path.relative_to(APP_ROOT))
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            # 解析不了就没法判定——按"不可解析"计，而不是让整个用例抛异常崩掉
+            unresolved.append((relative, 0))
+            continue
         local = _module_constants(tree)
         skip = _docstring_nodes(tree)
-        relative = str(path.relative_to(APP_ROOT))
         for text, lineno, mentions in _iter_sql_texts(tree, local, skip):
             if not mentions:
                 continue
@@ -566,8 +598,10 @@ def test_scan_scope_and_resolvability() -> None:
     )
     unresolved = unresolved_inserts()
     assert not unresolved, (
-        f"有 {len(unresolved)} 处 INSERT 的形态无法静态解析（表名用局部变量 / `+` 拼接 / "
-        f"`.format()`）：{unresolved}——这些语句不参与判定，结论不成立"
+        f"有 {len(unresolved)} 处 INSERT 的形态无法静态解析"
+        f'（表名用局部变量 / `+` 拼接 / `.format()` / `"".join([...])` / 关键字存在常量里 / '
+        f"文件本身语法错）：{unresolved}——这些语句不参与判定，结论不成立。"
+        f"请改成「表名取模块常量、列清单写在同一个 f-string 里」的形态"
     )
 
 
