@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from app.db.repositories.plugin_repo import CATALOG_AVAILABLE, InMemoryPluginStore
+from app.db.repositories.plugin import CATALOG_AVAILABLE, InMemoryPluginStore
 from app.db.repositories.task import InMemoryTaskStore, TaskRecord
 from app.plugins.loader import PluginRegistry
 

@@ -38,7 +38,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
 from app.core.security import AuthContext
-from app.db.repositories.plugin_repo import (
+from app.db.repositories.plugin import (
     PLATFORM_TENANT,
     STATUS_DISABLED,
     STATUS_ENABLED,

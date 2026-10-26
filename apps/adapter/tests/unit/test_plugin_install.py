@@ -23,7 +23,7 @@ from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
 from app.db.repositories.billing_repo import InMemoryBillingStore, get_billing_store
-from app.db.repositories.plugin_repo import (
+from app.db.repositories.plugin import (
     STATUS_ENABLED,
     InMemoryPluginStore,
 )

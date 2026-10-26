@@ -686,7 +686,7 @@ def _version_record(plugin_id: str, version: str = "1.0.0") -> object:
     Returns:
         object: `VersionRecord`。
     """
-    from app.db.repositories.plugin_repo import VersionRecord
+    from app.db.repositories.plugin import VersionRecord
 
     return VersionRecord(
         plugin_id=plugin_id,
@@ -711,7 +711,7 @@ async def plugin_store(pg_settings: Settings) -> AsyncIterator[object]:
     Yields:
         AsyncIterator[object]: `PostgresPluginStore`。
     """
-    from app.db.repositories.plugin_repo import PostgresPluginStore
+    from app.db.repositories.plugin import PostgresPluginStore
 
     store = PostgresPluginStore(pg_settings)
     try:
@@ -795,7 +795,7 @@ async def test_plugin_catalog_rating_and_install_count(plugin_store: object) -> 
 
 async def test_plugin_installation_lifecycle(plugin_store: object) -> None:
     """安装 → 读回 → 按租户列出 → 再次创建被拒（版本不可覆盖）。"""
-    from app.db.repositories.plugin_repo import InstallationRecord
+    from app.db.repositories.plugin import InstallationRecord
 
     plugin_id = _plugin_id()
     await plugin_store.ensure_versions([_version_record(plugin_id)])  # type: ignore[attr-defined]

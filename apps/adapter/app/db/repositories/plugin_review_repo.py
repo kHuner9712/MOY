@@ -23,7 +23,7 @@ from typing import Any, Final, Protocol
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.db.repositories.base import BaseRepository
-from app.db.repositories.plugin_repo import now_iso
+from app.db.repositories.plugin import now_iso
 from app.db.session import tenant_scope
 
 logger = get_logger(__name__)
@@ -335,7 +335,7 @@ def _to_review(row: Mapping[str, Any]) -> ReviewRecord:
     Returns:
         ReviewRecord: 评价记录。
     """
-    from app.db.repositories.plugin_repo import _timestamp
+    from app.db.repositories.plugin.postgres import _timestamp
 
     return ReviewRecord(
         tenant_id=str(row.get("tenant_id", "")),
