@@ -938,7 +938,7 @@ def _default_directory(settings: Settings) -> UsageDirectory:
         UsageDirectory: 组织信息解析器。
     """
     try:
-        from app.db.repositories.org_repo import get_org_directory
+        from app.db.repositories.org import get_org_directory
 
         directory: UsageDirectory = get_org_directory(settings)
         return directory

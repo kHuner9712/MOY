@@ -60,7 +60,7 @@ from app.db.repositories.knowledge_base_repo import (
     KnowledgeBaseRecord,
     get_knowledge_base_store,
 )
-from app.db.repositories.org_repo import (
+from app.db.repositories.org import (
     DepartmentRecord,
     MemberLink,
     get_org_store,

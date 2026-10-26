@@ -253,7 +253,7 @@ class SubscriptionService:
             int: 已用席位。
         """
         try:
-            from app.db.repositories.org_repo import get_org_store
+            from app.db.repositories.org import get_org_store
 
             members = await get_org_store(self._settings).user_ids(tenant_id)
         except Exception:  # pragma: no cover - 组织域不可用时按 0 处理

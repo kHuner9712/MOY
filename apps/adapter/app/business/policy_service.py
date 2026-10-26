@@ -323,7 +323,7 @@ class PolicyService:
             tuple[str, ...]: 部门 ID 元组；组织域不可用时为空。
         """
         try:
-            from app.db.repositories.org_repo import get_org_store
+            from app.db.repositories.org import get_org_store
 
             links = await get_org_store(self._settings).links_of_user(auth.tenant_id, auth.user_id)
         except Exception:  # pragma: no cover - 组织域不可用时退化为无部门

@@ -33,7 +33,7 @@ from app.db.repositories.knowledge_base_repo import (
     KnowledgeBaseStore,
     get_knowledge_base_store,
 )
-from app.db.repositories.org_repo import (
+from app.db.repositories.org import (
     MemberLink,
     OrgStore,
     get_org_store,

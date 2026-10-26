@@ -199,7 +199,7 @@ def _reset_state(app: FastAPI) -> Any:
     """
     from app.business.kc_projection import reset_outbox_store
     from app.db.repositories.grant_repo import reset_grant_store
-    from app.db.repositories.org_repo import reset_org_store
+    from app.db.repositories.org import reset_org_store
     from app.db.repositories.role_repo import reset_role_store
 
     def _clean() -> None:
@@ -792,7 +792,7 @@ def test_b08_3_delete_department_with_members_returns_14006(
     工程师的 API 用例只覆盖了「有子部门」分支，本用例补「有成员」分支
     （两者走同一个错误码但不同判定路径：`links_of_department`）。
     """
-    from app.db.repositories.org_repo import MemberLink, get_org_store
+    from app.db.repositories.org import MemberLink, get_org_store
 
     dept = _create_dept(client, settings, "QA有成员", tag="qa-del-members")
     dept_id = str(dept["data"]["department_id"])
@@ -1113,7 +1113,7 @@ async def test_b08_7_projection_delivery_failure_never_rolls_back_business(
         KcProjectionService,
         get_outbox_store,
     )
-    from app.db.repositories.org_repo import get_org_store
+    from app.db.repositories.org import get_org_store
 
     created = _create_dept(client, settings, "QA投影部门", tag="qa-proj")
     dept_id = str(created["data"]["department_id"])
@@ -1214,7 +1214,7 @@ def _seed_matrix() -> str:
         str: 受限库 ID。
     """
     from app.db.repositories.grant_repo import GrantRecord, get_grant_store
-    from app.db.repositories.org_repo import MemberLink, get_org_store
+    from app.db.repositories.org import MemberLink, get_org_store
     from app.db.repositories.role_repo import get_role_store
 
     base_id = "kb_qa_w2_restricted"
@@ -1395,7 +1395,7 @@ def test_perm_2_department_id_form_is_consistent(settings: Settings) -> None:
             )
         )
 
-    from app.db.repositories.org_repo import MemberLink, get_org_store
+    from app.db.repositories.org import MemberLink, get_org_store
 
     org = get_org_store()
     for user_id, dept in (("usr_q_p1", "dept_qa_form"), ("usr_q_p2", "dept_qa_form")):

@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from app.business.audit_service import AuditService
 from app.core.config import Settings
-from app.db.repositories.org_repo import get_org_store
+from app.db.repositories.org import get_org_store
 from app.db.repositories.role_repo import PERMISSION_CATALOG_SEED, get_role_store
 from tests.conftest import make_token
 
@@ -456,7 +456,7 @@ def test_u3_filter_by_status_and_department(client: TestClient, settings: Settin
     """U3 支持 `status` / `department_id` 筛选（B08 加性 query）。"""
     import asyncio
 
-    from app.db.repositories.org_repo import MemberLink
+    from app.db.repositories.org import MemberLink
 
     created = _create_dept(client, settings, "研发部", tag="u3-dept")
     department_id = str(created["data"]["department_id"])
@@ -530,7 +530,7 @@ def _reset_org_state(app: FastAPI) -> None:
         app: 应用实例（保证夹具顺序与配置一致）。
     """
     from app.business.kc_projection import reset_outbox_store
-    from app.db.repositories.org_repo import reset_org_store
+    from app.db.repositories.org import reset_org_store
     from app.db.repositories.role_repo import reset_role_store
 
     for reset in (reset_org_store, reset_role_store, reset_outbox_store):
@@ -592,7 +592,7 @@ async def test_postgres_org_role_audit_outbox_smoke(pg_dsn: str) -> None:
     )
     from app.core.config import Settings as Conf
     from app.db.repositories.audit_repo import AuditQuery, query_audit_logs
-    from app.db.repositories.org_repo import (
+    from app.db.repositories.org import (
         DepartmentRecord,
         MemberLink,
         PostgresOrgStore,

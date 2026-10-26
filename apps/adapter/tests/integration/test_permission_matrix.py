@@ -35,7 +35,7 @@ from app.db.repositories.knowledge_base_repo import (
     KnowledgeBaseRecord,
     get_knowledge_base_store,
 )
-from app.db.repositories.org_repo import MemberLink, get_org_store, reset_org_store
+from app.db.repositories.org import MemberLink, get_org_store, reset_org_store
 from app.db.repositories.role_repo import reset_role_store
 from tests.conftest import make_token
 

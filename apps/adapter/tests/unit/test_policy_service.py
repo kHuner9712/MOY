@@ -45,7 +45,7 @@ from app.db.repositories.knowledge_base_repo import (
     InMemoryKnowledgeBaseStore,
     KnowledgeBaseRecord,
 )
-from app.db.repositories.org_repo import MemberLink, get_org_store, reset_org_store
+from app.db.repositories.org import MemberLink, get_org_store, reset_org_store
 from app.db.repositories.role_repo import (
     InMemoryRoleStore,
     builtin_role_id,

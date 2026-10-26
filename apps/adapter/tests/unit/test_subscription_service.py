@@ -30,7 +30,7 @@ from app.db.repositories.billing_repo import (
     PlanRecord,
     default_plans,
 )
-from app.db.repositories.org_repo import DepartmentRecord, MemberLink, get_org_store
+from app.db.repositories.org import DepartmentRecord, MemberLink, get_org_store
 from app.schemas.billing import ChangeSubscriptionRequest
 
 pytestmark = pytest.mark.unit
@@ -45,7 +45,7 @@ def _isolate_org_store() -> Iterator[None]:
     Yields:
         Iterator[None]: 无值。
     """
-    from app.db.repositories.org_repo import reset_org_store
+    from app.db.repositories.org import reset_org_store
 
     reset_org_store()
     yield
