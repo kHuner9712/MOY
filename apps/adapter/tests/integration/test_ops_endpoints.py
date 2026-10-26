@@ -20,11 +20,11 @@ from app.business.subscription_service import SubscriptionService
 from app.business.usage_service import UsageService
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ErrorCode
-from app.db.repositories.billing_repo import (
+from app.db.repositories.billing import (
     PLAN_PROFESSIONAL,
     get_billing_store,
 )
-from app.db.repositories.usage_repo import UsageEventRecord, get_usage_store
+from app.db.repositories.usage import UsageEventRecord, get_usage_store
 from app.main import create_app
 from app.schemas.billing import ChangeSubscriptionRequest
 from tests.conftest import make_token

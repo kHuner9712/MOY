@@ -30,8 +30,8 @@ from jose import jwt
 from app.core import security as security_module
 from app.core.config import Settings
 from app.core.errors import ErrorCode
-from app.db.repositories.org_repo import MemberLink, get_org_store
-from app.db.repositories.role_repo import get_role_store
+from app.db.repositories.org import MemberLink, get_org_store
+from app.db.repositories.role import get_role_store
 from app.main import create_app
 
 pytestmark = [pytest.mark.security, pytest.mark.integration]

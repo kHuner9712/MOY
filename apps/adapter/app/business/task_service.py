@@ -45,7 +45,7 @@ from app.business.task.manifest import _step_spec  # noqa: F401
 from app.business.task.query import _artifact_type  # noqa: F401
 from app.business.task.runner import _summary_text  # noqa: F401
 from app.core.config import Settings
-from app.db.repositories.task_repo import OCCUPYING_STATUSES
+from app.db.repositories.task import OCCUPYING_STATUSES
 from app.plugins.actions import ActionGateway
 
 _service: TaskService | None = None

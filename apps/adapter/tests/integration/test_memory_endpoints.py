@@ -29,7 +29,7 @@ from httpx import ASGITransport, AsyncClient
 from app.business.audit_service import get_audit_recorder
 from app.core.config import Settings
 from app.db.engine import dispose_engine
-from app.db.repositories.memory_repo import (
+from app.db.repositories.memory import (
     MemoryRecord,
     get_memory_store,
     new_memory_id,

@@ -41,7 +41,7 @@ from app.business.usage_service import UsageService
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
-from app.db.repositories.billing_repo import (
+from app.db.repositories.billing import (
     TENANT_SUSPENDED,
     BillingStore,
     OrderRecord,

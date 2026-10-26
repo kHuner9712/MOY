@@ -45,7 +45,7 @@ from app.db.repositories.artifact_repo import (
     now_iso,
     reset_artifact_store,
 )
-from app.db.repositories.task_repo import PostgresTaskStore, TaskRecord
+from app.db.repositories.task import PostgresTaskStore, TaskRecord
 from app.db.session import platform_scope
 from app.main import create_app
 from app.plugins.renderer import DOCX_DOCUMENT_PART, FileRenderer

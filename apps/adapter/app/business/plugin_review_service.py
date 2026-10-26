@@ -23,7 +23,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
-from app.db.repositories.plugin_repo import PluginStore, get_plugin_store
+from app.db.repositories.plugin import PluginStore, get_plugin_store
 from app.db.repositories.plugin_review_repo import (
     ReviewRecord,
     ReviewStore,

@@ -44,12 +44,12 @@ from app.core.metrics import (
     MEMORY_RECALL_DEGRADED_TOTAL,
     MEMORY_RECALL_DURATION_SECONDS,
 )
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     MessageStore,
     get_message_store,
 )
 from app.db.repositories.job_repo import JobRecord, JobStore, get_job_store
-from app.db.repositories.memory_repo import (
+from app.db.repositories.memory import (
     MEMORY_CATEGORIES,
     MemoryRecord,
     MemorySettingRecord,

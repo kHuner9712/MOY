@@ -25,7 +25,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
 from app.db.repositories.grant_repo import InMemoryGrantStore
 from app.db.repositories.knowledge_base_repo import InMemoryKnowledgeBaseStore
-from app.db.repositories.org_repo import InMemoryOrgStore, MemberLink
+from app.db.repositories.org import InMemoryOrgStore, MemberLink
 from app.schemas.identity_ext import CreateDepartmentRequest, UpdateDepartmentRequest
 
 pytestmark = pytest.mark.unit

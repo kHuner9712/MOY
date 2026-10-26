@@ -54,7 +54,7 @@ from app.db.repositories.knowledge_base_repo import (
     get_knowledge_base_store,
     reset_knowledge_base_store,
 )
-from app.db.repositories.usage_repo import (
+from app.db.repositories.usage import (
     current_period,
     get_usage_store,
     reset_usage_store,
@@ -199,8 +199,8 @@ def _reset_state(app: FastAPI) -> Any:
     """
     from app.business.kc_projection import reset_outbox_store
     from app.db.repositories.grant_repo import reset_grant_store
-    from app.db.repositories.org_repo import reset_org_store
-    from app.db.repositories.role_repo import reset_role_store
+    from app.db.repositories.org import reset_org_store
+    from app.db.repositories.role import reset_role_store
 
     def _clean() -> None:
         reset_policy_service()
@@ -275,7 +275,7 @@ def _event(*, capability: str, idem_key: str, user_id: str, units: int) -> Any:
     Returns:
         UsageEventRecord: 事件记录。
     """
-    from app.db.repositories.usage_repo import UsageEventRecord
+    from app.db.repositories.usage import UsageEventRecord
 
     return UsageEventRecord(
         tenant_id=TENANT,
@@ -792,7 +792,7 @@ def test_b08_3_delete_department_with_members_returns_14006(
     工程师的 API 用例只覆盖了「有子部门」分支，本用例补「有成员」分支
     （两者走同一个错误码但不同判定路径：`links_of_department`）。
     """
-    from app.db.repositories.org_repo import MemberLink, get_org_store
+    from app.db.repositories.org import MemberLink, get_org_store
 
     dept = _create_dept(client, settings, "QA有成员", tag="qa-del-members")
     dept_id = str(dept["data"]["department_id"])
@@ -866,7 +866,7 @@ async def _seed_role(role_key: str, user_id: str) -> None:
         role_key: 角色标识。
         user_id: 用户 ID。
     """
-    from app.db.repositories.role_repo import get_role_store
+    from app.db.repositories.role import get_role_store
 
     store = get_role_store()
     await store.ensure_builtin_roles(TENANT, ORG)
@@ -1113,7 +1113,7 @@ async def test_b08_7_projection_delivery_failure_never_rolls_back_business(
         KcProjectionService,
         get_outbox_store,
     )
-    from app.db.repositories.org_repo import get_org_store
+    from app.db.repositories.org import get_org_store
 
     created = _create_dept(client, settings, "QA投影部门", tag="qa-proj")
     dept_id = str(created["data"]["department_id"])
@@ -1214,8 +1214,8 @@ def _seed_matrix() -> str:
         str: 受限库 ID。
     """
     from app.db.repositories.grant_repo import GrantRecord, get_grant_store
-    from app.db.repositories.org_repo import MemberLink, get_org_store
-    from app.db.repositories.role_repo import get_role_store
+    from app.db.repositories.org import MemberLink, get_org_store
+    from app.db.repositories.role import get_role_store
 
     base_id = "kb_qa_w2_restricted"
     asyncio.run(
@@ -1395,7 +1395,7 @@ def test_perm_2_department_id_form_is_consistent(settings: Settings) -> None:
             )
         )
 
-    from app.db.repositories.org_repo import MemberLink, get_org_store
+    from app.db.repositories.org import MemberLink, get_org_store
 
     org = get_org_store()
     for user_id, dept in (("usr_q_p1", "dept_qa_form"), ("usr_q_p2", "dept_qa_form")):
@@ -1621,7 +1621,7 @@ def test_perm_06_cross_tenant_detail_leaks_nothing(settings: Settings) -> None:
 
 async def _seed_role_rows_only() -> None:
     """只播种内置角色行（不分配成员角色），供跨租户用例使用。"""
-    from app.db.repositories.role_repo import get_role_store
+    from app.db.repositories.role import get_role_store
 
     await get_role_store().ensure_builtin_roles(TENANT, ORG)
 

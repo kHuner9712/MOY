@@ -28,7 +28,7 @@ from typing import Any, Final, Literal
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     ConversationStore,
     MessageStore,
     get_conversation_store,

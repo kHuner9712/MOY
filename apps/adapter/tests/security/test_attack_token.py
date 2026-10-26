@@ -28,7 +28,7 @@ from tests.security.conftest import (
     write_headers,
 )
 
-from app.db.repositories.conversation_repo import get_conversation_store, get_message_store
+from app.db.repositories.conversation import get_conversation_store, get_message_store
 
 pytestmark = [pytest.mark.security, pytest.mark.integration]
 

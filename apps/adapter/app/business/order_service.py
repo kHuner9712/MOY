@@ -46,7 +46,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
-from app.db.repositories.billing_repo import (
+from app.db.repositories.billing import (
     INVOICE_ISSUED,
     ORDER_CLOSED,
     ORDER_PAID,

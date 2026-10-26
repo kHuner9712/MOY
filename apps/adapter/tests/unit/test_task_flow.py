@@ -19,7 +19,7 @@ from app.business.task_service import TaskService
 from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
 from app.db.repositories.artifact_repo import InMemoryArtifactStore
-from app.db.repositories.task_repo import InMemoryTaskStore
+from app.db.repositories.task import InMemoryTaskStore
 from app.plugins.engine import TASK_COMPLETED, TASK_QUEUED, TASK_WAITING_CONFIRM
 from app.schemas.agent import CreateTaskRequest
 from app.schemas.task import RetryTaskRequest

@@ -21,7 +21,7 @@ from app.core.artifact_token import make_token
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
 from app.db.repositories.artifact_repo import ArtifactRecord
-from app.db.repositories.task_repo import TaskRecord
+from app.db.repositories.task import TaskRecord
 from app.plugins.engine import STEP_FAILED, TASK_WAITING_CONFIRM
 from app.schemas.agent import (
     Artifact,

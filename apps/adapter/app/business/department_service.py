@@ -32,7 +32,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
-from app.db.repositories.org_repo import (
+from app.db.repositories.org import (
     DEPARTMENT_ID_PREFIX,
     MAX_DEPARTMENT_LEVEL,
     DepartmentRecord,

@@ -25,12 +25,12 @@ import pytest
 
 from app.business.memory_service import MemoryService
 from app.core.config import Settings
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     InMemoryMessageStore,
     MessageRecord,
 )
 from app.db.repositories.job_repo import InMemoryJobStore, get_job_store
-from app.db.repositories.memory_repo import (
+from app.db.repositories.memory import (
     InMemoryMemoryStore,
     MemorySettingRecord,
 )

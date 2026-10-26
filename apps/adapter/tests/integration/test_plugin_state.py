@@ -16,8 +16,8 @@ from app.business.subscription_service import SubscriptionService
 from app.core.config import Settings
 from app.core.errors import ErrorCode
 from app.core.security import AuthContext
-from app.db.repositories.billing_repo import get_billing_store
-from app.db.repositories.plugin_repo import get_plugin_store
+from app.db.repositories.billing import get_billing_store
+from app.db.repositories.plugin import get_plugin_store
 from app.plugins.actions import ORG_CAPABILITIES
 from app.plugins.loader import get_registry
 from app.schemas.billing import ChangeSubscriptionRequest

@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from app.core.config import Settings, reset_settings_cache
-from app.db.repositories.plugin_repo import (
+from app.db.repositories.plugin import (
     STATUS_ENABLED,
     CatalogRecord,
     InMemoryPluginStore,

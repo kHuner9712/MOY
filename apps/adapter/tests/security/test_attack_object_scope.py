@@ -21,18 +21,18 @@ import pytest
 from tests.security.conftest import USER_B, issue_token, write_headers
 
 from app.core.config import get_settings
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     ConversationRecord,
     MessageRecord,
     get_conversation_store,
     get_message_store,
     new_message_id,
 )
-from app.db.repositories.memory_repo import (
+from app.db.repositories.memory import (
     MemoryRecord,
     get_memory_store,
 )
-from app.db.repositories.task_repo import (
+from app.db.repositories.task import (
     InMemoryTaskStore,
     TaskRecord,
     get_task_store,

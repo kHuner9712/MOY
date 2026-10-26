@@ -21,7 +21,7 @@ from app.business.usage_service import (
     reset_usage_service,
 )
 from app.core.config import Settings
-from app.db.repositories.usage_repo import (
+from app.db.repositories.usage import (
     CAPABILITY_CHAT,
     CAPABILITY_DOC_PROCESS,
     SCOPE_MEMBER,
@@ -301,7 +301,7 @@ async def _seed_subscription(*, seats: int = 5) -> int:
         int: 套餐额度总量。
     """
     from app.business.subscription_service import SubscriptionService
-    from app.db.repositories.billing_repo import get_billing_store
+    from app.db.repositories.billing import get_billing_store
     from app.schemas.billing import ChangeSubscriptionRequest
 
     conf = _settings()

@@ -21,12 +21,12 @@ from app.business.subscription_service import SubscriptionService
 from app.business.usage_service import UsageService
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ApiError, ErrorCode
-from app.db.repositories.billing_repo import (
+from app.db.repositories.billing import (
     PLAN_PROFESSIONAL,
     InMemoryBillingStore,
 )
 from app.db.repositories.ops_repo import InMemoryOpsStore
-from app.db.repositories.usage_repo import UsageEventRecord, get_usage_store
+from app.db.repositories.usage import UsageEventRecord, get_usage_store
 from app.schemas.billing import ChangeSubscriptionRequest, CreateOrderRequest
 from app.schemas.ops import (
     ConfirmOrderRequest,

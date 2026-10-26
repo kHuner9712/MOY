@@ -26,7 +26,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
 from app.db.repositories.grant_repo import InMemoryGrantStore
 from app.db.repositories.knowledge_base_repo import InMemoryKnowledgeBaseStore
-from app.db.repositories.org_repo import (
+from app.db.repositories.org import (
     MAX_DEPARTMENT_LEVEL,
     DepartmentRecord,
     InMemoryOrgStore,

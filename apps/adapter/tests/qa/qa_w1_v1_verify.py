@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings, reset_settings_cache
-from app.db.repositories.task_repo import (
+from app.db.repositories.task import (
     InMemoryTaskStore,
     TaskRecord,
     get_task_store,

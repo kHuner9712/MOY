@@ -24,7 +24,7 @@ from typing import Final
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
-from app.db.repositories.plugin_repo import PluginStore, get_plugin_store
+from app.db.repositories.plugin import PluginStore, get_plugin_store
 
 logger = get_logger(__name__)
 

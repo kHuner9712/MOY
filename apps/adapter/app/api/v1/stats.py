@@ -42,7 +42,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from app.core.config import get_request_settings
 from app.core.logging import get_logger
 from app.core.security import RequestContext, get_request_context
-from app.db.repositories.task_repo import TaskStats, get_task_store
+from app.db.repositories.task import TaskStats, get_task_store
 from app.schemas.common import ApiResponse
 from app.schemas.stats import TaskStatsData
 

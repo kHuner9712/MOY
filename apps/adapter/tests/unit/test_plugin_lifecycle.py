@@ -28,10 +28,10 @@ from app.business.subscription_service import SubscriptionService
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
-from app.db.repositories.billing_repo import get_billing_store
-from app.db.repositories.plugin_repo import STATUS_DISABLED, STATUS_ENABLED, InMemoryPluginStore
+from app.db.repositories.billing import get_billing_store
+from app.db.repositories.plugin import STATUS_DISABLED, STATUS_ENABLED, InMemoryPluginStore
 from app.db.repositories.plugin_review_repo import InMemoryReviewStore
-from app.db.repositories.task_repo import InMemoryTaskStore, TaskRecord
+from app.db.repositories.task import InMemoryTaskStore, TaskRecord
 from app.plugins.actions import ORG_CAPABILITIES
 from app.plugins.loader import PluginRegistry
 from app.schemas.billing import ChangeSubscriptionRequest

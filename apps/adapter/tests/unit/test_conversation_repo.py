@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     MAX_TITLE_LENGTH,
     ConversationRecord,
     InMemoryConversationStore,

@@ -21,7 +21,7 @@ from app.business.plugin_service import PluginService
 from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
-from app.db.repositories.plugin_repo import InMemoryPluginStore
+from app.db.repositories.plugin import InMemoryPluginStore
 from app.plugins.engine import TASK_CANCELLED
 from app.plugins.loader import PluginRegistry, default_manifests_dir
 from app.schemas.agent import CreateTaskRequest, ListTasksQuery, TaskStatus

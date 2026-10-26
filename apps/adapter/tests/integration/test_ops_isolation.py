@@ -23,8 +23,8 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ErrorCode
-from app.db.repositories.billing_repo import get_billing_store
-from app.db.repositories.usage_repo import UsageEventRecord, get_usage_store
+from app.db.repositories.billing import get_billing_store
+from app.db.repositories.usage import UsageEventRecord, get_usage_store
 from app.main import create_app
 from tests.conftest import make_token
 

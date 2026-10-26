@@ -31,8 +31,8 @@ from app.db.repositories.knowledge_base_repo import (
     InMemoryKnowledgeBaseStore,
     KnowledgeBaseRecord,
 )
-from app.db.repositories.org_repo import DepartmentRecord, InMemoryOrgStore, MemberLink
-from app.db.repositories.role_repo import InMemoryRoleStore
+from app.db.repositories.org import DepartmentRecord, InMemoryOrgStore, MemberLink
+from app.db.repositories.role import InMemoryRoleStore
 from app.schemas.identity import ListMembersQuery
 from app.schemas.identity_ext import (
     BatchMemberAction,

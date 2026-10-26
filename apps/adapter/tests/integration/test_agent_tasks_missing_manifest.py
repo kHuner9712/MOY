@@ -24,7 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
-from app.db.repositories.task_repo import (
+from app.db.repositories.task import (
     InMemoryTaskStore,
     TaskRecord,
     get_task_store,

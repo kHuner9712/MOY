@@ -35,8 +35,8 @@ from app.db.repositories.knowledge_base_repo import (
     KnowledgeBaseRecord,
     get_knowledge_base_store,
 )
-from app.db.repositories.org_repo import MemberLink, get_org_store, reset_org_store
-from app.db.repositories.role_repo import reset_role_store
+from app.db.repositories.org import MemberLink, get_org_store, reset_org_store
+from app.db.repositories.role import reset_role_store
 from tests.conftest import make_token
 
 # P0 红线用例（G-24，测试方案 §7.1）：P2-KB-03 / P0 判据③ —— 无权限账号通过详情/检索入口拿到数据
@@ -145,7 +145,7 @@ async def seed_matrix() -> SeedState:
     Returns:
         SeedState: 造数结果。
     """
-    from app.db.repositories.role_repo import get_role_store
+    from app.db.repositories.role import get_role_store
 
     bases = get_knowledge_base_store()
     await bases.create(

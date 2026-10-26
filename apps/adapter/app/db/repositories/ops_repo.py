@@ -27,7 +27,7 @@ from typing import Any, Final, Protocol
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.db.repositories.base import BaseRepository
-from app.db.repositories.billing_repo import (
+from app.db.repositories.billing import (
     PLATFORM_TENANT,
     BillingStore,
     OrderRecord,

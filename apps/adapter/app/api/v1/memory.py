@@ -26,7 +26,7 @@ from app.business.memory_service import MemoryService, get_memory_service
 from app.core.errors import ApiError, ErrorCode, error_response
 from app.core.idempotency import IdempotencyManager, get_idempotency_manager
 from app.core.security import RequestContext, get_request_context, run_idempotent
-from app.db.repositories.memory_repo import MEMORY_CATEGORIES, MemoryRecord
+from app.db.repositories.memory import MEMORY_CATEGORIES, MemoryRecord
 from app.schemas.common import ApiResponse, PageMeta
 from app.schemas.memory import (
     DEFAULT_MEMORY_PAGE_SIZE,

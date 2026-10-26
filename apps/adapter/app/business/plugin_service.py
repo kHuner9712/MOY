@@ -38,7 +38,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
 from app.core.security import AuthContext
-from app.db.repositories.plugin_repo import (
+from app.db.repositories.plugin import (
     PLATFORM_TENANT,
     STATUS_DISABLED,
     STATUS_ENABLED,
@@ -51,7 +51,7 @@ from app.db.repositories.plugin_repo import (
     now_iso,
     version_records_from_registry,
 )
-from app.db.repositories.task_repo import TaskStore, get_task_store
+from app.db.repositories.task import TaskStore, get_task_store
 from app.plugins.actions import (
     CAPABILITY_CATALOG,
     CAPABILITY_KEYS,

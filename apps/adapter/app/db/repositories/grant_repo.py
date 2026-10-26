@@ -106,7 +106,7 @@ def normalize_department_subject(subject_id: str) -> str:
     Returns:
         str: 规范形态；入参无法识别时原样返回。
     """
-    from app.db.repositories.org_repo import DEPARTMENT_ID_PREFIX, normalize_department_id
+    from app.db.repositories.org import DEPARTMENT_ID_PREFIX, normalize_department_id
 
     value = str(subject_id or "").strip()
     if not value or value.startswith(DEPARTMENT_ID_PREFIX):

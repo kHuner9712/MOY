@@ -48,22 +48,22 @@ from app.core.idempotency import (
 from app.core.logging import configure_logging, reset_logging_for_test
 from app.core.metrics import reset_counters
 from app.core.ratelimit import RateLimiter, reset_rate_limiter
-from app.db.repositories.billing_repo import reset_billing_store
-from app.db.repositories.conversation_repo import reset_conversation_stores
+from app.db.repositories.billing import reset_billing_store
+from app.db.repositories.conversation import reset_conversation_stores
 from app.db.repositories.credential_repo import reset_credential_stores
 from app.db.repositories.document_repo import reset_document_store
 from app.db.repositories.grant_repo import reset_grant_store
 from app.db.repositories.job_repo import reset_job_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
-from app.db.repositories.memory_repo import reset_memory_store
+from app.db.repositories.memory import reset_memory_store
 from app.db.repositories.ops_repo import reset_ops_store
-from app.db.repositories.org_repo import reset_org_store
-from app.db.repositories.plugin_repo import reset_plugin_store
+from app.db.repositories.org import reset_org_store
+from app.db.repositories.plugin import reset_plugin_store
 from app.db.repositories.plugin_review_repo import reset_review_store
-from app.db.repositories.role_repo import reset_role_store
+from app.db.repositories.role import reset_role_store
 from app.db.repositories.segment_repo import reset_segment_store
 from app.db.repositories.tool_repo import reset_tool_store
-from app.db.repositories.usage_repo import reset_usage_store
+from app.db.repositories.usage import reset_usage_store
 from app.main import create_app
 from app.plugins.loader import reset_registry
 from app.registry.loader import reset_registry_cache

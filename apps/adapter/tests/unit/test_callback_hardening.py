@@ -41,7 +41,7 @@ from app.business.payment_gateway import (
 from app.business.plan_service import PlanService
 from app.core.config import Settings, reset_settings_cache
 from app.core.errors import ApiError, ErrorCode
-from app.db.repositories.billing_repo import (
+from app.db.repositories.billing import (
     ORDER_PENDING,
     PLAN_PROFESSIONAL,
     InMemoryBillingStore,

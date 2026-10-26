@@ -19,7 +19,7 @@ from typing import Any
 
 from app.business.task.deps import TaskDeps
 from app.core.errors import ApiError, ErrorCode
-from app.db.repositories.task_repo import TaskRecord
+from app.db.repositories.task import TaskRecord
 from app.plugins.schema import PluginManifest
 
 

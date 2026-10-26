@@ -24,7 +24,7 @@ from app.business.conversation_service import ConversationService, get_conversat
 from app.core.errors import ApiError, ErrorCode, error_response
 from app.core.idempotency import IdempotencyManager, get_idempotency_manager
 from app.core.security import RequestContext, get_request_context, run_idempotent
-from app.db.repositories.conversation_repo import (
+from app.db.repositories.conversation import (
     ConversationRecord,
     ConversationStore,
     MessageStore,
