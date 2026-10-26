@@ -115,11 +115,13 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 import sys
 import tempfile
 import textwrap
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
@@ -131,6 +133,9 @@ from typing import Final
 DEFAULT_REPOSITORIES_ROOT: Final[Path] = (
     Path(__file__).resolve().parent.parent / "apps" / "adapter" / "app" / "db" / "repositories"
 )
+
+#: DDL 根目录（`deploy/`，R7 从这里取表结构与默认值）。
+DEFAULT_DEPLOY_ROOT: Final[Path] = Path(__file__).resolve().parent
 
 #: 默认基线文件。
 DEFAULT_BASELINE: Final[Path] = Path(__file__).resolve().parent / "repository_parity_baseline.txt"
@@ -181,8 +186,43 @@ R6_EXEMPTIONS: Final[dict[tuple[str, str, str], tuple[str, str]]] = {
     ),
 }
 
-#: R6 只看 PG 侧的映射器（内存侧直接构造，由 R4 的形状比对覆盖）。
-R6_MAPPER_PREFIX: Final[str] = "_to_"
+#: R6 配对按**返回注解**而不是函数名前缀：`memory._to_setting → MemorySettingRecord`
+#: 就是反例（名字带 `_to_` 也可能返回别的 record，名字不带也可能返回 record）。
+
+#: R7：`record → 表` 的配对容差。一个 record 允许有少量字段**不是表列**
+#: （派生值 / 预留字段 / 展示用冗余），但超过这个比例就说明配对错了
+#: （例如 `PlanRecord` 与 `billing_order` 只重叠 4 列，属误配）。
+R7_TABLE_TOLERANCE: Final[float] = 0.3
+
+#: R7：`record` 与表的列名重叠下限（低于它不认为配上了）。
+R7_MIN_OVERLAP: Final[int] = 3
+
+#: R7：DDL 来源（缺任一来源都会把"后补列"误判成不存在）。
+R7_DDL_GLOBS: Final[tuple[str, ...]] = ("*.sql", "migrations/*.sql")
+
+#: R7：**语义**注记（不是缺失豁免，因为该列已被 DDL 默认值覆盖）。
+#: 打印成 INFO，让"两个后端取值来源不同"这类差异在门禁输出里可见、可追溯。
+R7_NOTES: Final[dict[tuple[str, str, str], str]] = {
+    ("usage", "UsageEventRecord", "occurred_at"): (
+        "PG 侧由 DDL `DEFAULT now()` 生成（库时钟），内存侧沿用调用方传入值——"
+        "语义差异而非丢字段，故不补列；出现读回路径时须复核（届时两侧取值会直接可比）"
+    ),
+}
+
+#: DDL 里不算列定义的行首关键字。
+DDL_NON_COLUMN_KEYWORDS: Final[frozenset[str]] = frozenset(
+    {
+        "PRIMARY",
+        "UNIQUE",
+        "CONSTRAINT",
+        "CHECK",
+        "FOREIGN",
+        "REFERENCES",
+        "KEY",
+        "LIKE",
+        "EXCLUDE",
+    }
+)
 
 
 # ===========================================================================
@@ -330,6 +370,47 @@ class MapperFinding:
 
 
 @dataclass(frozen=True, slots=True)
+class DdlTable:
+    """一张表的 DDL 形状。
+
+    Attributes:
+        columns: 表里全部列名。
+        omittable: INSERT 可以不写的列——**有 `DEFAULT` 或允许 NULL** 的列。
+    """
+
+    columns: frozenset[str]
+    omittable: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class WriteFinding:
+    """R7 的一条发现：某 record 的字段在写侧完全没有落点。
+
+    Attributes:
+        unit: 单元名。
+        record: record 类名。
+        table: 该 record 对应的表名。
+        field: 既没被任何 INSERT 写入、也不在 DDL 可省略列里的字段。
+        detail: 人类可读说明。
+    """
+
+    unit: str
+    record: str
+    table: str
+    field: str
+    detail: str
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        """返回唯一键。
+
+        Returns:
+            tuple[str, str, str]: `(unit, record, field)`。
+        """
+        return (self.unit, self.record, self.field)
+
+
+@dataclass(frozen=True, slots=True)
 class BaselineEntry:
     """基线条目。
 
@@ -368,6 +449,8 @@ class ScanResult:
         infos: 只提示不判红的说明（R5 / 映射器跳过 / 单侧无构造点）。
         problems: 结构性问题（出现任一即 exit 2）。
         r6: R6 的映射器字段覆盖发现（默认 WARN-only，`--strict-r6` 才计入退出码）。
+        r7: R7 的写侧字段覆盖发现（默认 WARN-only，`--strict-r7` 才计入退出码）。
+        r7_info: R7 的说明行（非表列字段、找不到对应表的 record、语义注记）。
     """
 
     units: list[Unit]
@@ -375,6 +458,8 @@ class ScanResult:
     infos: list[str]
     problems: list[str]
     r6: list[MapperFinding] = field(default_factory=list)
+    r7: list[WriteFinding] = field(default_factory=list)
+    r7_info: list[str] = field(default_factory=list)
 
 
 # ===========================================================================
@@ -1218,15 +1303,339 @@ def _check_mapper_coverage(
     return findings
 
 
-def scan(repositories_root: Path) -> ScanResult:
+def _merge_ddl_lines(body: str) -> list[str]:
+    """把建表体按"列定义"聚合（续行并入上一条）。
+
+    `CHECK (...)` 常写在下一行，按行取会把续行当成新列；这里只在行首是
+    「标识符 + 空白 + 非空白」且不是关键字时才开新条目。
+
+    Args:
+        body: `CREATE TABLE (...)` 括号内的文本。
+
+    Returns:
+        list[str]: 每条列定义（含其续行）。
+    """
+    merged: list[str] = []
+    for line in body.splitlines():
+        head = re.match(r"\s*([a-z_][a-z0-9_]*)\s+\S", line)
+        if head is not None and head.group(1).upper() not in DDL_NON_COLUMN_KEYWORDS:
+            merged.append(line)
+        elif merged:
+            merged[-1] = f"{merged[-1]} {line.strip()}"
+    return merged
+
+
+def _is_omittable(definition: str, rest: str = "") -> bool:
+    """该列是否可以不写进 INSERT（有 DEFAULT 或允许 NULL）。
+
+    Args:
+        definition: 列定义全文。
+        rest: `ALTER TABLE` 里列名之后的剩余文本（与 definition 合并判断）。
+
+    Returns:
+        bool: 可省略返回 True。
+    """
+    text = f"{definition} {rest}".upper()
+    return "DEFAULT" in text or "NOT NULL" not in text
+
+
+def load_ddl_tables(deploy_root: Path) -> dict[str, DdlTable]:
+    """解析 `deploy` 下全部 DDL，得到「表 → (列集合, 可省略列集合)」。
+
+    必须同时读 `CREATE TABLE` 与 `ALTER TABLE … ADD COLUMN`：本项目"后补列"是常态
+    （`usage_event` 的 profile / provider / prompt_tokens / completion_tokens 四列
+    就只出现在 `init-schema-phase3.sql` 与 `migrations/0007`），只解析建表语句会把
+    它们判成"不存在"——系统性假红。
+
+    Args:
+        deploy_root: `deploy` 目录。
+
+    Returns:
+        dict[str, DdlTable]: 表名 → DDL 形状。
+    """
+    tables: dict[str, tuple[set[str], set[str]]] = {}
+    for pattern in R7_DDL_GLOBS:
+        for path in sorted(deploy_root.glob(pattern)):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for match in re.finditer(
+                r"CREATE TABLE(?:\s+IF NOT EXISTS)?\s+([a-z_][\w.]*)\s*\((.*?)\n\s*\)\s*;",
+                text,
+                re.DOTALL,
+            ):
+                table = match.group(1).split(".")[-1]
+                columns, omittable = tables.setdefault(table, (set(), set()))
+                for definition in _merge_ddl_lines(match.group(2)):
+                    name_match = re.match(r"\s*([a-z_][a-z0-9_]*)", definition)
+                    if name_match is None:
+                        continue
+                    columns.add(name_match.group(1))
+                    if _is_omittable(definition):
+                        omittable.add(name_match.group(1))
+            for match in re.finditer(
+                r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-z_][\w.]*)"
+                r"\s+ADD\s+COLUMN(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z_][a-z0-9_]*)\s*([^;]*);",
+                text,
+                re.DOTALL | re.IGNORECASE,
+            ):
+                table = match.group(1).split(".")[-1]
+                column, rest = match.group(2), match.group(3)
+                columns, omittable = tables.setdefault(table, (set(), set()))
+                columns.add(column)
+                if _is_omittable(rest):
+                    omittable.add(column)
+    return {
+        table: DdlTable(columns=frozenset(columns), omittable=frozenset(omittable))
+        for table, (columns, omittable) in tables.items()
+    }
+
+
+def _module_constants(module: ast.Module) -> dict[str, str]:
+    """收集模块级字符串常量（表名都写在这里，如 `USAGE_EVENT_TABLE = "usage_event"`）。
+
+    Args:
+        module: 语法树。
+
+    Returns:
+        dict[str, str]: 常量名 → 字符串值。
+    """
+    constants: dict[str, str] = {}
+    for node in module.body:
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            constants[node.target.id] = node.value.value
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            constants[node.targets[0].id] = node.value.value
+    return constants
+
+
+def _sql_text(node: ast.expr, constants: dict[str, str]) -> str | None:
+    """把 SQL 字面量还原成文本（f-string 里的表名常量替换成真实表名）。
+
+    Args:
+        node: 表达式节点。
+        constants: 模块级字符串常量。
+
+    Returns:
+        str | None: SQL 文本；不是字符串字面量时返回 None。
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if not isinstance(node, ast.JoinedStr):
+        return None
+    parts: list[str] = []
+    for value in node.values:
+        if isinstance(value, ast.Constant):
+            parts.append(str(value.value))
+        elif isinstance(value, ast.FormattedValue) and isinstance(value.value, ast.Name):
+            resolved = constants.get(value.value.id)
+            if resolved is None:
+                # 表名解析不出来要比"猜一个"安全：整条语句不参与判定，并在 INFO 里报出。
+                return None
+            parts.append(resolved)
+        else:
+            return None
+    return "".join(parts)
+
+
+def _insert_targets(
+    modules: dict[Path, ast.Module],
+    files: tuple[Path, ...],
+) -> dict[str, set[str]]:
+    """收集某侧文件里所有 `INSERT INTO <表> (...) VALUES` 的「表 → 列并集」。
+
+    **必须走 AST 而不是正则扫源码**：表名是 f-string 常量（`{USAGE_EVENT_TABLE}`），
+    文本匹配 `INSERT INTO usage_event` 会 0 命中——这条坑在 2C-4 已经踩过一次。
+
+    Args:
+        modules: 文件 → 语法树。
+        files: 只扫这些文件（PG 侧）。
+
+    Returns:
+        dict[str, set[str]]: 表名 → 出现过的列名并集。
+    """
+    targets: dict[str, set[str]] = {}
+    wanted = set(files)
+    for path, module in modules.items():
+        if path not in wanted:
+            continue
+        constants = _module_constants(module)
+        for node in ast.walk(module):
+            if not isinstance(node, ast.Constant | ast.JoinedStr):
+                continue
+            text = _sql_text(node, constants)
+            if text is None or "INSERT INTO" not in text:
+                continue
+            for match in re.finditer(
+                r"INSERT\s+INTO\s+([a-z_][\w.]*)\s*\(([^)]*)\)\s*VALUES",
+                text,
+                re.DOTALL | re.IGNORECASE,
+            ):
+                table = match.group(1).split(".")[-1]
+                columns = {item.strip() for item in match.group(2).split(",") if item.strip()}
+                targets.setdefault(table, set()).update(columns)
+    return targets
+
+
+def _candidate_tables(
+    record_fields: frozenset[str],
+    candidates: dict[str, set[str]],
+    ddl: dict[str, DdlTable],
+) -> list[tuple[int, str]]:
+    """列出该 record 的可能对应表（已按重叠列数降序）。
+
+    容差的作用：`PlanRecord` 与 `billing_order` 只重叠 4 列、有 9 个字段不是该表的列，
+    这种"沾边"必须排除，否则会拿错误的表去判覆盖。
+
+    Args:
+        record_fields: record 的字段集合。
+        candidates: 本单元 PG 侧出现过的「表 → INSERT 列并集」。
+        ddl: 表 → DDL 形状。
+
+    Returns:
+        list[tuple[int, str]]: `(重叠列数, 表名)`，按重叠降序。
+    """
+    scored: list[tuple[int, str]] = []
+    for table in candidates:
+        shape = ddl.get(table)
+        if shape is None:
+            continue
+        non_column = len(record_fields - shape.columns)
+        if non_column > R7_TABLE_TOLERANCE * len(record_fields):
+            continue
+        # 亲和度按**表列**算，不按 INSERT 列算：某张表只被写了 2 列时，
+        # 按 INSERT 列算会得出"重叠 2 < 下限"→ 整张表被跳过，缺口永远看不见。
+        overlap = len(record_fields & shape.columns)
+        if overlap >= R7_MIN_OVERLAP:
+            scored.append((overlap, table))
+    scored.sort(reverse=True)
+    return scored
+
+
+def _check_write_coverage(
+    unit: Unit,
+    classes: dict[str, ClassInfo],
+    modules: dict[Path, ast.Module],
+    ddl: dict[str, DdlTable],
+) -> tuple[list[WriteFinding], list[str]]:
+    """R7：写侧 INSERT 必须覆盖 record 的全部**表列**字段。
+
+    判据（三层）：
+
+    1. `record → 表` 按列名重叠最佳匹配（唯一、重叠 ≥ 3、非表列占比 ≤ 容差）；
+    2. `covered` = 该表全部 INSERT 语句的列并集（同表多条 INSERT 取并集：
+       `usage_event` 就有"全列"与"降级 12 列"两条静态 SQL）；
+    3. `missing = (字段 ∩ 表列) - covered - DDL 可省略列`。
+
+    三条关键口径（都踩过）：
+
+    - **只比表列**：`queue_position` / `history` / `uploader_name` / `member_count`
+      这类字段本来就不是表列（派生值 / 预留 / 展示冗余），拿它们判红就是系统性假红；
+    - **可省略列白名单来自 DDL**（有 `DEFAULT` 或允许 NULL）：`occurred_at` 由
+      `DEFAULT now()` 生成，不能要求 INSERT 写它；
+    - **并集口径的固有盲区**：抓不到"某条分支少写字段"（fallback 路径正是设计如此），
+      它只负责"字段级完全失联"。
+
+    Args:
+        unit: 仓储单元。
+        classes: 单元内全部类。
+        modules: 文件 → 语法树。
+        ddl: 表 → DDL 形状。
+
+    Returns:
+        tuple[list[WriteFinding], list[str]]: `(缺失发现, INFO 说明)`。
+    """
+    record_fields = {
+        name: frozenset(names)
+        for name, names in _dataclass_field_names(modules).items()
+        if name in classes and classes[name].is_dataclass
+    }
+    if not record_fields or not ddl:
+        return [], []
+    targets = _insert_targets(modules, unit.postgres_files)
+    if not targets:
+        return [], []
+
+    findings: list[WriteFinding] = []
+    infos: list[str] = []
+    loose: list[str] = []
+    ambiguous: list[str] = []
+    reported: set[tuple[str, str]] = set()
+    for record, fields in sorted(record_fields.items()):
+        scored = _candidate_tables(fields, targets, ddl)
+        if not scored:
+            # 不是行式 record（store / stats / patch / 无写路径的纯读 record）：
+            # 静默跳过。只有"本该配上但配不唯一"才值得说一句，否则是纯噪声。
+            continue
+        if len(scored) > 1 and scored[0][0] == scored[1][0]:
+            ambiguous.append(f"{record}（{scored[0][1]} / {scored[1][1]} 并列）")
+            continue
+        table = scored[0][1]
+        shape = ddl[table]
+        covered = targets[table] & fields
+        non_column = sorted(fields - shape.columns)
+        if non_column:
+            loose.append(f"{record}: {', '.join(non_column)}")
+        for column in sorted((fields & shape.columns) - covered - shape.omittable):
+            reported.add((record, column))
+            note = R7_NOTES.get((unit.name, record, column))
+            findings.append(
+                WriteFinding(
+                    unit=unit.name,
+                    record=record,
+                    table=table,
+                    field=column,
+                    detail=(
+                        f"`{record}.{column}` 是 `{table}` 的必填列（无 DEFAULT、非 NULL），"
+                        f"但本单元没有任何 INSERT 写它"
+                        + (f"；注：{note}" if note else "")
+                    ),
+                )
+            )
+    if ambiguous:
+        infos.append(f"R7 {unit.name}：对应表不唯一的 record（跳过）：{'；'.join(ambiguous)}")
+    for (note_unit, note_record, note_field), note in sorted(R7_NOTES.items()):
+        if note_unit == unit.name and (note_record, note_field) not in reported:
+            infos.append(f"R7 语义注记 {note_unit} `{note_record}.{note_field}`：{note}")
+    if loose:
+        infos.append(
+            f"R7 {unit.name}：非表列字段（派生/预留/展示冗余，不判红）：{'；'.join(loose)}"
+        )
+    return findings, infos
+
+
+@lru_cache(maxsize=1)
+def default_ddl_tables() -> dict[str, DdlTable]:
+    """加载仓库自带的 DDL（`deploy/*.sql` + `deploy/migrations/*.sql`）。
+
+    只加载一次：`scan()` 在自检里会被调用二十多次，重复读 16 个 SQL 文件纯属浪费。
+
+    Returns:
+        dict[str, DdlTable]: 表名 → DDL 形状。
+    """
+    return load_ddl_tables(DEFAULT_DEPLOY_ROOT)
+
+
+def scan(repositories_root: Path, *, ddl: dict[str, DdlTable] | None = None) -> ScanResult:
     """扫描仓储目录，产出全部判定结果。
 
     Args:
         repositories_root: 仓储目录。
+        ddl: 表 → DDL 形状（默认读仓库自带的 `deploy/**/*.sql`；自检可注入假 DDL）。
 
     Returns:
         ScanResult: 扫描结果。
     """
+    tables = default_ddl_tables() if ddl is None else ddl
     result = ScanResult(units=[], violations=[], infos=[], problems=[])
     units, problems = discover_units(repositories_root)
     result.units = units
@@ -1250,6 +1659,10 @@ def scan(repositories_root: Path) -> ScanResult:
         # 放在 `if triples:` 内会让**无协议单元**（`audit`）的映射器永远不被检查——
         # 那是一处"看着有判据、实际不执行"的假覆盖，2026-10-26 独立复核抓到的。
         result.r6.extend(_check_mapper_coverage(unit, classes, modules))
+        # R7 同理：只依赖「INSERT 语句」与「record 字段集」，与协议三元组无关。
+        write_findings, write_notes = _check_write_coverage(unit, classes, modules, tables)
+        result.r7.extend(write_findings)
+        result.r7_info.extend(write_notes)
     result.violations.sort(key=lambda item: item.key())
     return result
 
@@ -1392,6 +1805,8 @@ def run(
     min_units: int,
     show_units: bool = False,
     strict_r6: bool = False,
+    strict_r7: bool = False,
+    ddl: dict[str, DdlTable] | None = None,
 ) -> int:
     """执行一次完整门禁。
 
@@ -1401,6 +1816,8 @@ def run(
         min_units: 可判定单元数下限。
         show_units: 是否打印单元明细。
         strict_r6: 是否把 R6 的 WARN 计入退出码（默认关闭，WARN-only）。
+        strict_r7: 是否把 R7 的 WARN 计入退出码（默认关闭，WARN-only）。
+        ddl: 表 → DDL 形状（默认读仓库自带 SQL；自检可注入）。
 
     Returns:
         int: 退出码（0 / 1 / 2）。
@@ -1412,7 +1829,7 @@ def run(
         print(f"[FAIL] 仓储路径不是目录：{repositories_root}（fail-closed）")
         return 2
 
-    result = scan(repositories_root)
+    result = scan(repositories_root, ddl=ddl)
     if result.problems:
         for problem in result.problems:
             print(f"[FAIL] {problem}")
@@ -1436,6 +1853,18 @@ def run(
         print(
             f"[WARN] {finding.describe()} -- 映射器未写该字段，"
             f"读回时恒为 record 默认值（R6 只报不判红；要判红请用 --strict-r6）"
+        )
+
+    # R7：写侧 INSERT 字段覆盖（默认 WARN-only；只有 --strict-r7 才计入退出码）。
+    for info in result.r7_info:
+        print(f"[INFO] {info}")
+    r7_warn = 0
+    for finding in result.r7:
+        r7_warn += 1
+        print(
+            f"[WARN] R7 {finding.unit} `{finding.record}.{finding.field}`"
+            f"（表 `{finding.table}`） -- {finding.detail}"
+            f"（R7 只报不判红；要判红请用 --strict-r7）"
         )
 
     if len(result.units) < min_units:
@@ -1490,11 +1919,13 @@ def run(
     code = 0 if fail == 0 and stale == 0 else 1
     if strict_r6 and r6_warn:
         code = 1
+    if strict_r7 and r7_warn:
+        code = 1
     tag = "[OK]" if code == 0 else "[FAIL]"
     print(
         f"{tag} 仓储双实现一致性：{len(result.units)} 单元 / "
         f"{len(result.violations)} 条判定 / {warn} WARN / {fail} FAIL / {stale} stale / "
-        f"R6 WARN {r6_warn} → exit {code}"
+        f"R6 WARN {r6_warn} / R7 WARN {r7_warn} → exit {code}"
     )
     return code
 
@@ -1543,6 +1974,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--strict-r6",
         action="store_true",
         help="把 R6（映射器字段覆盖）的 WARN 计入退出码（默认 WARN-only，不入基线）",
+    )
+    parser.add_argument(
+        "--strict-r7",
+        action="store_true",
+        help="把 R7（写侧 INSERT 字段覆盖）的 WARN 计入退出码（默认 WARN-only，不入基线）",
     )
     return parser.parse_args(argv)
 
@@ -1681,6 +2117,57 @@ _R6_MAPPER_SAMPLE: Final[str] = (
     "\n"
     "\n" + _R6_MAPPER_FULL_BODY
 )
+
+
+def _r7_repo_source(postgres_body: str) -> str:
+    """拼一个"带 INSERT"的自检仓储模块（R7 用）。
+
+    Args:
+        postgres_body: PG 实现类的方法体（内含 INSERT）。
+
+    Returns:
+        str: 模块源码。
+    """
+    return (
+        '"""自检样例：写侧 INSERT 字段覆盖（R7）。"""\n'
+        "from __future__ import annotations\n"
+        "\n"
+        "from dataclasses import dataclass\n"
+        "from typing import Final, Protocol\n"
+        "\n"
+        'WIDGET_TABLE: Final[str] = "widget"\n'
+        "\n"
+        "\n"
+        "@dataclass(frozen=True, slots=True)\n"
+        "class WidgetRecord:\n"
+        "    key: str\n"
+        '    value: str = ""\n'
+        '    note: str = ""\n'
+        '    computed: str = ""\n'
+        "\n"
+        "\n"
+        "class WidgetStore(Protocol):\n"
+        "    async def save(self, record: WidgetRecord) -> None:\n"
+        "        ...\n"
+        "\n"
+        "\n"
+        "class InMemoryWidgetStore:\n"
+        "    async def save(self, record: WidgetRecord) -> None:\n"
+        "        return None\n"
+        "\n"
+        "\n"
+        "class PostgresWidgetStore:\n"
+        + textwrap.indent(textwrap.dedent(postgres_body).strip() + "\n", "    ")
+    )
+
+
+#: R7 自检用的假 DDL：`note` 无默认（必填），`created_at` 有默认。
+_R7_DDL: Final[dict[str, DdlTable]] = {
+    "widget": DdlTable(
+        columns=frozenset({"key", "value", "note", "created_at"}),
+        omittable=frozenset({"created_at"}),
+    )
+}
 
 
 def _write_module(path: Path, body: str) -> None:
@@ -2271,6 +2758,86 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
             f"实际 {[(item.describe(), item.is_exempt) for item in r6_partial.r6]}",
         )
 
+        # ---------------- 用例 19：R7 全覆盖 → 零发现 ----------------
+        r7_full_body = """
+        async def save(self, record: WidgetRecord) -> None:
+            sql = f"INSERT INTO {WIDGET_TABLE} (key, value, note) VALUES (:k, :v, :n)"
+            del sql
+            return None
+        """
+        r7_full_root = tmp / "r7-full"
+        _write_module(r7_full_root / "widget_repo.py", _r7_repo_source(r7_full_body))
+        r7_full = scan(r7_full_root, ddl=_R7_DDL)
+        failures += _case(
+            "R7：INSERT 覆盖全部表列 → 零发现",
+            r7_full.r7 == [],
+            f"实际 {[(item.record, item.field) for item in r7_full.r7]} / INFO {r7_full.r7_info}",
+        )
+        failures += _case(
+            "R7：非表列字段（computed）必须进 INFO 而不是 WARN",
+            any("computed" in info for info in r7_full.r7_info)
+            and not any(item.field == "computed" for item in r7_full.r7),
+            f"实际 INFO {r7_full.r7_info} / WARN {[item.field for item in r7_full.r7]}",
+        )
+        code = run(r7_full_root, clean_baseline, 0, ddl=_R7_DDL)
+        failures += _case("R7：全覆盖场景 exit 0", code == 0, f"实际 exit {code}")
+
+        # ---------------- 用例 20：漏写必填列 → 必须报（可红） ----------------
+        r7_miss_body = """
+        async def save(self, record: WidgetRecord) -> None:
+            sql = f"INSERT INTO {WIDGET_TABLE} (key, value) VALUES (:k, :v)"
+            del sql
+            return None
+        """
+        r7_miss_root = tmp / "r7-miss"
+        _write_module(r7_miss_root / "widget_repo.py", _r7_repo_source(r7_miss_body))
+        r7_miss = scan(r7_miss_root, ddl=_R7_DDL)
+        failures += _case(
+            "R7：漏写无默认列 note → 报 (WidgetRecord, note)",
+            [(item.record, item.field) for item in r7_miss.r7] == [("WidgetRecord", "note")],
+            f"实际 {[(item.record, item.field) for item in r7_miss.r7]}",
+        )
+        failures += _case(
+            "R7：发现里必须带表名（可定位）",
+            bool(r7_miss.r7) and r7_miss.r7[0].table == "widget",
+            f"实际 {[item.table for item in r7_miss.r7]}",
+        )
+        code = run(r7_miss_root, clean_baseline, 0, ddl=_R7_DDL)
+        failures += _case("R7：WARN-only 默认不改变 exit（0）", code == 0, f"实际 exit {code}")
+        code = run(r7_miss_root, clean_baseline, 0, strict_r7=True, ddl=_R7_DDL)
+        failures += _case("R7：--strict-r7 计入 exit（1）", code == 1, f"实际 exit {code}")
+
+        # ---------------- 用例 21：DDL 说该列有默认 → 不得再报 ----------------
+        relaxed_ddl = {
+            "widget": DdlTable(
+                columns=frozenset({"key", "value", "note", "created_at"}),
+                omittable=frozenset({"created_at", "note"}),
+            )
+        }
+        r7_relaxed = scan(r7_miss_root, ddl=relaxed_ddl)
+        failures += _case(
+            "R7：该列在 DDL 里有 DEFAULT → 不报（白名单来自 DDL，不是硬编码）",
+            r7_relaxed.r7 == [],
+            f"实际 {[(item.record, item.field) for item in r7_relaxed.r7]}",
+        )
+
+        # ---------------- 用例 22：同表多条 INSERT 取并集（降级路径不算缺口） ----------------
+        r7_union_body = """
+        async def save(self, record: WidgetRecord) -> None:
+            full = f"INSERT INTO {WIDGET_TABLE} (key, value, note) VALUES (:k, :v, :n)"
+            degraded = f"INSERT INTO {WIDGET_TABLE} (key, value) VALUES (:k, :v)"
+            del full, degraded
+            return None
+        """
+        r7_union_root = tmp / "r7-union"
+        _write_module(r7_union_root / "widget_repo.py", _r7_repo_source(r7_union_body))
+        r7_union = scan(r7_union_root, ddl=_R7_DDL)
+        failures += _case(
+            "R7：同表两条 INSERT 取并集 → 降级路径不产生假红",
+            r7_union.r7 == [],
+            f"实际 {[(item.record, item.field) for item in r7_union.r7]}",
+        )
+
     if failures:
         for failure in failures:
             print(failure)
@@ -2284,8 +2851,13 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
         "基线缺失=空基线 exit 1 / 基线格式错误 5 态 exit 2 / 目录不存在-非目录-单元数不足 exit 2 / "
         "包形态召回（三文件 + 纯 shim 识别为 1 单元且判定生效）/ shim 内含 ClassDef exit 2 / "
         "R4 v2：空 `_to_xxx` 不洗白（仍红）/ R4 v2：同侧一处少字段（并集含该字段）仍红 / "
-        "R6：全覆盖零发现 / R6：少写字段可红（含 mapper 与行号）/ R6：WARN-only 不改 exit、"
-        "--strict-r6 计入 exit / R6：只做零值构造时全字段都报 / R6：豁免降级为 INFO 且可恢复为 WARN"
+        "R6：全覆盖零发现 / R6：少写字段可红（含 mapper 与行号）/ "
+        "R6：WARN-only 不改 exit、--strict-r6 计入 exit / "
+        "R6：只做零值构造时全字段都报 / R6：豁免降级为 INFO 且可恢复为 WARN / "
+        "R7：INSERT 覆盖全部表列零发现（非表列进 INFO）/ R7：漏写无默认列可红（含表名）/ "
+        "R7：WARN-only 不改 exit、--strict-r7 计入 exit / "
+        "R7：DDL 有 DEFAULT 即不报（白名单来自 DDL）/ "
+        "R7：同表多条 INSERT 取并集（降级路径不假红）"
     )
     return 0
 
@@ -2308,6 +2880,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_units=args.min_units,
         show_units=args.show_units,
         strict_r6=args.strict_r6,
+        strict_r7=args.strict_r7,
     )
 
 

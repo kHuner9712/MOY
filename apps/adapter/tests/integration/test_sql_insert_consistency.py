@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -29,6 +30,14 @@ pytestmark = pytest.mark.integration
 REPO_ROOT = Path(__file__).resolve().parents[4]
 APP_ROOT = REPO_ROOT / "apps" / "adapter" / "app"
 DDL_ROOT = REPO_ROOT / "deploy"
+
+#: 仓储层 INSERT 语句数下限（**fail-closed**）。
+#:
+#: 为什么要有它：2C-1~2C-3a 把 8 个巨型仓储拆成包之后，SQL 散落到子目录，
+#: 而本文件的 `insert_statements()` 当时用的是 `glob("*.py")`（只扫顶层），
+#: 于是 **37 条里漏掉 25 条**（68%）——不报错、不失败，只是结论变空。
+#: 这类"扫描范围缩水"只有下限能抓住：低于它就不是"0 处不一致"，是"没看"。
+MIN_INSERT_STATEMENTS: Final[int] = 30
 
 #: 不算列定义的 DDL 行首关键字
 _DDL_KEYWORDS = frozenset(
@@ -106,11 +115,14 @@ def ddl_columns() -> set[str]:
 def insert_statements() -> list[tuple[str, list[str], list[str]]]:
     """扫描仓储层全部 INSERT 语句。
 
+    **必须递归**（`rglob`）：8 个拆分包的关键 SQL 都在 `billing/postgres.py`、
+    `usage/postgres.py` 这类子目录里，只扫顶层会把它们整体漏掉。
+
     Returns:
         list[tuple[str, list[str], list[str]]]: (文件名, 列清单, 值清单)。
     """
     found: list[tuple[str, list[str], list[str]]] = []
-    for path in (APP_ROOT / "db" / "repositories").glob("*.py"):
+    for path in (APP_ROOT / "db" / "repositories").rglob("*.py"):
         text = path.read_text(encoding="utf-8", errors="ignore")
         for match in _INSERT_RE.finditer(text):
             found.append((path.name, split_top(match.group(1)), split_top(match.group(2))))
@@ -152,6 +164,11 @@ def test_insert_column_value_arity_matches() -> None:
     assert statements, (
         f"未扫描到任何 INSERT 语句——判据输入为空，结论不成立（REPO_ROOT={REPO_ROOT}）"
     )
+    # 扫描范围缩水也是假绿：低于下限说明只扫了一部分目录（拆包后曾漏 25/37 条）
+    assert len(statements) >= MIN_INSERT_STATEMENTS, (
+        f"只扫描到 {len(statements)} 条 INSERT（下限 {MIN_INSERT_STATEMENTS}）——"
+        f"扫描范围疑似缩水（是否又退回非递归的 glob？）"
+    )
 
     mismatches = [
         (name, len(cols), len(vals)) for name, cols, vals in statements if len(cols) != len(vals)
@@ -166,6 +183,9 @@ def test_insert_columns_exist_in_ddl() -> None:
 
     statements = insert_statements()
     assert statements, "未扫描到任何 INSERT 语句——判据输入为空，结论不成立"
+    assert len(statements) >= MIN_INSERT_STATEMENTS, (
+        f"只扫描到 {len(statements)} 条 INSERT（下限 {MIN_INSERT_STATEMENTS}）——扫描范围疑似缩水"
+    )
 
     unknown = [
         (name, column) for name, cols, _ in statements for column in cols if column not in known
