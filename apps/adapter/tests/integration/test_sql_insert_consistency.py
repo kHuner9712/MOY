@@ -13,6 +13,12 @@ PG 侧 100% 失败，而**内存后端全绿**——覆盖率与门禁都看不�
 - 3 自检：`test_splitter_counterexample` / `test_adjacent_literal_is_folded` /
   `test_table_constant_is_resolved` 三条反例把实现钉死。
 
+**兜底不变量（fail-closed）**：某个文件里**出现了 `INSERT` 字样**（docstring 除外），却
+既没入账一条语句、也没报一处不可解析 → 判红。这条不依赖任何具体拼装形态，因此
+`"\n".join([...])` / `+=` / 关键字来自函数返回值 这类"没建模"的写法也不会静默蒸发；
+代价是**可能误红**（把合法但拆得太散的写法判红），修法统一为：把 SQL 写成**一个**
+f-string（表名取模块常量，列清单与 VALUES 都在同一个串里）。
+
 **仓内约定**：INSERT 必须显式写列清单（`INSERT INTO t (a, b) VALUES (...)`）。
 没有列清单的写法（`INSERT INTO t VALUES (...)`）会被 `unresolved_inserts()` 判红——
 不是"不支持"，而是"不写列清单就无法与 DDL 对账"，属于要修掉的写法。
@@ -315,7 +321,7 @@ def _joined_constants(node: ast.AST, local: dict[str, str]) -> str:
             if resolved is not None:
                 pieces.append((inner.lineno, inner.col_offset, resolved))
     pieces.sort()
-    return "".join(piece for _, _, piece in pieces)
+    return "\n".join(piece for _, _, piece in pieces)
 
 
 def _docstring_nodes(tree: ast.Module) -> set[int]:
@@ -341,6 +347,23 @@ def _docstring_nodes(tree: ast.Module) -> set[int]:
         ):
             skip.add(id(body[0].value))
     return skip
+
+
+def _contains_insert_word(tree: ast.Module, skip: set[int]) -> bool:
+    """这个文件里是否出现 `INSERT` 字样（docstring 与注释不算）。
+
+    Args:
+        tree: 模块语法树。
+        skip: docstring 节点 id。
+
+    Returns:
+        bool: 出现返回 True。
+    """
+    return any(
+        _INSERT_WORD.search(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip
+    )
 
 
 def _iter_sql_texts(node: ast.AST, local: dict[str, str], skip: set[int]) -> Any:
@@ -377,7 +400,7 @@ def _iter_sql_texts(node: ast.AST, local: dict[str, str], skip: set[int]) -> Any
         item for child in ast.iter_child_nodes(node) for item in _iter_sql_texts(child, local, skip)
     ]
     yield from children
-    if isinstance(node, ast.Call | ast.List | ast.Tuple | ast.Dict | ast.Subscript):
+    if isinstance(node, ast.Call | ast.List | ast.Tuple | ast.Dict | ast.Subscript | ast.AugAssign):
         # `"".join(["INSERT ", "INTO t (...)"])` 这类"短语跨元素"的写法：子树里每个
         # 字面量单独看都不含完整的 INSERT，但拼起来是。用"聚合计数的增量"补一条
         # 不可解析记录——否则语句会从两个入口同时消失。
@@ -440,6 +463,8 @@ def _scan() -> tuple[tuple[InsertStatement, ...], tuple[tuple[str, int], ...]]:
             continue
         local = _module_constants(tree)
         skip = _docstring_nodes(tree)
+        file_statements = 0
+        file_unresolved = 0
         for text, lineno, mentions in _iter_sql_texts(tree, local, skip):
             if not mentions:
                 continue
@@ -454,8 +479,16 @@ def _scan() -> tuple[tuple[InsertStatement, ...], tuple[tuple[str, int], ...]]:
                         values=tuple(values),
                     )
                 )
+                file_statements += 1
             if len(parsed) < mentions:
                 unresolved.append((relative, lineno))
+                file_unresolved += 1
+        # 文件级兜底不变量：这个文件里**出现了 INSERT 字样**，却既没入账也没报错，
+        # 说明它是用某种我们没建模的拼装方式写的（`"\n".join([...])`、`+=`、
+        # 函数返回关键字…）。这类形态无法逐个建模，但"有字样、零结果"必须可见——
+        # 否则语句就从两个入口同时消失。
+        if file_statements == 0 and file_unresolved == 0 and _contains_insert_word(tree, skip):
+            unresolved.append((relative, 0))
     statements.sort(key=lambda item: (item.file, item.lineno, item.table))
     return tuple(statements), tuple(unresolved)
 
