@@ -13,11 +13,16 @@ PG 侧 100% 失败，而**内存后端全绿**——覆盖率与门禁都看不�
 - 3 自检：`test_splitter_counterexample` / `test_adjacent_literal_is_folded` /
   `test_table_constant_is_resolved` 三条反例把实现钉死。
 
-**兜底不变量（fail-closed）**：某个文件里**出现了 `INSERT` 字样**（docstring 除外），却
-既没入账一条语句、也没报一处不可解析 → 判红。这条不依赖任何具体拼装形态，因此
-`"\n".join([...])` / `+=` / 关键字来自函数返回值 这类"没建模"的写法也不会静默蒸发；
-代价是**可能误红**（把合法但拆得太散的写法判红），修法统一为：把 SQL 写成**一个**
-f-string（表名取模块常量，列清单与 VALUES 都在同一个串里）。
+**兜底不变量（计数对账，fail-closed）**：一个文件里出现了几次**大写 `INSERT` 关键字**
+（docstring 除外；字节串按 UTF-8 解码后再看），就必须"解释"几次——入账一条语句，或报一处
+不可解析；差额判红。这条不依赖具体拼装形态，因此 `"\n".join([...])`、`+=`、关键字存在
+类属性/字典里、`b"...".decode()` 这些写法都不会静默蒸发；代价是可能**误红**（把合法但拆得
+太散的写法判红），修法统一为：把 SQL 写成**一个** f-string（表名取模块常量、列清单与
+VALUES 同串）。
+
+**明确的覆盖边界**：判据以"大写 `INSERT` 关键字是否成词出现"为锚。把**关键字本身**拆开
+（`"INS" + "ERT INTO ..."`）不在覆盖范围——那已经超出任何词法判据的能力，且不是本仓的
+书写习惯；同理，运行时才拼出的 SQL（模板渲染、ORM 生成）也不在静态判据范围内。
 
 **仓内约定**：INSERT 必须显式写列清单（`INSERT INTO t (a, b) VALUES (...)`）。
 没有列清单的写法（`INSERT INTO t VALUES (...)`）会被 `unresolved_inserts()` 判红——
@@ -76,6 +81,11 @@ _INSERT_WORD: Final[re.Pattern[str]] = re.compile(r"\bINSERT\b", re.IGNORECASE)
 
 #: 宽松形态的另一半。
 _INTO_WORD: Final[re.Pattern[str]] = re.compile(r"\bINTO\b", re.IGNORECASE)
+
+#: **计数对账专用**：只认大写的 `INSERT`（SQL 关键字惯例）。
+#: 用小写也匹配会把日志文案（`"task insert lost"`）算成一条 SQL，产生假红；
+#: 而真正的 SQL 在本仓一律大写。
+_INSERT_KEYWORD: Final[re.Pattern[str]] = re.compile(r"\bINSERT\b")
 
 #: 宽松形态的启用条件（"这段文本像不像 SQL"）。
 _SQL_CONTEXT: Final[re.Pattern[str]] = re.compile(r"\bVALUES\b", re.IGNORECASE)
@@ -314,8 +324,10 @@ def _joined_constants(node: ast.AST, local: dict[str, str]) -> str:
     unique, _ = _global_constants()
     pieces: list[tuple[int, int, str]] = []
     for inner in ast.walk(node):
-        if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
-            pieces.append((inner.lineno, inner.col_offset, inner.value))
+        if isinstance(inner, ast.Constant):
+            text_value = _text_of(inner)
+            if text_value is not None:
+                pieces.append((inner.lineno, inner.col_offset, text_value))
         elif isinstance(inner, ast.Name):
             resolved = local.get(inner.id, unique.get(inner.id))
             if resolved is not None:
@@ -349,21 +361,46 @@ def _docstring_nodes(tree: ast.Module) -> set[int]:
     return skip
 
 
-def _contains_insert_word(tree: ast.Module, skip: set[int]) -> bool:
-    """这个文件里是否出现 `INSERT` 字样（docstring 与注释不算）。
+def _text_of(node: ast.Constant) -> str | None:
+    """把字符串/字节常量统一成文本（bytes 按 UTF-8 尽力解码）。
+
+    SQL 也可能是 `b"INSERT …".decode()` 这种形态——只认 `str` 会让它对判据完全隐形。
+
+    Args:
+        node: 常量节点。
+
+    Returns:
+        str | None: 文本；不是字符串类常量时返回 None。
+    """
+    if isinstance(node.value, str):
+        return node.value
+    if isinstance(node.value, bytes):
+        return node.value.decode("utf-8", errors="ignore")
+    return None
+
+
+def _insert_word_count(tree: ast.Module, skip: set[int]) -> int:
+    """数这个文件里 `INSERT` 字样的次数（docstring 与注释不算）。
+
+    这是**计数对账**的左边：文件里出现 N 次 `INSERT` 字样，就必须有 N 次"已解释"
+    （入账一条语句，或报一处不可解析）。只看"零入账"不够——文件里只要已有 1 条
+    合法语句，藏起来的第 2 条就不会被发现。
 
     Args:
         tree: 模块语法树。
         skip: docstring 节点 id。
 
     Returns:
-        bool: 出现返回 True。
+        int: 出现次数。
     """
-    return any(
-        _INSERT_WORD.search(node.value)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip
-    )
+    total = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or id(node) in skip:
+            continue
+        text = _text_of(node)
+        if text is not None:
+            total += len(_INSERT_KEYWORD.findall(text))
+    return total
 
 
 def _iter_sql_texts(node: ast.AST, local: dict[str, str], skip: set[int]) -> Any:
@@ -393,9 +430,11 @@ def _iter_sql_texts(node: ast.AST, local: dict[str, str], skip: set[int]) -> Any
     if isinstance(node, ast.BinOp):
         yield None, node.lineno, _count_mentions(_joined_constants(node, local))
         return
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        yield node.value, node.lineno, _count_mentions(node.value)
-        return
+    if isinstance(node, ast.Constant):
+        text_value = _text_of(node)
+        if text_value is not None:
+            yield text_value, node.lineno, _count_mentions(text_value)
+            return
     children = [
         item for child in ast.iter_child_nodes(node) for item in _iter_sql_texts(child, local, skip)
     ]
@@ -463,8 +502,7 @@ def _scan() -> tuple[tuple[InsertStatement, ...], tuple[tuple[str, int], ...]]:
             continue
         local = _module_constants(tree)
         skip = _docstring_nodes(tree)
-        file_statements = 0
-        file_unresolved = 0
+        explained = 0
         for text, lineno, mentions in _iter_sql_texts(tree, local, skip):
             if not mentions:
                 continue
@@ -479,15 +517,14 @@ def _scan() -> tuple[tuple[InsertStatement, ...], tuple[tuple[str, int], ...]]:
                         values=tuple(values),
                     )
                 )
-                file_statements += 1
+            explained += mentions
             if len(parsed) < mentions:
                 unresolved.append((relative, lineno))
-                file_unresolved += 1
-        # 文件级兜底不变量：这个文件里**出现了 INSERT 字样**，却既没入账也没报错，
-        # 说明它是用某种我们没建模的拼装方式写的（`"\n".join([...])`、`+=`、
-        # 函数返回关键字…）。这类形态无法逐个建模，但"有字样、零结果"必须可见——
-        # 否则语句就从两个入口同时消失。
-        if file_statements == 0 and file_unresolved == 0 and _contains_insert_word(tree, skip):
+        # **计数对账**：文件里出现 N 次 `INSERT` 字样，就必须解释 N 次（入账或报不可解析）。
+        # 差额就是"没建模的拼装形态"（`"".join`、`+=`、bytes、函数返回值、类属性…），
+        # 一律报出来——不依赖具体形态，也不受"文件里已有合法语句"影响（只看零入账
+        # 会让藏在第 1 条后面的第 2 条逃走）。
+        if explained < _insert_word_count(tree, skip):
             unresolved.append((relative, 0))
     statements.sort(key=lambda item: (item.file, item.lineno, item.table))
     return tuple(statements), tuple(unresolved)
