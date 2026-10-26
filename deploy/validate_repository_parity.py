@@ -1246,7 +1246,10 @@ def scan(repositories_root: Path) -> ScanResult:
             violations, infos = _check_records(unit, classes, modules)
             result.violations.extend(violations)
             result.infos.extend(infos)
-            result.r6.extend(_check_mapper_coverage(unit, classes, modules))
+        # R6 不依赖三元组：它只比对「PG 侧映射器的构造点」与「record 字段集」。
+        # 放在 `if triples:` 内会让**无协议单元**（`audit`）的映射器永远不被检查——
+        # 那是一处"看着有判据、实际不执行"的假覆盖，2026-10-26 独立复核抓到的。
+        result.r6.extend(_check_mapper_coverage(unit, classes, modules))
     result.violations.sort(key=lambda item: item.key())
     return result
 

@@ -63,9 +63,15 @@ def _seed_statement(text: str) -> str:
     Raises:
         AssertionError: 脚本中找不到该 INSERT。
     """
-    start = text.find("INSERT INTO billing_plan ")
-    assert start >= 0, "init-schema-phase2.sql 里找不到 `INSERT INTO billing_plan`"
-    tail = text[start:]
+    # 行首锚定 + 必须紧跟列名左括号：注释里出现的同名片段不算数据源
+    # （`-- 见 INSERT INTO billing_plan ...` 这类说明在文档化程度高的脚本里很常见）。
+    match = re.search(
+        r"^INSERT\s+INTO\s+billing_plan\s*\(",
+        text,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    assert match is not None, "init-schema-phase2.sql 里找不到行首的 `INSERT INTO billing_plan (`"
+    tail = text[match.start() :]
     stops = [
         match.start()
         for match in (re.search(r"\bON\s+CONFLICT\b", tail, re.IGNORECASE), re.search(r";", tail))
