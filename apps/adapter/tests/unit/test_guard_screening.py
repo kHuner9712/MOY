@@ -32,13 +32,13 @@ from app.core.errors import ApiError, ErrorCode
 from app.plugins.actions import ActionResult, ArtifactDraft, RunContext
 from app.plugins.engine import (
     DEFAULT_OPERATOR_ACTION,
-    SCREENING_OUTPUT_KEY,
     STEP_COMPLETED,
     STEP_FAILED,
     PluginEngine,
     StepOutcome,
     StepPlan,
 )
+from app.plugins.guards import SCREENING_OUTPUT_KEY
 from app.plugins.schema import InputSpec, StepSpec
 from tests.unit.task_helpers import GRANTED, EchoGateway, load_manifest
 
@@ -169,7 +169,8 @@ def _guard(outcome: StepOutcome) -> StepOutcome:
         StepOutcome: 护栏后的结果。
     """
     engine = PluginEngine(EchoGateway())
-    return engine.guard(_screening_spec(), outcome)
+    guard_specs = load_manifest("plg_hr_admin").guards
+    return engine.guard(_screening_spec(), outcome, guard_specs)
 
 
 class _DraftGateway:
@@ -405,7 +406,10 @@ def test_run_step_wires_screening_gate() -> None:
     engine = PluginEngine(_DraftGateway(draft))
     ctx = RunContext(tenant_id="tnt_test", task_id="task_test", granted=GRANTED)
 
-    outcome = asyncio.run(engine.run_step(ctx, StepPlan(spec=_screening_spec()), {}))
+    guard_specs = load_manifest("plg_hr_admin").guards
+    outcome = asyncio.run(
+        engine.run_step(ctx, StepPlan(spec=_screening_spec()), {}, guard_specs=guard_specs)
+    )
 
     assert outcome.status == STEP_FAILED
     assert outcome.retryable is True

@@ -33,7 +33,7 @@ from typing import Any
 import pytest
 from httpx import AsyncClient
 
-from app.plugins.engine import scan_offer_amount
+from app.plugins.guards import scan_offer_amount
 from app.plugins.sanitizer import ArtifactSanitizer, strip_amount_exemptions
 from tests.e2e.conftest import (
     HR_PLUGIN,

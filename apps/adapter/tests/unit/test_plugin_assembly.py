@@ -30,11 +30,10 @@ from app.plugins.actions import (
     render_file_violations,
 )
 from app.plugins.engine import (
-    OFFER_OUTPUT_KEY,
-    SCHEDULE_OUTPUT_KEY,
     STEP_FAILED,
     PluginEngine,
 )
+from app.plugins.guards import OFFER_OUTPUT_KEY, SCHEDULE_OUTPUT_KEY
 from app.plugins.schema import StepSpec
 from tests.unit.task_helpers import load_manifest
 

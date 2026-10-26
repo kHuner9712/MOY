@@ -221,6 +221,47 @@
       "source_step": 6
     }
   ],
+  "match_hints": [
+  "内容",
+  "运营",
+  "稿件",
+  "发布",
+  "排期",
+  "公众号",
+  "文章"
+],
+  "guards": [
+  {
+    "output_key": "schedule",
+    "rule": "schedule_timeline",
+    "params": {
+      "time_keys": [
+        "计划时间",
+        "planned_at",
+        "计划发布时间",
+        "时间",
+        "time"
+      ],
+      "platform_keys": [
+        "平台",
+        "platform",
+        "channel"
+      ],
+      "time_formats": [
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%Y-%m-%d",
+        "%Y/%m/%d"
+      ],
+      "timezone_offset_hours": 8,
+      "forbid_past": true,
+      "forbid_duplicate_platform_time": true,
+      "retryable": false,
+      "operator_action": "修改排期表里的计划时间后重新导出"
+    }
+  }
+],
   "ui_extension": {
     "layout": "task_workspace",
     "nav_label": "内容运营",

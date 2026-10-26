@@ -37,6 +37,7 @@ from app.plugins.actions import (
     is_outbound_operation,
     render_file_violations,
 )
+from app.plugins.guards.registry import all_rule_names, resolve_guard
 from app.plugins.schema import (
     PluginManifest,
     find_banned_terms,
@@ -62,6 +63,7 @@ STAGE_TOOL: Final[str] = "tool"
 STAGE_CONFIRM: Final[str] = "confirm"
 STAGE_RENDER: Final[str] = "render"
 STAGE_RETRY: Final[str] = "retry"
+STAGE_GUARD: Final[str] = "guard"
 STAGE_DUPLICATE: Final[str] = "duplicate"
 STAGE_IO: Final[str] = "io"
 
@@ -309,6 +311,11 @@ class PluginRegistry:
                     )
                 )
 
+        # ---- 7b. 合规规则（P1-10）：规则已注册 / 参数合法 / 强制覆盖 ----
+        guard_failure = self._check_guards(manifest, source)
+        if guard_failure is not None:
+            return self._record_failure(guard_failure)
+
         # ---- 8. 版本不可变：同 (plugin_id, version) 重复注册即拒绝 ----
         key = (manifest.plugin_id, manifest.version)
         if key in self._records:
@@ -390,6 +397,66 @@ class PluginRegistry:
                     STAGE_CONFIRM,
                     f"步骤 {step.seq} 会对外发送内容，必须先请用户确认",
                 )
+        return None
+
+    def _check_guards(self, manifest: PluginManifest, source: str) -> LoadFailure | None:
+        """校验合规规则声明（P1-10）。
+
+        四条判据：
+
+        1. 规则已注册（`guards[].rule` ∈ `app.plugins.guards` 注册表）；
+        2. `rule.validate_params` 通过（拒绝把判据关闭的布尔项）；
+        3. `output_key` ∈ `outputs[].key`（schema 已查，这里再兜一次）；
+        4. **强制覆盖**：产出受管产物键（`required_output_keys`）就必须
+           声明对应规则——漏声明的表现是"看起来全绿"，比误判更危险。
+
+        Args:
+            manifest: 已通过形态校验的声明。
+            source: 来源标识。
+
+        Returns:
+            LoadFailure | None: 失败记录；通过返回 None。
+        """
+        output_keys = {item.key for item in manifest.outputs}
+        declared: set[tuple[str, str]] = set()
+        for guard in manifest.guards:
+            rule = resolve_guard(guard.rule)
+            if rule is None:
+                return LoadFailure(
+                    source,
+                    STAGE_GUARD,
+                    "声明了平台不支持的合规规则",
+                    guard.rule,
+                )
+            try:
+                rule.validate_params(guard.params)
+            except ValueError as exc:
+                return LoadFailure(
+                    source,
+                    STAGE_GUARD,
+                    "合规规则参数不合法",
+                    f"{guard.rule}：{exc}",
+                )
+            if guard.output_key not in output_keys:
+                return LoadFailure(
+                    source,
+                    STAGE_GUARD,
+                    "合规规则指向未声明的产物",
+                    guard.output_key,
+                )
+            declared.add((guard.output_key, guard.rule))
+        for rule_name in all_rule_names():
+            rule = resolve_guard(rule_name)
+            if rule is None:  # pragma: no cover - all_rule_names 与注册表同源
+                continue
+            for key in rule.required_output_keys:
+                if key in output_keys and (key, rule_name) not in declared:
+                    return LoadFailure(
+                        source,
+                        STAGE_GUARD,
+                        "产出该产物必须声明对应的合规规则",
+                        f"{key} → {rule_name}",
+                    )
         return None
 
     def _record_failure(self, failure: LoadFailure) -> LoadFailure:
@@ -621,6 +688,7 @@ __all__: list[str] = [
     "STAGE_CONFIRM",
     "STAGE_DUPLICATE",
     "STAGE_FORBIDDEN_KEY",
+    "STAGE_GUARD",
     "STAGE_IO",
     "STAGE_RETRY",
     "STAGE_SCHEMA",

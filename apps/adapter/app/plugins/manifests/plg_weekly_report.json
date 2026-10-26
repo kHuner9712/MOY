@@ -126,6 +126,12 @@
       "source_step": 3
     }
   ],
+  "match_hints": [
+  "周报",
+  "汇报",
+  "本周",
+  "工作总结"
+],
   "ui_extension": {
     "layout": "task_workspace",
     "nav_label": "周报生成",

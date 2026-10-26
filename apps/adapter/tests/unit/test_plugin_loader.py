@@ -28,6 +28,7 @@ from app.plugins.loader import (
     STAGE_CONFIRM,
     STAGE_DUPLICATE,
     STAGE_FORBIDDEN_KEY,
+    STAGE_GUARD,
     STAGE_IO,
     STAGE_RETRY,
     STAGE_SCHEMA,
@@ -270,6 +271,48 @@ def test_retry_on_tool_step_is_rejected() -> None:
     failure = _load(payload)
     assert failure is not None
     assert failure.stage == STAGE_RETRY
+
+
+# ===========================================================================
+# 负样本：合规规则声明（P1-10 / STAGE_GUARD）
+# ===========================================================================
+def _hr_baseline() -> dict[str, Any]:
+    """取带 guards 的行政人事声明作变异基座（offer/screening 产物齐全）。
+
+    Returns:
+        dict[str, Any]: 声明原文深拷贝。
+    """
+    path = default_manifests_dir() / "plg_hr_admin.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_unregistered_guard_rule_is_rejected() -> None:
+    """`guards[].rule` 未注册 → `guard`（不能"不认识就跳过"）。"""
+    payload = _hr_baseline()
+    payload["guards"] = [{"output_key": "offer", "rule": "no_such_rule", "params": {}}]
+    failure = _load(payload)
+    assert failure is not None
+    assert failure.stage == STAGE_GUARD
+
+
+def test_missing_required_guard_is_rejected() -> None:
+    """产出受管产物键却漏声明对应规则 → `guard`（强制覆盖）。"""
+    payload = _hr_baseline()
+    payload["guards"] = [g for g in payload["guards"] if g["output_key"] != "offer"]
+    failure = _load(payload)
+    assert failure is not None
+    assert failure.stage == STAGE_GUARD
+    assert "offer" in failure.detail
+
+
+def test_illegal_guard_params_are_rejected() -> None:
+    """合规规则参数不合法（试图关掉判据）→ `guard`。"""
+    payload = _hr_baseline()
+    payload["guards"][0]["params"]["context_window"] = 0
+    failure = _load(payload)
+    assert failure is not None
+    assert failure.stage == STAGE_GUARD
+    assert "context_window" in failure.detail
 
 
 # ===========================================================================

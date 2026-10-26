@@ -246,6 +246,78 @@
       "source_step": 6
     }
   ],
+  "match_hints": [
+  "招聘",
+  "人事",
+  "行政",
+  "公文",
+  "岗位",
+  "入职"
+],
+  "guards": [
+  {
+    "output_key": "offer",
+    "rule": "offer_amount",
+    "params": {
+      "amount_fields": [
+        "salary",
+        "probation_salary",
+        "bonus",
+        "equity"
+      ],
+      "allowed_values": [
+        "",
+        "按公司标准执行"
+      ],
+      "forbidden_phrases": [
+        "面议",
+        "待定",
+        "可谈",
+        "可议",
+        "根据经验",
+        "视情况",
+        "依能力",
+        "面谈",
+        "另议",
+        "按市场水平"
+      ],
+      "context_keywords": [
+        "薪",
+        "工资",
+        "待遇",
+        "补贴",
+        "奖金",
+        "年终",
+        "期权",
+        "股权",
+        "月收入",
+        "总包"
+      ],
+      "context_window": 20,
+      "retryable": false,
+      "operator_action": "清空或改为「按公司标准执行」后重新导出"
+    }
+  },
+  {
+    "output_key": "screening",
+    "rule": "screening_risk",
+    "params": {
+      "risk_headers": [
+        "风险",
+        "risk",
+        "risks"
+      ],
+      "row_id_keys": [
+        "姓名",
+        "候选人",
+        "name"
+      ],
+      "allow_zero_rows": true,
+      "retryable": true,
+      "operator_action": "可以重试这一步"
+    }
+  }
+],
   "ui_extension": {
     "layout": "task_workspace",
     "nav_label": "行政人事",

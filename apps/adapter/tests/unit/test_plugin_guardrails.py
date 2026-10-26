@@ -26,16 +26,20 @@ from app.plugins.actions import (
     declared_tool_paths,
 )
 from app.plugins.engine import (
-    OFFER_AMOUNT_ALLOWED_VALUES,
-    OFFER_AMOUNT_OPERATOR_ACTION,
-    OFFER_OUTPUT_KEY,
     STEP_COMPLETED,
     STEP_FAILED,
     PluginEngine,
     StepPlan,
-    parse_schedule_rows,
+)
+from app.plugins.guards import (
+    OFFER_AMOUNT_ALLOWED_VALUES,
+    OFFER_AMOUNT_OPERATOR_ACTION,
+    OFFER_OUTPUT_KEY,
     scan_offer_amount,
     scan_schedule,
+)
+from app.plugins.guards import (
+    parse_csv_rows as parse_schedule_rows,
 )
 from app.plugins.schema import StepSpec
 from tests.unit.task_helpers import GRANTED, load_manifest
@@ -372,7 +376,8 @@ def _run(engine: PluginEngine, spec: StepSpec) -> Any:
         StepOutcome: 步骤结果。
     """
     ctx = RunContext(tenant_id="tnt_test", task_id="task_test", granted=GRANTED)
-    return asyncio.run(engine.run_step(ctx, StepPlan(spec=spec), {}))
+    guard_specs = load_manifest("plg_hr_admin").guards + load_manifest("plg_content_ops").guards
+    return asyncio.run(engine.run_step(ctx, StepPlan(spec=spec), {}, guard_specs=guard_specs))
 
 
 def test_engine_blocks_offer_with_amount() -> None:

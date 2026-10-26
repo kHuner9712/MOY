@@ -22,13 +22,15 @@ import re
 import pytest
 
 from app.plugins.actions import ArtifactDraft
-from app.plugins.engine import PluginEngine, StepOutcome, StepSpec, scan_offer_amount
+from app.plugins.engine import PluginEngine, StepOutcome, StepSpec
+from app.plugins.guards import scan_offer_amount
 from app.plugins.sanitizer import (
     MASK_AMOUNT,
     amount_spans,
     mask_amounts,
     merge_spans,
 )
+from app.plugins.schema import GuardSpec
 from app.services.action_gateway import InertActionGateway
 
 #: 遮后就不该再有数字痕迹（小数点与千分位逗号也算）
@@ -257,13 +259,14 @@ def test_amount_scope_is_offer_only() -> None:
     """
     engine = PluginEngine(InertActionGateway())
     spec = _step_spec()
-    blocked = engine.guard(spec, _outcome("draft", SCALE_SENTENCE))
+    offer_guards = (GuardSpec(output_key="offer", rule="offer_amount"),)
+    blocked = engine.guard(spec, _outcome("draft", SCALE_SENTENCE), offer_guards)
     assert blocked.status == "completed", (
         f"非 offer 产物不该被金额规则判失败，实际 {blocked.status}：{blocked.reason_text}"
     )
     assert blocked.reason_text == ""
 
-    guarded = engine.guard(spec, _outcome("offer", SCALE_SENTENCE))
+    guarded = engine.guard(spec, _outcome("offer", SCALE_SENTENCE), offer_guards)
     assert guarded.status == "failed", "offer 产物里的「2000 万」必须判失败（不得漏检）"
     assert guarded.operator_action, "失败必须给可照做的建议动作"
 
@@ -276,8 +279,9 @@ def test_offer_scope_does_not_leak_into_other_steps() -> None:
     """
     engine = PluginEngine(InertActionGateway())
     spec = _step_spec()
-    draft_result = engine.guard(spec, _outcome("code_files", SCALE_SENTENCE))
-    offer_result = engine.guard(spec, _outcome("offer", SCALE_SENTENCE))
+    offer_guards = (GuardSpec(output_key="offer", rule="offer_amount"),)
+    draft_result = engine.guard(spec, _outcome("code_files", SCALE_SENTENCE), offer_guards)
+    offer_result = engine.guard(spec, _outcome("offer", SCALE_SENTENCE), offer_guards)
     assert draft_result.status != offer_result.status, (
         "同一段文本因产物键不同应得到不同判定（作用域生效）"
     )

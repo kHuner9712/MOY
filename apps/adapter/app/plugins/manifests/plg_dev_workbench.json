@@ -223,6 +223,14 @@
       "source_step": 5
     }
   ],
+  "match_hints": [
+  "代码",
+  "仓库",
+  "提交",
+  "研发",
+  "需求",
+  "分支"
+],
   "ui_extension": {
     "layout": "task_workspace",
     "nav_label": "前端研发",
