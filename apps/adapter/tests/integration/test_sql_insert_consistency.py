@@ -13,6 +13,10 @@ PG 侧 100% 失败，而**内存后端全绿**——覆盖率与门禁都看不�
 - 3 自检：`test_splitter_counterexample` / `test_adjacent_literal_is_folded` /
   `test_table_constant_is_resolved` 三条反例把实现钉死。
 
+**仓内约定**：INSERT 必须显式写列清单（`INSERT INTO t (a, b) VALUES (...)`）。
+没有列清单的写法（`INSERT INTO t VALUES (...)`）会被 `unresolved_inserts()` 判红——
+不是"不支持"，而是"不写列清单就无法与 DDL 对账"，属于要修掉的写法。
+
 **扫描范围**：**全 `app/`**。2C-6 之前只扫 `app/db/repositories/**` 的顶层文件，
 于是 ① 拆包后 8 个包的 SQL 全在子目录（37 条漏 25 条）；② 业务层 4 条写路径
 （`audit_log` / `integration_outbox` / `plugin_task` / `schema_migration`）完全在视野外，
@@ -306,7 +310,8 @@ def _parse_statements(text: str) -> list[tuple[str, list[str], list[str]]]:
         rest = text[after_columns:]
         values_match = re.match(r"\s*VALUES\s*", rest, re.IGNORECASE)
         if values_match is None:
-            # `INSERT INTO t SELECT ...` 这类没有列清单的形式：不是本文判据的对象。
+            # 列清单后面不是 VALUES（`INSERT INTO t (a) SELECT ...`）：本函数切不出来，
+            # 但**不会被静默放过**——`unresolved_inserts()` 会发现 mentions > parsed 并判红。
             continue
         values = _balanced(rest, values_match.end())
         if values is None:
