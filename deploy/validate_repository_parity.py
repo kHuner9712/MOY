@@ -219,7 +219,9 @@ R7_MIN_PAIRED: Final[int] = 28
 #: exit 仍 0——与 N2 修掉的那个洞是同一个，只是桶不同。
 R7_UNEVALUATED_ALLOWLIST: Final[frozenset[tuple[str, str]]] = frozenset(
     {
-        # audit 的 PG 写入故意留在 business/audit_service.py（R1/R4 对该单元的豁免所指）
+        # audit 的 PG 写入故意留在 business/audit_service.py（R1/R4 对该单元的豁免所指）；
+        # 那条写入的**列数/列名/表名**由 tests/integration/test_sql_insert_consistency.py（G-SQL）对账，
+        # 字段级覆盖 R7 看不到它——这是本白名单成立的前提，不是省略。
         ("audit", "ActionGroupEntry"),
         ("audit", "AuditQuery"),
         ("audit", "AuditQueryResult"),
