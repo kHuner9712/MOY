@@ -49,7 +49,8 @@ DDL_ROOT = REPO_ROOT / "deploy"
 #: INSERT 语句数下限（**fail-closed**）。
 #:
 #: 为什么要有它：扫描范围缩水不会报错、只会让结论变空。实测 2026-10-27：
-#: 仓储层 37 条 + 业务层 3 条 + 迁移 1 条 = **41 条**（迁移那条不写列清单，见下）。
+#: 仓储层 37 + 业务层 3（audit_log / integration_outbox / plugin_task）+ 迁移 1
+#: （schema_migration，写的是 `(version, checksum)`，**有**列清单）= **41 条**。
 #: 低于这个数就是"没看"，不是"没问题"。
 MIN_INSERT_STATEMENTS: Final[int] = 38
 
@@ -252,43 +253,83 @@ def _resolve_fstring(node: ast.JoinedStr, local: dict[str, str]) -> str | None:
     return "".join(parts)
 
 
-def _iter_sql_texts(node: ast.AST, local: dict[str, str]) -> Any:
+def _joined_constants(node: ast.AST) -> str:
+    """把节点内全部字符串常量**按出现顺序拼接**（用于数 `INSERT INTO` 提及次数）。
+
+    必须拼起来再数：`"INSERT" + " INTO t (...)"` 这种把短语拆到两个字面量的写法，
+    逐字面量数会得到 0 提及 → 语句凭空蒸发（漏报）。拼接后数才能把它抓成"不可解析"。
+
+    Args:
+        node: 语法树节点。
+
+    Returns:
+        str: 拼接后的文本。
+    """
+    pieces = sorted(
+        (inner.lineno, inner.col_offset, inner.value)
+        for inner in ast.walk(node)
+        if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
+    )
+    return "".join(piece for _, _, piece in pieces)
+
+
+def _docstring_nodes(tree: ast.Module) -> set[int]:
+    """收集模块/类/函数 docstring 的节点 id（这些文本不是 SQL）。
+
+    Args:
+        tree: 模块语法树。
+
+    Returns:
+        set[int]: 需要跳过的节点 id 集合。
+    """
+    skip: set[int] = set()
+    holders = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    for node in ast.walk(tree):
+        if not isinstance(node, holders):
+            continue
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            skip.add(id(body[0].value))
+    return skip
+
+
+def _iter_sql_texts(node: ast.AST, local: dict[str, str], skip: set[int]) -> Any:
     """遍历"最外层"字符串表达式，产出 `(文本 | None, 行号, INSERT 提及次数)`。
 
     只看最外层：f-string 内部的常量片段不再单独产出，否则一次 `INSERT INTO` 会被数两次。
     函数调用不是叶子——SQL 常是 `uow.execute(f"...")` 的实参。
+    docstring 不参与（`skip`）：文档里写一句 `INSERT INTO …` 不该让门禁变红。
 
     Args:
         node: 语法树节点。
         local: 本模块常量。
+        skip: 需要跳过的节点 id（docstring）。
 
     Yields:
         tuple[str | None, int, int]: `(文本, 行号, 提及次数)`。
     """
+    if id(node) in skip:
+        return
     if isinstance(node, ast.JoinedStr):
         text = _resolve_fstring(node, local)
-        mentions = sum(
-            inner.value.upper().count("INSERT INTO")
-            for inner in ast.walk(node)
-            if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
-        )
+        mentions = _joined_constants(node).upper().count("INSERT INTO")
         if text is not None:
             mentions = max(mentions, text.upper().count("INSERT INTO"))
         yield text, node.lineno, mentions
         return
     if isinstance(node, ast.BinOp):
-        mentions = sum(
-            inner.value.upper().count("INSERT INTO")
-            for inner in ast.walk(node)
-            if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
-        )
-        yield None, node.lineno, mentions
+        yield None, node.lineno, _joined_constants(node).upper().count("INSERT INTO")
         return
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         yield node.value, node.lineno, node.value.upper().count("INSERT INTO")
         return
     for child in ast.iter_child_nodes(node):
-        yield from _iter_sql_texts(child, local)
+        yield from _iter_sql_texts(child, local, skip)
 
 
 def _parse_statements(text: str) -> list[tuple[str, list[str], list[str]]]:
@@ -320,35 +361,52 @@ def _parse_statements(text: str) -> list[tuple[str, list[str], list[str]]]:
     return found
 
 
-def insert_statements() -> list[InsertStatement]:
-    """扫描**全 `app/`** 的 INSERT 语句（AST 取串 + 配对括号切分）。
+@lru_cache(maxsize=1)
+def _scan() -> tuple[tuple[InsertStatement, ...], tuple[tuple[str, int], ...]]:
+    """全量扫描一次（结果缓存：多个用例共用同一份扫描）。
+
+    **不做文本预筛**：`"INSERT" + " INTO ..."` 这种写法在源码里没有连续的
+    `INSERT INTO` 字样，文本预筛会整文件跳过——那正是本判据要抓的形态。
 
     Returns:
-        list[InsertStatement]: 逐条语句（按文件、行号排序）。
+        tuple[tuple[InsertStatement, ...], tuple[tuple[str, int], ...]]:
+            `(语句列表, 不可解析位置列表)`。
     """
     statements: list[InsertStatement] = []
+    unresolved: list[tuple[str, int]] = []
     for path in sorted(APP_ROOT.rglob("*.py")):
         source = path.read_text(encoding="utf-8", errors="ignore")
-        if "INSERT INTO" not in source.upper():
-            continue
         tree = ast.parse(source)
         local = _module_constants(tree)
-        for text, lineno, mentions in _iter_sql_texts(tree, local):
+        skip = _docstring_nodes(tree)
+        relative = str(path.relative_to(APP_ROOT))
+        for text, lineno, mentions in _iter_sql_texts(tree, local, skip):
             if not mentions:
                 continue
-            if text is None:
-                continue  # 交给 test_all_inserts_are_statically_resolvable 判红
-            for table, columns, values in _parse_statements(text):
+            parsed = _parse_statements(text) if text is not None else []
+            for table, columns, values in parsed:
                 statements.append(
                     InsertStatement(
-                        file=str(path.relative_to(APP_ROOT)),
+                        file=relative,
                         lineno=lineno,
                         table=table,
                         columns=tuple(columns),
                         values=tuple(values),
                     )
                 )
-    return statements
+            if len(parsed) < mentions:
+                unresolved.append((relative, lineno))
+    statements.sort(key=lambda item: (item.file, item.lineno, item.table))
+    return tuple(statements), tuple(unresolved)
+
+
+def insert_statements() -> list[InsertStatement]:
+    """扫描**全 `app/`** 的 INSERT 语句（AST 取串 + 配对括号切分）。
+
+    Returns:
+        list[InsertStatement]: 逐条语句（按文件、行号排序）。
+    """
+    return list(_scan()[0])
 
 
 def unresolved_inserts() -> list[tuple[str, int]]:
@@ -357,20 +415,7 @@ def unresolved_inserts() -> list[tuple[str, int]]:
     Returns:
         list[tuple[str, int]]: `(文件, 行号)`。
     """
-    unresolved: list[tuple[str, int]] = []
-    for path in sorted(APP_ROOT.rglob("*.py")):
-        source = path.read_text(encoding="utf-8", errors="ignore")
-        if "INSERT INTO" not in source.upper():
-            continue
-        tree = ast.parse(source)
-        local = _module_constants(tree)
-        for text, lineno, mentions in _iter_sql_texts(tree, local):
-            if not mentions:
-                continue
-            parsed = 0 if text is None else len(_parse_statements(text))
-            if parsed < mentions:
-                unresolved.append((str(path.relative_to(APP_ROOT)), lineno))
-    return unresolved
+    return list(_scan()[1])
 
 
 # ---------------------------------------------------------------------------
@@ -395,15 +440,31 @@ def test_splitter_counterexample() -> None:
 def test_ddl_parser_includes_alter_add_column() -> None:
     """反例自检：`ALTER TABLE … ADD COLUMN` 的列必须被解析进来。
 
-    B19 复盘时，本判据的第一版只解析 `CREATE TABLE`，于是把 `0004` 里
-    `ALTER TABLE plugin_task ADD COLUMN IF NOT EXISTS confirmed_step_seq …`
-    补的列判成"不存在"——**假红**。后补列是迁移的常态，漏解析它会让门禁噪声大到被关掉。
+    **断言必须落在"只由 ALTER 贡献"的列上**。本用例原先断言
+    `confirmed_step_seq / version / version_history`，而这三列在 `init-schema-phase3.sql`
+    的 `CREATE TABLE` 里**本来就写了**——把 ALTER 解析关掉它仍然绿（独立复核实测），
+    属"永不红的装饰性夹具"。现在改用 `audit_log.trace_id` / `usage_event.profile`
+    这类**只在 `ALTER TABLE … ADD COLUMN` 里出现**的列（2026-10-27 实测共 10 列，
+    全部落在 `audit_log` 与 `usage_event` 上）。
+
+    后补列是迁移的常态；漏解析它会让"写侧引用了必填列"被判成"列不存在"——**假红**。
     """
-    known = ddl_columns()
-    for column in ("confirmed_step_seq", "version", "version_history"):
-        assert column in known, f"`ALTER TABLE … ADD COLUMN` 补的列未被解析：{column}"
-    # `queue_position` 在任何迁移里都不存在（它是派生值）——必须**不**在集合里
-    assert "queue_position" not in known, "`queue_position` 不该出现在 DDL 列集合里（它是派生值）"
+    tables = ddl_tables()
+    alter_only = {
+        "audit_log": ("trace_id", "actor_role", "change_summary", "action_display_name"),
+        "usage_event": ("profile", "provider", "prompt_tokens", "completion_tokens"),
+    }
+    for table, columns in alter_only.items():
+        shape = tables.get(table)
+        assert shape is not None, f"DDL 里找不到表 {table}"
+        for column in columns:
+            assert column in shape.columns, (
+                f"`{table}.{column}` 只由 `ALTER TABLE … ADD COLUMN` 贡献，未被解析——"
+                f"关闭 ALTER 解析时本用例必须红"
+            )
+    assert "queue_position" not in ddl_columns(), (
+        "`queue_position` 不在任何建表/迁移里（它是派生值），不该出现在 DDL 列集合里"
+    )
 
 
 def test_adjacent_literal_is_folded() -> None:
@@ -424,10 +485,23 @@ def test_adjacent_literal_is_folded() -> None:
         ")\n"
     )
     tree = ast.parse(source)
-    texts = [text for text, _, mentions in _iter_sql_texts(tree, {}) if mentions]
+    texts = [text for text, _, mentions in _iter_sql_texts(tree, {}, set()) if mentions]
     assert len(texts) == 1, f"相邻字面量应折叠成一条语句，实际 {texts}"
     parsed = _parse_statements(texts[0] or "")
     assert parsed == [("widget", ["a", "b", "c"], [":a", ":b", ":c"])], f"实际 {parsed}"
+
+    # 再钉住**真实**那条：`tenant_data_service.py` 的 plugin_task 写入同样是相邻字面量
+    real = [
+        item
+        for item in insert_statements()
+        if item.table == "plugin_task"
+        and item.file.replace("\\", "/").endswith("tenant_data_service.py")
+    ]
+    assert len(real) == 1, f"未找到 tenant_data_service 的 plugin_task 写入：{real}"
+    statement = real[0]
+    assert len(statement.columns) == 17, f"列数应为 17，实际 {len(statement.columns)}"
+    dirty = [c for c in statement.columns if '"' in c or "\n" in c or "'" in c]
+    assert not dirty, f"列名被切碎（含引号/换行）：{dirty}"
 
 
 def test_table_constant_is_resolved() -> None:
@@ -444,7 +518,7 @@ def test_table_constant_is_resolved() -> None:
         '    return f"INSERT INTO {AUDIT_TABLE} (a, b) VALUES (:a, :b)"\n'
     )
     tree = ast.parse(source)
-    texts = [text for text, _, mentions in _iter_sql_texts(tree, {}) if mentions]
+    texts = [text for text, _, mentions in _iter_sql_texts(tree, {}, set()) if mentions]
     assert len(texts) == 1
     assert texts[0] is not None, "跨模块表名常量未被解析"
     parsed = _parse_statements(texts[0])
