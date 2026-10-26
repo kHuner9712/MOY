@@ -212,6 +212,20 @@ R7_MIN_PAIRED: Final[int] = 28
 #: 它的 record 配不上 → 静默进 skipped，而 paired 只掉 1、仍在余量内）。
 #: 所以 skipped 必须与这张白名单**逐项相等**，多一个即 exit 2。
 #: 新增非行式 dataclass（store / stats / patch / 纯读）时必须显式登记并说明理由。
+#: R7 允许"整单元没有 INSERT、dataclass 未评估"的白名单（`(unit, dataclass)`）。
+#:
+#: 与 skipped 白名单同理：**未评估必须逐项相等**。否则"某单元的 INSERT 挪去业务层 /
+#: 拆包后新单元还没写 SQL"会让 record 从 paired 掉进 unevaluated，而输出只多一行 INFO、
+#: exit 仍 0——与 N2 修掉的那个洞是同一个，只是桶不同。
+R7_UNEVALUATED_ALLOWLIST: Final[frozenset[tuple[str, str]]] = frozenset(
+    {
+        # audit 的 PG 写入故意留在 business/audit_service.py（R1/R4 对该单元的豁免所指）
+        ("audit", "ActionGroupEntry"),
+        ("audit", "AuditQuery"),
+        ("audit", "AuditQueryResult"),
+    }
+)
+
 R7_SKIPPED_ALLOWLIST: Final[frozenset[tuple[str, str]]] = frozenset(
     {
         ("billing", "PlanRecord"),  # 套餐目录由 SQL 种子写入，代码无 INSERT
@@ -463,6 +477,7 @@ class WriteStats:
     unresolved: int = 0
     orphan_tables: set[str] = field(default_factory=set)
     unexpected_skips: set[tuple[str, str]] = field(default_factory=set)
+    unevaluated_pairs: set[tuple[str, str]] = field(default_factory=set)
 
     def summary(self) -> str:
         """渲染成一行覆盖率摘要。
@@ -1701,6 +1716,7 @@ def _check_write_coverage(
         # 整单元没有可判定的 INSERT（如 `audit`：PG 写入故意留在 business 层）。
         # 必须计数并说一句——否则这 N 个 dataclass 会从分母里消失，而输出看上去"全绿"。
         stats.unevaluated += len(record_fields)
+        stats.unevaluated_pairs.update((unit.name, name) for name in record_fields)
         infos.append(
             f"R7 {unit.name}：本单元没有 `INSERT INTO … (列) VALUES` 语句，"
             f"{len(record_fields)} 个 dataclass 未评估（不是通过）"
@@ -1965,6 +1981,7 @@ def run(
     ddl: dict[str, DdlTable] | None = None,
     r7_min_inserts: int = 0,
     r7_min_paired: int = 0,
+    r7_coverage_guard: bool = False,
 ) -> int:
     """执行一次完整门禁。
 
@@ -1978,6 +1995,8 @@ def run(
         ddl: 表 → DDL 形状（默认读仓库自带 SQL；自检可注入）。
         r7_min_inserts: R7 扫描到的 INSERT 条数下限（低于即 exit 2；自检传 0）。
         r7_min_paired: R7 配上表的 dataclass 数下限（低于即 exit 2；自检传 0）。
+        r7_coverage_guard: 是否校验"未评估白名单"。**默认关**，只由 `main()` 在真实仓开启；
+            自检的合成仓储天然没有 INSERT，默认开会把每条用例都判死。
 
     Returns:
         int: 退出码（0 / 1 / 2）。
@@ -2034,6 +2053,29 @@ def run(
             f"结论不成立。请改成表名取模块常量的 f-string，或登记豁免"
         )
         return 2
+    if r7_coverage_guard:
+        extra_unevaluated = result.r7_stats.unevaluated_pairs - R7_UNEVALUATED_ALLOWLIST
+        # 只有在**该单元本轮确实存在**时才算白名单过期；否则合成仓储（没有 audit 单元）
+        # 会把整张白名单误判成 stale。
+        present_units = {unit.name for unit in result.units}
+        stale_unevaluated = {
+            pair for pair in R7_UNEVALUATED_ALLOWLIST if pair[0] in present_units
+        } - result.r7_stats.unevaluated_pairs
+        if extra_unevaluated:
+            pairs = "、".join(f"{unit}.{name}" for unit, name in sorted(extra_unevaluated))
+            print(
+                f"[FAIL] R7 有 {len(extra_unevaluated)} 个 dataclass 所在单元没有 INSERT、"
+                f"且不在未评估白名单：{pairs}——写路径可能挪走了或还没写，"
+                f"覆盖率已塌陷（须查清后登进 R7_UNEVALUATED_ALLOWLIST）"
+            )
+            return 2
+        if stale_unevaluated:
+            pairs = "、".join(f"{unit}.{name}" for unit, name in sorted(stale_unevaluated))
+            print(
+                f"[FAIL] R7 未评估白名单有 {len(stale_unevaluated)} 项已过期（该单元现在有 INSERT "
+                f"或被判成配对/跳过）：{pairs}——请删掉这几行白名单"
+            )
+            return 2
     if result.r7_stats.unexpected_skips:
         pairs = "、".join(
             f"{unit}.{record}" for unit, record in sorted(result.r7_stats.unexpected_skips)
@@ -2860,7 +2902,7 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
             not any("WidgetRecord" in info for info in mapper_scan.infos),
             f"实际 INFO {mapper_scan.infos}",
         )
-        code = run(mapper_root, clean_baseline, 0)
+        code = run(mapper_root, clean_baseline, 0, r7_coverage_guard=False)
         failures += _case("R4 v2：空映射器场景 exit 1", code == 1, f"实际 exit {code}")
 
         # ------- 用例 14：同侧两个构造点其中一处少字段（并集仍含该字段）→ 必红 -------
@@ -2881,7 +2923,7 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
             ),
             f"实际 detail {[v.detail for v in partial_scan.violations if v.rule == 'R4']}",
         )
-        code = run(partial_root, clean_baseline, 0)
+        code = run(partial_root, clean_baseline, 0, r7_coverage_guard=False)
         failures += _case("R4 v2：同侧少字段场景 exit 1", code == 1, f"实际 exit {code}")
 
         # ---------------- 用例 15：R6 映射器全覆盖 → 零发现 ----------------
@@ -3128,9 +3170,41 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
         )
 
         # ---------------- 用例 28：不可解析的语句形态必须判死（不是"记个数就算") ----------------
-        code = run(r7_unresolved_root, clean_baseline, 0, ddl=_R7_DDL)
+        code = run(r7_unresolved_root, clean_baseline, 0, ddl=_R7_DDL, r7_coverage_guard=True)
         failures += _case(
             "R7：表名不可解析 → exit 2（看不见 ≠ 没问题）", code == 2, f"实际 exit {code}"
+        )
+
+        # ---------------- 用例 30：未评估（单元无 INSERT）也要逐项对白名单 ----------------
+        no_insert_body = """
+        async def save(self, record: WidgetRecord) -> None:
+            return None
+        """
+        r7_noinsert_root = tmp / "r7-noinsert"
+        _write_module(r7_noinsert_root / "widget_repo.py", _r7_repo_source(no_insert_body))
+        r7_noinsert = scan(r7_noinsert_root, ddl=_R7_DDL)
+        failures += _case(
+            "R7：单元无 INSERT → dataclass 记为未评估（不是通过）",
+            r7_noinsert.r7_stats.unevaluated_pairs == {("widget", "WidgetRecord")},
+            f"实际 {r7_noinsert.r7_stats.unevaluated_pairs}",
+        )
+        code = run(r7_noinsert_root, clean_baseline, 0, ddl=_R7_DDL, r7_coverage_guard=True)
+        failures += _case(
+            "R7：未评估且不在白名单 → exit 2（覆盖率塌陷的另一个桶）",
+            code == 2,
+            f"实际 exit {code}",
+        )
+
+        # ---------------- 用例 31：未评估白名单"过期"也要判死（防止豁免腐坏） ----------------
+        saved_allow = R7_UNEVALUATED_ALLOWLIST
+        try:
+            # 把 widget.WidgetRecord 塞进白名单：它本轮其实是 paired，条目即"过期"
+            globals()["R7_UNEVALUATED_ALLOWLIST"] = saved_allow | {("widget", "WidgetRecord")}
+            code = run(r7_full_root, clean_baseline, 0, ddl=_R7_DDL, r7_coverage_guard=True)
+        finally:
+            globals()["R7_UNEVALUATED_ALLOWLIST"] = saved_allow
+        failures += _case(
+            "R7：未评估白名单条目已过期 → exit 2（豁免不得腐坏）", code == 2, f"实际 exit {code}"
         )
 
         # ---------------- 用例 29：非白名单的 skipped 必须判死 ----------------
@@ -3156,7 +3230,7 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
             r7_ghost.r7_stats.unexpected_skips == {("widget", "GhostRecord")},
             f"实际 {r7_ghost.r7_stats.unexpected_skips}",
         )
-        code = run(r7_ghost_root, clean_baseline, 0, ddl=_R7_DDL)
+        code = run(r7_ghost_root, clean_baseline, 0, ddl=_R7_DDL, r7_coverage_guard=True)
         failures += _case(
             "R7：非白名单 skipped → exit 2（单表漂移不能藏在计数余量里）",
             code == 2,
@@ -3208,6 +3282,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         strict_r7=args.strict_r7,
         r7_min_inserts=R7_MIN_INSERTS,
         r7_min_paired=R7_MIN_PAIRED,
+        r7_coverage_guard=True,
     )
 
 
