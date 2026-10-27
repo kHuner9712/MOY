@@ -83,7 +83,8 @@ MIN_SAFE_VERSIONS = {
 #: 约束：调用 jwt.decode() 必须显式传 algorithms=[...]。
 #: ecdsa PYSEC-2026-1325：P-256 Minerva 时序攻击，影响签名/密钥生成/ECDH，
 #: 验签不受影响。约束：禁止引入这三个 API。
-HARDENING_RULES = [    {
+HARDENING_RULES = [
+    {
         "id": "H-1",
         "desc": "jwt.decode() 必须显式传 algorithms=[...]（python-jose PYSEC-2026-4298 加固）",
         "pattern": re.compile(r"jwt\.decode\("),
@@ -179,7 +180,7 @@ def split_package(spec: str) -> tuple[str, str]:
         tuple[str, str]: (包名, 版本约束)。
     """
     name = re.split(r"[<>=!~\[]", spec, maxsplit=1)[0].strip()
-    constraint = spec[len(name):].strip()
+    constraint = spec[len(name) :].strip()
     return name.lower().replace("_", "-"), constraint
 
 
@@ -256,12 +257,15 @@ def check_min_safe_versions(deps: list[str]) -> list[str]:
             )
 
         # 2) 解析层：校验实际安装版本
+        installed: str | None = None
         try:
             import importlib.metadata as metadata
 
             installed = metadata.version(name)
-        except Exception:
-            continue  # 未安装（CI 中会在后续步骤安装），跳过
+        except Exception:  # 未安装（CI 中会在后续步骤安装）→ 本项跳过
+            installed = None
+        if installed is None:
+            continue
         if _version_tuple(installed) < _version_tuple(required):
             failures.append(
                 f"{name}：实际安装版本 {installed} < 最低安全版本 {required}"
@@ -291,7 +295,8 @@ def check_hardening_rules() -> list[str]:
                     if not rule["require_in_block"].search(call.group()):
                         rel = path.relative_to(REPO_ROOT)
                         failures.append(
-                            f"{rule['id']} {rule['desc']} —— {rel} 中的 jwt.decode() 未显式限定 algorithms"
+                            f"{rule['id']} {rule['desc']} —— {rel} 中的 jwt.decode() "
+                            f"未显式限定 algorithms"
                         )
         elif rule["id"] == "H-2":
             for path in py_files:
@@ -301,9 +306,7 @@ def check_hardening_rules() -> list[str]:
                 for api in rule["forbidden_apis"]:
                     if re.search(rf"\b{re.escape(api)}\b", text):
                         rel = path.relative_to(REPO_ROOT)
-                        failures.append(
-                            f"{rule['id']} {rule['desc']} —— {rel} 中出现 {api}"
-                        )
+                        failures.append(f"{rule['id']} {rule['desc']} —— {rel} 中出现 {api}")
     return failures
 
 
@@ -319,14 +322,14 @@ def run_pip_audit(deps: list[str]) -> list[str]:
     try:
         import pip_audit  # noqa: F401
     except ImportError:
-        return [
-            "pip-audit 未安装，跳过漏洞扫描（CI 中应使用独立 venv 安装后执行）"
-        ]
+        return ["pip-audit 未安装，跳过漏洞扫描（CI 中应使用独立 venv 安装后执行）"]
 
     with tempfile.TemporaryDirectory() as tmp:
         req_file = Path(tmp) / "requirements.txt"
         req_file.write_text("\n".join(deps) + "\n", encoding="utf-8")
-        result = subprocess.run(
+        # argv 全为常量（解释器路径 + 本函数自建的临时文件路径），不含任何外部输入，
+        # 因此 S603 判据里的「不可信输入」前提不成立，按白名单豁免并注明理由。
+        result = subprocess.run(  # noqa: S603 - argv 由常量构造，无外部输入
             [sys.executable, "-m", "pip_audit", "-r", str(req_file), "--progress-spinner", "off"],
             capture_output=True,
             text=True,
@@ -359,14 +362,13 @@ def run_pip_audit(deps: list[str]) -> list[str]:
             accepted.append(f"{entry} —— 已评估接受风险：{ACCEPTED_RISKS[key]}")
         else:
             advisory.append(
-                f"{entry} —— 需做调用面适用性评估并记录结论"
-                f"（架构文档 §8.1.1；不接受二值结论）"
+                f"{entry} —— 需做调用面适用性评估并记录结论（架构文档 §8.1.1；不接受二值结论）"
             )
     for note in accepted:
         print(f"[ACCEPTED] {note}")
     if blocking:
         if advisory:
-            return blocking + [f"另有 {len(advisory)} 项待评估：{'; '.join(advisory)}"]
+            return [*blocking, f"另有 {len(advisory)} 项待评估：{'; '.join(advisory)}"]
         return blocking
     return advisory
 

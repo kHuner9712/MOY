@@ -11,15 +11,17 @@
 
 由此固化两条纪律，本脚本把它们变成机械判据：
 
-| 路径 | 库的形态 | 暴露的缺陷类型 |
-| --- | --- | --- |
-| 空库（A） | 应用角色自建，无任何表 | **语法崩**、旧版 init 脚本漏列 |
-| 已初始化库（B） | initdb 跑过 `init-schema-*.sql`，表属主是超级用户 | **属主崩**、守卫缺失 |
-| 回滚往返（C） | 在 B 的库上 `--rollback 0007 0006` → `--apply` | **down 脚本空转**、回滚后升不回去 |
+- **路径 A（空库）**：应用角色自建、无任何表 ——
+  暴露 **语法崩**、旧版 init 脚本漏列。
+- **路径 B（已初始化库）**：initdb 跑过 `init-schema-*.sql`，表属主是超级用户 ——
+  暴露 **属主崩**、守卫缺失。
+- **路径 C（回滚往返）**：在 B 的库上 `--rollback 0007 0006` → `--apply` ——
+  暴露 **down 脚本空转**、回滚后升不回去。
 
 **三条路径都必须绿**——只跑一条等于没验。A 缺库时用 `--run-pg` 自建（需要超级用户
 连接串），B/C 直接打 `OA_TEST_DATABASE_URL` 指向的那台库。路径 C 是阶段四新增：
-它验证的是「升级出问题 → 回滚 → 修好 → 再升级」这条真实运维链路，而不是单次的 `--apply`。
+它验证的是「升级出问题 → 回滚 → 修好 → 再升级」这条真实运维链路，
+而不是单次的 `--apply`。
 
 用法::
 
@@ -344,7 +346,9 @@ def _column_declared(text: str, table: str, column: str) -> bool:
     return re.search(rf"^\s*{column}\b", match.group(1), re.IGNORECASE | re.MULTILINE) is not None
 
 
-def run_static_checks(directory: Path = MIGRATIONS_DIR) -> tuple[list[Violation], dict[str, object]]:
+def run_static_checks(
+    directory: Path = MIGRATIONS_DIR,
+) -> tuple[list[Violation], dict[str, object]]:
     """执行全部静态判据。
 
     Args:
@@ -481,7 +485,7 @@ def _run_path_a_empty_database(superuser_dsn: str) -> list[Violation]:
     violations: list[Violation] = []
     try:
         asyncio.run(_create())
-    except Exception as exc:  # noqa: BLE001 - 建库失败即环境问题，交回上层判 2
+    except Exception as exc:  # 建库失败即环境问题，交回上层判 2
         return [Violation("路径A(空库)", f"建库失败：{type(exc).__name__}: {exc}")]
     app_dsn = _swap_dsn(superuser_dsn, database=name, user=APP_ROLE)
     try:
@@ -499,7 +503,7 @@ def _run_path_a_empty_database(superuser_dsn: str) -> list[Violation]:
     finally:
         try:
             asyncio.run(_drop())
-        except Exception:  # noqa: BLE001, S110 - 清理失败不应掩盖主结论
+        except Exception:  # noqa: S110 - 清理失败不应掩盖主结论
             pass
     return violations
 
@@ -564,7 +568,7 @@ def _column_exists(dsn: str, table: str, column: str) -> bool:
 
     try:
         return bool(asyncio.run(_query()))
-    except Exception:  # noqa: BLE001 - 连接失败由调用方的路径判定负责报错
+    except Exception:  # 连接失败由调用方的路径判定负责报错
         return False
 
 
@@ -640,7 +644,7 @@ def _run_path_c_round_trip(superuser_dsn: str) -> list[Violation]:
 
         try:
             asyncio.run(_create())
-        except Exception as exc:  # noqa: BLE001 - 建库失败即环境问题
+        except Exception as exc:  # 建库失败即环境问题
             return [Violation("路径C(回滚往返)", f"建库失败：{type(exc).__name__}: {exc}")]
 
         dsn = _swap_dsn(superuser_dsn, database=name, user=APP_ROLE)
@@ -704,7 +708,7 @@ def _run_path_c_round_trip(superuser_dsn: str) -> list[Violation]:
         finally:
             try:
                 asyncio.run(_drop())
-            except Exception:  # noqa: BLE001, S110 - 清理失败不掩盖主结论
+            except Exception:  # noqa: S110 - 清理失败不掩盖主结论
                 pass
     return violations
 
@@ -771,7 +775,8 @@ def run_self_test() -> tuple[int, list[str]]:
         # 反向：干净样本不得被误判（防"一律报错"式假门禁）
         clean = root / "clean.sql"
         clean.write_text(
-            "DO $guard$\nBEGIN\n    IF to_regclass('public.plugin_task') IS NULL THEN RETURN; END IF;\n"
+            "DO $guard$\nBEGIN\n    IF to_regclass('public.plugin_task') IS NULL THEN RETURN; "
+            "END IF;\n"
             "    BEGIN\n        ALTER TABLE plugin_task ADD COLUMN extra INT;\n"
             "    EXCEPTION WHEN insufficient_privilege THEN\n"
             "        RAISE EXCEPTION '请以表属主身份执行：ALTER TABLE ...';\n"

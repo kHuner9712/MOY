@@ -1,4 +1,5 @@
-# ruff: noqa: S603 - 本脚本只在 CI/本地被 `python` 直接执行，不接收用户输入拼命令行。
+# 本脚本只在 CI/本地被 `python` 直接执行、不接收用户输入拼命令行，故无需 S603 豁免
+# （文件首行原有一条 S603 文件级豁免，已删除：它从未命中，属无效指令，会被 RUF100 判红）。
 """仓储双实现一致性门禁（G-38，架构文档 §9.6）。
 
 ## 为什么需要它
@@ -43,13 +44,16 @@ G-38 管"同一层内两个实现的形状"。本脚本**不 import** G-37 的�
 配不上三元组即 exit 2，例外只有 `NO_PROTOCOL_UNITS`（`audit`：该单元只有查询函数，
 PG 写入实现故意留在 `business/audit_service.py`，见其模块注释）。
 
-| 规则 | 判据 | 级别 |
-| --- | --- | --- |
-| **R1 `proto_missing`** | 协议的公开方法必须 ⊆ 内存实现且 ⊆ PG 实现，缺一个即违规 | FAIL |
-| **R2 `impl_asym`** | `(内存公开 − TEST_HOOKS) == (PG 公开 − TEST_HOOKS)`，不等即违规；`TEST_HOOKS` 出现在 PG 侧单独违规 | FAIL |
-| **R3 `sig_mismatch`** | 同名方法：位置参数名序列、keyword-only 名序列、`*args`/`**kwargs` 名、共同参数默认值（`ast.unparse` 文本）、同步/异步、`@property` 属性性全部相同 | FAIL |
-| **R4 `record_ctor_asym`** | 每侧把 record 的**直接构造点**关键字集合收成 `set[frozenset[str]]`（同形构造自动去重），两侧**逐集合相等**才通过；任一侧没有任何直接构造点 → 只 `[INFO]` 跳过（该侧经映射器/服务层构造，无可比对象） | FAIL |
-| **R5 `proto_undeclared`** | 双实现都有、协议未声明的方法 | 只 `[INFO]`（不判红、不入基线） |
+- **R1 `proto_missing`**（FAIL）：协议的公开方法必须 ⊆ 内存实现且 ⊆ PG 实现，缺一个即违规。
+- **R2 `impl_asym`**（FAIL）：`(内存公开 − TEST_HOOKS) == (PG 公开 − TEST_HOOKS)`，
+  不等即违规；`TEST_HOOKS` 出现在 PG 侧单独违规。
+- **R3 `sig_mismatch`**（FAIL）：同名方法：位置参数名序列、keyword-only 名序列、
+  `*args`/`**kwargs` 名、共同参数默认值（`ast.unparse` 文本）、同步/异步、
+  `@property` 属性性全部相同。
+- **R4 `record_ctor_asym`**（FAIL）：每侧把 record 的**直接构造点**关键字集合收成
+  `set[frozenset[str]]`（同形构造自动去重），两侧**逐集合相等**才通过；
+  任一侧没有任何直接构造点 → 只 `[INFO]` 跳过（该侧经映射器/服务层构造，无可比对象）。
+- **R5 `proto_undeclared`**（只 `[INFO]`，不判红、不入基线）：双实现都有、协议未声明的方法。
 
 **公开方法口径**：非 `_` 开头、非 dunder；`def` / `async def` / `@property` 都计入
 （property 也是公开面，只是调用形态不同，所以 R3 里单独比"属性性"）。
@@ -220,7 +224,8 @@ R7_MIN_PAIRED: Final[int] = 28
 R7_UNEVALUATED_ALLOWLIST: Final[frozenset[tuple[str, str]]] = frozenset(
     {
         # audit 的 PG 写入故意留在 business/audit_service.py（R1/R4 对该单元的豁免所指）；
-        # 那条写入的**列数/列名/表名**由 tests/integration/test_sql_insert_consistency.py（G-SQL）对账，
+        # 那条写入的**列数/列名/表名**由
+        # tests/integration/test_sql_insert_consistency.py（G-SQL）对账，
         # 字段级覆盖 R7 看不到它——这是本白名单成立的前提，不是省略。
         ("audit", "ActionGroupEntry"),
         ("audit", "AuditQuery"),
@@ -565,7 +570,9 @@ def _parse(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
-def _decorator_names(node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[str, ...]:
+def _decorator_names(
+    node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[str, ...]:
     """提取装饰器的源码文本（`@dataclass(frozen=True)` 取 `dataclass(...)`）。
 
     Args:
@@ -615,10 +622,14 @@ def _method_info(node: ast.FunctionDef | ast.AsyncFunctionDef) -> MethodInfo:
         all_positional = all_positional[1:]
 
     raw_defaults: dict[str, str] = {}
-    paired = zip(all_positional[len(all_positional) - len(args.defaults) :], args.defaults)
+    # `zip` 两侧长度由 AST 语义保证相等（默认值个数 ≤ 位置参数个数；kwonlyargs 与
+    # kw_defaults 恒同长），故显式 `strict=True`：若哪天不相等，应当立刻抛错而不是静默截断。
+    paired = zip(
+        all_positional[len(all_positional) - len(args.defaults) :], args.defaults, strict=True
+    )
     for arg_node, default_node in paired:
         raw_defaults[arg_node.arg] = ast.unparse(default_node)
-    for arg_node, default_node in zip(args.kwonlyargs, args.kw_defaults):
+    for arg_node, default_node in zip(args.kwonlyargs, args.kw_defaults, strict=True):
         # keyword-only 的 `None` 默认表示"必填"（`**` 之后不能有位置默认值），
         # 用哨兵文本与真实 `None` 默认值区分开。
         raw_defaults[arg_node.arg] = (
@@ -626,7 +637,8 @@ def _method_info(node: ast.FunctionDef | ast.AsyncFunctionDef) -> MethodInfo:
         )
 
     ordered_defaults = tuple(
-        (item.arg, raw_defaults[item.arg]) for item in [*all_positional, *args.kwonlyargs]
+        (item.arg, raw_defaults[item.arg])
+        for item in [*all_positional, *args.kwonlyargs]
         if item.arg in raw_defaults
     )
     return MethodInfo(
@@ -818,8 +830,9 @@ def discover_units(repositories_root: Path) -> tuple[list[Unit], list[str]]:
             # 不是仓储包（如只有 __init__.py 的杂项目录），不参与判定。
             continue
         if not memory.is_file() or not postgres.is_file():
+            missing = MEMORY_MODULE if not memory.is_file() else POSTGRES_MODULE
             problems.append(
-                f"包形态单元 `{entry.name}` 缺 `{MEMORY_MODULE if not memory.is_file() else POSTGRES_MODULE}`："
+                f"包形态单元 `{entry.name}` 缺 `{missing}`："
                 f"无法配对双实现（包形态必须同时含 memory.py 与 postgres.py）"
             )
             continue
@@ -929,7 +942,11 @@ def _pair_triples(
         postgres_name = f"{POSTGRES_PREFIX}{stem}"
         memory = classes.get(memory_name)
         postgres = classes.get(postgres_name)
-        missing = [name for name, found in ((memory_name, memory), (postgres_name, postgres)) if found is None]
+        missing = [
+            name
+            for name, found in ((memory_name, memory), (postgres_name, postgres))
+            if found is None
+        ]
         if missing:
             problems.append(
                 f"单元 `{unit.name}`：协议 `{protocol.name}` 无法配对三元组（缺 {missing}）"
@@ -1018,7 +1035,9 @@ def _signature_diff(memory: MethodInfo, postgres: MethodInfo) -> list[str]:
     if memory.positional != postgres.positional:
         issues.append(f"位置参数 {list(memory.positional)} != {list(postgres.positional)}")
     if memory.keyword_only != postgres.keyword_only:
-        issues.append(f"keyword-only 参数 {list(memory.keyword_only)} != {list(postgres.keyword_only)}")
+        issues.append(
+            f"keyword-only 参数 {list(memory.keyword_only)} != {list(postgres.keyword_only)}"
+        )
     if memory.vararg != postgres.vararg:
         issues.append(f"`*args` 名 {memory.vararg} != {postgres.vararg}")
     if memory.kwarg != postgres.kwarg:
@@ -1034,9 +1053,7 @@ def _signature_diff(memory: MethodInfo, postgres: MethodInfo) -> list[str]:
     postgres_defaults = dict(postgres.defaults)
     for name in sorted(set(memory_defaults) & set(postgres_defaults)):
         if memory_defaults[name] != postgres_defaults[name]:
-            issues.append(
-                f"默认值 `{name}`={memory_defaults[name]} != {postgres_defaults[name]}"
-            )
+            issues.append(f"默认值 `{name}`={memory_defaults[name]} != {postgres_defaults[name]}")
     return issues
 
 
@@ -1102,14 +1119,10 @@ def _check_impl_pair(
             )
         )
     memory_only = [
-        name
-        for name in memory_methods
-        if name not in postgres_methods and name not in TEST_HOOKS
+        name for name in memory_methods if name not in postgres_methods and name not in TEST_HOOKS
     ]
     postgres_only = [
-        name
-        for name in postgres_methods
-        if name not in memory_methods and name not in TEST_HOOKS
+        name for name in postgres_methods if name not in memory_methods and name not in TEST_HOOKS
     ]
     if memory_only or postgres_only:
         # 逐方法各发一条（而不是把一组方法压成一个 `/` 连接的 subject）：基线的粒度
@@ -1163,9 +1176,7 @@ def _check_impl_pair(
     undeclared = [
         name
         for name in memory_methods
-        if name in postgres_methods
-        and name not in protocol_methods
-        and name not in TEST_HOOKS
+        if name in postgres_methods and name not in protocol_methods and name not in TEST_HOOKS
     ]
     if undeclared:
         infos.append(
@@ -1217,8 +1228,12 @@ def _check_records(
             continue
         if memory_shapes == postgres_shapes:
             continue
-        memory_only = [sorted(shape) for shape in sorted(memory_shapes - postgres_shapes, key=sorted)]
-        postgres_only = [sorted(shape) for shape in sorted(postgres_shapes - memory_shapes, key=sorted)]
+        memory_only = [
+            sorted(shape) for shape in sorted(memory_shapes - postgres_shapes, key=sorted)
+        ]
+        postgres_only = [
+            sorted(shape) for shape in sorted(postgres_shapes - memory_shapes, key=sorted)
+        ]
         violations.append(
             Violation(
                 rule="R4",
@@ -2181,7 +2196,10 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         argparse.Namespace: 解析结果。
     """
     parser = argparse.ArgumentParser(
-        description="仓储双实现一致性门禁（G-38）：内存实现与 PG 实现的公开面/签名/record 构造点必须一致。",
+        description=(
+            "仓储双实现一致性门禁（G-38）：内存实现与 PG 实现的公开面/签名/record "
+            + "构造点必须一致。"
+        ),
     )
     parser.add_argument(
         "--repositories-root",
@@ -2254,7 +2272,7 @@ _R4_MAPPER_SAMPLE: Final[str] = (
     "@dataclass(frozen=True, slots=True)\n"
     "class WidgetRecord:\n"
     "    key: str\n"
-    "    value: str = \"\"\n"
+    '    value: str = ""\n'
     "\n"
     "\n"
     "class WidgetStore(Protocol):\n"
@@ -2290,7 +2308,7 @@ _R4_PARTIAL_SITE_SAMPLE: Final[str] = (
     "@dataclass(frozen=True, slots=True)\n"
     "class WidgetRecord:\n"
     "    key: str\n"
-    "    value: str = \"\"\n"
+    '    value: str = ""\n'
     "\n"
     "\n"
     "class WidgetStore(Protocol):\n"
@@ -2492,7 +2510,7 @@ def _case(name: str, ok: bool, detail: str) -> list[str]:
     return [f"[FAIL] 自检用例「{name}」不通过：{detail}"]
 
 
-def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函数只会让清单更难核对
+def _self_test() -> int:  # 自检是一个"用例清单"，拆函数只会让清单更难核对（C901 未启用）
     """在临时目录合成样本，逐条证明门禁会红、会白、会 fail-closed。
 
     Returns:
@@ -2506,7 +2524,9 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
         clean_root = tmp / "clean"
         _write_module(
             clean_root / "widget_repo.py",
-            _repo_source(_SAMPLE_GET + _SAMPLE_PUT, _SAMPLE_GET + _SAMPLE_PUT, _SAMPLE_GET + _SAMPLE_PUT),
+            _repo_source(
+                _SAMPLE_GET + _SAMPLE_PUT, _SAMPLE_GET + _SAMPLE_PUT, _SAMPLE_GET + _SAMPLE_PUT
+            ),
         )
         clean_baseline = tmp / "clean-baseline.txt"
         clean_baseline.write_text("", encoding="utf-8")
@@ -2523,9 +2543,13 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
         _write_module(
             mem_missing_root / "widget_repo.py",
             _repo_source(
-                _SAMPLE_GET + _SAMPLE_PUT + "\nasync def delete(self, key: str) -> None:\n    return None\n",
+                _SAMPLE_GET
+                + _SAMPLE_PUT
+                + "\nasync def delete(self, key: str) -> None:\n    return None\n",
                 _SAMPLE_GET + _SAMPLE_PUT,
-                _SAMPLE_GET + _SAMPLE_PUT + "\nasync def delete(self, key: str) -> None:\n    return None\n",
+                _SAMPLE_GET
+                + _SAMPLE_PUT
+                + "\nasync def delete(self, key: str) -> None:\n    return None\n",
             ),
         )
         mem_missing = scan(mem_missing_root)
@@ -2545,8 +2569,12 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
         _write_module(
             pg_missing_root / "widget_repo.py",
             _repo_source(
-                _SAMPLE_GET + _SAMPLE_PUT + "\nasync def delete(self, key: str) -> None:\n    return None\n",
-                _SAMPLE_GET + _SAMPLE_PUT + "\nasync def delete(self, key: str) -> None:\n    return None\n",
+                _SAMPLE_GET
+                + _SAMPLE_PUT
+                + "\nasync def delete(self, key: str) -> None:\n    return None\n",
+                _SAMPLE_GET
+                + _SAMPLE_PUT
+                + "\nasync def delete(self, key: str) -> None:\n    return None\n",
                 _SAMPLE_GET + _SAMPLE_PUT,
             ),
         )
@@ -2617,7 +2645,8 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
             _repo_source(
                 _SAMPLE_GET + _SAMPLE_PUT,
                 _SAMPLE_GET + _SAMPLE_PUT,
-                _SAMPLE_GET + "\nasync def put(self, name: str, value: str) -> None:\n    return None\n",
+                _SAMPLE_GET
+                + "\nasync def put(self, name: str, value: str) -> None:\n    return None\n",
             ),
         )
         rename = scan(rename_root)
@@ -2633,8 +2662,10 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
             default_root / "widget_repo.py",
             _repo_source(
                 _SAMPLE_GET + _SAMPLE_PUT,
-                _SAMPLE_GET + "\nasync def put(self, key: str, value: str = \"\") -> None:\n    return None\n",
-                _SAMPLE_GET + "\nasync def put(self, key: str, value: str = \"x\") -> None:\n    return None\n",
+                _SAMPLE_GET
+                + '\nasync def put(self, key: str, value: str = "") -> None:\n    return None\n',
+                _SAMPLE_GET
+                + '\nasync def put(self, key: str, value: str = "x") -> None:\n    return None\n',
             ),
         )
         default_diff = scan(default_root)
@@ -2949,8 +2980,7 @@ def _self_test() -> int:  # noqa: C901 - 自检是一个"用例清单"，拆函�
         r6_partial = scan(r6_partial_root)
         failures += _case(
             "R6：映射器少写 value → 报出 (WidgetRecord, value)",
-            [(item.record, item.field) for item in r6_partial.r6]
-            == [("WidgetRecord", "value")],
+            [(item.record, item.field) for item in r6_partial.r6] == [("WidgetRecord", "value")],
             f"实际 {[(item.record, item.field) for item in r6_partial.r6]}",
         )
         failures += _case(

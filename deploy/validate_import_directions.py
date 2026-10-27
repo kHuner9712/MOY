@@ -1,4 +1,5 @@
-# ruff: noqa: S603 - 本脚本只在 CI/本地被 `python` 直接执行，不接收用户输入拼命令行。
+# 本脚本只在 CI/本地被 `python` 直接执行、不接收用户输入拼命令行，故无需 S603 豁免
+# （文件首行原有一条 S603 文件级豁免，已删除：它从未命中，属无效指令，会被 RUF100 判红）。
 """分层依赖方向门禁（审计 P1-3 ~ P1-7 / P2-9~P2-11，架构文档 §9.6 的 G-37）。
 
 编号说明：本门禁原计划登记为 G-36，但 G-36 已被
@@ -471,9 +472,7 @@ def _iter_nested_imports(tree: ast.Module) -> list[tuple[ast.Import | ast.Import
     return found
 
 
-def _resolve_import_from(
-    module_name: str, is_package: bool, node: ast.ImportFrom
-) -> list[str]:
+def _resolve_import_from(module_name: str, is_package: bool, node: ast.ImportFrom) -> list[str]:
     """解析 `from ... import ...` 的目标模块名。
 
     Args:
@@ -564,9 +563,7 @@ def assert_app_root(app_root: Path, min_files: int = MIN_SCANNED_FILES) -> int:
         raise ScanRootError(f"app-root 不存在：{app_root}")
     if not app_root.is_dir():
         raise ScanRootError(f"app-root 不是目录：{app_root}")
-    count = sum(
-        1 for path in app_root.rglob("*.py") if "__pycache__" not in path.parts
-    )
+    count = sum(1 for path in app_root.rglob("*.py") if "__pycache__" not in path.parts)
     if count < min_files:
         raise ScanRootError(
             f"扫描文件数异常（{count}，下限 {min_files}），疑似 app-root 错误或目录被移动"
@@ -678,9 +675,7 @@ def load_baseline(path: Path) -> list[BaselineEntry]:
             continue
         head, separator, tail = line.partition("--")
         if not separator:
-            raise BaselineFormatError(
-                f"{path.name}:{lineno} 缺少 `--` 审计编号段：{raw.strip()}"
-            )
+            raise BaselineFormatError(f"{path.name}:{lineno} 缺少 `--` 审计编号段：{raw.strip()}")
         head_parts = head.split()
         tail_parts = tail.split(maxsplit=1)
         if len(head_parts) < 4:
@@ -765,7 +760,10 @@ def print_edges(result: ScanResult) -> None:
             cells.append((str(count) if count else ".").rjust(width))
         print(source_layer.ljust(12) + "".join(cells))
     print()
-    print(f"扫描文件 {result.scanned_files} 个；TYPE_CHECKING 边 {len(result.type_checking_edges)} 条（只统计不判红）")
+    print(
+        f"扫描文件 {result.scanned_files} 个；TYPE_CHECKING 边 "
+        f"{len(result.type_checking_edges)} 条（只统计不判红）"
+    )
 
 
 def _format_violation(violation: Violation) -> str:

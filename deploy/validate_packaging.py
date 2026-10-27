@@ -352,7 +352,7 @@ def self_test() -> int:
             pp,
             "[tool.setuptools]\n"
             'packages = ["app", "app.core", "app.registry"]\n'
-            '[tool.setuptools.package-data]\n'
+            "[tool.setuptools.package-data]\n"
             '"app.plugins" = ["manifests/*.json"]\n'
             '"app.registry" = ["*.yaml"]\n',
         )
@@ -368,7 +368,7 @@ def self_test() -> int:
             pp,
             "[tool.setuptools]\n"
             'packages = ["app", "app.core", "app.plugins", "app.registry"]\n'
-            '[tool.setuptools.package-data]\n'
+            "[tool.setuptools.package-data]\n"
             '"app.registry" = ["*.yaml"]\n',
         )
         v, _ = run_check(app, pp)
@@ -383,7 +383,7 @@ def self_test() -> int:
             pp,
             "[tool.setuptools]\n"
             'packages = ["app", "app.core", "app.plugins", "app.registry"]\n'
-            '[tool.setuptools.package-data]\n'
+            "[tool.setuptools.package-data]\n"
             '"app.plugins" = ["manifests/*.json"]\n'
             '"app.registry" = ["*.yml"]\n',
         )

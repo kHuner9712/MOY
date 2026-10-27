@@ -407,7 +407,9 @@ def scan_build_args(paths: list[Path], declared: frozenset[str]) -> list[BuildAr
         for service, name in web_build_args(path):
             if name in declared:
                 continue
-            drifts.append(BuildArgDrift(_rel_to_repo(path), _locate_line(path, name), service, name))
+            drifts.append(
+                BuildArgDrift(_rel_to_repo(path), _locate_line(path, name), service, name)
+            )
     return drifts
 
 
@@ -629,7 +631,10 @@ def main(argv: list[str] | None = None) -> int:
 
     arg_payload: list[dict[str, object]] = []
     if arg_drifts:
-        print("[FAIL] 编排传了、但 apps/web/Dockerfile 未声明的构建参数（构建期会被静默丢弃，前端拿到空值）：")
+        print(
+            "[FAIL] 编排传了、但 apps/web/Dockerfile 未声明的构建参数"
+            "（构建期会被静默丢弃，前端拿到空值）："
+        )
         for item in arg_drifts:
             print(item.render())
             arg_payload.append(

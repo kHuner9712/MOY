@@ -176,7 +176,9 @@ def main(argv: list[str] | None = None) -> int:
     if not offenders:
         print("[OK] 所有依赖 PG 夹具的用例都带 pg 标记")
         return 0
-    print(f"[FAIL] {len(offenders)} 条依赖 PG 夹具的用例缺少 pg 标记（未加 --run-pg 时会静默跳过）：")
+    print(
+        f"[FAIL] {len(offenders)} 条依赖 PG 夹具的用例缺少 pg 标记（未加 --run-pg 时会静默跳过）："
+    )
     for path, lineno, name in offenders:
         try:
             shown = path.relative_to(REPO_ROOT)
@@ -193,7 +195,7 @@ def _self_test() -> int:
     Returns:
         int: 0 自检通过 / 2 自检失败。
     """
-    sample = '''
+    sample = """
 import pytest
 
 def pg_dsn():
@@ -205,7 +207,7 @@ def test_dark(pg_dsn):
 @pytest.mark.pg
 def test_marked(pg_dsn):
     pass
-'''
+"""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "test_sample.py").write_text(sample, encoding="utf-8")

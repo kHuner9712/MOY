@@ -162,6 +162,29 @@ jobs:
         run: ruff format --check .
 
       # ------------------------------------------------------------------
+      # 门禁 2b：deploy/ 的**门禁脚本自己**也必须过 lint / format
+      #
+      # 工作流级 `defaults.run.working-directory` 是 `apps/adapter`，所以上面两步的
+      # `ruff check .` 只扫适配层——`deploy/` 下 14 个校验脚本**从未被 lint 过**。
+      # 后果是"守门的脚本自己是唯一无人看守的死角"：脚本里写了永远不生效的
+      # `# noqa`（RUF100 会抓）、超长行淹没真正的 review 意见，都没有任何流程会发现。
+      # 因此这里用 `../../deploy` + 适配层那份唯一的 ruff 配置（口径与生产代码一致，
+      # 不另建第二份 pyproject）把 deploy/ 纳入同一道门禁。
+      #
+      # 当前基线是 **0 error / 0 待格式化**，这是 W3 收敛的结果（历史 61 条：
+      # E501 38 / RUF100 13 / S310 3 / S603 2 / B905 2 / S112 1 / RUF005 1 / S607 1）。
+      # 其中仅新增 6 处 `# noqa`（S310×3、S603×2、S607×1，均为"参数全为常量、
+      # 无外部输入"的误报，逐条带理由），其余按语义修复（B905 补 strict=、
+      # RUF100 删无效豁免、S112 改写为哨兵赋值、RUF005 改写为解包）。
+      # **不允许**加 `--exit-zero`、放宽规则或扩大 exclude 把红变绿。
+      # ------------------------------------------------------------------
+      - name: ruff check (deploy/)
+        run: ruff check ../../deploy --config pyproject.toml --output-format=github
+
+      - name: ruff format --check (deploy/)
+        run: ruff format --check ../../deploy --config pyproject.toml
+
+      # ------------------------------------------------------------------
       # 门禁 3：类型检查（mypy 零 error）
       # ------------------------------------------------------------------
       - name: mypy

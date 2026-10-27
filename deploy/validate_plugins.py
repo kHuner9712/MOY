@@ -220,7 +220,8 @@ def run_validation(directory: Path) -> tuple[int, list[str], dict[str, object]]:
 
     if len(registry) != EXPECTED_PLUGIN_COUNT:
         problems.append(
-            f"插件数量应为 {EXPECTED_PLUGIN_COUNT}，实际 {len(registry)}（加载失败 {len(failures)}）"
+            f"插件数量应为 {EXPECTED_PLUGIN_COUNT}，实际 {len(registry)}"
+            f"（加载失败 {len(failures)}）"
         )
 
     # 第三段：文案禁词（`loader` 已扫过，这里再独立扫一遍原文，
