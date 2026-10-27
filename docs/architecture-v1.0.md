@@ -1462,6 +1462,36 @@ graph LR
 > **Valkey 客户端命令约定**：Valkey 官方镜像的客户端二进制名为 `valkey-cli`，**镜像内不存在 `redis-cli`**。compose 中 Valkey 服务的健康检查命令一律使用 `valkey-cli`，禁止照抄 Redis 文档改写（ADR-0002 第 2.5 节）。
 > **官方镜像命名空间约定**：Docker 官方镜像（`postgres` 等）在 Hub 上实际托管于 `library/` 命名空间（引用时可省略前缀）。门禁脚本须做命名空间归一化，否则会把官方镜像误判为「标签不存在」（ADR-0002 第 2.2.1 节）。
 
+### 8.2.1 前端开发期依赖
+
+上表是**运行时/构建期**清单；下表是 `apps/web/package.json` 的 `devDependencies`
+中**尚未在上表出现**的部分（测试、类型、Lint 工具链）。两张表的并集即
+`dependencies` + `devDependencies` 的全集（实测 19 + 17 = 36 条，2026-10-27）。
+
+| 包 | 版本约束 | 协议 | 用途 |
+| --- | --- | --- | --- |
+| vitest | ^5.0.5 | MIT | 单元测试运行器 |
+| jsdom | ^30.1.3 | MIT | 浏览器环境模拟（vitest 的 DOM 宿主） |
+| @vitejs/plugin-react | ^6.1.2 | MIT | React 转换插件（vitest 与构建共用） |
+| @playwright/test | ^1.64.1 | Apache-2.0 | 端到端测试（浏览器驱动） |
+| @eslint/eslintrc | ^3.3.7 | MIT | ESLint flat config 兼容层 |
+| eslint-config-next | ^16.4.2 | MIT | Next 官方 ESLint 规则集 |
+| @typescript-eslint/eslint-plugin | ^8.72.0 | MIT | TypeScript ESLint 规则插件 |
+| @typescript-eslint/parser | ^8.72.0 | MIT | TypeScript 语法解析器 |
+| @types/node | ^20.14.0 | MIT | Node 内置模块类型 |
+| @types/react | ^19.3.0 | MIT | React 类型声明 |
+| @types/react-dom | ^19.3.0 | MIT | React DOM 类型声明 |
+
+> **协议说明**：10 项 MIT + 1 项 Apache-2.0（`@playwright/test`），均在白名单内，
+> 无 GPL/AGPL/SSPL。
+>
+> **机械校验**：`deploy/validate_deps.py` 的 `check_frontend_documented()` 以
+> **本表 + §8.2 表**为唯一真源（脚本内不建包名常量），任何一个
+> `dependencies`/`devDependencies` 条目未在此登记即判红；`npm:` 别名按**被指向的
+> 包名**判定，`file:`/`link:`/`portal:`/`git+`/`github:`/`http(s):` 一律判红，
+> `workspace:*` 跳过（monorepo 内部引用）。条数低于 34 视为解析塌陷 → exit 2。
+> 新增前端依赖的顺序是**先登记进本节，再改 `package.json`**。
+
 ---
 
 # 9. 共享知识（跨文件约定）
