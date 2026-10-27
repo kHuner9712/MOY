@@ -456,6 +456,10 @@ def main(argv: list[str] | None = None) -> int:
     directory = Path(args.dir).resolve() if args.dir else MIGRATIONS_DIR
     violations, stats = run_static_checks(directory)
     code = 1 if violations else 0
+    #: 真库分支是否**确实执行并全部通过**。仅用于让成功输出自证分支执行过：
+    #: 静态与真库两种口径此前打印完全相同的 `[OK]`，日志无法区分，
+    #: 一旦将来 `--run-pg` 被误删/被短路，输出看不出任何差别（假绿风险）。
+    pg_verified = False
 
     if args.run_pg:
         dsn = os.environ.get(APP_DSN_ENV, "").strip()
@@ -471,6 +475,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         violations.extend(pg_violations)
         code = 1 if violations else 0
+        pg_verified = not pg_violations
 
     if args.json:
         print(
@@ -492,6 +497,13 @@ def main(argv: list[str] | None = None) -> int:
         print(violation.render())
     if code == 0:
         print("[OK]   留存门禁通过：expires_at 列、类型与 180 天默认值均符合口径")
+        if pg_verified:
+            # 只有真库分支真的跑过且无违规时才打印：纯静态口径下这一行**不出现**，
+            # 因此日志本身即可自证「库里的列确实被核对过」，而不是只有 .sql 文本被解析。
+            print(
+                "[OK]   pg: plugin_task / plugin_artifact 的 expires_at 默认值已核对"
+                f"（{stats['retention_days']} 天）"
+            )
         return 0
     print(f"[FAIL] 留存门禁未通过：{len(violations)} 处问题")
     return 1
