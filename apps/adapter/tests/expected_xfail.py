@@ -122,20 +122,51 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
     {
         "id": "P3-B22-01",
         "level": "P1",
-        # PRD 5.3「额度用尽（软限制，不停服）」要求四项行为：
-        # ① 对话限长 ② 文档处理暂停 ③ 自动化任务排队不启动 ④ 通知管理员。
-        # 实测 `over_quota_warning` 只被计费域（BL/U4）消费，
-        # M1/M2/R3/A1 四条路径**零接入**——超额租户可无限跑文档与自动化。
-        # 处置：15006 已接线为响应 `data` 的非阻断提示字段（见 errors.py 注册项），
-        # 四项行为本身按 PRD 属阶段四范围，本批只记录不实现。
-        "status": "open",
-        "pinned_by": "PRD 5.3 额度用尽软限制 / 15006 接线缺口",
+        # 【已结清 2026-10-27】PRD 5.3「额度用尽（软限制，不停服）」四项逐项落点：
+        # ① 对话限长：`check_capability_allowed` 只判定不抛（原 P2 的 402 硬止损撤销），
+        #    非流式 `apply_answer_cap` 按字收口、流式**整帧截断**（不切半句、达上限仍
+        #    消费上游），`standard_mode_answer_chars` 可配（默认 300）。
+        #    判据：`integration/test_quota_notice.py`
+        #         `::test_m1_generate_over_quota_is_capped_not_blocked`
+        #         `unit/test_model_stream_answer_cap.py`（含反向"未超额不受限"）
+        # ② 文档处理：额度耗尽时照落本地记录（`file_size>0`）但**一次底座调用都不发**，
+        #    `hold_reason='quota'`，`stage` 派生 `QUOTA_HELD`（DB 的 stage 列仍 'uploaded'，
+        #    绕开 phase2 的 CHECK）。
+        #    **⚠ 如实折价**：V1.0 不存输入字节（`document_meta` 无字节列，上传路径为
+        #    `content → post_multipart` 一次网络调用），额度恢复后**无法自动重放**；
+        #    文案已改为「额度已用尽，未处理」+「…恢复后请重新上传」，PRD 5.3 ② 已同步
+        #    修订并留痕。要恢复"自动"需走 (b-2) 存输入字节（留存/备份/数据主体权利需
+        #    评审），单独立项。
+        #    判据：`unit/test_rag_service.py`
+        #         `::test_upload_is_held_without_calling_downstream_when_quota_exhausted`
+        # ③ 自动化任务：`is_queued = occupying >= limit or quota_held`，`hold_reason`
+        #    只走 UPDATE 不进 INSERT，**零执行**（`run_step` 调用数 0）；额度恢复后
+        #    显式 `promote_queued`（与 `release_slot` 共用，保留
+        #    `expected_status=TASK_QUEUED` 乐观锁防并发双拉起）。
+        #    判据：`unit/test_task_quota_hold.py`（queued 不执行 + 恢复后才推进）
+        # ④ 管理员通知：`billing.quota_warn_80` / `_100` 两条 audit action（已进
+        #    `ACTION_CATALOG` 与运营台 ID11 目录），写入前按 (tenant, action, period)
+        #    查重幂等；普通请求零查零写。
+        #    判据：`unit/test_quota_admin_notification.py`（4 条）+
+        #         `integration/test_quota_admin_notification_e2e.py`（连发 5 次只留 1 行）
+        # **硬止损边界**：R3/A1 仍不调底座（成本护栏未被软限制削弱），与对话的软限制
+        # 是两种处置并存，不得据本条以为"所有路径都放行"。
+        "status": "fixed",
+        "pinned_by": (
+            "integration/test_quota_notice.py::test_m1_generate_over_quota_is_capped_not_blocked"
+            " / unit/test_model_stream_answer_cap.py"
+            " / unit/test_rag_service.py::test_upload_is_held_without_calling_downstream"
+            " / unit/test_task_quota_hold.py"
+            " / unit+integration/test_quota_admin_notification*.py"
+        ),
+        # 保留 B30 作审计痕迹：与同族 P3-B22-02 / P3-B22-04 同形，且到期判定 ⑯
+        # 只遍历 `status == "open"` 的条目，故不影响门禁。
         # 阶段四首批（阶段四批次表尚未拆分，编号沿用 B 序列；首批暂记为 B30）。
         # **必须写批次号**：门禁的过期判定已改为格式校验 + 数值比较，
         # 写"阶段四"这类非批次号会被直接判红（字符串比较会让它永久逃检）。
         "due_batch": "B30",
-        "due_action": "补 PRD 5.3 四项行为（对话限长/文档暂停/自动化排队/管理员通知），"
-        "15006 提示字段已随错误码收口落地",
+        "due_action": "已结清（2026-10-27）：四项逐项有判据；② 按 b-1 如实折价"
+        "（内容不落库→需重新上传）并同步 PRD 5.3 与风险台账",
     },
     {
         "id": "P3-B22-02",
