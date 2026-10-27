@@ -321,6 +321,38 @@ jobs:
       - name: 迁移门禁（静态 + 双路径实跑）
         run: python ../../deploy/validate_migrations.py --run-pg
 
+      # ------------------------------------------------------------------
+      # 门禁 4c-3：产物留存（G-31，阶段三 B28 第 7 项）
+      #
+      # 此前 `deploy/validate_schema_retention.py` 有完整判据与 `--self-test`，
+      # 但**从未挂进任何 workflow**（`grep -n validate_schema_retention
+      # .github/workflows/*.yml` 零命中）：判据写得再准，不跑就等于零——这与
+      # 「有 PG 服务却没人带 --run-pg」是同一类死角（审计 OA-AUDIT-001 / P0-4）。
+      #
+      # 判据：`plugin_task.expires_at` / `plugin_artifact.expires_at` 列在、
+      # 类型是 `timestamptz`、默认值是 `now() + INTERVAL '180 days'`
+      # （PRD Q3-5 / ADJ-8 唯一口径，改天数属法规变更须评审）。
+      #
+      # **必须带 `--run-pg`**：静态解析只能证明 .sql 文本写对了，证明不了库里的列
+      # 真长那样——迁移没跑到、或有人手工 `ALTER` 过，静态检查照样全绿。
+      # 本 workflow 已有 PostgreSQL 服务且 `OA_TEST_DATABASE_URL` 在 job env 里；
+      # 缺该变量时脚本以 **exit 2** 失败（明确"不视为通过"），不会静默变绿。
+      # ------------------------------------------------------------------
+      - name: 产物留存门禁（静态 + 真库）
+        run: python ../../deploy/validate_schema_retention.py --run-pg
+
+      - name: 产物留存门禁自检（G-31 可红证明）
+        run: |
+          set +e
+          python ../../deploy/validate_schema_retention.py --self-test
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "G-31 自检未按预期命中负样本（退出码 $code，期望 1）"
+            exit 1
+          fi
+          echo "G-31 自检通过：90 天 / 缺列 / timestamp 三类负样本全部被拦截"
+
       - name: 迁移门禁自检（可红证明）
         run: |
           set +e
