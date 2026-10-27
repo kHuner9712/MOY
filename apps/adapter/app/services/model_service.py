@@ -1223,6 +1223,15 @@ class ModelService:
             reasoning_filter = _ReasoningFilter()
             first_token_at: float | None = None
             stream_started = time.perf_counter()
+            # P4-11 ①「常规模式」：流式按**整帧**收口（主理人 2026-10-27 定的方案）。
+            # 规则：只有在"这一帧整帧放得下"时才转发；放不下就**整帧丢弃**并置
+            # `cap_reached`，此后继续消费上游但不再 yield。
+            # 为什么不是"跨帧缓冲切半句"：切半句会切断多字节字符与引用标记，
+            # 前端拿到的是坏帧或半句话——比"答案略短"严重得多。
+            # 为什么达上限后仍消费上游：提前 close 会破坏连接复用与计费完整性。
+            answer_cap = self._settings.standard_mode_answer_chars
+            capped_chars = 0
+            cap_reached = False
             async for event in self._dify_for(request.profile).post_stream(
                 _DIFY_CHAT_PATH, streaming_payload
             ):
@@ -1238,7 +1247,13 @@ class ModelService:
                     visible = reasoning_filter.feed(str(event.get("answer", "")))
                     if not visible:
                         continue
+                    # `produced_chars` 记**上游产出**（中断时按它折算费用），
+                    # `produced_parts` 记**用户实际看到的**（落库历史必须与所见一致）。
                     produced_chars += len(visible)
+                    if cap_reached or capped_chars + len(visible) > answer_cap:
+                        cap_reached = True
+                        continue
+                    capped_chars += len(visible)
                     produced_parts.append(visible)
                     event = {**event, "answer": visible}
                 elif native == "message_end":
@@ -1246,8 +1261,11 @@ class ModelService:
                     rest = reasoning_filter.flush()
                     if rest:
                         produced_chars += len(rest)
-                        produced_parts.append(rest)
-                        yield sse_frame("delta", StreamDeltaData(text=rest).model_dump())
+                        # 冲洗出的尾巴同样按整帧判断：放不下就不发（不切半句）
+                        if not cap_reached and capped_chars + len(rest) <= answer_cap:
+                            capped_chars += len(rest)
+                            produced_parts.append(rest)
+                            yield sse_frame("delta", StreamDeltaData(text=rest).model_dump())
                     downstream_total = _total_units_of(event)
                 mapped_frame = self._transform_stream_event(event, citation_ctx, notice=notice)
                 if mapped_frame is not None:
