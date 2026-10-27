@@ -111,8 +111,14 @@ jobs:
       # ------------------------------------------------------------------
       # 准备 PostgreSQL（审计 OA-AUDIT-001 / P0-4）
       #
-      # 顺序与 `deploy/docker-entrypoint-initdb.d` 一致：
-      # 基线 schema（phase2 / phase3 / phase4）→ 应用角色 → 迁移。
+      # 次序：基线 schema（phase2 / phase3）→ phase4 → 应用角色 → 迁移。
+      # 与 `deploy/docker-entrypoint-initdb.d` **有一处置换**（已实测等价）：
+      # initdb 里 `30-init-app-role.sql` 按字典序先于 `30-init-schema-phase4.sql`
+      # （compose:64-70 明确要求如此，否则 phase4 的显式 `GRANT ... TO officeai_app`
+      # 在角色不存在时只有一行 NOTICE 就静默跳过）。这里把 phase4 提到前面，靠
+      # `init-app-role.sql` 的 `GRANT ... ON ALL TABLES IN SCHEMA public` +
+      # `ALTER DEFAULT PRIVILEGES` 覆盖 phase4 建的表；两序实测均为 41 张表、
+      # 应用角色对 phase4 六张表 DML 齐全，相关 8 个模块 67 条用例两序都绿。
       # 应用角色必须是 `NOSUPERUSER NOBYPASSRLS`：超级用户永久绕过 RLS，
       # 用它跑隔离用例会"全绿但无效"，夹具的 `assert_rls_not_bypassed` 会直接 fail。
       # ------------------------------------------------------------------
@@ -402,9 +408,16 @@ jobs:
       # 说明：当前批次实测值见 docs/qa-phase2-w1-report.md；未达标即禁合并，
       # 不允许用 --cov-fail-under 参数临时放宽（W-01 单约束）。
       #
-      # 审计 OA-AUDIT-001 / P0-4：**必须带 `--run-pg`**。无 PG 时 141 条用例跳过，
-      # 覆盖率实测只有 84.19%（<85%）——门禁不可能通过，且隔离用例一条没跑。
-      # 带 PG 后实测：1597 passed / 0 skipped / 覆盖率 89.81%。
+      # 审计 OA-AUDIT-001 / P0-4：**必须带 `--run-pg`**。不带时 PG 用例整批跳过
+      # （当前 207 skipped），且隔离用例一条都没跑；历史上无 PG 口径的覆盖率实测
+      # 只有 84.19%（<85%，旧口径），门禁不可能通过。
+      #
+      # 带 PG 后实测（2026-10-27，QA 真库，JUnit 权威计数）：
+      #   `tests=2325 skipped=0 failures=0 errors=0`（593.78s）。
+      #   此前的「1597 passed / 0 skipped / 覆盖率 89.81%」**已过期**：用例数从
+      #   1597 涨到 2325，覆盖率分母随之变化，旧百分比不可直接沿用。
+      # 覆盖率：**待 CI 首次实跑确认**——以本步骤带 `--cov-fail-under=85` 的首次
+      #   真实结果为准，不预先写数字（写成"已知达标"会让首次实跑的失败无人预期）。
       #
       # 另：`--run-pg` 下**不允许有 skip**（QA 口径：带 PG 时 skipped 即红），
       # 因此这里额外断言 skipped=0，防止将来某个 PG 夹具静默退化成 skip。
