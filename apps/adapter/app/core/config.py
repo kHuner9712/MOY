@@ -258,6 +258,14 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     plugin_task_concurrency: int = Field(default=3, ge=1, le=20)
     plugin_task_timeout_seconds: int = Field(default=900, ge=30, le=86_400)
+    #: 「常规模式」下单次回答的字符上限（PRD 5.3 ①，运营可调）。
+    #:
+    #: 为什么限**字符**而不降 `max_tokens`：Dify chat 不接受 per-request 的
+    #: max_tokens（只能改底座应用配置 = 跨应用副作用）；也不降历史条数——
+    #: 那会让回答从"变短"退化成"变傻"（丢上下文），踩 PRD 红线。
+    #: 300 字的依据：免费版 20 万/席位/月，300 字 ≈ 0.015%/次，够用又不至于
+    #: 让用户觉得"被明显缩水"。
+    standard_mode_answer_chars: int = Field(default=300, ge=50, le=2_000)
     plugin_artifact_retention_days: int = Field(default=180, ge=1, le=3_650)
     #: 产物下载令牌有效期（秒）。默认 900（15 分钟），上限 86400：
     #: 链接是短期凭证不是资源标识，泄漏后可自然失效（S9，2026-10-23）。
