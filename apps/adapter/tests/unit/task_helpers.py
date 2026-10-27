@@ -116,6 +116,10 @@ class FakeUsageService:
     def __init__(self) -> None:
         """初始化。"""
         self.calls: list[tuple[str, int]] = []
+        #: 额度是否已用尽（P4-11 ③ 的挂起判定结果；用例可直接改）
+        self.exhausted: bool = False
+        #: 判定被问过的作用域序列（证明"判定真的被调用过"）
+        self.capability_checks: list[str] = []
 
     async def record_automation(
         self, *, tenant_id: str, user_id: str, task_id: str, units: int, source: str = ""
@@ -151,6 +155,27 @@ class FakeUsageService:
         """
         del tenant_id, user_id
         return 0, ""
+
+    async def is_capability_exhausted(
+        self, *, capability: str, tenant_id: str, user_id: str
+    ) -> bool:
+        """替身：额度硬止损的**挂起判定**（P4-11 ②③ 的接线点）。
+
+        默认 `False`（未超额）：绝大多数任务用例不该被额度拦住。
+        需要"超额 → 挂起"语义的用例，改 `self.exhausted`（或直接 patch 本方法），
+        见 `tests/unit/test_task_quota_hold.py`。
+
+        Args:
+            capability: 作用域（`automation` 等），仅记录便于断言。
+            tenant_id: 企业 ID（未使用）。
+            user_id: 用户 ID（未使用）。
+
+        Returns:
+            bool: `self.exhausted`（默认 False）。
+        """
+        del tenant_id, user_id
+        self.capability_checks.append(capability)
+        return self.exhausted
 
 
 class EchoGateway:

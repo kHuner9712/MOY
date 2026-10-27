@@ -254,6 +254,21 @@ class TaskRunner:
                 task_id=task_id,
                 plugin_id=plugin_id,
             )
+        else:
+            # P4-11 ⑤：判定成功 → 说明额度已恢复，**主动拉起**一次。
+            # 为什么必须显式 promote：恢复这一刻**没有任何任务完成事件**，
+            # 而 promote 的既有触发点只有 `release_slot()`（任务收尾时）。
+            # 只清标记不拉起，被 hold 住的任务会永远停在 `queued`——
+            # 判据 ③b 的「开始推进」就不成立（那正是"看着有判据、实际不执行"）。
+            cleared = await self._deps.tasks.clear_hold_reasons(auth.tenant_id)
+            if cleared:
+                logger.info(
+                    "plugin_task_quota_recovered",
+                    tenant_id=auth.tenant_id,
+                    plugin_id=plugin_id,
+                    cleared=cleared,
+                )
+                await self.promote_queued(auth.tenant_id, plugin_id)
         await self._deps.audit.record(
             tenant_id=auth.tenant_id,
             actor_id=auth.user_id,
@@ -847,12 +862,30 @@ class TaskRunner:
         if not transitioned:
             logger.info("plugin_task_slot_release_skipped", task_id=record.task_id)
             return
-        queued = await self._deps.tasks.list_queued(record.tenant_id, record.plugin_id)
+        await self.promote_queued(record.tenant_id, record.plugin_id)
+
+    async def promote_queued(self, tenant_id: str, plugin_id: str) -> TaskRecord | None:
+        """把本租户本插件**最早排队**的任务转 `running` 并推进（PRD E-12）。
+
+        **抽成独立方法而不是在 `release_slot` 里内联**：P4-11 ⑤ 的"额度恢复后
+        自动开始"需要**主动拉起**一次，而恢复那一刻没有任何任务完成事件——
+        如果只留内联版本，被 hold 住的任务清掉标记后会永远停在 `queued`。
+        两条入口（额度释放 / 额度恢复）必须共用同一份实现，否则乐观锁那一行
+        迟早会在其中一条上被写漏。
+
+        Args:
+            tenant_id: 企业 ID。
+            plugin_id: 插件标识。
+
+        Returns:
+            TaskRecord | None: 被拉起的任务行；没有可拉起的（或无空槽）返回 None。
+        """
+        queued = await self._deps.tasks.list_queued(tenant_id, plugin_id)
         if not queued:
-            return
-        occupying = await self._deps.tasks.count_occupying(record.tenant_id, record.plugin_id)
+            return None
+        occupying = await self._deps.tasks.count_occupying(tenant_id, plugin_id)
         if occupying >= self._deps.settings.plugin_task_concurrency:
-            return
+            return None
         promoted = queued[0]
         # 拉起排队任务同样是状态转换：带 `expected_status=queued` 才算"抢到"。
         # 没有这个条件时，两个并发释放方会各拉起一个任务，并发上限被击穿。
@@ -865,13 +898,14 @@ class TaskRunner:
         )
         if claimed is None:
             logger.info("plugin_task_promote_skipped", task_id=promoted.task_id)
-            return
+            return None
         for index, item in enumerate(queued[1:], start=1):
             await self._deps.tasks.update_task(item.tenant_id, item.task_id, queue_position=index)
         promoted.status = TASK_RUNNING
         promoted.queue_position = None
         logger.info("plugin_task_promoted", task_id=promoted.task_id)
         await self.advance_record(promoted)
+        return promoted
 
     # ------------------------------------------------------------------
     # WF1 重试 / 继续 / 重做
