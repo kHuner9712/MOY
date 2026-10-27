@@ -86,6 +86,12 @@ CAP_CHAT: Final[str] = "chat"
 CAP_DOCUMENT: Final[str] = "document"
 CAP_AUTOMATION: Final[str] = "automation"
 
+#: 挂起原因取值（与迁移 0012 的 `CHECK (hold_reason IN ('','quota','past_due'))` 对齐）。
+#: `past_due` 现在没有写入方（计费域 D3 冻结），先占位——将来接欠费时**不必再改约束**
+#: （改 CHECK 要全表重写，属高风险 DDL）。
+HOLD_REASON_QUOTA: Final[str] = "quota"
+HOLD_REASON_PAST_DUE: Final[str] = "past_due"
+
 #: 中断折算的分母下限（防止 0 除）
 _MIN_CHARS_PER_UNIT: Final[int] = 1
 
@@ -696,6 +702,40 @@ class UsageService:
                 ),
             )
         return status
+
+    async def is_capability_exhausted(
+        self, *, capability: str, tenant_id: str, user_id: str
+    ) -> bool:
+        """**只判定、不抛异常**的额度查询（供"可挂起"的调用面使用，P4-11 ②③）。
+
+        为什么要与 `check_capability_allowed` 并存而不是复用它：
+        对话（M1/M2）超额只能**拒**，所以那边必须抛 `15006`；
+        文档（R3）与自动化（A1）超额应当**挂起**——先收下、恢复后再跑。
+        同一个判据，两种处置，因此这里只返回布尔，由调用方决定拒还是挂。
+
+        判定逻辑仍然只有一份（都走 `budget_status`），不会出现"拒的阈值"与
+        "挂的阈值"不一致这种最难解释的漂移。
+
+        Args:
+            capability: 作用域（`document` / `automation`），只用于归因。
+            tenant_id: 租户 ID。
+            user_id: 用户 ID。
+
+        Returns:
+            bool: 已用尽返回 True。
+        """
+        status = await self.budget_status(tenant_id=tenant_id, user_id=user_id)
+        if status.exhausted:
+            logger.warning(
+                "budget_exhausted_deferred",
+                capability=capability,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                plan_remaining=status.plan_remaining_units,
+                budget_used=status.budget_used_units,
+                budget_units=status.budget_units,
+            )
+        return bool(status.exhausted)
 
     async def quota_notice(self, *, tenant_id: str, user_id: str) -> tuple[int, str]:
         """取"额度将要用尽"的**非阻断提示**（B27 `15006` 的唯一出品口）。

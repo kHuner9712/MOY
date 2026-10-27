@@ -35,6 +35,7 @@ from app.business.task.access import assert_task_visible
 from app.business.task.deps import TaskDeps
 from app.business.task.manifest import TaskManifestResolver
 from app.business.task.query import TaskQuery
+from app.business.usage_service import CAP_AUTOMATION, HOLD_REASON_QUOTA
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
@@ -208,7 +209,12 @@ class TaskRunner:
         occupying = await self._deps.tasks.count_occupying(auth.tenant_id, plugin_id)
         queued = await self._deps.tasks.count_queued(auth.tenant_id, plugin_id)
         limit = self._deps.settings.plugin_task_concurrency
-        is_queued = occupying >= limit
+        # P4-11 ③：额度挂起**并入排队**，不新增状态枚举值。
+        # 语义上两者都是"没开始跑"，因此复用 `queued`：用户看到的是
+        # 「已排队 / 额度恢复后自动开始」，而 `TaskStatus` 不多出一个
+        # 库里永不存在的筛选值（那种值会让前端筛出无法解释的空列表）。
+        quota_held = await self._quota_held(auth)
+        is_queued = occupying >= limit or quota_held
         status = TASK_QUEUED if is_queued else TASK_RUNNING
 
         task_id = new_resource_id(_TASK_PREFIX)
@@ -234,6 +240,20 @@ class TaskRunner:
             )
         )
         await self._deps.tasks.create_steps(steps)
+        if quota_held:
+            # **挂起标记只在 UPDATE 里写，不进 INSERT 列名列表**：
+            # DDL 的 `NOT NULL DEFAULT ''` 让它成为 R7 的 omittable，
+            # 也让 G-SQL 的「列数 == 值数」对账完全不受影响。
+            # 先建行再改挂起（而不是建行时就带上）是为了不动那条 INSERT。
+            await self._deps.tasks.update_task(
+                auth.tenant_id, task_id, hold_reason=HOLD_REASON_QUOTA
+            )
+            logger.info(
+                "plugin_task_quota_held",
+                tenant_id=auth.tenant_id,
+                task_id=task_id,
+                plugin_id=plugin_id,
+            )
         await self._deps.audit.record(
             tenant_id=auth.tenant_id,
             actor_id=auth.user_id,
@@ -276,6 +296,30 @@ class TaskRunner:
         await self.advance_record(record)
         latest = await self._deps.tasks.get_task(auth.tenant_id, task_id) or record
         return await self._with_quota_notice(await self._create_data(latest, manifest), auth)
+
+    async def _quota_held(self, auth: AuthContext) -> bool:
+        """判定本次建任务是否应**挂起**（P4-11 ③，上游调用之前用）。
+
+        与 `RagService._quota_exhausted` 同一口径（都委托 `UsageService`）：
+        判定本身出错时**放行**并记 WARN —— 护栏不该把可用性押在计量库上。
+
+        Args:
+            auth: 鉴权上下文。
+
+        Returns:
+            bool: 已超额返回 True（任务照建、但不执行）。
+        """
+        if not auth.user_id:
+            return False
+        try:
+            return await self._deps.usage.is_capability_exhausted(
+                capability=CAP_AUTOMATION,
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+            )
+        except Exception as exc:  # 判定失败不阻断
+            logger.warning("task_quota_check_failed", detail=type(exc).__name__)
+            return False
 
     async def _with_quota_notice(self, data: CreateTaskData, auth: AuthContext) -> CreateTaskData:
         """给 A1 成功响应补上非阻断额度提示（B27 `15006`）。

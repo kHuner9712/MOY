@@ -34,6 +34,7 @@ from app.schemas.agent import (
     TaskItem,
     TaskResult,
     TaskStatus,
+    hold_reason_display_name,
 )
 from app.schemas.common import build_page
 from app.schemas.model import Usage
@@ -112,6 +113,10 @@ class TaskQuery:
             warning_count=len(record.warnings),
             initiator_id=record.initiator_id,
             initiator_name=self._initiator_name(record, auth),
+            # P4-11 ③：额度挂起是**与状态正交**的事实，所以不新增状态枚举值，
+            # 用一对字段表达（列表页据此显示「额度恢复后自动开始」）。
+            hold_reason=record.hold_reason,
+            hold_reason_display_name=hold_reason_display_name(record.hold_reason),
         )
 
     async def get_task(self, task_id: str, auth: AuthContext) -> TaskDetailData:

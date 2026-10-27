@@ -4650,13 +4650,14 @@
         "type": "object"
       },
       "DocumentStage": {
-        "description": "文档处理阶段（五态，P2-KB-02；与三态 `index_status` 语义对齐）。",
+        "description": "文档处理阶段（六态，P2-KB-02 / P4-11 ②；与三态 `index_status` 语义对齐）。",
         "enum": [
           "uploaded",
           "parsing",
           "preparing",
           "completed",
-          "failed"
+          "failed",
+          "quota_held"
         ],
         "title": "DocumentStage",
         "type": "string"
@@ -8771,6 +8772,19 @@
             "title": "Goal",
             "type": "string"
           },
+          "hold_reason": {
+            "default": "",
+            "description": "额度挂起原因：'' 未挂起 / quota 超额 / past_due 欠费（加性字段）",
+            "maxLength": 16,
+            "title": "Hold Reason",
+            "type": "string"
+          },
+          "hold_reason_display_name": {
+            "default": "",
+            "description": "挂起原因的展示名（未挂起为空串；照 initiator_name 先例）",
+            "title": "Hold Reason Display Name",
+            "type": "string"
+          },
           "initiator_id": {
             "default": "",
             "description": "发起人 ID（阶段三加性字段）",
@@ -8959,7 +8973,7 @@
         "type": "object"
       },
       "TaskStatus": {
-        "description": "任务状态枚举（底座原生状态已映射为自研状态）。\n\n阶段三 B19 **加性新增**两个值（不改既有五值的语义）：\n\n- `queued`：同租户同插件并发超限时的排队态（返回 200 + `queue_position`，\n  **不是** 429/20006——4xx 会被前端渲染成报错页，用户以为没创建成功）；\n- `waiting_confirm`：人工接管点（`confirm` 步骤未确认），**永不自动推进**。",
+        "description": "任务状态枚举（底座原生状态已映射为自研状态）。\n\n阶段三 B19 **加性新增**两个值（不改既有五值的语义）：\n\n- `queued`：同租户同插件并发超限时的排队态（返回 200 + `queue_position`，\n  **不是** 429/20006——4xx 会被前端渲染成报错页，用户以为没创建成功）；\n- `waiting_confirm`：人工接管点（`confirm` 步骤未确认），**永不自动推进**。\n\n**P4-11 ③ 明确不加 `queued_quota`**：额度挂起复用 `queued`（同样是\"没开始跑\"），\n原因见 `TaskItem.hold_reason` 的注释——状态是筛选维度，多造一个库里永不存在的\n状态值会让前端筛出无法解释的空列表。",
         "enum": [
           "pending",
           "running",

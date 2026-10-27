@@ -36,7 +36,12 @@ from app.business.document_service import DocumentService, map_stage
 from app.business.knowledge_base_service import KnowledgeBaseService
 from app.business.policy_service import PolicyService, get_policy_service, normalize_base_id
 from app.business.segment_service import SegmentHit, SegmentService, build_key
-from app.business.usage_service import UsageService, get_usage_service
+from app.business.usage_service import (
+    CAP_DOCUMENT,
+    HOLD_REASON_QUOTA,
+    UsageService,
+    get_usage_service,
+)
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -386,6 +391,47 @@ class RagService:
         if not content:
             raise ApiError(ErrorCode.INTERNAL_ERROR, internal_detail="upload content missing")
 
+        # ------------------------------------------------------------------
+        # P4-11 ②：额度硬止损（**底座调用之前**，这里之后一次 `post_multipart` 都不发）
+        #
+        # PRD 5.3 原文是「文档上传**暂停处理**（**已上传的保留**，处理排队到额度恢复
+        # 或升级后）」——所以超额**不拒收**：
+        #   - 本地元数据照落（含 file_size，字节由调用方随请求带来、已在内存里）；
+        #   - hold_reason 置 `quota`，`stage` 由展示层派生为「额度恢复后自动处理」；
+        #   - 一次底座调用都没有（判据里的"零上游"指**零底座调用**，不是零落库）。
+        # 若改成完全静默拒绝，"额度恢复后自动处理"就没有对象可处理，成了空话。
+        # ------------------------------------------------------------------
+        if await self._quota_exhausted(auth):
+            held = await self._documents.register_document(
+                base_id=base_id,
+                file_name=file_name,
+                file_size=file_size,
+                auth=auth,
+                chunk_policy=chunk_policy,
+                document_id=new_document_id(),
+            )
+            await self._documents.store.set_hold_reason(
+                auth.tenant_id, held.document_id, HOLD_REASON_QUOTA
+            )
+            logger.info(
+                "document_upload_held",
+                base_id=base_id,
+                document_id=held.document_id,
+                file_size=file_size,
+                tenant_id=auth.tenant_id,
+            )
+            return await self._with_quota_notice(
+                UploadDocumentData(
+                    document_id=held.document_id,
+                    file_name=held.file_name,
+                    index_status=IndexStatus(held.index_status),
+                    stage=DocumentStage.QUOTA_HELD,
+                    chunk_policy=ChunkPolicy(held.chunk_policy),
+                    progress=0,
+                ),
+                auth,
+            )
+
         api_key = await self._api_key_for(base_id, auth)
         effective_policy = chunk_policy or await self._resolve_base_policy(base_id, auth)
         upload = await self._dify.post_multipart(
@@ -462,6 +508,34 @@ class RagService:
         return data.model_copy(
             update={"notice_code": notice_code, "notice_message": notice_message}
         )
+
+    async def _quota_exhausted(self, auth: AuthContext) -> bool:
+        """判定本次上传是否应**挂起**（P4-11 ②，底座调用之前用）。
+
+        为什么返回布尔而不是像对话路径那样抛 `15006`：文档超额要「收下 + 挂起」，
+        拒收会让 PRD 5.3「已上传的保留」无从谈起（见 `upload_document` 的注释）。
+
+        与 `ModelService._enforce_generation_budget` 同口径：判定本身出错
+        （计量库抖动）时**放行**并记 WARN —— 护栏是为控成本，不该把可用性
+        押在计量库的可用性上。
+
+        Args:
+            auth: 鉴权上下文。
+
+        Returns:
+            bool: 已超额返回 True。
+        """
+        if not auth.user_id:
+            return False
+        try:
+            return await self._usage.is_capability_exhausted(
+                capability=CAP_DOCUMENT,
+                tenant_id=self._tenant_of(auth),
+                user_id=auth.user_id,
+            )
+        except Exception as exc:  # 判定失败不阻断（与额度提示同口径）
+            logger.warning("document_quota_check_failed", detail=type(exc).__name__)
+            return False
 
     async def _resolve_base_policy(self, base_id: str, auth: AuthContext) -> ChunkPolicy:
         """取知识库的内容切分精细度（上传未指定时使用）。
