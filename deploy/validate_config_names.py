@@ -56,7 +56,7 @@ from typing import Final
 try:  # pragma: no cover - 缺依赖属于环境问题，给出可操作提示而不是 traceback
     import yaml
 except ModuleNotFoundError:  # pragma: no cover
-    yaml = None  # type: ignore[assignment]
+    yaml = None
 
 #: 仓库根目录（本脚本位于 <repo>/deploy/）
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parent.parent

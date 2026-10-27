@@ -32,7 +32,7 @@ import tempfile
 import tomllib
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 #: 仓库根目录
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -106,13 +106,31 @@ MIN_SAFE_VERSIONS = {
     "starlette": "1.3.1",
 }
 
+
 #: 加固约束（无上游修复版本的漏洞 → 代码侧补偿措施）
 #:
 #: python-jose PYSEC-2026-4298：未显式限定 algorithms 时可伪造 HS256 令牌。
 #: 约束：调用 jwt.decode() 必须显式传 algorithms=[...]。
 #: ecdsa PYSEC-2026-1325：P-256 Minerva 时序攻击，影响签名/密钥生成/ECDH，
 #: 验签不受影响。约束：禁止引入这三个 API。
-HARDENING_RULES = [
+class HardeningRule(TypedDict):
+    """单条代码加固约束。
+
+    此前这张表是裸 `list[dict]`，值被推断成 `object`：`rule["pattern"].search(...)`
+    这类调用过不了类型检查（`object` 没有 `search`），只能靠 `cast`/`ignore` 掩盖。
+    TypedDict 让「哪条规则带正则、哪条只有 API 名单」变成类型可表达的差异——
+    `forbid_pattern` / `require_in_block` 在 H-2 里就是 `None`。
+    """
+
+    id: str
+    desc: str
+    pattern: re.Pattern[str]
+    forbid_pattern: re.Pattern[str] | None
+    require_in_block: re.Pattern[str] | None
+    forbidden_apis: list[str]
+
+
+HARDENING_RULES: list[HardeningRule] = [
     {
         "id": "H-1",
         "desc": "jwt.decode() 必须显式传 algorithms=[...]（python-jose PYSEC-2026-4298 加固）",
@@ -318,12 +336,17 @@ def check_hardening_rules() -> list[str]:
 
     for rule in HARDENING_RULES:
         if rule["id"] == "H-1":
+            # H-1 的两条正则是该规则的组成部分（表里恒有值）；断言同时完成类型收窄，
+            # 等价于把「表被改坏」变成启动即失败，而不是静默跳过这条防线。
+            forbid_pattern = rule["forbid_pattern"]
+            require_in_block = rule["require_in_block"]
+            assert forbid_pattern is not None and require_in_block is not None
             for path in py_files:
                 text = path.read_text(encoding="utf-8")
                 if not rule["pattern"].search(text):
                     continue
-                for call in rule["forbid_pattern"].finditer(text):
-                    if not rule["require_in_block"].search(call.group()):
+                for call in forbid_pattern.finditer(text):
+                    if not require_in_block.search(call.group()):
                         rel = path.relative_to(REPO_ROOT)
                         failures.append(
                             f"{rule['id']} {rule['desc']} —— {rel} 中的 jwt.decode() "

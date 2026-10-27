@@ -228,7 +228,10 @@ def _registry_pull_probe(
             headers=headers,
         )
         with urllib.request.urlopen(request, timeout=20) as resp:  # noqa: S310
-            return resp.status == 200
+            # `urlopen()` 的返回值在 typeshed 里是 `Any`：先落到有注解的局部量，
+            # 否则 `Any == 200` 仍是 `Any`，函数会以 `Any` 冒充 `bool | None`。
+            manifest_status: int = resp.status
+            return manifest_status == 200
     except urllib.error.HTTPError as exc:
         # token 已成功取得但 manifest 被拒 → 确定性不可拉取
         return False if exc.code in {401, 403, 404} else None
@@ -344,7 +347,8 @@ def _docker_hub_exists(name: str, tag: str) -> bool | None:
     url = f"https://hub.docker.com/v2/repositories/{_normalize_repo(name)}/tags/{tag}"
     try:
         with urllib.request.urlopen(url, timeout=20) as resp:
-            return resp.status == 200
+            hub_status: int = resp.status
+            return hub_status == 200
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return False

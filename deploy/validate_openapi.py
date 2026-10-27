@@ -153,7 +153,9 @@ def build_schema() -> dict[str, Any]:
     _ensure_adapter_on_path()
     from app.main import create_app
 
-    return create_app().openapi()  # type: ignore[no-any-return]
+    # FastAPI 的 `openapi()` 已标注为 `dict[str, Any]`，早前那处
+    # `# type: ignore[no-any-return]` 已经过期（`warn_unused_ignores` 会报它）。
+    return create_app().openapi()
 
 
 def collect_operations(schema: dict[str, Any]) -> set[tuple[str, str]]:

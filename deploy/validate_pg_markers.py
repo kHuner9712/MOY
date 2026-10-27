@@ -43,25 +43,30 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TESTS_ROOT = REPO_ROOT / "apps" / "adapter" / "tests"
 
 
-def _unwrap(node: ast.expr) -> ast.expr:
+def _unwrap(node: ast.AST) -> ast.AST:
     """剥掉装饰器外层的调用（`pytest.mark.pg(...)` → `pytest.mark.pg`）。
 
+    形参收 `ast.AST` 而非 `ast.expr`：`_is_pg_mark()` 的实参来自 `ast.walk()`，
+    后者产出的是任意 AST 节点（含 `ast.Load` 之类非表达式节点）。实参比形参宽时
+    旧的 `ast.expr` 注解就是**写窄了**，而不是调用方有问题——`isinstance` 逐个分支
+    判断的实现在运行时本就安全。
+
     Args:
-        node: 装饰器表达式。
+        node: 装饰器或标记表达式（任意 AST 节点）。
 
     Returns:
-        ast.expr: 去掉 Call 后的表达式。
+        ast.AST: 去掉 Call 后的节点（非 Call 时原样返回）。
     """
     if isinstance(node, ast.Call):
         return node.func
     return node
 
 
-def _is_pg_mark(node: ast.expr) -> bool:
+def _is_pg_mark(node: ast.AST) -> bool:
     """判断表达式是否为 `pytest.mark.pg`。
 
     Args:
-        node: 装饰器或标记表达式。
+        node: 装饰器或标记表达式（`ast.walk()` 产出的任意 AST 节点均可）。
 
     Returns:
         bool: 是 pg 标记返回 True。

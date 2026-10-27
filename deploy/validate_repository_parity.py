@@ -629,12 +629,13 @@ def _method_info(node: ast.FunctionDef | ast.AsyncFunctionDef) -> MethodInfo:
     )
     for arg_node, default_node in paired:
         raw_defaults[arg_node.arg] = ast.unparse(default_node)
-    for arg_node, default_node in zip(args.kwonlyargs, args.kw_defaults, strict=True):
+    # 变量名刻意不与上一轮复用：`kw_defaults` 的元素类型是 `expr | None`
+    # （`None` 表示 keyword-only 必填），与上一轮 `args.defaults` 的 `expr` 不同；
+    # 复用同名会同时误导人与类型检查器。
+    for kw_arg, kw_default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
         # keyword-only 的 `None` 默认表示"必填"（`**` 之后不能有位置默认值），
         # 用哨兵文本与真实 `None` 默认值区分开。
-        raw_defaults[arg_node.arg] = (
-            "<required>" if default_node is None else ast.unparse(default_node)
-        )
+        raw_defaults[kw_arg.arg] = "<required>" if kw_default is None else ast.unparse(kw_default)
 
     ordered_defaults = tuple(
         (item.arg, raw_defaults[item.arg])
@@ -761,6 +762,10 @@ def _check_shim(path: Path) -> list[str]:
                     continue
                 if target.id == "__all__":
                     seen_all = True
+                    # `ast.Assign.value` 在 typeshed 里是 `expr | None`（那是给
+                    # `AnnAssign` 共用的形状）；对 `ast.Assign` 而言 value 必然存在，
+                    # 断言把这一语言事实写进代码，也顺带完成类型收窄。
+                    assert node.value is not None
                     exported.extend(_literal_str_sequence(node.value))
                 elif not target.id.isupper():
                     problems.append(
@@ -1011,13 +1016,15 @@ def _region_calls(
             elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 bodies.append(node)
     for body in bodies:
-        for node in ast.walk(body):
-            if not isinstance(node, ast.Call):
+        # 内层变量名与上面 `for node in module.body`（`stmt`）区分开：`ast.walk()`
+        # 产出的是任意 `ast.AST`，同名会让类型检查器把两轮的 `node` 当成同一个变量。
+        for walked in ast.walk(body):
+            if not isinstance(walked, ast.Call):
                 continue
-            if not isinstance(node.func, ast.Name) or node.func.id not in records:
+            if not isinstance(walked.func, ast.Name) or walked.func.id not in records:
                 continue
-            keywords = frozenset(item.arg for item in node.keywords if item.arg is not None)
-            found.setdefault(node.func.id, set()).add(keywords)
+            keywords = frozenset(item.arg for item in walked.keywords if item.arg is not None)
+            found.setdefault(walked.func.id, set()).add(keywords)
     return found
 
 
@@ -2056,11 +2063,14 @@ def run(
         print(f"[INFO] {info}")
     print(f"[INFO] R7 覆盖：{result.r7_stats.summary()}")
     r7_warn = 0
-    for finding in result.r7:
+    # 与上面 R6 那轮（`MapperFinding`）区分开：R7 的元素是 `WriteFinding`，
+    # 两者字段集不同（R7 有 table/detail），复用 `finding` 会让读代码的人
+    # 和类型检查器都以为是同一个对象。
+    for r7_finding in result.r7:
         r7_warn += 1
         print(
-            f"[WARN] R7 {finding.unit} `{finding.record}.{finding.field}`"
-            f"（表 `{finding.table}`） -- {finding.detail}"
+            f"[WARN] R7 {r7_finding.unit} `{r7_finding.record}.{r7_finding.field}`"
+            f"（表 `{r7_finding.table}`） -- {r7_finding.detail}"
             f"（R7 只报不判红；要判红请用 --strict-r7）"
         )
     if result.r7_stats.unresolved:

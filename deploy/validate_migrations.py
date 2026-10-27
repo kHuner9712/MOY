@@ -44,7 +44,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Final
+from typing import Final, TypedDict
 
 #: 仓库根目录
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
@@ -58,6 +58,20 @@ MIGRATIONS_DIR: Final[Path] = REPO_ROOT / "deploy" / "migrations"
 #: 基线脚本（initdb 阶段执行，不是迁移）
 BASELINE_PHASE2: Final[Path] = REPO_ROOT / "deploy" / "init-schema-phase2.sql"
 BASELINE_PHASE3: Final[Path] = REPO_ROOT / "deploy" / "init-schema-phase3.sql"
+
+
+class MigrationStats(TypedDict):
+    """静态检查的统计信息（`--json` 输出与 INFO 行共用）。
+
+    用 TypedDict 而非 `dict[str, object]`：后者把 `stats['versions']` 推断成 `object`，
+    `', '.join()` 过不了类型检查；同时键名与值类型从此受约束，
+    「加了键但某分支漏给」能被静态发现。
+    """
+
+    migrations_dir: str
+    versions: list[str]
+    count: int
+
 
 #: 迁移文件命名（`0002_callback_idempotency_selfcheck.sql`）
 MIGRATION_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^(\d{4})_([a-z0-9_]+)\.sql$")
@@ -348,21 +362,21 @@ def _column_declared(text: str, table: str, column: str) -> bool:
 
 def run_static_checks(
     directory: Path = MIGRATIONS_DIR,
-) -> tuple[list[Violation], dict[str, object]]:
+) -> tuple[list[Violation], MigrationStats]:
     """执行全部静态判据。
 
     Args:
         directory: 迁移目录。
 
     Returns:
-        tuple[list[Violation], dict[str, object]]: 违规清单与统计信息。
+        tuple[list[Violation], MigrationStats]: 违规清单与统计信息。
     """
     migrations, violations = discover_migrations(directory)
     for _version, path in migrations:
         violations.extend(check_dollar_quotes(path))
         violations.extend(check_guard_presence(path))
     violations.extend(check_init_baseline())
-    stats: dict[str, object] = {
+    stats: MigrationStats = {
         "migrations_dir": str(directory.resolve()),
         "versions": [version for version, _ in migrations],
         "count": len(migrations),
