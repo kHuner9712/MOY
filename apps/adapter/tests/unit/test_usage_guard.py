@@ -19,7 +19,7 @@ import pytest
 
 from app.business.usage_service import BUDGET_WARN_MESSAGE, BudgetStatus, UsageService
 from app.core.config import Settings
-from app.core.errors import ApiError, ErrorCode
+from app.core.errors import ErrorCode
 from app.core.security import AuthContext
 from app.db import schema_guard
 from app.db.repositories.budget_repo import InMemoryBudgetStore, TenantBudgetRecord
@@ -143,18 +143,22 @@ class TestBudgetStatus:
         assert status.warn is True
         assert status.exhausted is False
 
-    async def test_hundred_percent_blocks(self) -> None:
-        """100% → `exhausted=True`，`check_generation_allowed` 抛 15006。"""
+    async def test_hundred_percent_is_reported_not_raised(self) -> None:
+        """100% → `exhausted=True`，但**不抛**：对话继续可用、由调用方限长。
+
+        2026-10-27 用户裁决（PRD 5.3 ①）：`≥100%` 对话不再 402，改为"常规模式"。
+        判据落点：`model_service` 拿到 `exhausted` → `apply_answer_cap()`。
+        若有人把这里改回 `raise`，本用例立即红。
+        """
         store = InMemoryUsageStore()
         budgets = InMemoryBudgetStore()
         await budgets.upsert(TenantBudgetRecord(tenant_id=TENANT, monthly_budget_units=100))
         await store.append(_event(100))
         service = _service(store=store, budgets=budgets)
 
-        with pytest.raises(ApiError) as excinfo:
-            await service.check_generation_allowed(tenant_id=TENANT, user_id=USER)
+        status = await service.check_generation_allowed(tenant_id=TENANT, user_id=USER)
 
-        assert excinfo.value.code == ErrorCode.QUOTA_EXHAUSTED
+        assert status.exhausted is True
 
     async def test_budget_resets_across_months(self) -> None:
         """跨月自然重置：上月用量不计入本月（预算按月判，不需要手工清零）。"""
@@ -336,48 +340,32 @@ async def _always_false(settings: Any = None) -> bool:
     return False
 
 
-class TestHardStopBeforeUpstream:
-    """硬止损发生在**上游调用之前**。"""
+class TestSoftLimitAfterQuota:
+    """额度触顶后：对话**继续可用但限长**（P4-11 ①，2026-10-27 用户裁决）。
 
-    async def test_api_returns_402_and_skips_upstream(
+    历史：本类原为 `TestHardStopBeforeUpstream`，断言"402 + 上游 0 次"。
+    改判据的原因：PRD 5.3 ① 要求「≥100% 对话继续可用、只限长」。
+    **代价（如实标注）**：超额用户每次对话仍会产生一次上游调用。
+    R3/A1 的超额仍是硬止损（不调底座），由 `test_task_quota_hold.py` 与
+    `test_rag_service.py::test_upload_is_held_...` 覆盖——两种处置并存。
+    """
+
+    async def test_exhausted_status_is_returned_not_raised(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """额度用尽 → HTTP 402 / 15006，且底座客户端**一次都没被创建**。"""
-        from fastapi.testclient import TestClient
+        """`_resolve_generation_budget` 返回 exhausted 状态，**不抛**。"""
+        service = ModelService(_settings())
+        auth = AuthContext(user_id=USER, tenant_id=TENANT)
 
-        from app.main import create_app
+        async def _exhausted(*_: Any, **__: Any) -> BudgetStatus:
+            return BudgetStatus(exhausted=True)
 
-        settings = _settings(downstream_enabled=True)
-        app = create_app(settings)
-        created: list[str] = []
+        monkeypatch.setattr(service._usage, "check_capability_allowed", _exhausted)  # noqa: SLF001
 
-        async def _blocked(*_: Any, **__: Any) -> BudgetStatus:
-            raise ApiError(ErrorCode.QUOTA_EXHAUSTED)
+        status = await service._resolve_generation_budget(auth)  # noqa: SLF001
 
-        monkeypatch.setattr(UsageService, "check_generation_allowed", _blocked)
-        monkeypatch.setattr(
-            "app.clients.dify_client.DifyClient.for_app_key",
-            classmethod(lambda cls, key, settings=None: created.append(key)),
-        )
-        client = TestClient(app)
-        token = _token(settings)
-
-        response = client.post(
-            "/api/v1/model/generate",
-            json={
-                "profile": "general",
-                "messages": [{"role": "user", "content": "你好"}],
-            },
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Tenant-Id": TENANT,
-                "Idempotency-Key": "11111111-2222-4333-8444-555555555555",
-            },
-        )
-
-        assert response.status_code == 402
-        assert response.json()["code"] == int(ErrorCode.QUOTA_EXHAUSTED)
-        assert created == []  # 上游 0 次
+        assert status is not None
+        assert status.exhausted is True, "超额状态必须原样返回给调用方（由它决定限长）"
 
     async def test_guard_swallows_unexpected_errors(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """判定本身出错（计量库抖动）时放行：护栏不能把可用性押在计量库上。"""
@@ -387,21 +375,11 @@ class TestHardStopBeforeUpstream:
         async def _boom(*_: Any, **__: Any) -> BudgetStatus:
             raise RuntimeError("usage store down")
 
-        monkeypatch.setattr(service._usage, "check_generation_allowed", _boom)  # noqa: SLF001
-        await service._enforce_generation_budget(auth)  # noqa: SLF001 - 不抛即通过
+        monkeypatch.setattr(service._usage, "check_capability_allowed", _boom)  # noqa: SLF001
 
-    async def test_check_raises_api_error_directly(self) -> None:
-        """`ApiError` 要原样抛出（不能被"放行"逻辑吞掉）。"""
-        auth = AuthContext(user_id=USER, tenant_id=TENANT)
-        model = ModelService(_settings())
+        status = await service._resolve_generation_budget(auth)  # noqa: SLF001 - 不抛即通过
 
-        async def _raise(*_: Any, **__: Any) -> BudgetStatus:
-            raise ApiError(ErrorCode.QUOTA_EXHAUSTED)
-
-        model._usage.check_generation_allowed = _raise  # type: ignore[method-assign]  # noqa: SLF001
-
-        with pytest.raises(ApiError):
-            await model._enforce_generation_budget(auth)  # noqa: SLF001
+        assert status is None, "判定失败要按「未超额」处理（返回 None），不能把请求打挂"
 
 
 def _token(settings: Settings) -> str:

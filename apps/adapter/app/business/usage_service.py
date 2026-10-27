@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
 from app.core.config import Settings, get_settings
-from app.core.errors import ERROR_REGISTRY, ApiError, ErrorCode
+from app.core.errors import ERROR_REGISTRY, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.metrics import (
@@ -631,22 +631,18 @@ class UsageService:
         )
 
     async def check_generation_allowed(self, *, tenant_id: str, user_id: str) -> BudgetStatus:
-        """成本硬止损：**上游调用之前**判定额度（架构 §7.2 唯一判定点）。
+        """`capability="chat"` 的薄包装（P4-11 ①，**签名保持不变**）。
 
-        本方法是 `capability="chat"` 的**薄包装**（P4-11 ①）：判定逻辑已上收到
-        `check_capability_allowed()`，这里只固定作用域。**签名保持不变**——
-        `model_service.py:581` / `:1105` 两个调用点因此零改动，
-        也不会因为"顺手统一一下调用写法"而把两条路径的异常口径改歪。
+        `model_service.py:581` / `:1105` 两个调用点因此零改动，也不会因为
+        "顺手统一一下调用写法"而把两条路径的处置口径改歪。
+        **本方法不抛 `15006`**（2026-10-27 用户裁决）：对话超额继续可用、只限长。
 
         Args:
             tenant_id: 租户 ID。
             user_id: 用户 ID。
 
         Returns:
-            BudgetStatus: 判定结果（未用尽时返回，供上层决定是否带预警提示）。
-
-        Raises:
-            ApiError: 额度/预算已用尽（15006，HTTP 402）。
+            BudgetStatus: 判定结果（`exhausted` 时由调用方限长）。
         """
         return await self.check_capability_allowed(
             capability=CAP_CHAT, tenant_id=tenant_id, user_id=user_id
@@ -655,18 +651,21 @@ class UsageService:
     async def check_capability_allowed(
         self, *, capability: str, tenant_id: str, user_id: str
     ) -> BudgetStatus:
-        """成本硬止损的**唯一判定点**（P4-11 ①，覆盖对话 / 文档 / 自动化三个面）。
+        """额度判定（**只判定、不抛**，P4-11 ①；2026-10-27 按 PRD 5.3 ① 改为软限制）。
 
-        为什么必须在调用之前：额度已用尽时仍打上游，等于"用户看到 402、账单还在涨"。
-        判定失败直接抛 `15006`（HTTP 402），上层因此**一次上游都不会发**。
+        历史（必须知道，否则会以为这里漏了拦截）：本方法曾经在 `exhausted` 时抛
+        `15006`（HTTP 402），那是 P2 阶段的"对话硬止损"。用户裁决按 PRD 5.3 ①
+        改为：**≥100% 对话仍继续可用，只是单次回答限长（常规模式）**。
 
-        为什么做成"能力维度"而不是复制三份：三条路径（M/R3/A1）此前各自只做了
-        「提示」或什么都不做，唯一做过硬止损的只有对话路径。判定逻辑一旦分叉，
-        口径必然漂移——最终表现是"对话被拦、文档照跑"，这正是 P3-B22-01 的形态。
-        因此判定只有一份，作用域只进日志与指标。
+        处置分工（两种，别混）：
+
+        - **对话（M1/M2）**：`model_service` 拿到 `exhausted` → `apply_answer_cap()`
+          限长 + 常规模式提示，`code=0`，**不拦停**；
+        - **文档（R3）/ 自动化（A1）**：走 `is_capability_exhausted()` + **不调底座**
+          （挂起）。它们的"零上游调用"判据**没有被削弱**。
 
         **不要用 `10005 MODEL_QUOTA_EXHAUSTED`**：它表示"上游回传额度不足"
-        （底座侧的 429/配额错误），与自研侧的硬止损是两件事——复用会让排障时
+        （底座侧的 429/配额错误），与自研侧的额度判定是两件事——复用会让排障时
         分不清"我们的额度用完了"还是"上游说我们额度用完了"。
 
         Args:
@@ -675,10 +674,7 @@ class UsageService:
             user_id: 用户 ID。
 
         Returns:
-            BudgetStatus: 判定结果（未用尽时返回，供上层决定是否带预警提示）。
-
-        Raises:
-            ApiError: 额度/预算已用尽（15006，HTTP 402）。
+            BudgetStatus: 判定结果（`exhausted` 时由调用方决定限长还是挂起）。
         """
         status = await self.budget_status(tenant_id=tenant_id, user_id=user_id)
         if status.exhausted:
@@ -699,14 +695,13 @@ class UsageService:
                 and status.budget_used_units >= status.budget_units
                 else "plan"
             ).inc()
-            raise ApiError(
-                ErrorCode.QUOTA_EXHAUSTED,
-                internal_detail=(
-                    f"hard stop: capability={capability} "
-                    f"plan_remaining={status.plan_remaining_units} "
-                    f"budget={status.budget_used_units}/{status.budget_units}"
-                ),
-            )
+            # 2026-10-27 用户裁决（PRD 5.3 ①）：**不再抛 `15006`**。
+            # 对话超额继续可用、只把回答限长（常规模式）；R3/A1 不经过本方法的抛错，
+            # 它们走 `is_capability_exhausted()` + 挂起，那两条的"零上游调用"
+            # 判据**没有**被这次改动削弱。
+            # 代价如实标注（已进 PRD 5.3 ① 与风险台账）：超额用户**每次对话仍会产生
+            # 一次上游调用**（输出限 300 字 ≈ 0.015% 月额度/次，**次数无上限**）；
+            # 要彻底阻断需另立"超额限次"策略——PRD 目前没有这个定义。
         return status
 
     async def is_capability_exhausted(
@@ -714,13 +709,11 @@ class UsageService:
     ) -> bool:
         """**只判定、不抛异常**的额度查询（供"可挂起"的调用面使用，P4-11 ②③）。
 
-        为什么要与 `check_capability_allowed` 并存而不是复用它：
-        对话（M1/M2）超额只能**拒**，所以那边必须抛 `15006`；
-        文档（R3）与自动化（A1）超额应当**挂起**——先收下、恢复后再跑。
-        同一个判据，两种处置，因此这里只返回布尔，由调用方决定拒还是挂。
-
-        判定逻辑仍然只有一份（都走 `budget_status`），不会出现"拒的阈值"与
-        "挂的阈值"不一致这种最难解释的漂移。
+        为什么与 `check_capability_allowed` 并存而不是合并：
+        对话（M1/M2）超额要**继续可用、只限长**（PRD 5.3 ①），所以那边返回 status；
+        文档（R3）与自动化（A1）超额要**挂起**（先收下、恢复后再跑），所以这里
+        只返回布尔。同一个判据（都走 `budget_status`），两种处置，
+        不会出现"限长的阈值"与"挂起的阈值"不一致这种最难解释的漂移。
 
         Args:
             capability: 作用域（`document` / `automation`），只用于归因。

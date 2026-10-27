@@ -33,10 +33,10 @@ from app.business.conversation_service import (
 )
 from app.business.policy_service import PolicyService, get_policy_service, normalize_base_id
 from app.business.segment_service import SegmentHit, SegmentService, build_key
-from app.business.usage_service import UsageService, get_usage_service
+from app.business.usage_service import CAP_CHAT, BudgetStatus, UsageService, get_usage_service
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
-from app.core.errors import ApiError, ErrorCode
+from app.core.errors import ERROR_REGISTRY, ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.metrics import (
@@ -71,6 +71,7 @@ from app.schemas.model import (
     UsageData,
 )
 from app.schemas.rag import SegmentPosition
+from app.services.answer_cap import STANDARD_MODE_NOTICE, apply_answer_cap
 from app.services.profile_routing import ProfileRouter
 
 logger = get_logger(__name__)
@@ -577,8 +578,9 @@ class ModelService:
             ApiError: 档位不可用（10004）、上下文超窗（10002）、生成失败（10001）。
         """
         self.resolve_route(request.profile)
-        # 阶段四 T4-04.2：成本硬止损是**唯一判定点**，且必须在任何上游调用之前
-        await self._enforce_generation_budget(auth)
+        # P4-11 ①（2026-10-27 用户裁决）：额度判定在**任何上游调用之前**做，
+        # 但**不再拦截**——超额时只把回答限长（常规模式），`code` 仍为 0。
+        budget = await self._resolve_generation_budget(auth)
         authorized = await self._authorized_base_ids(request, auth)
         logger.info(
             "model_generate_requested",
@@ -664,6 +666,20 @@ class ModelService:
         settled = await self._attach_citation_backlinks(
             data, authorized, self._tenant_of(auth), schedule=False
         )
+        # P4-11 ①「常规模式」：超额不拦停，只把**已生成**的正文按字收口，
+        # 末尾追加业务语并挂 `notice_code=15006`（PRD 5.3 ①，用户可感知但不停服）。
+        # 位置放在引用回链之后：引用是正文的一部分，先截断会把引用标记切坏。
+        if budget is not None and budget.exhausted:
+            capped, _ = apply_answer_cap(
+                settled.content, limit=self._settings.standard_mode_answer_chars
+            )
+            settled = settled.model_copy(
+                update={
+                    "content": capped,
+                    "notice_code": int(ERROR_REGISTRY[ErrorCode.QUOTA_EXHAUSTED].code),
+                    "notice_message": STANDARD_MODE_NOTICE,
+                }
+            )
         # 结算时点：下游已返回 message_end（blocking 模式即响应体），
         # 用下游 usage.total_units 结算，source='settled'（D-12 第 3 条）
         prompt_tokens, completion_tokens, tokens_estimated = self._token_usage(
@@ -756,36 +772,39 @@ class ModelService:
                 detail=type(exc).__name__,
             )
 
-    async def _enforce_generation_budget(self, auth: AuthContext | None) -> None:
-        """成本硬止损（阶段四 T4-04.2）：额度/预算用尽 → `15006`（HTTP 402）。
+    async def _resolve_generation_budget(self, auth: AuthContext | None) -> BudgetStatus | None:
+        """取本次生成可用的额度判定结果（**不再拦截**，P4-11 ① 软限制）。
 
-        两条纪律：
+        为什么改名：它曾叫 `_enforce_generation_budget`，在超额时抛 `15006` 拦停。
+        2026-10-27 用户裁决按 PRD 5.3 ① 改为「≥100% 对话继续可用，只是单次回答限长」，
+        于是这里**只取状态、不抛**——留着旧名会让下一个人以为它还会拦，
+        再在别处补一层拦截，两条口径就开始漂移了。
 
-        1. **在上游之前**：调用方必须在任何下游请求之前 await 本方法；
-        2. **只拦"确定用尽"**：判定本身出错（计量库抖动）时**放行并记 WARN**——
-           护栏是为了控成本，不是为了把可用性押在计量库上（与配额提示同口径）。
+        两条纪律仍然保留：
+
+        1. **必须在任何下游请求之前**取（限长要用它的结果，晚取就是先花钱后限长）；
+        2. **判定本身出错时放行并记 WARN**——护栏不该把可用性押在计量库上。
 
         Args:
             auth: 鉴权上下文（无用户时跳过判定：内部/桩调用不计入个人额度）。
 
-        Raises:
-            ApiError: 额度或租户预算已用尽（15006）。
+        Returns:
+            BudgetStatus | None: 判定结果；无用户或判定失败时返回 None（按"未超额"处理）。
         """
         user_id = auth.user_id if auth is not None else ""
         if not user_id:
-            return
+            return None
         try:
-            await self._usage.check_generation_allowed(
-                tenant_id=self._tenant_of(auth), user_id=user_id
+            return await self._usage.check_capability_allowed(
+                capability=CAP_CHAT, tenant_id=self._tenant_of(auth), user_id=user_id
             )
-        except ApiError:
-            raise
         except Exception as exc:  # 判定失败不阻断（与 `_quota_notice` 同口径）
             logger.warning(
                 "generation_budget_check_failed",
                 user_id=user_id,
                 detail=type(exc).__name__,
             )
+            return None
 
     @staticmethod
     def _token_usage(
@@ -1098,14 +1117,15 @@ class ModelService:
             yield sse_frame("error", {"code": int(exc.code), "message": exc.message})
             return
 
-        # 阶段四 T4-04.2：流式与 M1 同口径——先判额度再开流。
-        # 额度用尽按 `error` 帧下发（**不是**抛异常）：流已经建立，抛异常会让前端
-        # 拿到一条断掉的连接而不是可读的业务提示。
-        try:
-            await self._enforce_generation_budget(auth)
-        except ApiError as exc:
-            yield sse_frame("error", {"code": int(exc.code), "message": exc.message})
-            return
+        # P4-11 ①（2026-10-27 用户裁决）：流式与 M1 同口径，但**不再下发 402 error 帧**——
+        # PRD 5.3 ① 要求「≥100% 对话继续可用，只是单次回答限长」。
+        # 这里取一次判定结果；超额提示仍走 `done` 帧的 `notice_*`（既有 `notice` 通道）。
+        #
+        # **已知边界（不要误以为是漏实现）**：流式**不做帧级截断**——
+        # 在 SSE 上按字截断要跨帧缓冲、还要避免切断多字节字符与引用标记，
+        # 处理不当会让前端拿到半句话或坏帧（比"答案长一点"严重得多）。
+        # 故降级为"只加终帧提示、不截断"，该边界已写进 PRD 5.3 ① 的注。
+        budget = await self._resolve_generation_budget(auth)
 
         authorized = await self._authorized_base_ids(request, auth)
         tenant_id = self._tenant_of(auth)
@@ -1119,6 +1139,13 @@ class ModelService:
         # 为什么不中途插帧：流式期间插入非 delta 帧会打断前端渲染与自动滚动；
         # 为什么不改 `error` 帧：超额不是错误，PRD 5.3 要求"提醒而非拦停"。
         notice = await self._quota_notice(auth)
+        # 超额时**必须**带 15006 提示（即使 `_quota_notice` 因套餐口径没算出提示）：
+        # 流式不截断是已知边界，这条 `notice` 就是用户唯一能感知"进入常规模式"的地方。
+        if notice[0] == 0 and budget is not None and budget.exhausted:
+            notice = (
+                int(ERROR_REGISTRY[ErrorCode.QUOTA_EXHAUSTED].code),
+                STANDARD_MODE_NOTICE,
+            )
         # 阶段四：与 M1 同序——先落库，再组装，再开流。
         current_text = _last_user_text(request.messages)
         started = await self._conversations.start_generation(

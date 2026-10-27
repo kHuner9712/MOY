@@ -68,10 +68,19 @@ ADAPTER_CORE_ENDPOINTS: int = 30
 #: 现阶段（B02）为 0 条已实现，基线文件 `docs/api/baseline-phase2-38.json` 由 B03 起逐步补齐
 PHASE2_DOMAIN_ENDPOINTS: int = 38
 
-#: 阶段三插件域端点基线（14 条：PL1-PL13 + WF1），**阶段二 38 条一个字节不改**。
+#: 阶段三端点基线 **16 条** = 14 个插件域端点（PL1–PL14，路径前缀 `/api/v1/plugins/`）
+#: + 2 个工作流端点（WF1 `POST /api/v1/agent/tasks/{task_id}/retry`、
+#: WF2 `PUT /api/v1/agent/tasks/{task_id}/artifacts/{artifact_id}`），
+#: 与 `docs/api/baseline-phase3-16.json`（`frozen_target: 16`）逐条对齐。
 #: 计数由 `tests/integration/test_endpoint_baseline.py` 与
-#: `deploy/validate_openapi.py` 双向断言。
-PHASE3_DOMAIN_ENDPOINTS: int = 14
+#: `deploy/validate_openapi.py` 双向断言（G3 对 phase3 **恒严格** `== 16`）。
+#: **阶段二 38 条一个字节不改。**
+#:
+#: 历史（勿回退）：本常数曾写 `14`——那是 B18 时只有插件域的数目；B19 追加 WF1/WF2
+#: 后未同步，而 `artifact_files.py` / `artifact_token.py` 的注释一直按 16 引用它，
+#: 同一个数在两处自相矛盾。W3-2 以**实际注册数**为准校正（实测 14 + 2 = 16，
+#: 基线 16 条全部在册）。
+PHASE3_DOMAIN_ENDPOINTS: int = 16
 
 #: 健康检查路由（免鉴权，不挂 API 版本前缀）
 health_router = APIRouter(tags=["健康检查"])

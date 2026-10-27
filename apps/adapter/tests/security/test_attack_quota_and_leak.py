@@ -16,7 +16,7 @@ import re
 from typing import Any
 
 import pytest
-from tests.integration.test_quota_notice import _generate_payload, _seed_usage, _write_headers
+from tests.integration.test_quota_notice import _generate_payload, _seed_usage
 from tests.security.conftest import TENANT_A, issue_token, write_headers
 
 from app.core.errors import ApiError, ErrorCode
@@ -49,42 +49,51 @@ def _assert_clean(message: str, *, label: str) -> None:
 
 
 class TestQuotaAbuse:
-    """额度用尽：402 且上游 0 次。"""
+    """额度用尽：对话**继续可用但限长**（P4-11 ①，2026-10-27 用户裁决）。
 
-    def test_hard_stop_calls_no_upstream(
+    历史：本用例原为 `test_hard_stop_calls_no_upstream`，断言「402 + 上游 0 次」。
+    改判据的原因：PRD 5.3 ① 要求「≥100% 对话继续可用、进入常规模式、单次回答限长」，
+    用户据此裁决**撤销对话的硬止损**。本用例因此从「硬止损判据」变成
+    「软限制判据」——**没有删除**：删掉就等于对超额路径失去任何断言。
+
+    **代价（如实标注，已进 PRD 5.3 ① 与风险台账）**：超额用户每次对话
+    仍会产生一次上游调用（输出限 300 字 ≈ 0.015% 月额度/次，**次数无上限**）。
+    R3/A1 的超额仍是硬止损（不调底座），见
+    `tests/unit/test_rag_service.py::test_upload_is_held_...` 与
+    `tests/unit/test_task_quota_hold.py`——两种处置并存，别混。
+
+    覆盖范围说明（诚实标注，勿当成"全绿"）：本条断言**判定层与限长层**；
+    HTTP 层的 `code==0` + 上游恰好 1 次（判据 ①a/①d）尚未补，
+    已在 b 批交付说明里标为待补。
+    """
+
+    def test_exhausted_is_no_longer_a_hard_stop(
         self,
         client: Any,
         settings: Any,
         auth_headers: dict[str, str],
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """超额请求 → 402，且 `DifyClient.for_app_key` 一次都没被调用。"""
-        # 造"已超额"的计费状态（复用 B27 的造数器，避免另写一套额度口径）
+        """超额请求**不得**再返回 402/15006（否则说明有人把软限制改回了硬拦）。
+
+        这是本用例在新口径下的**唯一职责**：防止"把对话硬止损悄悄装回去"。
+        正向判据（`code==0` + 上游恰好 1 次 + 限长 300 + `notice_code=15006`）
+        需要可用的上游桩，属判据 ①a/①d，**尚未补**——已在 b 批交付说明里标明，
+        不在此处假装覆盖。
+        """
         import asyncio
 
         state = asyncio.run(_seed_usage(settings, over=True))
         assert state.over_quota
 
-        created: list[str] = []
-
-        def _for_app_key(cls: Any, key: str, settings: Any = None) -> Any:
-            created.append(key)
-            raise AssertionError("额度用尽时不应创建上游客户端")
-
-        monkeypatch.setattr(
-            "app.clients.dify_client.DifyClient.for_app_key", classmethod(_for_app_key)
-        )
-
         response = client.post(
             GENERATE_PATH,
             json=_generate_payload(),
-            headers=_write_headers(auth_headers, "sec-quota"),
+            headers=auth_headers,
         )
 
-        assert response.status_code == 402
-        assert response.json()["code"] == 15006
-        assert created == []
-        _assert_clean(response.json()["message"], label="402 额度用尽")
+        body = response.json()
+        assert response.status_code != 402, "超额对话不得再返回 402（PRD 5.3 ① 软限制）"
+        assert body.get("code") != 15006, "超额对话不得再以 15006 拦停（应限长后 code=0）"
 
 
 class TestNoInformationLeak:
