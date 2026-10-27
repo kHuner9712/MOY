@@ -1229,7 +1229,14 @@ class ModelService:
             # 为什么不是"跨帧缓冲切半句"：切半句会切断多字节字符与引用标记，
             # 前端拿到的是坏帧或半句话——比"答案略短"严重得多。
             # 为什么达上限后仍消费上游：提前 close 会破坏连接复用与计费完整性。
-            answer_cap = self._settings.standard_mode_answer_chars
+            # **只在超额时收口**：`answer_cap=None` 表示不设限。
+            # 这里必须判 `budget.exhausted`——漏判会把限长打到全部用户，
+            # 且从响应上完全看不出来（测试用反向断言钉住）。
+            answer_cap: int | None = (
+                self._settings.standard_mode_answer_chars
+                if budget is not None and budget.exhausted
+                else None
+            )
             capped_chars = 0
             cap_reached = False
             async for event in self._dify_for(request.profile).post_stream(
@@ -1250,7 +1257,9 @@ class ModelService:
                     # `produced_chars` 记**上游产出**（中断时按它折算费用），
                     # `produced_parts` 记**用户实际看到的**（落库历史必须与所见一致）。
                     produced_chars += len(visible)
-                    if cap_reached or capped_chars + len(visible) > answer_cap:
+                    if answer_cap is not None and (
+                        cap_reached or capped_chars + len(visible) > answer_cap
+                    ):
                         cap_reached = True
                         continue
                     capped_chars += len(visible)
@@ -1262,7 +1271,9 @@ class ModelService:
                     if rest:
                         produced_chars += len(rest)
                         # 冲洗出的尾巴同样按整帧判断：放不下就不发（不切半句）
-                        if not cap_reached and capped_chars + len(rest) <= answer_cap:
+                        if answer_cap is None or (
+                            not cap_reached and capped_chars + len(rest) <= answer_cap
+                        ):
                             capped_chars += len(rest)
                             produced_parts.append(rest)
                             yield sse_frame("delta", StreamDeltaData(text=rest).model_dump())
