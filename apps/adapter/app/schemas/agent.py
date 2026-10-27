@@ -9,7 +9,7 @@ V1.0 双通道：创建 + 轮询（A2/A3/A4）+ SSE 推送（A6），Webhook 回
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -26,6 +26,10 @@ class TaskStatus(StrEnum):
     - `queued`：同租户同插件并发超限时的排队态（返回 200 + `queue_position`，
       **不是** 429/20006——4xx 会被前端渲染成报错页，用户以为没创建成功）；
     - `waiting_confirm`：人工接管点（`confirm` 步骤未确认），**永不自动推进**。
+
+    **P4-11 ③ 明确不加 `queued_quota`**：额度挂起复用 `queued`（同样是"没开始跑"），
+    原因见 `TaskItem.hold_reason` 的注释——状态是筛选维度，多造一个库里永不存在的
+    状态值会让前端筛出无法解释的空列表。
     """
 
     PENDING = "pending"
@@ -35,6 +39,26 @@ class TaskStatus(StrEnum):
     CANCELLED = "cancelled"
     QUEUED = "queued"
     WAITING_CONFIRM = "waiting_confirm"
+
+
+#: 额度挂起原因 → 用户可见文案（P4-11 ③，业务语言、零技术词）
+HOLD_REASON_DISPLAY_NAMES: Final[dict[str, str]] = {
+    "": "",
+    "quota": "额度恢复后自动开始",
+    "past_due": "结清欠费后自动开始",
+}
+
+
+def hold_reason_display_name(hold_reason: str) -> str:
+    """取挂起原因的用户可见文案。
+
+    Args:
+        hold_reason: 挂起原因（`''` / `quota` / `past_due`）。
+
+    Returns:
+        str: 业务语言文案；未挂起或未知原因返回空串（前端按空串隐藏这一列）。
+    """
+    return HOLD_REASON_DISPLAY_NAMES.get(hold_reason, "")
 
 
 class StepStatus(StrEnum):
@@ -178,6 +202,18 @@ class TaskItem(BaseModel):
     warning_count: int = Field(default=0, ge=0, description="未完成步骤数（阶段三加性字段）")
     initiator_id: str = Field(default="", description="发起人 ID（阶段三加性字段）")
     initiator_name: str = Field(default="", description="发起人显示名（阶段三加性字段）")
+    #: 额度挂起标记（P4-11 ③，加性字段）：`''` 未挂起 / `quota` 超额 / `past_due` 欠费。
+    #: **不新增 `TaskStatus.queued_quota` 状态**：状态是**筛选维度**（前端会按枚举生成
+    #: 筛选下拉），造一个"可筛选但库里永不存在的值"会让用户筛出空列表且无法解释。
+    #: 挂起是状态之外的一个**正交事实**（排队的任务也可能被挂起），所以用一对字段表达。
+    hold_reason: str = Field(
+        default="",
+        max_length=16,
+        description="额度挂起原因：'' 未挂起 / quota 超额 / past_due 欠费（加性字段）",
+    )
+    hold_reason_display_name: str = Field(
+        default="", description="挂起原因的展示名（未挂起为空串；照 initiator_name 先例）"
+    )
 
 
 class ListTasksQuery(PageQuery):

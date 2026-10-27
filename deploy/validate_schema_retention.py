@@ -59,7 +59,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Final, TypedDict
 
 #: 仓库根目录
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
@@ -81,6 +81,21 @@ EXPECTED_DATA_TYPE: Final[str] = "timestamp with time zone"
 
 #: 测试环境变量（与应用角色一致）
 APP_DSN_ENV: Final[str] = "OA_TEST_DATABASE_URL"
+
+
+class RetentionStats(TypedDict):
+    """静态检查的统计信息（`--json` 输出与成功行共用同一份）。
+
+    用 TypedDict 而不是 `dict[str, object]`：后者让 `stats['files']` 被推断成
+    `object`，`len()` / `', '.join()` 都过不了类型检查，只能靠 `cast` 或 `# type: ignore`
+    掩盖；而且**键名与类型无任何约束**——本次改造时正是它掩盖了一个真问题：
+    早退分支漏了 `retention_days` 键，`main()` 打印到该键时直接 `KeyError` 崩溃
+    （触发条件是「基线脚本缺失 + 目录无 SQL」，即最需要给出可读报错的仓库不完整状态）。
+    """
+
+    files: list[str]
+    migrations_dir: str
+    retention_days: int
 
 #: `CREATE TABLE <name> (...)` 的定位（表体由括号深度扫描，不靠正则吃括号）
 CREATE_TABLE_PATTERN: Final[re.Pattern[str]] = re.compile(

@@ -76,6 +76,16 @@ RESOURCE_GENERATION: Final[str] = "generation"
 RESOURCE_DOCUMENT: Final[str] = "document"
 RESOURCE_TASK: Final[str] = "task"
 
+#: 成本护栏的**作用域**（P4-11 ①）：判定逻辑只有一份，作用域只影响日志与指标归因。
+#:
+#: 为什么要按作用域区分：三类调用面的成本量级与"超额后能否延后"完全不同——
+#: 对话是同步消耗（只能拒），文档与自动化可以**挂起**（存下来、恢复后再跑）。
+#: 没有这个维度时，日志里只有一行 `budget_exhausted`，
+#: 排障时分不清是"用户被拒了一次对话"还是"一批文档被挂起"，也统计不出哪个面在烧钱。
+CAP_CHAT: Final[str] = "chat"
+CAP_DOCUMENT: Final[str] = "document"
+CAP_AUTOMATION: Final[str] = "automation"
+
 #: 中断折算的分母下限（防止 0 除）
 _MIN_CHARS_PER_UNIT: Final[int] = 1
 
@@ -611,14 +621,44 @@ class UsageService:
     async def check_generation_allowed(self, *, tenant_id: str, user_id: str) -> BudgetStatus:
         """成本硬止损：**上游调用之前**判定额度（架构 §7.2 唯一判定点）。
 
+        本方法是 `capability="chat"` 的**薄包装**（P4-11 ①）：判定逻辑已上收到
+        `check_capability_allowed()`，这里只固定作用域。**签名保持不变**——
+        `model_service.py:581` / `:1105` 两个调用点因此零改动，
+        也不会因为"顺手统一一下调用写法"而把两条路径的异常口径改歪。
+
+        Args:
+            tenant_id: 租户 ID。
+            user_id: 用户 ID。
+
+        Returns:
+            BudgetStatus: 判定结果（未用尽时返回，供上层决定是否带预警提示）。
+
+        Raises:
+            ApiError: 额度/预算已用尽（15006，HTTP 402）。
+        """
+        return await self.check_capability_allowed(
+            capability=CAP_CHAT, tenant_id=tenant_id, user_id=user_id
+        )
+
+    async def check_capability_allowed(
+        self, *, capability: str, tenant_id: str, user_id: str
+    ) -> BudgetStatus:
+        """成本硬止损的**唯一判定点**（P4-11 ①，覆盖对话 / 文档 / 自动化三个面）。
+
         为什么必须在调用之前：额度已用尽时仍打上游，等于"用户看到 402、账单还在涨"。
         判定失败直接抛 `15006`（HTTP 402），上层因此**一次上游都不会发**。
+
+        为什么做成"能力维度"而不是复制三份：三条路径（M/R3/A1）此前各自只做了
+        「提示」或什么都不做，唯一做过硬止损的只有对话路径。判定逻辑一旦分叉，
+        口径必然漂移——最终表现是"对话被拦、文档照跑"，这正是 P3-B22-01 的形态。
+        因此判定只有一份，作用域只进日志与指标。
 
         **不要用 `10005 MODEL_QUOTA_EXHAUSTED`**：它表示"上游回传额度不足"
         （底座侧的 429/配额错误），与自研侧的硬止损是两件事——复用会让排障时
         分不清"我们的额度用完了"还是"上游说我们额度用完了"。
 
         Args:
+            capability: 作用域（`chat` / `document` / `automation`），只用于归因。
             tenant_id: 租户 ID。
             user_id: 用户 ID。
 
@@ -631,7 +671,8 @@ class UsageService:
         status = await self.budget_status(tenant_id=tenant_id, user_id=user_id)
         if status.exhausted:
             logger.warning(
-                "generation_budget_exhausted",
+                "budget_exhausted",
+                capability=capability,
                 tenant_id=tenant_id,
                 user_id=user_id,
                 plan_remaining=status.plan_remaining_units,
@@ -649,7 +690,8 @@ class UsageService:
             raise ApiError(
                 ErrorCode.QUOTA_EXHAUSTED,
                 internal_detail=(
-                    f"hard stop: plan_remaining={status.plan_remaining_units} "
+                    f"hard stop: capability={capability} "
+                    f"plan_remaining={status.plan_remaining_units} "
                     f"budget={status.budget_used_units}/{status.budget_units}"
                 ),
             )

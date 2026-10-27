@@ -189,6 +189,26 @@ class InMemoryTaskStore:
             if record.tenant_id == tenant_id and record.plugin_id == plugin_id and record.occupying
         )
 
+    async def clear_hold_reasons(self, tenant_id: str) -> int:
+        """按租户批量清空额度挂起标记（懒恢复）。
+
+        与 PG 实现同语义：只清本站租户、只清非空行，返回被清条数。
+        内存实现直接改原对象（与 `update_task` 的 `setattr` 一致），
+        不复制记录——复制会让同一 task_id 出现两个快照，推进方拿到旧的那个。
+
+        Args:
+            tenant_id: 企业 ID。
+
+        Returns:
+            int: 被清空的任务条数。
+        """
+        cleared = 0
+        for record in self._tasks.values():
+            if record.tenant_id == tenant_id and record.hold_reason:
+                record.hold_reason = ""
+                cleared += 1
+        return cleared
+
     async def counts_occupying(self, tenant_id: str, plugin_ids: Sequence[str]) -> dict[str, int]:
         """批量统计各插件占用额度的任务数。
 

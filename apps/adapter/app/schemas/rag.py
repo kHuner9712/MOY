@@ -64,13 +64,20 @@ class IndexStatus(StrEnum):
 
 
 class DocumentStage(StrEnum):
-    """文档处理阶段（五态，P2-KB-02；与三态 `index_status` 语义对齐）。"""
+    """文档处理阶段（六态，P2-KB-02 / P4-11 ②；与三态 `index_status` 语义对齐）。"""
 
     UPLOADED = "uploaded"
     PARSING = "parsing"
     PREPARING = "preparing"
     COMPLETED = "completed"
     FAILED = "failed"
+    #: 额度挂起（P4-11 ②）：文档**已保存**、字节已落库，但因超额暂不送底座。
+    #: **这是展示层派生值**，DB 的 `stage` 列仍然是 `'uploaded'`——`document_meta`
+    #: 的 CHECK 约束只允许五态，加值要全表重写且前后端版本必须同步发布。
+    #: 派生规则见 `business/document_service.py` 的 mapper：`hold_reason != ''` 时
+    #: 覆盖成该值。这样"库里的物理阶段"与"用户看到的阶段"解耦，
+    #: 前端 `document-table.tsx` 无需改动即可显示新文案。
+    QUOTA_HELD = "quota_held"
 
 
 #: 阶段 → 用户可见文案（PRD P2-KB-02 第 2 条，禁词已全部替换为业务语言）
@@ -80,6 +87,7 @@ STAGE_DISPLAY_NAMES: Final[dict[DocumentStage, str]] = {
     DocumentStage.PREPARING: "正在准备内容",
     DocumentStage.COMPLETED: "可使用",
     DocumentStage.FAILED: "处理未成功",
+    DocumentStage.QUOTA_HELD: "额度恢复后自动处理",
 }
 
 

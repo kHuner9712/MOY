@@ -61,6 +61,9 @@ TASK_MUTABLE_FIELDS: Final[frozenset[str]] = frozenset(
         "usage_units",
         "finished_at",
         "inputs",
+        # P4-11 ③：挂起/解除挂起都是"可变字段"，走既有 update_task 通道，
+        # 不新增仓储方法（少一个方法 = 少一处双实现漂移面）。
+        "hold_reason",
     }
 )
 
@@ -170,6 +173,12 @@ class TaskRecord:
     started_at: str = ""
     finished_at: str = ""
     expires_at: str = ""
+    #: 额度挂起原因（P4-11 ③）：`''` 未挂起 / `quota` 超额 / `past_due` 欠费。
+    #: **不进任何 INSERT 列名列表**——DDL 里 `NOT NULL DEFAULT ''`，
+    #: 因此对 R7（字段覆盖）是 omittable、对 G-SQL（arity）零影响；
+    #: 只在「建任务后切 queued / 懒恢复清空」的 UPDATE 里带。
+    #: 挂起与状态**正交**：被挂起的任务 `status` 仍是 `queued`（不新增状态枚举值）。
+    hold_reason: str = ""
 
     @property
     def terminal(self) -> bool:
