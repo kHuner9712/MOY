@@ -59,7 +59,7 @@
 | PRD | 需求 | 本文件章节 | 关键落点 |
 | --- | --- | --- | --- |
 | P4-01 | 生产鉴权防呆 + 密钥卫生 | §2.4 / §10.5 | 在途整改已含 `validate_auth_startup`（`security.py` diff）+ compose 写 `OA_AUTH_MODE`；本阶段只需入库 + 密钥清单文档 |
-| P4-02 | CI 真绿一次 | §11 T4-01 | 依赖 `P3-B22-01/02/04` 关闭（`expected_xfail.py:123/141/177`，均 `due_batch=B30`） |
+| P4-02 | CI 真绿一次 | §11 T4-01 | 依赖 `P4-11（=P3-B22-01，expected_xfail.py 中唯一仍 open 的 B30 条目）` 关闭；`P3-B22-02/04` 已于 `fcbe0d8` 前转为 `fixed` |
 | P4-03 | SBOM + difypkg 扫描 | §9.5 | 新增 `deploy/sbom/` + `deploy/validate_offline_pkgs.py` |
 | P4-04 | fail-closed | §2.5 | 白名单 **2 条**（§2.5.2） |
 | P4-05 | 保留 + 清理 + 导出/删除 | §10.4 / §4.6 / §7.5 | 后台任务引擎（§2.3）+ `TD1/TD2` |
