@@ -310,6 +310,37 @@ class AuditService:
         """当前存储实现（测试可据此断言「审计有记录」）。"""
         return self._recorder
 
+    async def exists(self, *, tenant_id: str, action: str, resource_id: str) -> bool:
+        """该租户在本期该资源上是否已有这条审计记录（P4-11 ④ 的幂等判据）。
+
+        为什么要"先查再写"而不是靠唯一索引挡：`audit_log` **没有**
+        (tenant, action, resource_id) 唯一约束（历史数据里同动作多次出现是合法的），
+        所以必须显式查重；这也让判据能断言"走了查重分支"（fake 返 True 时不写），
+        而不是靠"写了再看条数"反推——后者证明不了那行代码被执行过。
+
+        只在 `warn or exhausted` 时被调用，普通请求零额外查询。
+
+        `start_at` 收窄到**本月初**：同一租户跨月会有多条同动作记录（每月一条），
+        限定本期后扫描量稳定在 1~2 条，不必动 `AuditQuery` 的结构（它没有
+        `resource_id` 过滤项，为一个调用点改查询结构与两个后端不划算）。
+
+        Args:
+            tenant_id: 租户 ID。
+            action: 动作编码（`billing.quota_warn_80` / `billing.quota_exhausted_100`）。
+            resource_id: 资源 ID（本期 `YYYY-MM`）。
+
+        Returns:
+            bool: 已有同 (租户, 动作, 本期) 的记录返回 True。
+        """
+        from app.db.repositories.audit_repo import AuditQuery, query_audit_logs
+
+        result = await query_audit_logs(
+            self._settings,
+            tenant_id,
+            AuditQuery(action=action, start_at=f"{resource_id}-01", page_size=50),
+        )
+        return any(item.resource_id == resource_id for item in result.items)
+
     async def record(
         self,
         *,

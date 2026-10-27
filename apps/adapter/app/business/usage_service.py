@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
+from app.business.audit_service import AuditService
+from app.core.audit_actions import ACTION_QUOTA_EXHAUSTED_100, ACTION_QUOTA_WARN_80
 from app.core.config import Settings, get_settings
 from app.core.errors import ERROR_REGISTRY, ErrorCode
 from app.core.ids import new_resource_id
@@ -274,6 +276,7 @@ class UsageService:
         store: UsageStore | None = None,
         directory: UsageDirectory | None = None,
         budgets: BudgetStore | None = None,
+        audit: AuditService | None = None,
     ) -> None:
         """初始化服务。
 
@@ -282,11 +285,14 @@ class UsageService:
             store: 可选计量存储（测试注入）。
             directory: 可选组织信息解析器（测试注入）。
             budgets: 可选租户预算存储（阶段四 T4-04.3；测试注入）。
+            audit: 可选审计服务（P4-11 ④ 管理员通知；**可选**是为了让既有用例
+                零改动：不传即不写审计，走原路径。生产组合根必须传真实实例）。
         """
         self._settings = settings or get_settings()
         self._store: UsageStore = store or get_usage_store(self._settings)
         self._directory: UsageDirectory = directory or _default_directory(self._settings)
         self._budgets: BudgetStore = budgets or get_budget_store(self._settings)
+        self._audit: AuditService | None = audit
 
     @property
     def settings(self) -> Settings:
@@ -618,7 +624,7 @@ class UsageService:
             and not plan_exhausted
             and snapshot.usage_percent >= DEFAULT_PLAN_WARN_PERCENT
         )
-        return BudgetStatus(
+        status = BudgetStatus(
             plan_total_units=snapshot.total_units,
             plan_remaining_units=snapshot.remaining_units,
             budget_units=budget.monthly_budget_units,
@@ -629,6 +635,61 @@ class UsageService:
             warn_ratio=budget.warn_ratio,
             budget_enabled=budget.effective,
         )
+        await self._notify_admin_threshold(status=status, tenant_id=tenant_id, user_id=user_id)
+        return status
+
+    async def _notify_admin_threshold(
+        self, *, status: BudgetStatus, tenant_id: str, user_id: str
+    ) -> None:
+        """额度触达阈值时给管理员留一条审计（P4-11 ④）。
+
+        两条纪律：
+
+        1. **普通请求零额外查询**：`warn or exhausted` 之外直接返回，
+           不产生任何额外的审计查询（读路径不能因为护栏变慢）；
+        2. **写失败不能打挂读路径**：审计是副产品，异常只记 WARN 并带上
+           `type(exc).__name__`（吞掉异常类型会让排障时看不出是连不上库还是写冲突）。
+
+        幂等：同一 `(租户, 动作, 本期)` 只写一条。`audit_log` 没有该组合的唯一约束，
+        所以必须显式查（见 `AuditService.exists`），否则每条请求都会写一条。
+
+        Args:
+            status: 本次额度判定结果。
+            tenant_id: 租户 ID。
+            user_id: 用户 ID。
+        """
+        if self._audit is None or not (status.warn or status.exhausted):
+            return
+        action = ACTION_QUOTA_EXHAUSTED_100 if status.exhausted else ACTION_QUOTA_WARN_80
+        period = current_period()
+        try:
+            if await self._audit.exists(tenant_id=tenant_id, action=action, resource_id=period):
+                return
+            await self._audit.record(
+                tenant_id=tenant_id,
+                actor_id=user_id,
+                action=action,
+                resource_type="tenant_budget",
+                resource_id=period,
+                change_summary={
+                    "budget_used": status.budget_used_units,
+                    "budget_units": status.budget_units,
+                    "plan_remaining": status.plan_remaining_units,
+                },
+            )
+            logger.info(
+                "quota_admin_notified",
+                action=action,
+                tenant_id=tenant_id,
+                period=period,
+            )
+        except Exception as exc:  # 审计失败不影响额度判定
+            logger.warning(
+                "quota_admin_notify_failed",
+                action=action,
+                tenant_id=tenant_id,
+                detail=type(exc).__name__,
+            )
 
     async def check_generation_allowed(self, *, tenant_id: str, user_id: str) -> BudgetStatus:
         """`capability="chat"` 的薄包装（P4-11 ①，**签名保持不变**）。
@@ -1044,7 +1105,11 @@ def get_usage_service(settings: Settings | None = None) -> UsageService:
     """
     global _service
     if _service is None:
-        _service = UsageService(settings)
+        effective = settings or get_settings()
+        # P4-11 ④：生产组合根**必须**传真实审计服务——额度触顶要给管理员留痕。
+        # 测试里直接构造 `UsageService(...)` 时不传 audit（走原路径），
+        # 因此既有用例零改动；新用例显式注入 fake 以断言幂等。
+        _service = UsageService(effective, audit=AuditService(effective))
     return _service
 
 
