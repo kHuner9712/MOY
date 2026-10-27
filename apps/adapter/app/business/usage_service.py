@@ -23,8 +23,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
+from app.business.audit_service import AuditService
+from app.core.audit_actions import ACTION_QUOTA_EXHAUSTED_100, ACTION_QUOTA_WARN_80
 from app.core.config import Settings, get_settings
-from app.core.errors import ERROR_REGISTRY, ApiError, ErrorCode
+from app.core.errors import ERROR_REGISTRY, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.metrics import (
@@ -274,6 +276,7 @@ class UsageService:
         store: UsageStore | None = None,
         directory: UsageDirectory | None = None,
         budgets: BudgetStore | None = None,
+        audit: AuditService | None = None,
     ) -> None:
         """初始化服务。
 
@@ -282,11 +285,14 @@ class UsageService:
             store: 可选计量存储（测试注入）。
             directory: 可选组织信息解析器（测试注入）。
             budgets: 可选租户预算存储（阶段四 T4-04.3；测试注入）。
+            audit: 可选审计服务（P4-11 ④ 管理员通知；**可选**是为了让既有用例
+                零改动：不传即不写审计，走原路径。生产组合根必须传真实实例）。
         """
         self._settings = settings or get_settings()
         self._store: UsageStore = store or get_usage_store(self._settings)
         self._directory: UsageDirectory = directory or _default_directory(self._settings)
         self._budgets: BudgetStore = budgets or get_budget_store(self._settings)
+        self._audit: AuditService | None = audit
 
     @property
     def settings(self) -> Settings:
@@ -618,7 +624,7 @@ class UsageService:
             and not plan_exhausted
             and snapshot.usage_percent >= DEFAULT_PLAN_WARN_PERCENT
         )
-        return BudgetStatus(
+        status = BudgetStatus(
             plan_total_units=snapshot.total_units,
             plan_remaining_units=snapshot.remaining_units,
             budget_units=budget.monthly_budget_units,
@@ -629,24 +635,75 @@ class UsageService:
             warn_ratio=budget.warn_ratio,
             budget_enabled=budget.effective,
         )
+        await self._notify_admin_threshold(status=status, tenant_id=tenant_id, user_id=user_id)
+        return status
+
+    async def _notify_admin_threshold(
+        self, *, status: BudgetStatus, tenant_id: str, user_id: str
+    ) -> None:
+        """额度触达阈值时给管理员留一条审计（P4-11 ④）。
+
+        两条纪律：
+
+        1. **普通请求零额外查询**：`warn or exhausted` 之外直接返回，
+           不产生任何额外的审计查询（读路径不能因为护栏变慢）；
+        2. **写失败不能打挂读路径**：审计是副产品，异常只记 WARN 并带上
+           `type(exc).__name__`（吞掉异常类型会让排障时看不出是连不上库还是写冲突）。
+
+        幂等：同一 `(租户, 动作, 本期)` 只写一条。`audit_log` 没有该组合的唯一约束，
+        所以必须显式查（见 `AuditService.exists`），否则每条请求都会写一条。
+
+        Args:
+            status: 本次额度判定结果。
+            tenant_id: 租户 ID。
+            user_id: 用户 ID。
+        """
+        if self._audit is None or not (status.warn or status.exhausted):
+            return
+        action = ACTION_QUOTA_EXHAUSTED_100 if status.exhausted else ACTION_QUOTA_WARN_80
+        period = current_period()
+        try:
+            if await self._audit.exists(tenant_id=tenant_id, action=action, resource_id=period):
+                return
+            await self._audit.record(
+                tenant_id=tenant_id,
+                actor_id=user_id,
+                action=action,
+                resource_type="tenant_budget",
+                resource_id=period,
+                change_summary={
+                    "budget_used": status.budget_used_units,
+                    "budget_units": status.budget_units,
+                    "plan_remaining": status.plan_remaining_units,
+                },
+            )
+            logger.info(
+                "quota_admin_notified",
+                action=action,
+                tenant_id=tenant_id,
+                period=period,
+            )
+        except Exception as exc:  # 审计失败不影响额度判定
+            logger.warning(
+                "quota_admin_notify_failed",
+                action=action,
+                tenant_id=tenant_id,
+                detail=type(exc).__name__,
+            )
 
     async def check_generation_allowed(self, *, tenant_id: str, user_id: str) -> BudgetStatus:
-        """成本硬止损：**上游调用之前**判定额度（架构 §7.2 唯一判定点）。
+        """`capability="chat"` 的薄包装（P4-11 ①，**签名保持不变**）。
 
-        本方法是 `capability="chat"` 的**薄包装**（P4-11 ①）：判定逻辑已上收到
-        `check_capability_allowed()`，这里只固定作用域。**签名保持不变**——
-        `model_service.py:581` / `:1105` 两个调用点因此零改动，
-        也不会因为"顺手统一一下调用写法"而把两条路径的异常口径改歪。
+        `model_service.py:581` / `:1105` 两个调用点因此零改动，也不会因为
+        "顺手统一一下调用写法"而把两条路径的处置口径改歪。
+        **本方法不抛 `15006`**（2026-10-27 用户裁决）：对话超额继续可用、只限长。
 
         Args:
             tenant_id: 租户 ID。
             user_id: 用户 ID。
 
         Returns:
-            BudgetStatus: 判定结果（未用尽时返回，供上层决定是否带预警提示）。
-
-        Raises:
-            ApiError: 额度/预算已用尽（15006，HTTP 402）。
+            BudgetStatus: 判定结果（`exhausted` 时由调用方限长）。
         """
         return await self.check_capability_allowed(
             capability=CAP_CHAT, tenant_id=tenant_id, user_id=user_id
@@ -655,18 +712,21 @@ class UsageService:
     async def check_capability_allowed(
         self, *, capability: str, tenant_id: str, user_id: str
     ) -> BudgetStatus:
-        """成本硬止损的**唯一判定点**（P4-11 ①，覆盖对话 / 文档 / 自动化三个面）。
+        """额度判定（**只判定、不抛**，P4-11 ①；2026-10-27 按 PRD 5.3 ① 改为软限制）。
 
-        为什么必须在调用之前：额度已用尽时仍打上游，等于"用户看到 402、账单还在涨"。
-        判定失败直接抛 `15006`（HTTP 402），上层因此**一次上游都不会发**。
+        历史（必须知道，否则会以为这里漏了拦截）：本方法曾经在 `exhausted` 时抛
+        `15006`（HTTP 402），那是 P2 阶段的"对话硬止损"。用户裁决按 PRD 5.3 ①
+        改为：**≥100% 对话仍继续可用，只是单次回答限长（常规模式）**。
 
-        为什么做成"能力维度"而不是复制三份：三条路径（M/R3/A1）此前各自只做了
-        「提示」或什么都不做，唯一做过硬止损的只有对话路径。判定逻辑一旦分叉，
-        口径必然漂移——最终表现是"对话被拦、文档照跑"，这正是 P3-B22-01 的形态。
-        因此判定只有一份，作用域只进日志与指标。
+        处置分工（两种，别混）：
+
+        - **对话（M1/M2）**：`model_service` 拿到 `exhausted` → `apply_answer_cap()`
+          限长 + 常规模式提示，`code=0`，**不拦停**；
+        - **文档（R3）/ 自动化（A1）**：走 `is_capability_exhausted()` + **不调底座**
+          （挂起）。它们的"零上游调用"判据**没有被削弱**。
 
         **不要用 `10005 MODEL_QUOTA_EXHAUSTED`**：它表示"上游回传额度不足"
-        （底座侧的 429/配额错误），与自研侧的硬止损是两件事——复用会让排障时
+        （底座侧的 429/配额错误），与自研侧的额度判定是两件事——复用会让排障时
         分不清"我们的额度用完了"还是"上游说我们额度用完了"。
 
         Args:
@@ -675,10 +735,7 @@ class UsageService:
             user_id: 用户 ID。
 
         Returns:
-            BudgetStatus: 判定结果（未用尽时返回，供上层决定是否带预警提示）。
-
-        Raises:
-            ApiError: 额度/预算已用尽（15006，HTTP 402）。
+            BudgetStatus: 判定结果（`exhausted` 时由调用方决定限长还是挂起）。
         """
         status = await self.budget_status(tenant_id=tenant_id, user_id=user_id)
         if status.exhausted:
@@ -699,14 +756,13 @@ class UsageService:
                 and status.budget_used_units >= status.budget_units
                 else "plan"
             ).inc()
-            raise ApiError(
-                ErrorCode.QUOTA_EXHAUSTED,
-                internal_detail=(
-                    f"hard stop: capability={capability} "
-                    f"plan_remaining={status.plan_remaining_units} "
-                    f"budget={status.budget_used_units}/{status.budget_units}"
-                ),
-            )
+            # 2026-10-27 用户裁决（PRD 5.3 ①）：**不再抛 `15006`**。
+            # 对话超额继续可用、只把回答限长（常规模式）；R3/A1 不经过本方法的抛错，
+            # 它们走 `is_capability_exhausted()` + 挂起，那两条的"零上游调用"
+            # 判据**没有**被这次改动削弱。
+            # 代价如实标注（已进 PRD 5.3 ① 与风险台账）：超额用户**每次对话仍会产生
+            # 一次上游调用**（输出限 300 字 ≈ 0.015% 月额度/次，**次数无上限**）；
+            # 要彻底阻断需另立"超额限次"策略——PRD 目前没有这个定义。
         return status
 
     async def is_capability_exhausted(
@@ -714,13 +770,11 @@ class UsageService:
     ) -> bool:
         """**只判定、不抛异常**的额度查询（供"可挂起"的调用面使用，P4-11 ②③）。
 
-        为什么要与 `check_capability_allowed` 并存而不是复用它：
-        对话（M1/M2）超额只能**拒**，所以那边必须抛 `15006`；
-        文档（R3）与自动化（A1）超额应当**挂起**——先收下、恢复后再跑。
-        同一个判据，两种处置，因此这里只返回布尔，由调用方决定拒还是挂。
-
-        判定逻辑仍然只有一份（都走 `budget_status`），不会出现"拒的阈值"与
-        "挂的阈值"不一致这种最难解释的漂移。
+        为什么与 `check_capability_allowed` 并存而不是合并：
+        对话（M1/M2）超额要**继续可用、只限长**（PRD 5.3 ①），所以那边返回 status；
+        文档（R3）与自动化（A1）超额要**挂起**（先收下、恢复后再跑），所以这里
+        只返回布尔。同一个判据（都走 `budget_status`），两种处置，
+        不会出现"限长的阈值"与"挂起的阈值"不一致这种最难解释的漂移。
 
         Args:
             capability: 作用域（`document` / `automation`），只用于归因。
@@ -1051,7 +1105,11 @@ def get_usage_service(settings: Settings | None = None) -> UsageService:
     """
     global _service
     if _service is None:
-        _service = UsageService(settings)
+        effective = settings or get_settings()
+        # P4-11 ④：生产组合根**必须**传真实审计服务——额度触顶要给管理员留痕。
+        # 测试里直接构造 `UsageService(...)` 时不传 audit（走原路径），
+        # 因此既有用例零改动；新用例显式注入 fake 以断言幂等。
+        _service = UsageService(effective, audit=AuditService(effective))
     return _service
 
 

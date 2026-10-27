@@ -28,6 +28,7 @@ from app.core.errors import ERROR_REGISTRY, ErrorCode
 from app.db.repositories.billing import get_billing_store
 from app.db.repositories.usage import get_usage_store
 from app.schemas.billing import ChangeSubscriptionRequest
+from app.services.answer_cap import STANDARD_MODE_NOTICE
 from tests.conftest import TEST_USER_ID
 
 pytestmark = [pytest.mark.integration]
@@ -159,14 +160,18 @@ def _sse_frames(text: str) -> list[tuple[str, dict[str, Any]]]:
 # ===========================================================================
 # M1 非流式
 # ===========================================================================
-async def test_m1_generate_over_quota_is_hard_stopped(
+async def test_m1_generate_over_quota_is_capped_not_blocked(
     client: TestClient, settings: Settings, auth_headers: dict[str, str]
 ) -> None:
-    """M1 超额：**硬止损** —— HTTP 402 / `15006`，且**一次上游都不发**。
+    """判据 ①a（P4-11 ①，2026-10-27 用户裁决）：超额**不再 402**，改为限长。
 
-    阶段四 T4-04.2（E-3/E-4）把这里从"软限制提示"改成"拒绝"：额度已用尽还继续打上游，
-    等于"用户看到提示、账单还在涨"。非阻断提示仍然存在，但它现在只服务 **80% 预警**
-    （见 `tests/unit/test_usage_guard.py::TestBudgetNotice`）。
+    断言四件事：`code==0`（不拦停）、`notice_code==15006`、正文被收到上限内、
+    正文非空（真的答了，不是空壳）。
+
+    历史：本条原为 `test_m1_generate_over_quota_is_hard_stopped`，断言 402 +
+    "一次上游都不发"（P2 硬止损）。PRD 5.3 ① 裁决改为"继续可用、只限长"，
+    故改判据——**不删除**，删掉就失去对超额路径的正向证据。
+    **代价**：超额用户每次对话仍会产生一次上游调用（见 PRD 5.3 ① 代价段）。
     """
     state = await _seed_usage(settings, over=True)
     assert state.over_quota, "造数失败：已用额度未达到上限"
@@ -176,14 +181,18 @@ async def test_m1_generate_over_quota_is_hard_stopped(
         json=_generate_payload(),
         headers=_write_headers(auth_headers, "quota-m1-over"),
     )
-    assert response.status_code == 402
+
+    assert response.status_code == 200, "超额不得再返回 402（PRD 5.3 ① 软限制）"
     body = response.json()
-    assert body["code"] == int(ErrorCode.QUOTA_EXHAUSTED)
-    assert body["code"] == 15006
-    # 拒绝时没有正文（没有生成，也没有结算）；文案是业务语言，不含错误码与堆栈
-    assert body["data"] is None
-    assert body["message"]
-    assert "15006" not in body["message"]
+    assert body["code"] == 0
+    data = body["data"]
+    assert data is not None and data["content"], "超额仍必须给出回答（常规模式，不是空壳）"
+    assert data["notice_code"] == 15006
+    assert data["notice_message"] == STANDARD_MODE_NOTICE
+    limit = settings.standard_mode_answer_chars
+    assert len(data["content"]) <= limit + len(STANDARD_MODE_NOTICE) + 2, (
+        f"正文未收到上限内：{len(data['content'])} > {limit}+提示语"
+    )
 
 
 async def test_m1_generate_under_quota_has_no_notice(
@@ -224,13 +233,18 @@ async def test_m1_generate_without_subscription_has_no_notice(
 # ===========================================================================
 # M2 流式（提示只挂终帧 `done`）
 # ===========================================================================
-async def test_m2_stream_over_quota_notice_only_on_done_frame(
+async def test_m2_stream_over_quota_has_no_error_frame_and_notice_on_done(
     client: TestClient, settings: Settings, auth_headers: dict[str, str]
 ) -> None:
-    """M2 超额：**开流前**就以 `error` 帧拒绝（不产生 `start`/`delta`，不碰上游）。
+    """判据 ①b（HTTP 层）：超额流式**不得**再以 `error` 帧拒绝，提示挂 `done`。
 
-    为什么用 `error` 帧而不是抛异常：流已经建立，抛异常会让前端拿到一条断掉的连接，
-    而不是一条可读的业务提示（见 `generate_stream` 里的注释）。
+    历史：本条原为 `test_m2_stream_over_quota_notice_only_on_done_frame`，
+    断言"开流前就以 error 帧拒绝"。PRD 5.3 ① 裁决改为"流式按整帧截断、
+    继续可用"，故改判据。
+
+    **截断本身在 `tests/unit/test_model_stream_answer_cap.py` 覆盖**：
+    截断逻辑在真实下游分支上，本套件走桩模式不经过该分支，
+    在这里断言长度上限会变成"测了个寂寞"。
     """
     state = await _seed_usage(settings, over=True)
     assert state.over_quota
@@ -244,9 +258,10 @@ async def test_m2_stream_over_quota_notice_only_on_done_frame(
     frames = _sse_frames(response.text)
     names = [name for name, _ in frames]
 
-    assert names == ["error"], f"超额必须在开流前拒绝，实际帧序列：{names}"
-    assert frames[0][1]["code"] == 15006
-    assert "start" not in names and "delta" not in names
+    assert "error" not in names, f"超额不得再以 error 帧拒绝，实际帧序列：{names}"
+    assert names[-1] == "done", f"流应正常收尾于 done，实际：{names}"
+    done = frames[-1][1]
+    assert done.get("notice_code") == 15006, f"终帧必须带常规模式提示，实际 {done!r}"
 
 
 async def test_m2_stream_under_quota_has_no_notice(

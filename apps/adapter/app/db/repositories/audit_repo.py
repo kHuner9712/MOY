@@ -52,6 +52,8 @@ from app.core.audit_actions import (
     ACTION_PLUGIN_STATE_CHANGE,
     ACTION_PLUGIN_UNINSTALL,
     ACTION_PLUGIN_VERSION_CHANGE,
+    ACTION_QUOTA_EXHAUSTED_100,
+    ACTION_QUOTA_WARN_80,
     ACTION_RECONCILE_MISMATCH,
     ACTION_ROLE_DELETE,
     ACTION_SETTINGS_UPDATE,
@@ -89,6 +91,8 @@ ACTION_CATALOG: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
     ("department", (ACTION_DEPT_CREATE, ACTION_DEPT_UPDATE, ACTION_DEPT_DELETE)),
     ("member", (ACTION_MEMBER_UPDATE, ACTION_MEMBER_REMOVE, ACTION_MEMBER_BATCH)),
     ("role", (ACTION_ROLE_DELETE,)),
+    # P4-11 ④：管理员通知类动作（按租户+周期幂等，见 usage_service）
+    ("billing", (ACTION_QUOTA_WARN_80, ACTION_QUOTA_EXHAUSTED_100)),
     ("billing", (ACTION_RECONCILE_MISMATCH,)),
     (
         "billing",

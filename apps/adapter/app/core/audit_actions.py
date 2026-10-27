@@ -34,6 +34,12 @@ ACTION_GRANT_CREATE: Final[str] = "knowledge_base.grant_create"
 #: 操作：撤销成员授权（B05）
 ACTION_GRANT_REVOKE: Final[str] = "knowledge_base.grant_revoke"
 
+#: 操作：额度预警（≥80%，P4-11 ④ 管理员通知）
+ACTION_QUOTA_WARN_80: Final[str] = "billing.quota_warn_80"
+
+#: 操作：额度用尽（≥100%，P4-11 ④ 管理员通知）
+ACTION_QUOTA_EXHAUSTED_100: Final[str] = "billing.quota_exhausted_100"
+
 #: 操作：上传文档
 ACTION_DOC_UPLOAD: Final[str] = "document.upload"
 
@@ -137,6 +143,8 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_KB_DELETE: "删除知识库",
     ACTION_GRANT_CREATE: "添加成员授权",
     ACTION_GRANT_REVOKE: "撤销成员授权",
+    ACTION_QUOTA_WARN_80: "额度用到八成",
+    ACTION_QUOTA_EXHAUSTED_100: "额度已用尽",
     ACTION_DOC_UPLOAD: "上传文档",
     ACTION_DOC_DELETE: "删除文档",
     ACTION_DEPT_CREATE: "新建部门",
