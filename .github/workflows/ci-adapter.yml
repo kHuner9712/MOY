@@ -111,7 +111,8 @@ jobs:
       # ------------------------------------------------------------------
       # 准备 PostgreSQL（审计 OA-AUDIT-001 / P0-4）
       #
-      # 顺序与 `deploy/docker-entrypoint-initdb.d` 一致：基线 schema → 应用角色 → 迁移。
+      # 顺序与 `deploy/docker-entrypoint-initdb.d` 一致：
+      # 基线 schema（phase2 / phase3 / phase4）→ 应用角色 → 迁移。
       # 应用角色必须是 `NOSUPERUSER NOBYPASSRLS`：超级用户永久绕过 RLS，
       # 用它跑隔离用例会"全绿但无效"，夹具的 `assert_rls_not_bypassed` 会直接 fail。
       # ------------------------------------------------------------------
@@ -130,6 +131,10 @@ jobs:
 
           $PSQL -f ../../deploy/init-schema-phase2.sql
           $PSQL -f ../../deploy/init-schema-phase3.sql
+          # 阶段四 schema：`background_job` / `tenant_budget` / `memory_*` 的建表者。
+          # 缺这一步时迁移 0010 会以「角色不是库属主」失败——那是守卫的 fail-closed
+          # 正确行为，不是 0010 的 bug（2026-10-27 真库实测：缺 phase4 → 52 条红）。
+          $PSQL -f ../../deploy/init-schema-phase4.sql
           $PSQL -f ../../deploy/init-app-role.sql
 
           # `init-app-role.sql` 用占位口令建角色，该文件自身的运维要求就是
@@ -138,7 +143,9 @@ jobs:
           # `tests/integration/pg_fixture.py::_derive_superuser_dsn`）。
           $PSQL -c "ALTER ROLE officeai_app PASSWORD 'oa_ci_pw';"
 
-          for f in ../../deploy/migrations/000*.sql; do
+          # glob 必须是 `0*.sql`：`000*.sql` 匹配不到 0010/0011（它们以 `001` 开头），
+          # 而这两个迁移正是 phase4 表的「已存在则零 DDL」路径（2026-10-27 实测漏匹配）。
+          for f in ../../deploy/migrations/0*.sql; do
             echo "== 应用迁移：$f"
             $PSQL -f "$f"
           done
