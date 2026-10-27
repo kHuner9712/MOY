@@ -39,12 +39,13 @@ from app.business.segment_service import SegmentHit, SegmentService, build_key
 from app.business.usage_service import (
     CAP_DOCUMENT,
     HOLD_REASON_QUOTA,
+    QUOTA_HOLD_NOTICE,
     UsageService,
     get_usage_service,
 )
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
-from app.core.errors import ApiError, ErrorCode
+from app.core.errors import ERROR_REGISTRY, ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
@@ -420,17 +421,31 @@ class RagService:
                 file_size=file_size,
                 tenant_id=auth.tenant_id,
             )
-            return await self._with_quota_notice(
-                UploadDocumentData(
-                    document_id=held.document_id,
-                    file_name=held.file_name,
-                    index_status=IndexStatus(held.index_status),
-                    stage=DocumentStage.QUOTA_HELD,
-                    chunk_policy=ChunkPolicy(held.chunk_policy),
-                    progress=0,
-                ),
-                auth,
+            # 提示文案**必须带出路**（PRD 5.3 红线：界面要有可执行动作）。
+            # 为什么不是「自动处理」：V1.0 不存输入字节，恢复后无法重放解析
+            # （见 `STAGE_DISPLAY_NAMES[QUOTA_HELD]` 的注释与 PRD 5.3 ② 的修订留痕）。
+            return UploadDocumentData(
+                document_id=held.document_id,
+                file_name=held.file_name,
+                index_status=IndexStatus(held.index_status),
+                stage=DocumentStage.QUOTA_HELD,
+                chunk_policy=ChunkPolicy(held.chunk_policy),
+                progress=0,
+                notice_code=int(ERROR_REGISTRY[ErrorCode.QUOTA_EXHAUSTED].code),
+                notice_message=QUOTA_HOLD_NOTICE,
             )
+        else:
+            # P4-11 ⑤（文档侧）：判定成功 → 额度已恢复，清掉本租户的挂起标记。
+            # 只清标记、不重放：字节不在本地（见上），用户重新上传即可正常处理。
+            # **放在写路径而不是 `list_documents`**：读路径保持纯读，
+            # 既不撞只读事务的 `read_only` 守卫，也不把查询变成写操作。
+            cleared = await self._documents.store.clear_hold_reasons(auth.tenant_id)
+            if cleared:
+                logger.info(
+                    "document_quota_recovered",
+                    cleared=cleared,
+                    tenant_id=auth.tenant_id,
+                )
 
         api_key = await self._api_key_for(base_id, auth)
         effective_policy = chunk_policy or await self._resolve_base_policy(base_id, auth)

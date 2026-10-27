@@ -92,6 +92,12 @@ CAP_AUTOMATION: Final[str] = "automation"
 HOLD_REASON_QUOTA: Final[str] = "quota"
 HOLD_REASON_PAST_DUE: Final[str] = "past_due"
 
+#: 文档被额度挂起时给用户的提示（PRD 5.3 ② 红线：界面必须给出**可执行出路**）。
+#: 为什么写「请重新上传」而不是「自动处理」：V1.0 **不存输入字节**
+#: （`document_meta` 无字节列，上传路径为 `content → post_multipart` 一次网络调用），
+#: 恢复后无法重放解析。要改成"自动"必须先落 b-2（存输入字节 + 留存/合规评审）。
+QUOTA_HOLD_NOTICE: Final[str] = "额度已用尽，文档已保存但未处理；额度恢复后请重新上传"
+
 #: 中断折算的分母下限（防止 0 除）
 _MIN_CHARS_PER_UNIT: Final[int] = 1
 

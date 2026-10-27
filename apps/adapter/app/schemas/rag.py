@@ -87,7 +87,13 @@ STAGE_DISPLAY_NAMES: Final[dict[DocumentStage, str]] = {
     DocumentStage.PREPARING: "正在准备内容",
     DocumentStage.COMPLETED: "可使用",
     DocumentStage.FAILED: "处理未成功",
-    DocumentStage.QUOTA_HELD: "额度恢复后自动处理",
+    #: **如实折价（PRD 5.3 ②，2026-10-27 主理人裁决 b-1）**：V1.0 不存输入字节
+    #: （`document_meta` 无字节列，上传路径是 `content → post_multipart` 一次网络调用），
+    #: 因此额度恢复后**无法**自动重放解析。列表这里只如实反映状态，
+    #: **可执行出路放在上传响应**（`upload_document` 的 `notice_message`）——
+    #: 红线要求"界面上有明确出路"，而动作必须出现在用户当场能看到的位置。
+    #: 不要把它改回「额度恢复后自动处理」：那句在 b-2（存输入字节）落地前是假承诺。
+    DocumentStage.QUOTA_HELD: "额度已用尽，未处理",
 }
 
 
