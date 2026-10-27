@@ -98,6 +98,11 @@ class DocumentRecord:
     uploaded_at: str = ""
     run_id: str = ""
     deleted_at: str | None = None
+    #: 额度挂起原因（P4-11 ②）：`''` 未挂起 / `quota` 超额 / `past_due` 欠费。
+    #: **不进任何 INSERT 列名列表**——DDL 里 `NOT NULL DEFAULT ''`，
+    #: 因此它对 R7（字段覆盖）是 omittable、对 G-SQL（arity）完全不产生影响；
+    #: 只在「写挂起 / 懒恢复清空」的 UPDATE 里带。
+    hold_reason: str = ""
 
     @property
     def is_deleted(self) -> bool:
@@ -170,6 +175,14 @@ class DocumentStoreProtocol(Protocol):
 
     async def count_by_base(self, tenant_id: str, base_id: str) -> int:
         """统计知识库下未删除的文档数量。"""
+        ...
+
+    async def set_hold_reason(self, tenant_id: str, document_id: str, hold_reason: str) -> bool:
+        """写入额度挂起原因（P4-11 ②）；返回是否有行被更新。"""
+        ...
+
+    async def clear_hold_reasons(self, tenant_id: str) -> int:
+        """按租户批量清空挂起原因（懒恢复）；返回被清空的条数。"""
         ...
 
 
@@ -347,6 +360,42 @@ class InMemoryDocumentStore:
                 and not record.is_deleted
             )
 
+    async def set_hold_reason(self, tenant_id: str, document_id: str, hold_reason: str) -> bool:
+        """写入额度挂起原因。
+
+        Args:
+            tenant_id: 租户 ID。
+            document_id: 文档 ID。
+            hold_reason: `''` / `quota` / `past_due`。
+
+        Returns:
+            bool: 有行被更新返回 True；文档不存在或已删除返回 False。
+        """
+        async with self._lock:
+            key = (tenant_id, document_id)
+            current = self._records.get(key)
+            if current is None or current.is_deleted:
+                return False
+            self._records[key] = replace(current, hold_reason=hold_reason)
+        return True
+
+    async def clear_hold_reasons(self, tenant_id: str) -> int:
+        """按租户批量清空挂起原因（懒恢复）。
+
+        Args:
+            tenant_id: 租户 ID。
+
+        Returns:
+            int: 被清空的文档条数。
+        """
+        cleared = 0
+        async with self._lock:
+            for key, record in list(self._records.items()):
+                if record.tenant_id == tenant_id and record.hold_reason:
+                    self._records[key] = replace(record, hold_reason="")
+                    cleared += 1
+        return cleared
+
     def clear(self) -> None:
         """清空（测试隔离用）。"""
         self._records.clear()
@@ -437,7 +486,7 @@ class PostgresDocumentStore:
                 SELECT tenant_id, document_id, base_id, file_name, file_size, chunk_policy,
                        stage, index_status, progress, estimated_remaining_seconds,
                        segment_count, error_message, uploader_user_id, uploaded_at,
-                       run_id, deleted_at
+                       run_id, deleted_at, hold_reason
                 FROM {DOCUMENT_TABLE}
                 WHERE {repo.tenant_clause()} AND document_id = :document_id
                   AND deleted_at IS NULL
@@ -483,7 +532,7 @@ class PostgresDocumentStore:
                 SELECT tenant_id, document_id, base_id, file_name, file_size, chunk_policy,
                        stage, index_status, progress, estimated_remaining_seconds,
                        segment_count, error_message, uploader_user_id, uploaded_at,
-                       run_id, deleted_at
+                       run_id, deleted_at, hold_reason
                 FROM {DOCUMENT_TABLE}
                 WHERE {repo.tenant_clause()} AND base_id = :base_id
                   AND deleted_at IS NULL {keyword_filter} {stage_filter}
@@ -633,6 +682,61 @@ class PostgresDocumentStore:
             )
         return int(total or 0)
 
+    async def set_hold_reason(self, tenant_id: str, document_id: str, hold_reason: str) -> bool:
+        """写入额度挂起原因（P4-11 ②）。
+
+        Args:
+            tenant_id: 租户 ID。
+            document_id: 文档 ID。
+            hold_reason: `''` / `quota` / `past_due`。
+
+        Returns:
+            bool: 有行被更新返回 True。
+        """
+        async with tenant_scope(tenant_id, settings=self._settings) as uow:
+            repo = _DocumentTableRepository(uow)
+            row = await repo.fetch_one(
+                f"""
+                UPDATE {DOCUMENT_TABLE}
+                   SET hold_reason = :hold_reason
+                 WHERE {repo.tenant_clause()} AND document_id = :document_id
+                   AND deleted_at IS NULL
+                RETURNING document_id
+                """,
+                repo.params(document_id=document_id, hold_reason=hold_reason),
+            )
+        return row is not None
+
+    async def clear_hold_reasons(self, tenant_id: str) -> int:
+        """按租户批量清空挂起原因（懒恢复三触点的统一动作）。
+
+        **为什么是"按租户一条 UPDATE"而不是逐行**：懒恢复发生在读路径上
+        （`list_tasks` / `list_documents`），逐行更新会让一次列表请求打出 N 次
+        UPDATE；一条带 `hold_reason <> ''` 的批量更新既只命中少量行，
+        又天然幂等（没有挂起行时更新 0 行）。
+
+        Args:
+            tenant_id: 租户 ID。
+
+        Returns:
+            int: 被清空的条数。
+        """
+        async with tenant_scope(tenant_id, settings=self._settings) as uow:
+            repo = _DocumentTableRepository(uow)
+            removed = await repo.fetch_scalar(
+                f"""
+                WITH removed AS (
+                    UPDATE {DOCUMENT_TABLE}
+                       SET hold_reason = ''
+                     WHERE {repo.tenant_clause()} AND hold_reason <> ''
+                    RETURNING 1
+                )
+                SELECT COUNT(*) FROM removed
+                """,
+                repo.params(),
+            )
+        return int(removed or 0)
+
 
 def _sort_key(sort_field: str) -> Any:
     """构造内存排序键。
@@ -707,6 +811,9 @@ def _to_record(row: Mapping[str, Any]) -> DocumentRecord:
         uploaded_at=_to_timestamp(row.get("uploaded_at")),
         run_id=str(row.get("run_id", "") or ""),
         deleted_at=_to_timestamp(row.get("deleted_at")) or None,
+        # 防御式取列：并非每条 SELECT 都必须列出该列（未列出时按「未挂起」处理），
+        # 这样新增一个 SELECT 不会因漏列而 KeyError，也不会把挂起状态静默读成别的值。
+        hold_reason=str(row.get("hold_reason", "") or ""),
     )
 
 

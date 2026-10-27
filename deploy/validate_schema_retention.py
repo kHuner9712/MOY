@@ -59,7 +59,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Final, TypedDict
 
 #: 仓库根目录
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
@@ -81,6 +81,22 @@ EXPECTED_DATA_TYPE: Final[str] = "timestamp with time zone"
 
 #: 测试环境变量（与应用角色一致）
 APP_DSN_ENV: Final[str] = "OA_TEST_DATABASE_URL"
+
+
+class RetentionStats(TypedDict):
+    """静态检查的统计信息（`--json` 输出与成功行共用同一份）。
+
+    用 TypedDict 而不是 `dict[str, object]`：后者让 `stats['files']` 被推断成
+    `object`，`len()` / `', '.join()` 都过不了类型检查，只能靠 `cast` 或 `# type: ignore`
+    掩盖；而且**键名与类型无任何约束**——本次改造时正是它掩盖了一个真问题：
+    早退分支漏了 `retention_days` 键，`main()` 打印到该键时直接 `KeyError` 崩溃
+    （触发条件是「基线脚本缺失 + 目录无 SQL」，即最需要给出可读报错的仓库不完整状态）。
+    """
+
+    files: list[str]
+    migrations_dir: str
+    retention_days: int
+
 
 #: `CREATE TABLE <name> (...)` 的定位（表体由括号深度扫描，不靠正则吃括号）
 CREATE_TABLE_PATTERN: Final[re.Pattern[str]] = re.compile(
@@ -248,20 +264,26 @@ def collect_sql_files(directory: Path) -> list[Path]:
     return files
 
 
-def run_static_checks(directory: Path) -> tuple[list[Violation], dict[str, object]]:
+def run_static_checks(directory: Path) -> tuple[list[Violation], RetentionStats]:
     """静态判据：迁移脚本与基线脚本里的列定义。
 
     Args:
         directory: 迁移目录。
 
     Returns:
-        tuple[list[Violation], dict[str, object]]: 违规清单与统计信息。
+        tuple[list[Violation], RetentionStats]: 违规清单与统计信息。
     """
     files = collect_sql_files(directory)
     if not files:
         return (
             [Violation(str(directory), "找不到任何 SQL 文件（--dir 指错或仓库不完整）")],
-            {"files": [], "migrations_dir": str(directory)},
+            {
+                "files": [],
+                "migrations_dir": str(directory),
+                # 必须与正常分支同键：`main()` 的成功/失败输出都会打印这一项，
+                # 缺键会让"仓库不完整"这个最该被读懂的场景变成 KeyError 崩溃。
+                "retention_days": RETENTION_DAYS,
+            },
         )
     violations: list[Violation] = []
     defined: set[str] = set()
@@ -456,6 +478,10 @@ def main(argv: list[str] | None = None) -> int:
     directory = Path(args.dir).resolve() if args.dir else MIGRATIONS_DIR
     violations, stats = run_static_checks(directory)
     code = 1 if violations else 0
+    #: 真库分支是否**确实执行并全部通过**。仅用于让成功输出自证分支执行过：
+    #: 静态与真库两种口径此前打印完全相同的 `[OK]`，日志无法区分，
+    #: 一旦将来 `--run-pg` 被误删/被短路，输出看不出任何差别（假绿风险）。
+    pg_verified = False
 
     if args.run_pg:
         dsn = os.environ.get(APP_DSN_ENV, "").strip()
@@ -466,11 +492,12 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             pg_violations = asyncio.run(run_pg_check(dsn))
-        except Exception as exc:  # noqa: BLE001 - CLI 入口：连接类异常一律转成可读失败信息并以非 0 退出
+        except Exception as exc:  # CLI 入口：连接类异常一律转成可读失败信息并以非 0 退出
             print(f"[FAIL] 连接数据库失败：{type(exc).__name__}: {exc}")
             return 2
         violations.extend(pg_violations)
         code = 1 if violations else 0
+        pg_verified = not pg_violations
 
     if args.json:
         print(
@@ -492,6 +519,13 @@ def main(argv: list[str] | None = None) -> int:
         print(violation.render())
     if code == 0:
         print("[OK]   留存门禁通过：expires_at 列、类型与 180 天默认值均符合口径")
+        if pg_verified:
+            # 只有真库分支真的跑过且无违规时才打印：纯静态口径下这一行**不出现**，
+            # 因此日志本身即可自证「库里的列确实被核对过」，而不是只有 .sql 文本被解析。
+            print(
+                "[OK]   pg: plugin_task / plugin_artifact 的 expires_at 默认值已核对"
+                f"（{stats['retention_days']} 天）"
+            )
         return 0
     print(f"[FAIL] 留存门禁未通过：{len(violations)} 处问题")
     return 1

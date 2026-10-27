@@ -76,6 +76,28 @@ RESOURCE_GENERATION: Final[str] = "generation"
 RESOURCE_DOCUMENT: Final[str] = "document"
 RESOURCE_TASK: Final[str] = "task"
 
+#: 成本护栏的**作用域**（P4-11 ①）：判定逻辑只有一份，作用域只影响日志与指标归因。
+#:
+#: 为什么要按作用域区分：三类调用面的成本量级与"超额后能否延后"完全不同——
+#: 对话是同步消耗（只能拒），文档与自动化可以**挂起**（存下来、恢复后再跑）。
+#: 没有这个维度时，日志里只有一行 `budget_exhausted`，
+#: 排障时分不清是"用户被拒了一次对话"还是"一批文档被挂起"，也统计不出哪个面在烧钱。
+CAP_CHAT: Final[str] = "chat"
+CAP_DOCUMENT: Final[str] = "document"
+CAP_AUTOMATION: Final[str] = "automation"
+
+#: 挂起原因取值（与迁移 0012 的 `CHECK (hold_reason IN ('','quota','past_due'))` 对齐）。
+#: `past_due` 现在没有写入方（计费域 D3 冻结），先占位——将来接欠费时**不必再改约束**
+#: （改 CHECK 要全表重写，属高风险 DDL）。
+HOLD_REASON_QUOTA: Final[str] = "quota"
+HOLD_REASON_PAST_DUE: Final[str] = "past_due"
+
+#: 文档被额度挂起时给用户的提示（PRD 5.3 ② 红线：界面必须给出**可执行出路**）。
+#: 为什么写「请重新上传」而不是「自动处理」：V1.0 **不存输入字节**
+#: （`document_meta` 无字节列，上传路径为 `content → post_multipart` 一次网络调用），
+#: 恢复后无法重放解析。要改成"自动"必须先落 b-2（存输入字节 + 留存/合规评审）。
+QUOTA_HOLD_NOTICE: Final[str] = "额度已用尽，文档已保存但未处理；额度恢复后请重新上传"
+
 #: 中断折算的分母下限（防止 0 除）
 _MIN_CHARS_PER_UNIT: Final[int] = 1
 
@@ -611,14 +633,44 @@ class UsageService:
     async def check_generation_allowed(self, *, tenant_id: str, user_id: str) -> BudgetStatus:
         """成本硬止损：**上游调用之前**判定额度（架构 §7.2 唯一判定点）。
 
+        本方法是 `capability="chat"` 的**薄包装**（P4-11 ①）：判定逻辑已上收到
+        `check_capability_allowed()`，这里只固定作用域。**签名保持不变**——
+        `model_service.py:581` / `:1105` 两个调用点因此零改动，
+        也不会因为"顺手统一一下调用写法"而把两条路径的异常口径改歪。
+
+        Args:
+            tenant_id: 租户 ID。
+            user_id: 用户 ID。
+
+        Returns:
+            BudgetStatus: 判定结果（未用尽时返回，供上层决定是否带预警提示）。
+
+        Raises:
+            ApiError: 额度/预算已用尽（15006，HTTP 402）。
+        """
+        return await self.check_capability_allowed(
+            capability=CAP_CHAT, tenant_id=tenant_id, user_id=user_id
+        )
+
+    async def check_capability_allowed(
+        self, *, capability: str, tenant_id: str, user_id: str
+    ) -> BudgetStatus:
+        """成本硬止损的**唯一判定点**（P4-11 ①，覆盖对话 / 文档 / 自动化三个面）。
+
         为什么必须在调用之前：额度已用尽时仍打上游，等于"用户看到 402、账单还在涨"。
         判定失败直接抛 `15006`（HTTP 402），上层因此**一次上游都不会发**。
+
+        为什么做成"能力维度"而不是复制三份：三条路径（M/R3/A1）此前各自只做了
+        「提示」或什么都不做，唯一做过硬止损的只有对话路径。判定逻辑一旦分叉，
+        口径必然漂移——最终表现是"对话被拦、文档照跑"，这正是 P3-B22-01 的形态。
+        因此判定只有一份，作用域只进日志与指标。
 
         **不要用 `10005 MODEL_QUOTA_EXHAUSTED`**：它表示"上游回传额度不足"
         （底座侧的 429/配额错误），与自研侧的硬止损是两件事——复用会让排障时
         分不清"我们的额度用完了"还是"上游说我们额度用完了"。
 
         Args:
+            capability: 作用域（`chat` / `document` / `automation`），只用于归因。
             tenant_id: 租户 ID。
             user_id: 用户 ID。
 
@@ -631,7 +683,8 @@ class UsageService:
         status = await self.budget_status(tenant_id=tenant_id, user_id=user_id)
         if status.exhausted:
             logger.warning(
-                "generation_budget_exhausted",
+                "budget_exhausted",
+                capability=capability,
                 tenant_id=tenant_id,
                 user_id=user_id,
                 plan_remaining=status.plan_remaining_units,
@@ -649,11 +702,46 @@ class UsageService:
             raise ApiError(
                 ErrorCode.QUOTA_EXHAUSTED,
                 internal_detail=(
-                    f"hard stop: plan_remaining={status.plan_remaining_units} "
+                    f"hard stop: capability={capability} "
+                    f"plan_remaining={status.plan_remaining_units} "
                     f"budget={status.budget_used_units}/{status.budget_units}"
                 ),
             )
         return status
+
+    async def is_capability_exhausted(
+        self, *, capability: str, tenant_id: str, user_id: str
+    ) -> bool:
+        """**只判定、不抛异常**的额度查询（供"可挂起"的调用面使用，P4-11 ②③）。
+
+        为什么要与 `check_capability_allowed` 并存而不是复用它：
+        对话（M1/M2）超额只能**拒**，所以那边必须抛 `15006`；
+        文档（R3）与自动化（A1）超额应当**挂起**——先收下、恢复后再跑。
+        同一个判据，两种处置，因此这里只返回布尔，由调用方决定拒还是挂。
+
+        判定逻辑仍然只有一份（都走 `budget_status`），不会出现"拒的阈值"与
+        "挂的阈值"不一致这种最难解释的漂移。
+
+        Args:
+            capability: 作用域（`document` / `automation`），只用于归因。
+            tenant_id: 租户 ID。
+            user_id: 用户 ID。
+
+        Returns:
+            bool: 已用尽返回 True。
+        """
+        status = await self.budget_status(tenant_id=tenant_id, user_id=user_id)
+        if status.exhausted:
+            logger.warning(
+                "budget_exhausted_deferred",
+                capability=capability,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                plan_remaining=status.plan_remaining_units,
+                budget_used=status.budget_used_units,
+                budget_units=status.budget_units,
+            )
+        return bool(status.exhausted)
 
     async def quota_notice(self, *, tenant_id: str, user_id: str) -> tuple[int, str]:
         """取"额度将要用尽"的**非阻断提示**（B27 `15006` 的唯一出品口）。

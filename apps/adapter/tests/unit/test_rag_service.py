@@ -11,10 +11,12 @@ from app.core.security import AuthContext
 from app.schemas.rag import (
     ChunkPolicy,
     CreateBaseRequest,
+    DocumentStage,
     IndexStatus,
     ListBasesQuery,
     SearchRequest,
     Visibility,
+    stage_display_name,
 )
 from app.services.rag_service import (
     RagService,
@@ -605,3 +607,48 @@ async def test_upload_live_mode_without_content_is_a_coding_defect() -> None:
     assert exc_info.value.code == ErrorCode.INTERNAL_ERROR
     assert dify.multipart_calls == []
     assert dify.post_calls == []
+
+
+@pytest.mark.asyncio
+async def test_upload_is_held_without_calling_downstream_when_quota_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P4-11 ②b：超额上传 = 零底座调用 + 记录保留 + 未处理 + 如实文案。
+
+    判据（主理人 2026-10-27 定稿，b-1 口径）：
+    - `post_multipart` 调用次数 **== 0**（"零上游"指零底座调用，不是零落库）；
+    - `document_meta` 行存在且 `file_size > 0`（PRD 5.3「已上传的保留」）；
+    - `progress == 0` / `segment_count == 0`（零处理）；
+    - `stage == quota_held`，列表文案「额度已用尽，未处理」；
+    - 提示文案带**可执行出路**（「重新上传」）——因为 V1.0 不存输入字节，
+      恢复后无法重放解析（PRD 5.3 ② 已按 b-1 修订留痕）。
+    """
+    dify = _RecordingDify()
+    service = _live_service(dify=dify)
+
+    async def _exhausted(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(service._usage, "is_capability_exhausted", _exhausted)  # noqa: SLF001
+
+    data = await service.upload_document(
+        base_id="kb_quota_1",
+        file_name="合同.docx",
+        file_size=2048,
+        auth=_AUTH,
+        content=b"x" * 2048,
+    )
+
+    assert dify.multipart_calls == [], "超额时一次底座调用都不许发"
+    assert data.stage == DocumentStage.QUOTA_HELD
+    assert stage_display_name(data.stage) == "额度已用尽，未处理"
+    assert data.progress == 0
+    assert data.notice_code == 15006
+    assert "重新上传" in data.notice_message, "红线要求文案里有可执行出路"
+
+    record = await service._documents.store.get(_AUTH.tenant_id, data.document_id)  # noqa: SLF001
+    assert record is not None, "PRD 5.3「已上传的保留」：记录必须落库"
+    assert record.file_size == 2048
+    assert record.hold_reason == "quota"
+    assert record.progress == 0
+    assert record.segment_count == 0

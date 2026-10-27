@@ -11,15 +11,17 @@
 
 由此固化两条纪律，本脚本把它们变成机械判据：
 
-| 路径 | 库的形态 | 暴露的缺陷类型 |
-| --- | --- | --- |
-| 空库（A） | 应用角色自建，无任何表 | **语法崩**、旧版 init 脚本漏列 |
-| 已初始化库（B） | initdb 跑过 `init-schema-*.sql`，表属主是超级用户 | **属主崩**、守卫缺失 |
-| 回滚往返（C） | 在 B 的库上 `--rollback 0007 0006` → `--apply` | **down 脚本空转**、回滚后升不回去 |
+- **路径 A（空库）**：应用角色自建、无任何表 ——
+  暴露 **语法崩**、旧版 init 脚本漏列。
+- **路径 B（已初始化库）**：initdb 跑过 `init-schema-*.sql`，表属主是超级用户 ——
+  暴露 **属主崩**、守卫缺失。
+- **路径 C（回滚往返）**：在 B 的库上 `--rollback 0007 0006` → `--apply` ——
+  暴露 **down 脚本空转**、回滚后升不回去。
 
 **三条路径都必须绿**——只跑一条等于没验。A 缺库时用 `--run-pg` 自建（需要超级用户
 连接串），B/C 直接打 `OA_TEST_DATABASE_URL` 指向的那台库。路径 C 是阶段四新增：
-它验证的是「升级出问题 → 回滚 → 修好 → 再升级」这条真实运维链路，而不是单次的 `--apply`。
+它验证的是「升级出问题 → 回滚 → 修好 → 再升级」这条真实运维链路，
+而不是单次的 `--apply`。
 
 用法::
 
@@ -42,7 +44,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Final
+from typing import Final, TypedDict
 
 #: 仓库根目录
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
@@ -56,6 +58,20 @@ MIGRATIONS_DIR: Final[Path] = REPO_ROOT / "deploy" / "migrations"
 #: 基线脚本（initdb 阶段执行，不是迁移）
 BASELINE_PHASE2: Final[Path] = REPO_ROOT / "deploy" / "init-schema-phase2.sql"
 BASELINE_PHASE3: Final[Path] = REPO_ROOT / "deploy" / "init-schema-phase3.sql"
+
+
+class MigrationStats(TypedDict):
+    """静态检查的统计信息（`--json` 输出与 INFO 行共用）。
+
+    用 TypedDict 而非 `dict[str, object]`：后者把 `stats['versions']` 推断成 `object`，
+    `', '.join()` 过不了类型检查；同时键名与值类型从此受约束，
+    「加了键但某分支漏给」能被静态发现。
+    """
+
+    migrations_dir: str
+    versions: list[str]
+    count: int
+
 
 #: 迁移文件命名（`0002_callback_idempotency_selfcheck.sql`）
 MIGRATION_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^(\d{4})_([a-z0-9_]+)\.sql$")
@@ -344,21 +360,23 @@ def _column_declared(text: str, table: str, column: str) -> bool:
     return re.search(rf"^\s*{column}\b", match.group(1), re.IGNORECASE | re.MULTILINE) is not None
 
 
-def run_static_checks(directory: Path = MIGRATIONS_DIR) -> tuple[list[Violation], dict[str, object]]:
+def run_static_checks(
+    directory: Path = MIGRATIONS_DIR,
+) -> tuple[list[Violation], MigrationStats]:
     """执行全部静态判据。
 
     Args:
         directory: 迁移目录。
 
     Returns:
-        tuple[list[Violation], dict[str, object]]: 违规清单与统计信息。
+        tuple[list[Violation], MigrationStats]: 违规清单与统计信息。
     """
     migrations, violations = discover_migrations(directory)
     for _version, path in migrations:
         violations.extend(check_dollar_quotes(path))
         violations.extend(check_guard_presence(path))
     violations.extend(check_init_baseline())
-    stats: dict[str, object] = {
+    stats: MigrationStats = {
         "migrations_dir": str(directory.resolve()),
         "versions": [version for version, _ in migrations],
         "count": len(migrations),
@@ -481,7 +499,7 @@ def _run_path_a_empty_database(superuser_dsn: str) -> list[Violation]:
     violations: list[Violation] = []
     try:
         asyncio.run(_create())
-    except Exception as exc:  # noqa: BLE001 - 建库失败即环境问题，交回上层判 2
+    except Exception as exc:  # 建库失败即环境问题，交回上层判 2
         return [Violation("路径A(空库)", f"建库失败：{type(exc).__name__}: {exc}")]
     app_dsn = _swap_dsn(superuser_dsn, database=name, user=APP_ROLE)
     try:
@@ -499,7 +517,7 @@ def _run_path_a_empty_database(superuser_dsn: str) -> list[Violation]:
     finally:
         try:
             asyncio.run(_drop())
-        except Exception:  # noqa: BLE001, S110 - 清理失败不应掩盖主结论
+        except Exception:  # noqa: S110 - 清理失败不应掩盖主结论
             pass
     return violations
 
@@ -564,7 +582,7 @@ def _column_exists(dsn: str, table: str, column: str) -> bool:
 
     try:
         return bool(asyncio.run(_query()))
-    except Exception:  # noqa: BLE001 - 连接失败由调用方的路径判定负责报错
+    except Exception:  # 连接失败由调用方的路径判定负责报错
         return False
 
 
@@ -640,7 +658,7 @@ def _run_path_c_round_trip(superuser_dsn: str) -> list[Violation]:
 
         try:
             asyncio.run(_create())
-        except Exception as exc:  # noqa: BLE001 - 建库失败即环境问题
+        except Exception as exc:  # 建库失败即环境问题
             return [Violation("路径C(回滚往返)", f"建库失败：{type(exc).__name__}: {exc}")]
 
         dsn = _swap_dsn(superuser_dsn, database=name, user=APP_ROLE)
@@ -704,7 +722,7 @@ def _run_path_c_round_trip(superuser_dsn: str) -> list[Violation]:
         finally:
             try:
                 asyncio.run(_drop())
-            except Exception:  # noqa: BLE001, S110 - 清理失败不掩盖主结论
+            except Exception:  # noqa: S110 - 清理失败不掩盖主结论
                 pass
     return violations
 
@@ -771,7 +789,8 @@ def run_self_test() -> tuple[int, list[str]]:
         # 反向：干净样本不得被误判（防"一律报错"式假门禁）
         clean = root / "clean.sql"
         clean.write_text(
-            "DO $guard$\nBEGIN\n    IF to_regclass('public.plugin_task') IS NULL THEN RETURN; END IF;\n"
+            "DO $guard$\nBEGIN\n    IF to_regclass('public.plugin_task') IS NULL THEN RETURN; "
+            "END IF;\n"
             "    BEGIN\n        ALTER TABLE plugin_task ADD COLUMN extra INT;\n"
             "    EXCEPTION WHEN insufficient_privilege THEN\n"
             "        RAISE EXCEPTION '请以表属主身份执行：ALTER TABLE ...';\n"

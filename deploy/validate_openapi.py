@@ -3,15 +3,23 @@
 
 五道门禁，**任一失败即退出码非 0**，并明确指出缺失/变更的 `method + path`：
 
-| 门禁 | 规则 |
-| --- | --- |
-| G1 核心基线 | `core_actual` 与 `baseline-core-30.json` **精确集合相等**（新增/删除/改路径都红） |
-| G2 新域基线 | 已实现的新域端点必须全部登记在 `baseline-phase2-38.json` / `baseline-phase3-16.json`；未实现部分由 `--allow-missing-phase2` 放宽（**阶段三自 B21 起无放宽参数**） |
-| G3 计数 | `len(core) == 30`；未放宽时 `len(phase2) == 38`；**`len(phase3) == 16` 恒严格**；阶段四 `declared == 10` |
-| G4 加性 diff | 与 `openapi.snapshot.json` 比对：允许新增属性/新增枚举值；禁止删属性、改类型、`required` 变长、enum 收窄、新增必填请求字段、删除既有响应码 |
-| G5 泄漏扫描 | 对外文档出现底座/基础设施术语即红（保留 CI 原有 4 个禁词并扩充） |
-| G6 阶段四登记 | 基线登记的 10 条里**未实现**的部分按 `[PENDING]` 打印；默认**不判红**（登记先于实现是这一批的正常状态），`--strict` 才判红（W2 起 CI 用 `--strict`） |
-| G7 W1 登记 | `baseline-w1-2.json` 必须精确 2 条（`GET /api/v1/stats/tasks` / `GET /api/v1/capabilities/recommend`）；W1 端点实现前同样按 `[PENDING]` 打印、默认不判红，`--strict` 判红；**未登记的端点仍立即红**（会留在我 core 里被 G1 抓出） |
+- **G1 核心基线**：`core_actual` 与 `baseline-core-30.json` **精确集合相等**
+  （新增/删除/改路径都红）。
+- **G2 新域基线**：已实现的新域端点必须全部登记在 `baseline-phase2-38.json` /
+  `baseline-phase3-16.json`；未实现部分由 `--allow-missing-phase2` 放宽
+  （**阶段三自 B21 起无放宽参数**）。
+- **G3 计数**：`len(core) == 30`；未放宽时 `len(phase2) == 38`；
+  **`len(phase3) == 16` 恒严格**；阶段四 `declared == 10`。
+- **G4 加性 diff**：与 `openapi.snapshot.json` 比对：允许新增属性/新增枚举值；
+  禁止删属性、改类型、`required` 变长、enum 收窄、新增必填请求字段、删除既有响应码。
+- **G5 泄漏扫描**：对外文档出现底座/基础设施术语即红（保留 CI 原有 4 个禁词并扩充）。
+- **G6 阶段四登记**：基线登记的 10 条里**未实现**的部分按 `[PENDING]` 打印；
+  默认**不判红**（登记先于实现是这一批的正常状态），`--strict` 才判红
+  （W2 起 CI 用 `--strict`）。
+- **G7 W1 登记**：`baseline-w1-2.json` 必须精确 2 条
+  （`GET /api/v1/stats/tasks` / `GET /api/v1/capabilities/recommend`）；
+  W1 端点实现前同样按 `[PENDING]` 打印、默认不判红，`--strict` 判红；
+  **未登记的端点仍立即红**（会留在我 core 里被 G1 抓出）。
 
 **阶段四为什么允许「登记了但还没实现」（G6）**：阶段四的 10 个端点（MC/MM/TD）
 要跨 T4-02~T4-05 四周落地，如果登记当天就让门禁红，唯一"解法"就是把基线删掉——
@@ -145,7 +153,9 @@ def build_schema() -> dict[str, Any]:
     _ensure_adapter_on_path()
     from app.main import create_app
 
-    return create_app().openapi()  # type: ignore[no-any-return]
+    # FastAPI 的 `openapi()` 已标注为 `dict[str, Any]`，早前那处
+    # `# type: ignore[no-any-return]` 已经过期（`warn_unused_ignores` 会报它）。
+    return create_app().openapi()
 
 
 def collect_operations(schema: dict[str, Any]) -> set[tuple[str, str]]:
@@ -199,7 +209,9 @@ def _format_operations(operations: Iterable[tuple[str, str]]) -> str:
     Returns:
         str: 形如 `POST /api/v1/x, GET /api/v1/y` 的文本。
     """
-    return ", ".join(f"{method} {path}" for method, path in sorted(operations, key=operation_sort_key))
+    return ", ".join(
+        f"{method} {path}" for method, path in sorted(operations, key=operation_sort_key)
+    )
 
 
 def operation_sort_key(operation: tuple[str, str]) -> tuple[str, str]:
@@ -245,8 +257,7 @@ def gate_core_baseline(
         failures.append(
             GateFailure(
                 "G1",
-                "出现未登记的核心端点（新增端点必须登记到基线文件）: "
-                f"{_format_operations(extra)}",
+                f"出现未登记的核心端点（新增端点必须登记到基线文件）: {_format_operations(extra)}",
             )
         )
     return failures
@@ -278,12 +289,12 @@ def gate_phase2_baseline(
     extra = actual - declared
     if extra:
         failures.append(
-            GateFailure("G2", f"新域端点未登记（禁止先写端点后补基线）: {_format_operations(extra)}")
+            GateFailure(
+                "G2", f"新域端点未登记（禁止先写端点后补基线）: {_format_operations(extra)}"
+            )
         )
     if missing and not allow_missing:
-        failures.append(
-            GateFailure("G2", f"新域端点未实现: {_format_operations(missing)}{hint}")
-        )
+        failures.append(GateFailure("G2", f"新域端点未实现: {_format_operations(missing)}{hint}"))
     return failures
 
 
@@ -511,7 +522,9 @@ def diff_schema(old: Any, new: Any, path: str) -> list[str]:
 
     if not isinstance(old, dict) or not isinstance(new, dict):
         if old != new:
-            violations.append(f"{path}: 结构类型变化（{type(old).__name__} → {type(new).__name__}）")
+            violations.append(
+                f"{path}: 结构类型变化（{type(old).__name__} → {type(new).__name__}）"
+            )
         return violations
 
     old_type = _type_of(old)
@@ -598,9 +611,7 @@ def _request_schema(operation: dict[str, Any]) -> Any:
     return None
 
 
-def gate_additive_diff(
-    snapshot: dict[str, Any], current: dict[str, Any]
-) -> list[GateFailure]:
+def gate_additive_diff(snapshot: dict[str, Any], current: dict[str, Any]) -> list[GateFailure]:
     """G4：与快照做加性 diff。
 
     Args:
@@ -637,9 +648,7 @@ def gate_additive_diff(
             if isinstance(old_responses, dict) and isinstance(new_responses, dict):
                 for status in old_responses:
                     if status.startswith(ERROR_STATUS_PREFIXES) and status not in new_responses:
-                        failures.append(
-                            GateFailure("G4", f"{label}: 删除既有错误码响应 {status}")
-                        )
+                        failures.append(GateFailure("G4", f"{label}: 删除既有错误码响应 {status}"))
 
             old_response = _response_schema(old_operation)
             new_response = _response_schema(new_operation)
@@ -653,9 +662,7 @@ def gate_additive_diff(
             if isinstance(old_request, dict):
                 new_request = _request_schema(new_operation)
                 if isinstance(new_request, dict):
-                    for violation in diff_schema(
-                        old_request, new_request, f"{label} request"
-                    ):
+                    for violation in diff_schema(old_request, new_request, f"{label} request"):
                         failures.append(GateFailure("G4", violation))
                 else:
                     failures.append(GateFailure("G4", f"{label}: 请求体 schema 消失"))
@@ -728,9 +735,7 @@ def collect_failures(
     phase4_actual = operations & declared_phase4
     w1_actual = operations & declared_w1
     # 阶段四与 W1 登记过的端点必须先扣掉，否则它们会被算进 core → G1 精确相等立刻误报
-    core_actual = (
-        operations - phase2_baseline - declared_phase3 - declared_phase4 - declared_w1
-    )
+    core_actual = operations - phase2_baseline - declared_phase3 - declared_phase4 - declared_w1
 
     failures: list[GateFailure] = []
     failures.extend(gate_core_baseline(core_actual, core_baseline))
@@ -748,9 +753,7 @@ def collect_failures(
     if phase4_baseline is not None:
         # 显式传 None = 调用方声明"本次不参与阶段四判定"（合成 schema 的单元用例）；
         # CLI 与仓库级用例一律传真实基线，登记数纪律由它们守住。
-        failures.extend(
-            gate_phase4_baseline(phase4_actual, declared_phase4, strict=strict_phase4)
-        )
+        failures.extend(gate_phase4_baseline(phase4_actual, declared_phase4, strict=strict_phase4))
     if w1_baseline is not None:
         # 同 phase4：显式传 None = 本次不参与 W1 判定；仓库级用例一律传真实基线。
         failures.extend(gate_w1_baseline(w1_actual, declared_w1, strict=strict_phase4))
@@ -778,9 +781,7 @@ def collect_failures(
         "phase3_missing": len(declared_phase3 - phase3_actual),
         "phase4_declared": len(declared_phase4),
         "phase4_present": len(phase4_actual),
-        "phase4_missing": sorted(
-            declared_phase4 - phase4_actual, key=operation_sort_key
-        ),
+        "phase4_missing": sorted(declared_phase4 - phase4_actual, key=operation_sort_key),
         "w1_declared": len(declared_w1),
         "w1_present": len(w1_actual),
         "w1_missing": sorted(declared_w1 - w1_actual, key=operation_sort_key),
@@ -857,7 +858,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         schema = build_schema()
-    except Exception as exc:  # noqa: BLE001 - 脚本入口，任何导入/构建失败都属环境问题
+    except Exception as exc:  # 脚本入口，任何导入/构建失败都属环境问题
         print(f"[FAIL] 无法构建 OpenAPI 文档: {type(exc).__name__}: {exc}")
         return 2
 
@@ -944,9 +945,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         for label, items in pending:
             if items:
                 # 只报告、不判红：这一批的口径是「登记先于实现」（见文件头 G6/G7 说明）
+                strict_hint = (
+                    "（--strict 下将判红）"
+                    if args.strict
+                    else "（默认不判红，CI 自 W2 起用 --strict）"
+                )
                 print(
-                    f"[PENDING] {label}已登记未实现 {len(items)} 条"
-                    f"{'（--strict 下将判红）' if args.strict else '（默认不判红，CI 自 W2 起用 --strict）'}: "
+                    f"[PENDING] {label}已登记未实现 {len(items)} 条{strict_hint}: "
                     f"{_format_pending(items)}"
                 )
         for failure in failures:

@@ -35,6 +35,7 @@ from app.business.task.access import assert_task_visible
 from app.business.task.deps import TaskDeps
 from app.business.task.manifest import TaskManifestResolver
 from app.business.task.query import TaskQuery
+from app.business.usage_service import CAP_AUTOMATION, HOLD_REASON_QUOTA
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
@@ -208,7 +209,12 @@ class TaskRunner:
         occupying = await self._deps.tasks.count_occupying(auth.tenant_id, plugin_id)
         queued = await self._deps.tasks.count_queued(auth.tenant_id, plugin_id)
         limit = self._deps.settings.plugin_task_concurrency
-        is_queued = occupying >= limit
+        # P4-11 ③：额度挂起**并入排队**，不新增状态枚举值。
+        # 语义上两者都是"没开始跑"，因此复用 `queued`：用户看到的是
+        # 「已排队 / 额度恢复后自动开始」，而 `TaskStatus` 不多出一个
+        # 库里永不存在的筛选值（那种值会让前端筛出无法解释的空列表）。
+        quota_held = await self._quota_held(auth)
+        is_queued = occupying >= limit or quota_held
         status = TASK_QUEUED if is_queued else TASK_RUNNING
 
         task_id = new_resource_id(_TASK_PREFIX)
@@ -234,6 +240,35 @@ class TaskRunner:
             )
         )
         await self._deps.tasks.create_steps(steps)
+        if quota_held:
+            # **挂起标记只在 UPDATE 里写，不进 INSERT 列名列表**：
+            # DDL 的 `NOT NULL DEFAULT ''` 让它成为 R7 的 omittable，
+            # 也让 G-SQL 的「列数 == 值数」对账完全不受影响。
+            # 先建行再改挂起（而不是建行时就带上）是为了不动那条 INSERT。
+            await self._deps.tasks.update_task(
+                auth.tenant_id, task_id, hold_reason=HOLD_REASON_QUOTA
+            )
+            logger.info(
+                "plugin_task_quota_held",
+                tenant_id=auth.tenant_id,
+                task_id=task_id,
+                plugin_id=plugin_id,
+            )
+        else:
+            # P4-11 ⑤：判定成功 → 说明额度已恢复，**主动拉起**一次。
+            # 为什么必须显式 promote：恢复这一刻**没有任何任务完成事件**，
+            # 而 promote 的既有触发点只有 `release_slot()`（任务收尾时）。
+            # 只清标记不拉起，被 hold 住的任务会永远停在 `queued`——
+            # 判据 ③b 的「开始推进」就不成立（那正是"看着有判据、实际不执行"）。
+            cleared = await self._deps.tasks.clear_hold_reasons(auth.tenant_id)
+            if cleared:
+                logger.info(
+                    "plugin_task_quota_recovered",
+                    tenant_id=auth.tenant_id,
+                    plugin_id=plugin_id,
+                    cleared=cleared,
+                )
+                await self.promote_queued(auth.tenant_id, plugin_id)
         await self._deps.audit.record(
             tenant_id=auth.tenant_id,
             actor_id=auth.user_id,
@@ -276,6 +311,30 @@ class TaskRunner:
         await self.advance_record(record)
         latest = await self._deps.tasks.get_task(auth.tenant_id, task_id) or record
         return await self._with_quota_notice(await self._create_data(latest, manifest), auth)
+
+    async def _quota_held(self, auth: AuthContext) -> bool:
+        """判定本次建任务是否应**挂起**（P4-11 ③，上游调用之前用）。
+
+        与 `RagService._quota_exhausted` 同一口径（都委托 `UsageService`）：
+        判定本身出错时**放行**并记 WARN —— 护栏不该把可用性押在计量库上。
+
+        Args:
+            auth: 鉴权上下文。
+
+        Returns:
+            bool: 已超额返回 True（任务照建、但不执行）。
+        """
+        if not auth.user_id:
+            return False
+        try:
+            return await self._deps.usage.is_capability_exhausted(
+                capability=CAP_AUTOMATION,
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+            )
+        except Exception as exc:  # 判定失败不阻断
+            logger.warning("task_quota_check_failed", detail=type(exc).__name__)
+            return False
 
     async def _with_quota_notice(self, data: CreateTaskData, auth: AuthContext) -> CreateTaskData:
         """给 A1 成功响应补上非阻断额度提示（B27 `15006`）。
@@ -803,12 +862,30 @@ class TaskRunner:
         if not transitioned:
             logger.info("plugin_task_slot_release_skipped", task_id=record.task_id)
             return
-        queued = await self._deps.tasks.list_queued(record.tenant_id, record.plugin_id)
+        await self.promote_queued(record.tenant_id, record.plugin_id)
+
+    async def promote_queued(self, tenant_id: str, plugin_id: str) -> TaskRecord | None:
+        """把本租户本插件**最早排队**的任务转 `running` 并推进（PRD E-12）。
+
+        **抽成独立方法而不是在 `release_slot` 里内联**：P4-11 ⑤ 的"额度恢复后
+        自动开始"需要**主动拉起**一次，而恢复那一刻没有任何任务完成事件——
+        如果只留内联版本，被 hold 住的任务清掉标记后会永远停在 `queued`。
+        两条入口（额度释放 / 额度恢复）必须共用同一份实现，否则乐观锁那一行
+        迟早会在其中一条上被写漏。
+
+        Args:
+            tenant_id: 企业 ID。
+            plugin_id: 插件标识。
+
+        Returns:
+            TaskRecord | None: 被拉起的任务行；没有可拉起的（或无空槽）返回 None。
+        """
+        queued = await self._deps.tasks.list_queued(tenant_id, plugin_id)
         if not queued:
-            return
-        occupying = await self._deps.tasks.count_occupying(record.tenant_id, record.plugin_id)
+            return None
+        occupying = await self._deps.tasks.count_occupying(tenant_id, plugin_id)
         if occupying >= self._deps.settings.plugin_task_concurrency:
-            return
+            return None
         promoted = queued[0]
         # 拉起排队任务同样是状态转换：带 `expected_status=queued` 才算"抢到"。
         # 没有这个条件时，两个并发释放方会各拉起一个任务，并发上限被击穿。
@@ -821,13 +898,14 @@ class TaskRunner:
         )
         if claimed is None:
             logger.info("plugin_task_promote_skipped", task_id=promoted.task_id)
-            return
+            return None
         for index, item in enumerate(queued[1:], start=1):
             await self._deps.tasks.update_task(item.tenant_id, item.task_id, queue_position=index)
         promoted.status = TASK_RUNNING
         promoted.queue_position = None
         logger.info("plugin_task_promoted", task_id=promoted.task_id)
         await self.advance_record(promoted)
+        return promoted
 
     # ------------------------------------------------------------------
     # WF1 重试 / 继续 / 重做

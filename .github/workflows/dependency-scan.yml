@@ -384,51 +384,38 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 校验依赖版本约束落在架构文档 8 章清单内
-        run: |
-          echo "::group::校验依赖版本约束"
-          python - <<'PY'
-          import pathlib
-          import re
-          import sys
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
 
-          # 架构文档 8.1 / 8.2 允许的核心依赖（非穷举，用于兜底告警）
-          ALLOWED = {
-              'fastapi', 'uvicorn', 'pydantic', 'pydantic-settings', 'httpx', 'redis',
-              'sqlalchemy', 'asyncpg', 'python-jose', 'cryptography', 'tenacity',
-              'structlog', 'slowapi', 'limits', 'deprecated', 'python-multipart',
-              'pyyaml', 'pytest', 'pytest-asyncio', 'pytest-cov', 'coverage', 'ruff', 'mypy',
-              # 前端
-              'next', 'react', 'react-dom', 'typescript', 'tailwindcss', 'tailwindcss-animate',
-              'lucide-react', 'zustand', 'zod', 'sonner', 'date-fns', 'eslint',
-              'prettier', 'postcss', 'autoprefixer', 'class-variance-authority', 'clsx',
-              'tailwind-merge', '@tanstack/react-query', 'react-hook-form', 'zod',
-              '@hookform/resolvers', '@radix-ui/react-dialog', '@radix-ui/react-label',
-              '@radix-ui/react-slot', '@radix-ui/react-toast', 'eslint-config-next',
-              '@types/node', '@types/react', '@types/react-dom',
-          }
+      # ------------------------------------------------------------------
+      # 依赖清单与架构文档一致（P2-19：真源唯一化）
+      #
+      # 此前本 job 用「内联脚本 + 硬编码 ALLOWED 集合」做兜底告警，三处失效
+      # （2026-10-27 实测）：
+      # ① **只告警不判红**（打印 `[WARN]` 后没有 exit 1）→ 新增依赖永远拦不住；
+      # ② **前端 regex 匹配不到**：`\s*"([^"]+)[\[<>=]` 要求版本号紧跟引号后
+      #    以 `<>=` 起头，而 package.json 是 `"next": "^16.4.2"` 的 `": "` 形态
+      #    → 前端 36 条依赖**一条都没进过这个集合**（"看起来在守、其实没守"）；
+      # ③ **对 pyproject 实测就报 3 条黄**（starlette / prometheus-client /
+      #    python-docx，三者都合法且已登记在 §8.1）→ 恒黄即恒被无视。
+      #
+      # 现改为调用 `deploy/validate_deps.py`：真源是架构文档 §8.1 / §8.2 的
+      # **表格本身**（脚本内不建第二份包名常量），两处白名单不可能漂移。
+      # 该脚本当前是绿的（17 运行时 + 36 前端全部已登记），因此删掉内联白名单
+      # **不需要**补 starlette / prometheus-client / python-docx。
+      #
+      # 注意：本 job **没有** job 级 `defaults.run.working-directory`，
+      # 所以每一步都必须显式写 `working-directory: .`（脚本按仓库根定位文档）。
+      # ------------------------------------------------------------------
+      - name: 依赖清单与架构文档一致（§8.1 + §8.2）
+        working-directory: .
+        run: python deploy/validate_deps.py
 
-          suspicious = []
-          for manifest in ('apps/adapter/pyproject.toml', 'apps/web/package.json'):
-              path = pathlib.Path(manifest)
-              if not path.is_file():
-                  continue
-              text = path.read_text(encoding='utf-8')
-              for line in text.splitlines():
-                  match = re.match(r'\s*"([a-zA-Z0-9@._\-/]+)[\[<>=]', line)
-                  if match:
-                      name = match.group(1)
-                      root = name.split('/')[0] if name.startswith('@') else name
-                      root = root.split('/')[0]
-                      if root.lower() not in {a.lower() for a in ALLOWED}:
-                          suspicious.append(f'{manifest}: {name}')
-
-          if suspicious:
-              print('[WARN] 以下依赖不在架构文档第 8 章清单内，需确认协议合规性：')
-              for item in suspicious:
-                  print(f'  - {item}')
-              print('\n[提示] 新增依赖必须先完成协议审核（总方案 5.3 组件引入流程）')
-          else:
-              print('[OK] 依赖清单与架构文档第 8 章一致')
-          PY
-          echo "::endgroup::"
+      # 自检：A–G 七条样本证明门禁会红、会白、会 fail-closed（exit 2）。
+      # 口径与 validate_config_names 一致：**自检成功 = exit 0**，不要套 `-ne 1`
+      # （套了会把健康门禁判成红）。
+      - name: 依赖门禁自检（可红证明）
+        working-directory: .
+        run: python deploy/validate_deps.py --self-test

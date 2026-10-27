@@ -111,7 +111,14 @@ jobs:
       # ------------------------------------------------------------------
       # 准备 PostgreSQL（审计 OA-AUDIT-001 / P0-4）
       #
-      # 顺序与 `deploy/docker-entrypoint-initdb.d` 一致：基线 schema → 应用角色 → 迁移。
+      # 次序：基线 schema（phase2 / phase3）→ phase4 → 应用角色 → 迁移。
+      # 与 `deploy/docker-entrypoint-initdb.d` **有一处置换**（已实测等价）：
+      # initdb 里 `30-init-app-role.sql` 按字典序先于 `30-init-schema-phase4.sql`
+      # （compose:64-70 明确要求如此，否则 phase4 的显式 `GRANT ... TO officeai_app`
+      # 在角色不存在时只有一行 NOTICE 就静默跳过）。这里把 phase4 提到前面，靠
+      # `init-app-role.sql` 的 `GRANT ... ON ALL TABLES IN SCHEMA public` +
+      # `ALTER DEFAULT PRIVILEGES` 覆盖 phase4 建的表；两序实测均为 41 张表、
+      # 应用角色对 phase4 六张表 DML 齐全，相关 8 个模块 67 条用例两序都绿。
       # 应用角色必须是 `NOSUPERUSER NOBYPASSRLS`：超级用户永久绕过 RLS，
       # 用它跑隔离用例会"全绿但无效"，夹具的 `assert_rls_not_bypassed` 会直接 fail。
       # ------------------------------------------------------------------
@@ -130,6 +137,10 @@ jobs:
 
           $PSQL -f ../../deploy/init-schema-phase2.sql
           $PSQL -f ../../deploy/init-schema-phase3.sql
+          # 阶段四 schema：`background_job` / `tenant_budget` / `memory_*` 的建表者。
+          # 缺这一步时迁移 0010 会以「角色不是库属主」失败——那是守卫的 fail-closed
+          # 正确行为，不是 0010 的 bug（2026-10-27 真库实测：缺 phase4 → 52 条红）。
+          $PSQL -f ../../deploy/init-schema-phase4.sql
           $PSQL -f ../../deploy/init-app-role.sql
 
           # `init-app-role.sql` 用占位口令建角色，该文件自身的运维要求就是
@@ -138,7 +149,9 @@ jobs:
           # `tests/integration/pg_fixture.py::_derive_superuser_dsn`）。
           $PSQL -c "ALTER ROLE officeai_app PASSWORD 'oa_ci_pw';"
 
-          for f in ../../deploy/migrations/000*.sql; do
+          # glob 必须是 `0*.sql`：`000*.sql` 匹配不到 0010/0011（它们以 `001` 开头），
+          # 而这两个迁移正是 phase4 表的「已存在则零 DDL」路径（2026-10-27 实测漏匹配）。
+          for f in ../../deploy/migrations/0*.sql; do
             echo "== 应用迁移：$f"
             $PSQL -f "$f"
           done
@@ -160,6 +173,29 @@ jobs:
       # ------------------------------------------------------------------
       - name: ruff format --check
         run: ruff format --check .
+
+      # ------------------------------------------------------------------
+      # 门禁 2b：deploy/ 的**门禁脚本自己**也必须过 lint / format
+      #
+      # 工作流级 `defaults.run.working-directory` 是 `apps/adapter`，所以上面两步的
+      # `ruff check .` 只扫适配层——`deploy/` 下 14 个校验脚本**从未被 lint 过**。
+      # 后果是"守门的脚本自己是唯一无人看守的死角"：脚本里写了永远不生效的
+      # `# noqa`（RUF100 会抓）、超长行淹没真正的 review 意见，都没有任何流程会发现。
+      # 因此这里用 `../../deploy` + 适配层那份唯一的 ruff 配置（口径与生产代码一致，
+      # 不另建第二份 pyproject）把 deploy/ 纳入同一道门禁。
+      #
+      # 当前基线是 **0 error / 0 待格式化**，这是 W3 收敛的结果（历史 61 条：
+      # E501 38 / RUF100 13 / S310 3 / S603 2 / B905 2 / S112 1 / RUF005 1 / S607 1）。
+      # 其中仅新增 6 处 `# noqa`（S310×3、S603×2、S607×1，均为"参数全为常量、
+      # 无外部输入"的误报，逐条带理由），其余按语义修复（B905 补 strict=、
+      # RUF100 删无效豁免、S112 改写为哨兵赋值、RUF005 改写为解包）。
+      # **不允许**加 `--exit-zero`、放宽规则或扩大 exclude 把红变绿。
+      # ------------------------------------------------------------------
+      - name: ruff check (deploy/)
+        run: ruff check ../../deploy --config pyproject.toml --output-format=github
+
+      - name: ruff format --check (deploy/)
+        run: ruff format --check ../../deploy --config pyproject.toml
 
       # ------------------------------------------------------------------
       # 门禁 3：类型检查（mypy 零 error）
@@ -298,6 +334,68 @@ jobs:
       - name: 迁移门禁（静态 + 双路径实跑）
         run: python ../../deploy/validate_migrations.py --run-pg
 
+      # ------------------------------------------------------------------
+      # 门禁 4c-3：产物留存（G-31，阶段三 B28 第 7 项）
+      #
+      # 此前 `deploy/validate_schema_retention.py` 有完整判据与 `--self-test`，
+      # 但**从未挂进任何 workflow**（`grep -n validate_schema_retention
+      # .github/workflows/*.yml` 零命中）：判据写得再准，不跑就等于零——这与
+      # 「有 PG 服务却没人带 --run-pg」是同一类死角（审计 OA-AUDIT-001 / P0-4）。
+      #
+      # 判据：`plugin_task.expires_at` / `plugin_artifact.expires_at` 列在、
+      # 类型是 `timestamptz`、默认值是 `now() + INTERVAL '180 days'`
+      # （PRD Q3-5 / ADJ-8 唯一口径，改天数属法规变更须评审）。
+      #
+      # **必须带 `--run-pg`**：静态解析只能证明 .sql 文本写对了，证明不了库里的列
+      # 真长那样——迁移没跑到、或有人手工 `ALTER` 过，静态检查照样全绿。
+      # 本 workflow 已有 PostgreSQL 服务且 `OA_TEST_DATABASE_URL` 在 job env 里；
+      # 缺该变量时脚本以 **exit 2** 失败（明确"不视为通过"），不会静默变绿。
+      # ------------------------------------------------------------------
+      - name: 产物留存门禁（静态 + 真库）
+        run: python ../../deploy/validate_schema_retention.py --run-pg
+
+      - name: 产物留存门禁自检（G-31 可红证明）
+        run: |
+          set +e
+          python ../../deploy/validate_schema_retention.py --self-test
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "G-31 自检未按预期命中负样本（退出码 $code，期望 1）"
+            exit 1
+          fi
+          echo "G-31 自检通过：90 天 / 缺列 / timestamp 三类负样本全部被拦截"
+
+      # ------------------------------------------------------------------
+      # 门禁 4c-4：门禁接线体检（C-1 / C-4，第三波「判据存在 ≠ 判据在跑」）
+      #
+      # 本 workflow 自己就曾是这个门禁要抓的对象：`validate_schema_retention.py`
+      # 判据齐全但从未被任何 workflow 引用（`grep` 零命中）；PG 初始化缺 phase4、
+      # 迁移 glob 写成 `000*.sql`（匹配不到 0010/0011）。三条死角的共同点是
+      # **绿的理由是"没检查"**，而日志里看不出来——所以必须有机械判据：
+      #   C-1 反向遍历 `deploy/validate_*.py`，逐个查是否被引用（不排除自身）；
+      #   C-4 仓库 SQL 与 CI 实际执行集合做差集（glob 展开成实际文件再比）。
+      # 退出码：0 通过 / 1 有发现 / 2 自身无法判定（workflow 缺失，fail-closed）。
+      #
+      # **本 step 必须先于主体检存在**：脚本未挂 CI 时它会正确地报自己红
+      # （self-test 的负样本 2 就是这条自指样本），挂上后即绿——这不是巧合，
+      # 而是"遍历而非白名单"的反证。
+      # ------------------------------------------------------------------
+      - name: 门禁接线体检（C-1 反向遍历 + C-4 初始化差集）
+        run: python ../../deploy/validate_gate_wiring.py
+
+      - name: 门禁接线体检自检（可红证明）
+        run: |
+          set +e
+          python ../../deploy/validate_gate_wiring.py --self-test
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "门禁接线自检未按预期命中负样本（退出码 $code，期望 1）"
+            exit 1
+          fi
+          echo "门禁接线自检通过：6 条样本（含自指）全部符合预期"
+
       - name: 迁移门禁自检（可红证明）
         run: |
           set +e
@@ -340,9 +438,16 @@ jobs:
       # 说明：当前批次实测值见 docs/qa-phase2-w1-report.md；未达标即禁合并，
       # 不允许用 --cov-fail-under 参数临时放宽（W-01 单约束）。
       #
-      # 审计 OA-AUDIT-001 / P0-4：**必须带 `--run-pg`**。无 PG 时 141 条用例跳过，
-      # 覆盖率实测只有 84.19%（<85%）——门禁不可能通过，且隔离用例一条没跑。
-      # 带 PG 后实测：1597 passed / 0 skipped / 覆盖率 89.81%。
+      # 审计 OA-AUDIT-001 / P0-4：**必须带 `--run-pg`**。不带时 PG 用例整批跳过
+      # （当前 207 skipped），且隔离用例一条都没跑；历史上无 PG 口径的覆盖率实测
+      # 只有 84.19%（<85%，旧口径），门禁不可能通过。
+      #
+      # 带 PG 后实测（2026-10-27，QA 真库，JUnit 权威计数）：
+      #   `tests=2325 skipped=0 failures=0 errors=0`（593.78s）。
+      #   此前的「1597 passed / 0 skipped / 覆盖率 89.81%」**已过期**：用例数从
+      #   1597 涨到 2325，覆盖率分母随之变化，旧百分比不可直接沿用。
+      # 覆盖率：**待 CI 首次实跑确认**——以本步骤带 `--cov-fail-under=85` 的首次
+      #   真实结果为准，不预先写数字（写成"已知达标"会让首次实跑的失败无人预期）。
       #
       # 另：`--run-pg` 下**不允许有 skip**（QA 口径：带 PG 时 skipped 即红），
       # 因此这里额外断言 skipped=0，防止将来某个 PG 夹具静默退化成 skip。

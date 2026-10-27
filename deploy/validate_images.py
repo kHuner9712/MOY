@@ -77,6 +77,7 @@ def _normalize_repo(name: str) -> str:
         return f"library/{name}"
     return name
 
+
 #: 模板标签解析：${VAR:-default}
 TEMPLATE_PATTERN = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]+)\}")
 
@@ -111,7 +112,9 @@ def load_lock() -> dict[str, dict[str, str]]:
     if not isinstance(images, list) or not images:
         print("[FAIL] images.lock 缺少 images 列表")
         raise SystemExit(1)
-    return {str(entry["name"]): entry for entry in images if isinstance(entry, dict) and "name" in entry}
+    return {
+        str(entry["name"]): entry for entry in images if isinstance(entry, dict) and "name" in entry
+    }
 
 
 def split_image(image: str) -> tuple[str, str] | None:
@@ -178,8 +181,7 @@ def check_consistency(
             failures.append(f"{source}: {name}:{tag} 未在 images.lock 中登记")
         elif str(entry.get("tag")) != tag:
             failures.append(
-                f"{source}: {name}:{tag} 与 images.lock 登记的 "
-                f"{name}:{entry.get('tag')} 不一致"
+                f"{source}: {name}:{tag} 与 images.lock 登记的 {name}:{entry.get('tag')} 不一致"
             )
     return failures
 
@@ -210,7 +212,7 @@ def _registry_pull_probe(
     try:
         token = ""
         if auth_url:
-            with urllib.request.urlopen(auth_url, timeout=20) as resp:
+            with urllib.request.urlopen(auth_url, timeout=20) as resp:  # noqa: S310
                 token = json.loads(resp.read().decode()).get("token", "")
         headers = {
             "Accept": "application/vnd.docker.distribution.manifest.list.v2+json,"
@@ -219,15 +221,21 @@ def _registry_pull_probe(
         }
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        request = urllib.request.Request(
-            f"{registry}/v2/{repo}/manifests/{tag}", headers=headers
+        # 这里的 URL 全部由 `split_image()` 从 `images.lock` 解析出的 registry 常量拼成
+        # （https，不含用户输入），S310 担心的 `file:` / 自定义 scheme 不成立。
+        request = urllib.request.Request(  # noqa: S310 - URL 来自 images.lock 常量
+            f"{registry}/v2/{repo}/manifests/{tag}",
+            headers=headers,
         )
-        with urllib.request.urlopen(request, timeout=20) as resp:
-            return resp.status == 200
+        with urllib.request.urlopen(request, timeout=20) as resp:  # noqa: S310
+            # `urlopen()` 的返回值在 typeshed 里是 `Any`：先落到有注解的局部量，
+            # 否则 `Any == 200` 仍是 `Any`，函数会以 `Any` 冒充 `bool | None`。
+            manifest_status: int = resp.status
+            return manifest_status == 200
     except urllib.error.HTTPError as exc:
         # token 已成功取得但 manifest 被拒 → 确定性不可拉取
         return False if exc.code in {401, 403, 404} else None
-    except Exception:  # noqa: BLE001 - 网络异常统一判定为环境受限
+    except Exception:  # 网络异常统一判定为环境受限
         return None
 
 
@@ -279,10 +287,7 @@ def _docker_hub_pullable(name: str, tag: str) -> bool | None:
         bool | None: True=可拉取；False=不可拉取；None=环境受限。
     """
     repo = _hub_repo(name)
-    auth = (
-        "https://auth.docker.io/token?service=registry.docker.io"
-        f"&scope=repository:{repo}:pull"
-    )
+    auth = f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull"
     return _registry_pull_probe("https://registry-1.docker.io", repo, tag, auth)
 
 
@@ -342,14 +347,15 @@ def _docker_hub_exists(name: str, tag: str) -> bool | None:
     url = f"https://hub.docker.com/v2/repositories/{_normalize_repo(name)}/tags/{tag}"
     try:
         with urllib.request.urlopen(url, timeout=20) as resp:
-            return resp.status == 200
+            hub_status: int = resp.status
+            return hub_status == 200
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return False
         # 401/403 及其他状态：判定为环境受限，交由调用方降级
         print(f"[WARN] {name}:{tag} 上游查询返回 HTTP {exc.code}，判定为环境受限（非标签不存在）")
         return None
-    except Exception as exc:  # noqa: BLE001 - 网络异常统一降级
+    except Exception as exc:  # 网络异常统一降级
         print(f"[WARN] {name}:{tag} 上游查询失败（{type(exc).__name__}），判定为环境受限")
         return None
 
@@ -378,7 +384,7 @@ def _quay_exists(name: str, tag: str) -> bool | None:
             return False
         print(f"[WARN] {name}:{tag} 上游查询返回 HTTP {exc.code}，判定为环境受限（非标签不存在）")
         return None
-    except Exception as exc:  # noqa: BLE001 - 网络异常统一降级
+    except Exception as exc:  # 网络异常统一降级
         print(f"[WARN] {name}:{tag} 上游查询失败（{type(exc).__name__}），判定为环境受限")
         return None
 
@@ -393,8 +399,10 @@ def _github_tags(repo: str) -> set[str]:
         set[str]: 标签集合；获取失败时返回空集。
     """
     try:
-        result = subprocess.run(
-            ["git", "ls-remote", "--tags", f"https://github.com/{repo}.git"],
+        # `git` 是宿主机 PATH 上的标准工具（CI runner 与本地开发机均自带），
+        # argv 全为常量 + 由调用方给定的仓名，不含用户输入拼接。
+        result = subprocess.run(  # noqa: S603 - argv 由常量构造，无外部输入
+            ["git", "ls-remote", "--tags", f"https://github.com/{repo}.git"],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=180,
@@ -480,9 +488,7 @@ def check_remote_existence(locked: dict[str, dict[str, str]]) -> list[str]:
                     "判定为网络环境受限，跳过核验"
                 )
                 continue
-            failures.append(
-                f"{name}:{tag} 镜像不可拉取——上游仓库可能已下架或被封禁，部署将失败"
-            )
+            failures.append(f"{name}:{tag} 镜像不可拉取——上游仓库可能已下架或被封禁，部署将失败")
             continue
         print(f"[OK]   {name}:{tag} 上游可拉取")
     return failures
@@ -524,18 +530,14 @@ def run_self_test() -> list[str]:
     # 负样本 2：squidly/squid —— 仓库从未存在（合成仓库名）
     exists = _docker_hub_pullable("squidly/squid", "5.2")
     if exists is not False:
-        failures.append(
-            f"[SELFTEST] squidly/squid 应判为不存在，实际返回 {exists!r}"
-        )
+        failures.append(f"[SELFTEST] squidly/squid 应判为不存在，实际返回 {exists!r}")
     else:
         print("[SELFTEST] ✅ squidly/squid 判为不存在（合成仓库名）")
 
     # 负样本 3：合成标签 —— 官方镜像上不存在的标签
     exists = _docker_hub_pullable("valkey/valkey", "RELEASE.2021-04-22T23-11-00Z")
     if exists is not False:
-        failures.append(
-            f"[SELFTEST] 合成标签应判为不存在，实际返回 {exists!r}"
-        )
+        failures.append(f"[SELFTEST] 合成标签应判为不存在，实际返回 {exists!r}")
     else:
         print("[SELFTEST] ✅ 合成标签判为不存在")
 
@@ -593,8 +595,7 @@ def check_digests(locked: dict[str, dict[str, str]]) -> list[str]:
             continue
         if not DIGEST_PATTERN.match(digest):
             failures.append(
-                f"{name}:{tag} 的 digest 形态非法：{digest!r}"
-                "（要求 `sha256:` + 64 位小写十六进制）"
+                f"{name}:{tag} 的 digest 形态非法：{digest!r}（要求 `sha256:` + 64 位小写十六进制）"
             )
             continue
         print(f"[OK]   {name}:{tag} digest 已登记（{digest[:19]}…）")

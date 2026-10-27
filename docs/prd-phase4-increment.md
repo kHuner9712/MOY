@@ -95,11 +95,11 @@
 | **S8** 合规门禁三处同修 | 工作区已实现（未入库）：`:137/:207` 已装 `pyyaml`、`:311` MinIO 死规则已删、`images.lock:138` 已加 `distribution: independent-container` 豁免字段（缺字段默认判黑） | **残留立项 P0**：SBOM（CycloneDX）**零命中**、`.difypkg` 内 36 个精确 pin 无扫描（`validate_offline_pkgs.py` 不存在）、license-scan 从未在 CI 真跑成功（P4-03） |
 | **S9** 产物下载无鉴权、令牌永久有效 | 工作区已实现（未入库）：`artifact_token.py` 载荷含 `expires_at`（`artifact_token_ttl_seconds` 默认 900s、封顶 86400s）、`parse_token` 强制校验过期、密钥为空**拒绝签发**、下载链路按"租户 + IP"限流 60/min、校验产物留存期 `_is_expired()` | **降 P1**（P4-24）：残留为"非一次性、不可吊销、可被转发（900 秒内）"，按 P4-24 处理并在交付手册披露 |
 | **S1** 生产配置里鉴权等于关闭，且**代码没有任何防呆** | 工作区已实现（未入库）：`security.py` 新增 `validate_auth_startup()`（`staging/production` + `stub` → `30004` 启动失败；同环境 `jwt_secret` 为空同样拦），`main.py:115` 在 `lifespan` 中调用，新增单测 `test_auth_startup.py`（未跟踪） | **P4-01 改判**：从"实现防呆"改为**"收敛提交 + 验证 + 两份 compose 显式声明 `OA_AUTH_MODE` + 密钥轮换执行"**。防呆本身**不重复实现** |
-| **M2** 任务超时死配置 | **仍开放**（工作区无改动）：`plugin_task_timeout_seconds`（`config.py:213`）全仓**零读取** | **仍 P0**（P4-12）：`expected_xfail.py` 台账 `P3-B22-02` 已挂 `due_batch=B30`，到 B30 即报红 |
+| **M2** 任务超时死配置 | **已实现**（`2c85efb` T4-04.4 落地，`747280c` P1-9 三拆迁入）：`business/task/facade.py:127-130` 缺省取 `plugin_task_timeout_seconds`（**已不再零读取**）；`business/task/runner.py:477-521` 每**步** `asyncio.wait_for(…, timeout=deps.step_timeout_seconds)` → `STEP_FAILED` + 「这一步执行超过 N 秒，已停止等待」，已落库产物不回滚（唯一调用点 `runner.py:434`） | **已结清**（P1-13）：台账 `P3-B22-02` 由 `open` 改为 `status="fixed"`，`due_batch=B30` 仅留审计痕迹（到期判定 ⑯ 只对 `open` 生效）。P4-12 的「单步超时」判据（该步到点即失败、`elapsed` 远小于睡满时长、产物保留）由 `tests/unit/test_task_step_lock.py::TestStepTimeout` 两条用例钉住，可直接复核 |
 
 > **数字来源规则**：本节与全文的"现状"数字分两类——① 代码实测（`2bdfa19`，复核命令见附录 E）；② 引自 `repo-gap-assessment`（`fc3df7b`）或阶段三验收报告（`d363909`，数字回填提交 `94f87a7`）的存量口径，引用时注明出处。两类不得混用，冲突一律以本机命令结果为准。
 >
-> 另注：`P3-B22-04`（下载 MIME 恒 `text/plain`）**仍开放**——`plugin_artifact` 表无 `content_type` 列（`grep content_type deploy/init-schema-phase3.sql deploy/migrations/*.sql` 零命中），`record.content_type` 永远取默认值。**v1.1 由 P1 上调 P0（P4-29）**，理由见 C-2。
+> 另注：`P3-B22-04`（下载 MIME 恒 `text/plain`）**已结清**——`deploy/migrations/0006_plugin_artifact_content_type.sql` 建列、`deploy/init-schema-phase3.sql:266` 直接建 `content_type VARCHAR(128)`、写入与读取三处统一走 `artifact_repo.resolve_content_type()`（`artifact_repo.py:69`），判据见 `tests/integration/test_artifact_content_pg.py`。原文「`grep content_type … ` 零命中」已被该批改动推翻（该 grep **现在恰有命中**）。**v1.1 由 P1 上调 P0（P4-29）**保留为历史决策痕迹（理由见 C-2），不再作为开放项。
 
 ### 0.5 不做清单（写进合同边界，不允许留成"未做"）
 
@@ -221,8 +221,8 @@
   ① 一次 CI run 的 URL 可被外部打开，`pytest` 步骤结论为 success；
   ② 该 run 日志中 `tests/integration/test_tenant_isolation.py` 出现 **15 个 passed**、`skipped` 计数为 **0**；
   ③ 覆盖率门禁在该 run 中通过，门槛按 v1.1 §7.5（合并 ≥90% / `business+db` ≥90% / 分支 ≥80%），且数字与报告脚注一致；
-  ④ **到期机制自证（三段式，缺一不可）**：**入库后、修复前**把 `OA_BATCH` 临时改成 `B30` → CI 因 3 条 `due_batch=B30`（`P3-B22-01/02/04`）**报红**；三条关闭后同参数 → CI **转绿**；再把任一条目改回 `open` → **再报红**（证明不是把条目挪走）。三次结果都留进验收报告。
-- **依赖**：P4-01（改动先入库）、P4-14、**P4-11 / P4-12 / P4-29（三条 B30 到期项必须真关闭，否则永远红）**。
+  ④ **到期机制自证（三段式，缺一不可）**：**入库后、修复前**把 `OA_BATCH` 临时改成 `B30` → CI 因**到期未闭的 `open` 条目**（`fcbe0d8` 起为 **1 条：`P3-B22-01`**；`fcbe0d8` 前为 2 条：`P3-B22-01/02`）**报红**；该条真关闭后同参数 → CI **转绿**；再把它改回 `open` → **再报红**（证明不是把条目挪走）。三次结果都留进验收报告。
+- **依赖**：P4-01（改动先入库）、P4-14、**P4-11**（`P3-B22-01`，B30 到期项中**唯一仍未关闭**的一条；其判据含 PRD 5.3 四项行为，属功能缺口而非账务问题）。`P4-12`（`P3-B22-02`）与 `P4-29`（`P3-B22-04`）的 B30 到期项**均已 `status="fixed"`**，不再构成本条的阻塞，仅保留追溯意义。
 - **优先级理由**：没有这一条，本阶段所有"已修复"都只是自述。**判定标准是 URL，不是文字。**
 
 **P4-03 合规可交付：SBOM + difypkg 扫描 + 门禁真绿（来源 S8）**
@@ -1116,7 +1116,7 @@ flowchart LR
 | 依赖 | 说明 |
 | --- | --- |
 | **P4-02 ⇐ P4-01** | CI 配置在工作区、未入库；不先提交，CI 拿到的是老 workflow |
-| **P4-02 ⇐ P4-11 + P4-12 + P4-29** | 三条 `due_batch=B30` 到期项必须**真关闭**（其中 P4-11 含 `P3-B22-01`），否则 `B30` 永远红，"到期机制自证"无法达成（v1.1 C-2） |
+| **P4-02 ⇐ P4-11**（+ P4-12 / P4-29 已结清） | `fcbe0d8` 后 B30 到期项只剩 `P3-B22-01`（⇒ P4-11）；`P3-B22-02`（⇒ P4-12）与 `P3-B22-04`（⇒ P4-29）已 `fixed`。故 `B30` 转绿的前置是**实现 P4-11 的四项行为**，不是改台账（v1.1 C-2 的三条并列口径已过期） |
 | **P4-15 / P4-16 / P4-17 ⇐ P4-35** | ✅ 已解除：容器数 9、空载 1.88/2.24 GiB、起栈 95.7 s、9 条 RepoDigest 均已实测（`lite-container-baseline.md`）。剩余影响仅「四处数字漂移」这一风险（P4-35 ①） |
 | P4-16 ⇐ P4-14 + P4-03 + P4-15 | 离线包需要 rollback 脚本、包扫描器、编排文件 |
 | **P4-16 ⇐ `images.lock` 增 `digest`** | 该字段当前不存在（F-6）；不回填，RepoDigest 比对判据无法执行 |

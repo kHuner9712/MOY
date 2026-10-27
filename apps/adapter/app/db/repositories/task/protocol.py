@@ -66,6 +66,10 @@ class TaskStore(Protocol):
         """统计占用并发额度的任务数。"""
         ...
 
+    async def clear_hold_reasons(self, tenant_id: str) -> int:
+        """按租户批量清空额度挂起标记（懒恢复）；返回被清空的条数。"""
+        ...
+
     async def counts_occupying(self, tenant_id: str, plugin_ids: Sequence[str]) -> dict[str, int]:
         """批量统计各插件占用额度的任务数（审计 P2-6）。
 

@@ -66,6 +66,9 @@ _PG_TASK_COLUMNS: Final[frozenset[str]] = frozenset(
         "usage_units",
         "finished_at",
         "inputs",
+        # P4-11 ③：`plugin_task.hold_reason`（迁移 0012）——只在 UPDATE 里出现，
+        # **不进 INSERT 列名列表**（DEFAULT '' → R7 omittable、G-SQL arity 不变）。
+        "hold_reason",
     }
 )
 
@@ -324,6 +327,38 @@ class PostgresTaskStore:
                 repo.params(plugin_id=plugin_id, statuses=list(OCCUPYING_STATUSES)),
             )
         return int(total or 0)
+
+    async def clear_hold_reasons(self, tenant_id: str) -> int:
+        """按租户批量清空额度挂起标记（懒恢复三触点的统一动作）。
+
+        **为什么用 `UPDATE ... WHERE hold_reason <> ''` 而不是逐行改**：懒恢复挂在
+        读路径上（`list_tasks` / 建任务前 / 上传前），逐行会让一次列表请求打出 N 次
+        UPDATE；一条批量更新只命中少量被挂起的行，且没有挂起行时更新 0 行。
+
+        只清 `plugin_task` 一张表 —— 文档侧的同类清理在 `DocumentStore` 上
+        （`document_repo.clear_hold_reasons`），两侧各自清自己的表，避免跨表事务。
+
+        Args:
+            tenant_id: 企业 ID。
+
+        Returns:
+            int: 被清空的任务条数。
+        """
+        async with tenant_scope(tenant_id, settings=self._settings) as uow:
+            repo = _TaskRepository(uow)
+            removed = await repo.fetch_scalar(
+                f"""
+                WITH cleared AS (
+                    UPDATE {TASK_TABLE}
+                       SET hold_reason = ''
+                     WHERE tenant_id = :tenant_id AND hold_reason <> ''
+                    RETURNING 1
+                )
+                SELECT count(*) FROM cleared
+                """,
+                repo.params(),
+            )
+        return int(removed or 0)
 
     async def counts_occupying(self, tenant_id: str, plugin_ids: Sequence[str]) -> dict[str, int]:
         """批量统计各插件占用额度的任务数（一次 `GROUP BY plugin_id`）。
@@ -768,6 +803,8 @@ def _to_task(row: Mapping[str, Any]) -> TaskRecord:
         started_at=_timestamp(row.get("started_at")),
         finished_at=_timestamp(row.get("finished_at")),
         expires_at=_timestamp(row.get("expires_at")),
+        # 防御式取列：未列出该列的 SELECT 按「未挂起」处理（见 records.py 的字段注释）
+        hold_reason=str(row.get("hold_reason", "") or ""),
     )
 
 

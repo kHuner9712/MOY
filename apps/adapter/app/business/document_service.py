@@ -163,6 +163,25 @@ def _stage_from_value(value: str) -> DocumentStage:
         return DocumentStage.UPLOADED
 
 
+def _derive_stage(record: DocumentRecord) -> DocumentStage:
+    """派生**展示阶段**：被额度挂起时覆盖为 `quota_held`（P4-11 ②）。
+
+    为什么在展示层派生而不是写进库：`document_meta.stage` 的 CHECK 只允许五态
+    （`init-schema-phase2.sql`），加一个值要全表重写约束、且要求前后端同版本发布；
+    而「挂起」本身是**与物理阶段正交的事实**（已上传、尚未处理），
+    用 `hold_reason` 表达、展示层合并，库与接口都无需迁移窗口。
+
+    Args:
+        record: 文档记录。
+
+    Returns:
+        DocumentStage: 挂起时为 `QUOTA_HELD`，否则为记录的物理阶段。
+    """
+    if record.hold_reason:
+        return DocumentStage.QUOTA_HELD
+    return _stage_from_value(record.stage)
+
+
 def _index_status_of(stage: DocumentStage) -> IndexStatus:
     """五态 → 三态（唯一映射，保证两者语义一致）。
 
@@ -426,7 +445,12 @@ class DocumentService:
         Returns:
             DocumentItem: 清单条目。
         """
-        stage = _stage_from_value(record.stage)
+        # P4-11 ②：**展示层派生**额度挂起阶段。
+        # DB 的 `stage` 列仍是 `uploaded`（`document_meta` 的 CHECK 只允许五态，
+        # 加值要全表重写且前后端必须同步发布）；这里按 `hold_reason` 覆盖成
+        # `quota_held`，前端拿到的是「额度恢复后自动处理」——
+        # 于是"库里的物理阶段"与"用户看到的阶段"解耦，前端零改动。
+        stage = _derive_stage(record)
         estimate = record.estimated_remaining_seconds
         if estimate is None:
             estimate = map_stage(
@@ -456,7 +480,9 @@ class DocumentService:
         Returns:
             IndexStatusData: 处理进度（含阶段、大小、上传时间）。
         """
-        stage = _stage_from_value(record.stage)
+        # 与 `to_item` 同源：R4 也要能看出「被额度挂起」，否则用户刷新进度页
+        # 会看到「已上传」而不是「额度恢复后自动处理」，两个页面自相矛盾。
+        stage = _derive_stage(record)
         estimate = record.estimated_remaining_seconds
         if estimate is None:
             estimate = map_stage(

@@ -31,6 +31,32 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any, TypedDict
+
+#: 校验统计（`--json` 输出与成功行共用）。
+#:
+#: 用 TypedDict 而非 `dict[str, object]`：后者把 `stats['plugin_ids']` 推断成 `object`，
+#: `', '.join(...)` 过不了类型检查；更要紧的是键名与类型没有约束，
+#: 「加了一个键、某条分支漏了它」这类问题只能等到运行时才暴露。
+
+
+class PluginStats(TypedDict, total=False):
+    """插件声明校验的统计信息。
+
+    `total=False` 是刻意的：目录不存在时 `run_validation` 会返回**空统计**（`{}`）
+    并以 exit 2 结束，`--json` 会把这份空对象原样输出。若把键声明为必填，
+    要么强制给空分支编造一堆假值（改变既有 JSON 输出形状），要么放弃类型检查——
+    两者都比"允许缺键、但键名与值类型仍受约束"更差。
+    """
+
+    directory: str
+    manifests_dir: str
+    archive_root: str
+    declarations: int
+    registered: int
+    plugin_ids: list[str]
+    digests: dict[str, str]
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 #: 适配层根目录（脚本相对树推导：`<repo>/deploy` → `<repo>/apps/adapter`）
@@ -119,7 +145,9 @@ def _mutate_extra_field(payload: dict) -> dict:
     Returns:
         dict: 变异后的声明。
     """
-    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    # 深拷贝后立刻落到有注解的局部量：`json.loads()` 返回 `Any`，
+    # 直接 `return mutated` 会以 `Any` 冒充 `dict` 蒙过类型检查（no-any-return）。
+    mutated: dict[str, Any] = json.loads(json.dumps(payload, ensure_ascii=False))
     mutated["entry_point"] = "main.py"
     return mutated
 
@@ -133,7 +161,9 @@ def _mutate_capability(payload: dict) -> dict:
     Returns:
         dict: 变异后的声明。
     """
-    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    # 深拷贝后立刻落到有注解的局部量：`json.loads()` 返回 `Any`，
+    # 直接 `return mutated` 会以 `Any` 冒充 `dict` 蒙过类型检查（no-any-return）。
+    mutated: dict[str, Any] = json.loads(json.dumps(payload, ensure_ascii=False))
     mutated["capabilities"][0]["key"] = "model.invoke"
     return mutated
 
@@ -147,7 +177,9 @@ def _mutate_banned_term(payload: dict) -> dict:
     Returns:
         dict: 变异后的声明。
     """
-    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    # 深拷贝后立刻落到有注解的局部量：`json.loads()` 返回 `Any`，
+    # 直接 `return mutated` 会以 `Any` 冒充 `dict` 蒙过类型检查（no-any-return）。
+    mutated: dict[str, Any] = json.loads(json.dumps(payload, ensure_ascii=False))
     mutated["summary"] = "RAG 助手"
     return mutated
 
@@ -161,7 +193,9 @@ def _mutate_seq(payload: dict) -> dict:
     Returns:
         dict: 变异后的声明。
     """
-    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    # 深拷贝后立刻落到有注解的局部量：`json.loads()` 返回 `Any`，
+    # 直接 `return mutated` 会以 `Any` 冒充 `dict` 蒙过类型检查（no-any-return）。
+    mutated: dict[str, Any] = json.loads(json.dumps(payload, ensure_ascii=False))
     mutated["steps"][1]["seq"] = 3
     return mutated
 
@@ -175,7 +209,9 @@ def _mutate_tool_operation(payload: dict) -> dict:
     Returns:
         dict: 变异后的声明。
     """
-    mutated = json.loads(json.dumps(payload, ensure_ascii=False))
+    # 深拷贝后立刻落到有注解的局部量：`json.loads()` 返回 `Any`，
+    # 直接 `return mutated` 会以 `Any` 冒充 `dict` 蒙过类型检查（no-any-return）。
+    mutated: dict[str, Any] = json.loads(json.dumps(payload, ensure_ascii=False))
     for step in mutated["steps"]:
         if step.get("action") == "tool":
             step["operation"] = "delete_repo"
@@ -198,14 +234,14 @@ def _load_payloads(directory: Path) -> list[tuple[str, dict]]:
     return payloads
 
 
-def run_validation(directory: Path) -> tuple[int, list[str], dict[str, object]]:
+def run_validation(directory: Path) -> tuple[int, list[str], PluginStats]:
     """执行六条判据。
 
     Args:
         directory: 声明目录。
 
     Returns:
-        tuple[int, list[str], dict[str, object]]: 退出码、问题清单、统计信息。
+        tuple[int, list[str], PluginStats]: 退出码、问题清单、统计信息。
     """
     if not directory.is_dir():
         return 2, [f"声明目录不存在：{directory}"], {}
@@ -220,7 +256,8 @@ def run_validation(directory: Path) -> tuple[int, list[str], dict[str, object]]:
 
     if len(registry) != EXPECTED_PLUGIN_COUNT:
         problems.append(
-            f"插件数量应为 {EXPECTED_PLUGIN_COUNT}，实际 {len(registry)}（加载失败 {len(failures)}）"
+            f"插件数量应为 {EXPECTED_PLUGIN_COUNT}，实际 {len(registry)}"
+            f"（加载失败 {len(failures)}）"
         )
 
     # 第三段：文案禁词（`loader` 已扫过，这里再独立扫一遍原文，
@@ -248,7 +285,7 @@ def run_validation(directory: Path) -> tuple[int, list[str], dict[str, object]]:
         if len(digest) != 64:
             problems.append(f"{name} [sha256] 摘要长度异常：{len(digest)}")
 
-    stats: dict[str, object] = {
+    stats: PluginStats = {
         "directory": str(directory),
         # 绝对路径单独给一个键：复核人 `grep '"manifests_dir"'` 就能确认扫的是哪棵树，
         # 不必再从 `"directory"` 的相对/绝对形态里猜（QA 检查单要求的"归档身份"）。

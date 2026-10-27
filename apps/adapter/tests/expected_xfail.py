@@ -141,15 +141,30 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         "id": "P3-B22-02",
         "level": "P2",
         # PRD P0-P3-02 ③ 要求「单步执行超时自动失败」。
-        # 实测：`config.py:211 plugin_task_timeout_seconds`（默认 900）**全文零读取**；
-        # `engine.py:960` 写入 `params["timeout_seconds"]` 后**无任何消费方**；
-        # 步骤超时只走底座动作超时（`schema.py:382 timeout_seconds`，另有一套默认值）。
-        # 即：配置项存在、文档承诺存在、实现不存在——TC-P3-02③ 无实现可测。
-        "status": "open",
-        "pinned_by": "PRD P0-P3-02 ③ / config.py:211 死配置",
-        # 阶段四首批（阶段四批次表尚未拆分，编号沿用 B 序列；首批暂记为 B30）。
-        # **必须写批次号**：门禁的过期判定已改为格式校验 + 数值比较，
-        # 写"阶段四"这类非批次号会被直接判红（字符串比较会让它永久逃检）。
+        # **本条是"登记时属实、一天后即与代码相反"的典型，故写清时间线**：
+        # - 38ed5d3（2026-10-22，阶段三收口）登记时确实成立：
+        #   `plugin_task_timeout_seconds` 全文零读取，步骤超时只走底座动作超时
+        #   →「TC-P3-02③ 无实现可测」；
+        # - 2c85efb（2026-10-23，T4-04.4）落地单步超时，747280c（P1-9 三拆）把它
+        #   迁进 facade/runner —— 台账未回填，从那天起账上说"无实现"，代码里有实现。
+        # 关闭依据（三处 file:line，逐条可核）：
+        # ① `app/business/task/facade.py:127-130`：`step_timeout_seconds` 缺省取
+        #    `conf.plugin_task_timeout_seconds` —— 该配置项**已不再零读取**；
+        # ② `app/business/task/runner.py:477-521` `_run_step_with_timeout()`：
+        #    每步 `asyncio.wait_for(..., timeout=float(deps.step_timeout_seconds))`，
+        #    `TimeoutError` → `STEP_FAILED` + 原因「这一步执行超过 N 秒，已停止等待」，
+        #    已落库产物不回滚；唯一调用点 `runner.py:434`（**按步**限时，非整任务）；
+        # ③ `tests/unit/test_task_step_lock.py:82-140` `TestStepTimeout` 两条用例：
+        #    `test_slow_step_times_out_quickly`（elapsed < 3.0 + STEP_FAILED + 文案含
+        #    「超过」「停止等待」）、`test_timeout_keeps_previously_saved_artifacts`。
+        # 注意行为边界（免得被读成"整任务也有超时"）：限时是**每步**的，
+        # 整任务外层没有 `wait_for`——这正是 PRD 要的语义（8 步任务共用一个总时限
+        # 等于每步都没限）。
+        "status": "fixed",
+        "pinned_by": "test_task_step_lock.py::TestStepTimeout（单步超时两条用例）",
+        # 保留 due_batch：与同族 P3-B22-04（fixed + due B30）同形，留作"曾欠账到 B30"
+        # 的审计痕迹。到期判定只对 `status == "open"` 生效（骨架汇总 ⑯），
+        # 故本行不参与过期检查。
         "due_batch": "B30",
         "due_action": "接上任务级超时（读 plugin_task_timeout_seconds 并让引擎消费），"
         "或明确注销该配置项并在 PRD 标注不做",
