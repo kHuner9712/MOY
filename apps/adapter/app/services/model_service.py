@@ -592,6 +592,14 @@ class ModelService:
         # 非阻断额度提示（B27 `15006`）：判据 = 与 M4/BL5 同源的 `over_quota_warning`。
         # 只挂在 `data.notice_*` 上，外层 `code` 恒为 0——超额**不拦停**（PRD 5.3）。
         notice = await self._quota_notice(auth)
+        # 超额时提示**必须**是常规模式文案（PRD 5.3 ①）：`_quota_notice` 给的是
+        # 「本月可用量已用完，请联系管理员调整」——那是"要停服"的口径，
+        # 与本条"继续可用、只限长"矛盾。两者都指向 15006，但文案必须说清出路。
+        if budget is not None and budget.exhausted:
+            notice = (
+                int(ERROR_REGISTRY[ErrorCode.QUOTA_EXHAUSTED].code),
+                STANDARD_MODE_NOTICE,
+            )
 
         # ---- 阶段四落库与自研组装（架构 §5.1，顺序不可调换）---------------
         # 校验 → **落库 user 消息** → 组装 → 调底座 → 回写助手消息。
