@@ -20,17 +20,17 @@
 >
 > | 口径 | 前置条件 | 实测结果 |
 > | --- | --- | --- |
-> | **全量（含 PG）** | 设 `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + `--run-pg` + 设 `OA_BATCH` | **2337 passed / 0 skipped / 0 failed**（收集 2337），合并覆盖 **91.91%** |
-> | **本机（无 PG）** | 不设上述变量，`OA_BATCH=B21` | **2127 passed / 210 skipped / 0 failed**（收集 2337），合并覆盖 **85.51%** |
+> | **全量（含 PG）** | 设 `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + `--run-pg` + 设 `OA_BATCH` | **2343 passed / 0 skipped / 0 failed**（收集 2343），合并覆盖 **91.94%** |
+> | **本机（无 PG）** | 不设上述变量，`OA_BATCH=B21` | **2133 passed / 210 skipped / 0 failed**（收集 2343），合并覆盖 **85.55%** |
 >
 > 未设 `OA_BATCH` 时 `tests/expected_xfail.py::current_batch()` **故意抛错**（缺失即红，
 > 不给静默默认）。无库口径下 210 条 PG 用例按设计 skip，不计入断言有效性。
 >
-> **以上两组数字的口径（引用时必须连口径一起引）**：均为 **`38d1e77`** 树实测。
+> **以上两组数字的口径（引用时必须连口径一起引）**：均为 **`cedd3e9`** 树实测。
 > 含 PG = `pytest tests -q --run-pg --cov=app --cov-report=term-missing`
 > （`OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + 真库）；
 > 无 PG = 同一命令去掉 `--run-pg` 与 DSN。
-> 实测分项：含 PG 行 93.70% / 分支 83.25%；无 PG 行 87.33% / 分支 76.67%。
+> 实测分项：含 PG 行 93.72% / 分支 83.34%；无 PG 行 87.36% / 分支 76.78%。
 > **这两组数会随批次推进而变化**——引用时请连同 SHA 与命令一起引，
 > 不要把它当常量（PRD §7.5 同款要求）。
 
@@ -219,8 +219,8 @@ pytest tests -q --cov=app --cov-report=term-missing
 | 项 | 值 |
 | --- | --- |
 | 端点契约 | `core=30 / phase2=38/38 / phase3=16/16 / phase4=10/10 / w1=2/2`，合计 **96**，`--strict` EXIT 0 |
-| 本机测试（无 PG） | **2127 passed / 210 skipped / 0 failed**（收集 2337）——这是 **W3 收口口径**；含 PG 需 `--run-pg` + 真库（**2337 passed / 0 skipped**） |
-| 覆盖率 | 总 `app/*` **合并**覆盖 **91.91%**（含 PG）/ **85.51%**（无 PG），门槛 85% → 余 **+1546 / +113 单位**（≈ +6.91pt / +0.51pt）；行 93.70% / 87.33%，分支 83.25% / 76.67%（`38d1e77` 实测） |
+| 本机测试（无 PG） | **2133 passed / 210 skipped / 0 failed**（收集 2343）——这是 **W3 收口口径**；含 PG 需 `--run-pg` + 真库（**2343 passed / 0 skipped**） |
+| 覆盖率 | 总 `app/*` **合并**覆盖 **91.94%**（含 PG）/ **85.55%**（无 PG），门槛 85% → 余 **+1556 / +123 单位**（≈ +6.94pt / +0.55pt）；行 93.72% / 87.36%，分支 83.34% / 76.78%（`cedd3e9` 实测） |
 | 静态门禁 | `ruff check` / `ruff format` / `mypy`（203 文件）全绿 |
 | 部署门禁 | 端点基线 / 迁移双路径 / 依赖白名单 / 镜像锁定 / 插件声明 / 错误码三处一致 均 EXIT 0 |
 | 前端门禁 | 禁词 / 占位词 / 页面三态 / 契约快照 / 能力一致性 / 工作台宿主唯一 均 0 命中 |
