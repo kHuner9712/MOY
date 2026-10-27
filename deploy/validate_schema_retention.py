@@ -97,6 +97,7 @@ class RetentionStats(TypedDict):
     migrations_dir: str
     retention_days: int
 
+
 #: `CREATE TABLE <name> (...)` 的定位（表体由括号深度扫描，不靠正则吃括号）
 CREATE_TABLE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<table>[a-z_][a-z0-9_]*)\s*\(",
@@ -263,20 +264,26 @@ def collect_sql_files(directory: Path) -> list[Path]:
     return files
 
 
-def run_static_checks(directory: Path) -> tuple[list[Violation], dict[str, object]]:
+def run_static_checks(directory: Path) -> tuple[list[Violation], RetentionStats]:
     """静态判据：迁移脚本与基线脚本里的列定义。
 
     Args:
         directory: 迁移目录。
 
     Returns:
-        tuple[list[Violation], dict[str, object]]: 违规清单与统计信息。
+        tuple[list[Violation], RetentionStats]: 违规清单与统计信息。
     """
     files = collect_sql_files(directory)
     if not files:
         return (
             [Violation(str(directory), "找不到任何 SQL 文件（--dir 指错或仓库不完整）")],
-            {"files": [], "migrations_dir": str(directory)},
+            {
+                "files": [],
+                "migrations_dir": str(directory),
+                # 必须与正常分支同键：`main()` 的成功/失败输出都会打印这一项，
+                # 缺键会让"仓库不完整"这个最该被读懂的场景变成 KeyError 崩溃。
+                "retention_days": RETENTION_DAYS,
+            },
         )
     violations: list[Violation] = []
     defined: set[str] = set()
