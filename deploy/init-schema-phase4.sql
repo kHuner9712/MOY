@@ -301,3 +301,36 @@ BEGIN
     END IF;
     RAISE NOTICE 'phase4: tenant_budget 已启用 FORCE RLS 并授权';
 END $rls_budget$;
+
+-- ===========================================================================
+-- 阶段四补充：额度挂起列（迁移 0012 的「零 DDL」前置）
+--
+-- **为什么必须在这里建列**：迁移 Job 用**应用 DSN**（`officeai_app`）执行
+-- `apply_migrations`，而 `officeai_app` 在 `public` 上没有 CREATE 权限。
+-- 若只靠 0012 的 `ALTER TABLE ... ADD COLUMN`，新装环境第一次 `--apply` 就会撞
+-- 「不是表属主」——这正是 0010（background_job）踩过一次的坑，0012 不能重演。
+--
+-- 这里由 initdb 的超级用户建好列，0012 于是走「列已存在 → 零 DDL」路径；
+-- 已初始化的老库（init 脚本早就跑过）仍由 0012 在超级用户/DBA 下补齐，
+-- 那一步的 fail-closed 报错是**刻意保留**的，不要改成"无权限只告警"。
+--
+-- 语义与取值见 `deploy/migrations/0012_quota_hold.sql` 文件头。
+-- 幂等性：`ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`。
+-- ===========================================================================
+
+ALTER TABLE document_meta
+    ADD COLUMN IF NOT EXISTS hold_reason TEXT NOT NULL DEFAULT ''
+    CHECK (hold_reason IN ('', 'quota', 'past_due'));
+
+ALTER TABLE plugin_task
+    ADD COLUMN IF NOT EXISTS hold_reason TEXT NOT NULL DEFAULT ''
+    CHECK (hold_reason IN ('', 'quota', 'past_due'));
+
+-- 部分索引：只覆盖「被挂起」的少量行（懒恢复的批量清理走它）
+CREATE INDEX IF NOT EXISTS idx_document_meta_hold
+    ON document_meta (tenant_id)
+ WHERE hold_reason <> '';
+
+CREATE INDEX IF NOT EXISTS idx_plugin_task_hold
+    ON plugin_task (tenant_id)
+ WHERE hold_reason <> '';

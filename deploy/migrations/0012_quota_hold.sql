@@ -23,8 +23,12 @@
 --   - G-SQL（列数/值数 arity 对账）完全不受影响 —— 少写一列就等于没动过 arity。
 --   只在「切 queued / 写挂起」的 UPDATE 里带它。
 --
--- 幂等性：列存在性守卫 + `IF NOT EXISTS`；重复执行零改动，新库（init 脚本建表后
--- 第一次 --apply）同样走 ALTER 路径补齐，不需要改 init-schema。
+-- 幂等性：列存在性守卫 + `IF NOT EXISTS`；重复执行零改动。
+-- **新装库走的是「零 DDL」路径**：`init-schema-phase4.sql` 已由 initdb 的超级用户
+-- 建好这两列与两条部分索引，本迁移只做守卫判定。**不要**把 phase4 里那两列删掉
+-- 只留本迁移的 ALTER —— 迁移 Job 用应用 DSN（`officeai_app` 在 `public` 上无
+-- CREATE 权限），那样新装环境第一次 `--apply` 就会撞「不是表属主」，
+-- 0010（background_job）已经踩过一次；`test_migration_0012_quota_hold.py` 是回归锁。
 -- 回滚：`rollback/0012_quota_hold.down.sql`（⚠ 回滚会丢挂起状态，恢复后需重新判定）。
 -- ===========================================================================
 
@@ -74,24 +78,50 @@ END $guard$;
 -- 部分索引：只索引「被挂起」的少量行。
 -- 懒恢复的批量清理（`WHERE tenant_id = ? AND hold_reason <> ''`）与「当前有多少行
 -- 被挂起」的运维查询都走它；未挂起的行不进索引，索引体积与总行数无关。
+--
+-- **为什么先查 `pg_indexes` 再建，而不是直接 `CREATE INDEX IF NOT EXISTS`**：
+-- 新装库的索引由 `init-schema-phase4.sql`（超级用户）建好，本迁移在应用角色下执行。
+-- `CREATE INDEX IF NOT EXISTS` 命中已有索引时是否仍校验属主，属于实现细节，
+-- 不能拿它当"反正会跳过"的依据——显式查存在性才能保证这一步真正是零 DDL。
 DO $idx$
+DECLARE
+    missing TEXT[];
 BEGIN
-    BEGIN
-        EXECUTE $ddl$
-            CREATE INDEX IF NOT EXISTS idx_document_meta_hold
-                ON document_meta (tenant_id)
-             WHERE hold_reason <> ''
-        $ddl$;
+    SELECT array_agg(wanted.name) INTO missing
+      FROM (VALUES ('idx_document_meta_hold'),
+                   ('idx_plugin_task_hold')) AS wanted(name)
+     WHERE NOT EXISTS (
+               SELECT 1
+                 FROM pg_indexes i
+                WHERE i.schemaname = 'public'
+                  AND i.indexname = wanted.name
+           );
 
-        EXECUTE $ddl$
-            CREATE INDEX IF NOT EXISTS idx_plugin_task_hold
-                ON plugin_task (tenant_id)
-             WHERE hold_reason <> ''
-        $ddl$;
+    IF missing IS NULL THEN
+        RAISE NOTICE '0012: 挂起部分索引已存在（init-schema-phase4.sql 建的新库），零 DDL';
+        RETURN;
+    END IF;
+
+    BEGIN
+        IF 'idx_document_meta_hold' = ANY (missing) THEN
+            EXECUTE $ddl$
+                CREATE INDEX IF NOT EXISTS idx_document_meta_hold
+                    ON document_meta (tenant_id)
+                 WHERE hold_reason <> ''
+            $ddl$;
+        END IF;
+
+        IF 'idx_plugin_task_hold' = ANY (missing) THEN
+            EXECUTE $ddl$
+                CREATE INDEX IF NOT EXISTS idx_plugin_task_hold
+                    ON plugin_task (tenant_id)
+                 WHERE hold_reason <> ''
+            $ddl$;
+        END IF;
     EXCEPTION
         WHEN insufficient_privilege THEN
             RAISE EXCEPTION
                 '0012 建索引需要 document_meta / plugin_task 的属主权限，请由表属主执行。';
     END;
-    RAISE NOTICE '0012: 挂起部分索引就绪（document_meta / plugin_task）';
+    RAISE NOTICE '0012: 挂起部分索引就绪（新建 % 个）', coalesce(array_length(missing, 1), 0);
 END $idx$;
