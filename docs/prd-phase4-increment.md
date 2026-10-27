@@ -95,7 +95,7 @@
 | **S8** 合规门禁三处同修 | 工作区已实现（未入库）：`:137/:207` 已装 `pyyaml`、`:311` MinIO 死规则已删、`images.lock:138` 已加 `distribution: independent-container` 豁免字段（缺字段默认判黑） | **残留立项 P0**：SBOM（CycloneDX）**零命中**、`.difypkg` 内 36 个精确 pin 无扫描（`validate_offline_pkgs.py` 不存在）、license-scan 从未在 CI 真跑成功（P4-03） |
 | **S9** 产物下载无鉴权、令牌永久有效 | 工作区已实现（未入库）：`artifact_token.py` 载荷含 `expires_at`（`artifact_token_ttl_seconds` 默认 900s、封顶 86400s）、`parse_token` 强制校验过期、密钥为空**拒绝签发**、下载链路按"租户 + IP"限流 60/min、校验产物留存期 `_is_expired()` | **降 P1**（P4-24）：残留为"非一次性、不可吊销、可被转发（900 秒内）"，按 P4-24 处理并在交付手册披露 |
 | **S1** 生产配置里鉴权等于关闭，且**代码没有任何防呆** | 工作区已实现（未入库）：`security.py` 新增 `validate_auth_startup()`（`staging/production` + `stub` → `30004` 启动失败；同环境 `jwt_secret` 为空同样拦），`main.py:115` 在 `lifespan` 中调用，新增单测 `test_auth_startup.py`（未跟踪） | **P4-01 改判**：从"实现防呆"改为**"收敛提交 + 验证 + 两份 compose 显式声明 `OA_AUTH_MODE` + 密钥轮换执行"**。防呆本身**不重复实现** |
-| **M2** 任务超时死配置 | **仍开放**（工作区无改动）：`plugin_task_timeout_seconds`（`config.py:213`）全仓**零读取** | **仍 P0**（P4-12）：`expected_xfail.py` 台账 `P3-B22-02` 已挂 `due_batch=B30`，到 B30 即报红 |
+| **M2** 任务超时死配置 | **已实现**（`2c85efb` T4-04.4 落地，`747280c` P1-9 三拆迁入）：`business/task/facade.py:127-130` 缺省取 `plugin_task_timeout_seconds`（**已不再零读取**）；`business/task/runner.py:477-521` 每**步** `asyncio.wait_for(…, timeout=deps.step_timeout_seconds)` → `STEP_FAILED` + 「这一步执行超过 N 秒，已停止等待」，已落库产物不回滚（唯一调用点 `runner.py:434`） | **已结清**（P1-13）：台账 `P3-B22-02` 由 `open` 改为 `status="fixed"`，`due_batch=B30` 仅留审计痕迹（到期判定 ⑯ 只对 `open` 生效）。P4-12 的「单步超时」判据（该步到点即失败、`elapsed` 远小于睡满时长、产物保留）由 `tests/unit/test_task_step_lock.py::TestStepTimeout` 两条用例钉住，可直接复核 |
 
 > **数字来源规则**：本节与全文的"现状"数字分两类——① 代码实测（`2bdfa19`，复核命令见附录 E）；② 引自 `repo-gap-assessment`（`fc3df7b`）或阶段三验收报告（`d363909`，数字回填提交 `94f87a7`）的存量口径，引用时注明出处。两类不得混用，冲突一律以本机命令结果为准。
 >

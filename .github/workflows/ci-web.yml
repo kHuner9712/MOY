@@ -12,10 +12,15 @@ on:
     branches: [main, develop, 'feature/**', 'release/**', 'hotfix/**']
     paths:
       - 'apps/web/**'
+      # P2-20：`scripts/check-banned-terms.mjs` 的 PRD_PATH 指向本文件，`scan:words`
+      # 从它的 §7 取词表真源。paths 不含它 → **只改 PRD §7 的 PR 不触发 ci-web**，
+      # 词表漂移（退出码 3）在合并前不可见。
+      - 'docs/prd-phase2-increment.md'
       - '.github/workflows/ci-web.yml'
   pull_request:
     paths:
       - 'apps/web/**'
+      - 'docs/prd-phase2-increment.md'
       - '.github/workflows/ci-web.yml'
   workflow_dispatch:
 
