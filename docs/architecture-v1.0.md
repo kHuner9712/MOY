@@ -177,7 +177,7 @@ graph TB
 | 适配层 | Web 框架 | FastAPI | MIT | 原生异步、Pydantic 强校验、自动 OpenAPI、SSE 支持完善 |
 | 适配层 | HTTP 客户端 | HTTPX | BSD-3-Clause | 异步 + 连接池 + 超时/重试精细控制，适配 Dify 调用 |
 | 适配层 | 参数校验 | Pydantic v2 | MIT | 与 FastAPI 一体，接口入参强校验 |
-| 前端 | 框架 | Next.js 14（App Router） | MIT | SSR/SSG、路由与性能优化开箱即用；React 生态 |
+| 前端 | 框架 | Next.js 16（App Router） | MIT | SSR/SSG、路由与性能优化开箱即用；React 生态 |
 | 前端 | 语言 | TypeScript | Apache-2.0 | 全端类型安全，接口契约即类型 |
 | 前端 | 样式 | Tailwind CSS | MIT | 原子化 CSS，设计令牌落地快 |
 | 前端 | 组件库 | shadcn/ui + Radix UI | MIT / MIT | 组件源码级可控、无供应商锁定；满足「100% 统一组件库」硬约束 |
@@ -338,7 +338,7 @@ HTTP 状态码仅用于传输层语义（200 成功 / 400 请求格式错误 / 4
 | 15003 | 400 | 成员席位已用满，请先增加席位 | 席位不足（邀请/加成员/减席越界） |
 | 15004 | 409 | 当前账户有未完成订单，请先完成支付 | 重复下单 |
 | 15005 | 200 | 降级将在当前周期结束后生效 | 变更生效时点（**非阻断提示码**，仅「无法立即生效」时使用） |
-| 15006 | 402 | 本月额度已用完，升级套餐可恢复完整能力 | 额度用尽（ENG-07 修正：阶段四起为**硬止损**——402 + 上游调用 0 次，M1/M2/R3/A1 统一口径；历史「200 软限制」已废止） |
+| 15006 | 402 | 本月可用量已用完，请联系管理员调整 | 额度/预算用尽（E-3 个人额度、E-4 租户预算同码，唯一判定点 usage_service）。**2026-10-27 用户裁决（PRD 5.3 ①）后为软限制**：M1/M2 超额限长 + `notice_code=15006` 不停服，R3 收下+挂起、A1 照常创建+提示；HTTP 402 为 ErrorCode 级注册表映射保留值，端点不再以 `code=15006` 拦停 |
 | 15007 | 200 | 支付未完成，请重新支付 | 支付失败/超时 |
 | 15008 | 409 | 该订单已处理，请勿重复操作 | 重复核销/重复回调的业务侧冲突 |
 | 15009 | 400 | 订单金额与应付金额不一致，请核对后重试 | 核销金额校验失败 |
@@ -1388,19 +1388,17 @@ graph LR
 | --- | --- | --- | --- |
 | fastapi | **^0.156**（Sprint 1 升级，见 8.1.1） | MIT | Web 框架 |
 | starlette | **^1.3**（随 fastapi 传递依赖，**须 ≥1.3.1**） | BSD-3-Clause | ASGI 工具层（fastapi 传递依赖） |
-| uvicorn[standard] | ^0.30 | BSD-3-Clause | ASGI 服务器 |
+| uvicorn[standard] | ==0.54.0 | BSD-3-Clause | ASGI 服务器 |
 | pydantic | ^2.7 | MIT | 参数校验与配置 |
 | pydantic-settings | ^2.3 | MIT | 环境变量配置管理 |
 | httpx | ^0.27 | BSD-3-Clause | Dify/Keycloak 异步调用 |
-| redis | ^5.0 | MIT | 幂等键/限流/缓存（Python 客户端，通过 RESP 协议对接 Valkey） |
+| redis | ==8.1.0 | MIT | 幂等键/限流/缓存（Python 客户端，通过 RESP 协议对接 Valkey） |
 | sqlalchemy | ^2.0 | MIT | 业务库 ORM（审计等轻量场景） |
-| asyncpg | ^0.29 | Apache-2.0 | PostgreSQL 异步驱动 |
+| asyncpg | ==0.32.0 | Apache-2.0 | PostgreSQL 异步驱动 |
 | python-jose[cryptography] | ^3.3 | MIT | JWT 解析（**须显式限定 algorithms**，见 8.1.1） |
-| tenacity | ^8.2 | Apache-2.0 | 重试策略 |
-| structlog | ^24.1 | MIT + Apache-2.0 双许可 | 结构化日志 |
-| slowapi | ^0.1.9 | MIT | 限流（基于 limits，MIT） |
-| python-multipart | ^0.0.9 | Apache-2.0 | multipart 文件上传 |
-| pyyaml | ^6.0 | MIT | 注册表/路由表 YAML 解析 |
+| structlog | ==26.1.0 | MIT + Apache-2.0 双许可 | 结构化日志 |
+| python-multipart | ==0.0.32 | Apache-2.0 | multipart 文件上传 |
+| pyyaml | ==6.0.3 | MIT | 注册表/路由表 YAML 解析 |
 | python-docx | ^1.1 | MIT | 公文/Offer docx 导出（D-20，平台 render_file 专用） |
 | prometheus-client | ^0.20（**阶段四 T4-05.1 引入**） | Apache-2.0 | `/metrics` exposition（Prometheus 官方客户端库；**不手写直方图与文本格式**） |
 | pytest / pytest-asyncio / pytest-cov | ^8.0 / ^0.23 / ^4.1 | MIT | 测试框架 |
@@ -1443,20 +1441,18 @@ graph LR
 
 | 包 | 版本约束 | 协议 | 用途 |
 | --- | --- | --- | --- |
-| next | ^14.2 | MIT | 应用框架 |
-| react / react-dom | ^18.2 | MIT | UI 运行时 |
-| typescript | ^5.4 | Apache-2.0 | 类型系统 |
+| next | ^16.4 | MIT | 应用框架 |
+| react / react-dom | ^19.3 | MIT | UI 运行时 |
+| typescript | ^5.5 | Apache-2.0 | 类型系统 |
 | tailwindcss | ^3.4 | MIT | 样式 |
 | @radix-ui/* | ^1.x（按需） | MIT | 无样式组件基元 |
 | class-variance-authority / clsx / tailwind-merge | ^0.7 / ^2.1 / ^2.5 | MIT / MIT / MIT | 样式变体与类名合并 |
 | lucide-react | ^0.4xx | ISC | 图标 |
 | zustand | ^4.5 | MIT | 客户端状态 |
 | @tanstack/react-query | ^5.5 | MIT | 服务端状态与缓存 |
-| react-hook-form + @hookform/resolvers | ^7.5 / ^3.9 | MIT | 表单 |
-| zod | ^3.23 | MIT | 前端参数校验 |
 | sonner | ^1.5 | MIT | 全局提示 |
 | date-fns | ^3.6 | MIT | 日期处理 |
-| eslint / prettier | ^8.57 / ^3.3 | MIT | Lint 与格式化 |
+| eslint / prettier | ^10.13 / ^3.3 | MIT | Lint 与格式化（eslint 本体登记见 8.2.1） |
 | postcss | ^8.4.38 | MIT | CSS 处理（构建期） |
 | autoprefixer | ^10.4.19 | MIT | CSS 浏览器前缀补全（构建期） |
 | tailwindcss-animate | ^1.0.7 | MIT | Tailwind 动画插件（构建期） |
@@ -1473,7 +1469,8 @@ graph LR
 
 上表是**运行时/构建期**清单；下表是 `apps/web/package.json` 的 `devDependencies`
 中**尚未在上表出现**的部分（测试、类型、Lint 工具链）。两张表的并集即
-`dependencies` + `devDependencies` 的全集（实测 19 + 17 = 36 条，2026-10-27）。
+`dependencies` + `devDependencies` 的全集（实测 14 + 17 = 31 条，2026-10-28
+清理 6 项零引用依赖后；清理前为 19 + 18 = 37 条）。
 
 | 包 | 版本约束 | 协议 | 用途 |
 | --- | --- | --- | --- |
@@ -1481,7 +1478,7 @@ graph LR
 | jsdom | ^30.1.3 | MIT | 浏览器环境模拟（vitest 的 DOM 宿主） |
 | @vitejs/plugin-react | ^6.1.2 | MIT | React 转换插件（vitest 与构建共用） |
 | @playwright/test | ^1.64.1 | Apache-2.0 | 端到端测试（浏览器驱动） |
-| @eslint/eslintrc | ^3.3.7 | MIT | ESLint flat config 兼容层 |
+| @vitest/coverage-v8 | 5.0.5 | MIT | vitest 覆盖率插件（V8 原生覆盖率，前端覆盖率门禁用） |
 | eslint | ^10.13.0 | MIT | ESLint 本体（ENG-05：扁平配置 9 起默认、10 延续；早期 baseline 记 ESLint 9，以本表为准） |
 | eslint-config-next | ^16.4.2 | MIT | Next 官方 ESLint 规则集 |
 | @typescript-eslint/eslint-plugin | ^8.72.0 | MIT | TypeScript ESLint 规则插件 |
@@ -1490,7 +1487,7 @@ graph LR
 | @types/react | ^19.3.0 | MIT | React 类型声明 |
 | @types/react-dom | ^19.3.0 | MIT | React DOM 类型声明 |
 
-> **协议说明**：10 项 MIT + 1 项 Apache-2.0（`@playwright/test`），均在白名单内，
+> **协议说明**：11 项 MIT + 1 项 Apache-2.0（`@playwright/test`），均在白名单内，
 > 无 GPL/AGPL/SSPL。
 >
 > **机械校验**：`deploy/validate_deps.py` 的 `check_frontend_documented()` 以

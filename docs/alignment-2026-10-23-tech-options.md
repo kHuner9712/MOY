@@ -654,7 +654,7 @@ apps/web/src/app/page.tsx
 
 | # | 豁免项 | 位置 | 理由 | 到期动作 |
 | --- | --- | --- | --- | --- |
-| 1 | `react-hooks/set-state-in-effect: off` | eslint.config.mjs rules | 现有 6 处均为异步加载器的同步 loading 态，功能正确 | 第二阶段 T03 前端收敛（迁 react-query）后重新开启 |
+| 1 | `react-hooks/set-state-in-effect: off` | eslint.config.mjs rules | 现有命中点均为异步加载器的同步 loading 态，功能正确 | 前端收敛：`@tanstack/react-query` 已引入，旧加载器全部迁移后重新开启（与 eslint.config.mjs 注释两处同步） |
 | 2 | `no-console: warn`（allow warn/error/info） | eslint.config.mjs rules | 非豁免：仅降级为警告；stdout 调试残留由 `--max-warnings=0` 拦截 | 无 |
 | 3 | ignores：`.next-bak*/**`、`.next.stale-*/**`、`build.log`、`tsconfig.tsbuildinfo` | eslint.config.mjs ignores | 构建残留/生成物，非源码 | 无（与仓库根 .gitignore 同一组显式模式） |
 

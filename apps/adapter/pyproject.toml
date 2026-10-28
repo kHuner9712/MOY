@@ -34,7 +34,6 @@ dependencies = [
     "asyncpg==0.32.0",
     "python-jose[cryptography]>=3.3",
     "structlog==26.1.0",
-    "slowapi==0.1.10",
     "python-multipart==0.0.32",
     "pyyaml==6.0.3",
     # 指标 exposition（阶段四 T4-05.1）：`/metrics` 的标准文本格式。

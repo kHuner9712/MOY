@@ -58,7 +58,7 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 | 运营后台 | `/api/v1/ops` | 8 | OPS1-OPS8 |
 | **新域端点合计** | | **38** | |
 
-> 合计 **68 个业务端点**（30 冻结 + 38 新域）。基线文件：
+> 阶段小计 **68 个业务端点**（30 冻结 + 38 新域）。基线文件：
 > `docs/api/baseline-core-30.json`（受 CODEOWNERS 保护，禁止修改）、
 > `docs/api/baseline-phase2-38.json`（只允许登记真实已实现端点）。
 > 门禁：`python deploy/validate_openapi.py`（G1-G5，失败退出码非 0）；
@@ -74,7 +74,7 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 | 任务域（新增写端点） | `/api/v1/agent` | 2 | WF1-WF2 |
 | **新域端点合计** | | **16** | |
 
-> 合计 **84 个业务端点**（30 冻结 + 38 阶段二 + 16 阶段三）。基线文件：
+> 阶段小计 **84 个业务端点**（30 冻结 + 38 阶段二 + 16 阶段三；阶段四与 W1 见下两节，全量 96）。基线文件：
 > `docs/api/baseline-phase3-16.json`（**文件名即域内冻结总数 16**，逐个登记已实现端点；
 > B17 登记 6 条、B18 追加 8 条、B19 追加 WF1/WF2 → 16/16 收口）。
 > **非业务端点（不计入基线）**：`GET /files/artifacts/{token}` —— 产物内容代理。
@@ -105,6 +105,28 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 >
 > 三态证据（B21 实跑，主理人已验收）：补齐态 EXIT 0 → 追加一条假端点 EXIT 1
 > （G2）→ 恢复 EXIT 0 → 删掉一条已实现端点的登记 EXIT 1（G1+G3）→ 恢复 EXIT 0。
+
+**阶段四新域端点（10 个，T4 批次落地；同挂 `/api/v1`，不新增版本）**
+
+| 域 | 前缀 | target | 编号 |
+| --- | --- | --- | --- |
+| 会话管理 | `/api/v1/model/conversations` | 4 | MC1-MC4 |
+| 用户记忆 | `/api/v1/model/memories` | 4 | MM1-MM4 |
+| 租户数据 | `/api/v1/ops/tenant-data` | 2 | TD1-TD2 |
+| **新域端点合计** | | **10** | |
+
+**W1 增量端点（2 个，门禁基础设施；同挂 `/api/v1`）**
+
+| 域 | 前缀 | target | 编号 |
+| --- | --- | --- | --- |
+| 任务统计 | `/api/v1/stats` | 1 | W1-A1 |
+| 能力推荐 | `/api/v1/capabilities` | 1 | W1-B1 |
+| **增量端点合计** | | **2** | |
+
+> 全量合计 **96 个业务端点**（30 冻结 + 38 阶段二 + 16 阶段三 + 10 阶段四 + 2 W1）。
+> 基线文件：`docs/api/baseline-phase4-10.json`、`docs/api/baseline-w1-2.json`
+> （口径同阶段三：只登记真实已实现端点；`--strict` 下 missing>0 即红，
+> 任何未登记的新端点一律立即判红，这两条都没有放宽开关）。
 
 ### 2.2 统一约定
 

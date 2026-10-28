@@ -14,7 +14,6 @@
     "dev:web": "npm run dev --workspace apps/web",
     "build:web": "npm run build --workspace apps/web",
     "lint:web": "npm run lint --workspace apps/web",
-    "typecheck:web": "npm run typecheck --workspace apps/web",
-    "clean": "node -e \"console.log('清理任务占位：由各子工程自行实现')\""
+    "typecheck:web": "npm run typecheck --workspace apps/web"
   }
 }

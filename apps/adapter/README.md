@@ -41,18 +41,22 @@ apps/adapter/
 │   ├── middleware/
 │   │   ├── trace.py             # trace_id 注入与透传、访问日志
 │   │   └── error_handler.py     # 统一异常 → {code, message, data} 兜底
-│   ├── schemas/                 # 请求响应契约（common/model/rag/agent/tool/identity）
-│   ├── api/v1/                  # 30 个业务端点（router/model/rag/agent/tool/identity）
+│   ├── schemas/                 # 请求响应契约（common/model/rag/agent/tool/identity + 插件/计费/运维等）
+│   ├── api/v1/                  # 标准接口端点（96 个业务端点，清单见 docs/api/README.md）
+│   ├── business/                # 业务规则层（任务/额度等，不含协议转换）
 │   ├── services/                # 协议转换服务（唯一允许写下游调用的位置）
 │   ├── clients/                 # dify_client / keycloak_client（唯一调用出口）
+│   ├── db/                      # SQLAlchemy 模型与 repositories（billing/conversation/memory/org/plugin/role/task/usage）
+│   ├── plugins/                 # 插件运行时（manifests / guards）
 │   ├── registry/                # profile_routes.yaml / tool_registry.yaml（数据驱动）
+│   ├── workers/                 # 后台任务（tasks/）
 │   └── tools/                   # 工具连接器（新增工具只加这里）
-├── tests/{unit,integration}/    # 单元测试与契约测试
+├── tests/{unit,integration,e2e,qa,security}/  # 单元/契约/端到端/QA/安全测试
 ├── Dockerfile
 └── pyproject.toml
 ```
 
-## 三、接口清单（30 个业务端点 + 2 个免鉴权探针）
+## 三、接口清单（核心 30 端点冻结清单；全量 96 端点见 `docs/api/README.md`）
 
 | 域 | 端点 | 方法 | 编号 |
 | --- | --- | --- | --- |

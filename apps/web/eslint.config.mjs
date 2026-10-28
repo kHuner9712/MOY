@@ -32,8 +32,9 @@ const eslintConfig = [
       "prefer-const": "error",
       "no-var": "error",
       // React 19 新增的严格规则：拦截「effect 内同步 setState」。
-      // 现有 6 处均为异步加载器的同步 loading 态，功能正确；
-      // TODO(第二阶段 T03 前端收敛)：迁移至 react-query 后重新开启。
+      // 现有命中点均为异步加载器的同步 loading 态，功能正确；
+      // TODO(前端收敛)：@tanstack/react-query 已引入，但旧加载器尚未全部迁移，
+      // 迁移完成后重新开启本规则（豁免登记见 alignment 文档 §8，两处同步）。
       "react-hooks/set-state-in-effect": "off",
     },
   },

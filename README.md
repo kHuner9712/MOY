@@ -184,7 +184,7 @@ docker compose -f docker-compose.saas.yml up -d   # SaaS 本地联调
 | --- | --- | --- |
 | Python Lint / Format | ruff | 零告警 |
 | Python 类型检查 | mypy | 零 error |
-| Python 测试 | pytest | 核心接口覆盖率 ≥ 80% |
+| Python 测试 | pytest | 核心接口合并覆盖率 ≥ 85%（`--cov-fail-under=85`） |
 | 前端 Lint | ESLint | 零 error |
 | 前端类型检查 | tsc | 零 error |
 | 开源协议扫描 | CI `dependency-scan.yml` | 无 GPL/AGPL/SSPL |

@@ -105,7 +105,8 @@ class ErrorCode(IntEnum):
     PENDING_ORDER_EXISTS = 15004
     #: 降级将在当前周期结束后生效（**非阻断提示码**，BL3）
     PLAN_CHANGE_PENDING = 15005
-    #: 额度用尽（阶段四起为**硬止损**：402 + 上游调用 0 次；M1/M2/R3/A1）
+    #: 额度/预算用尽（2026-10-27 PRD 5.3 ① 起为**软限制**：M1/M2 限长 + notice_code
+    #: 提示、R3 收下+挂起、A1 照常创建；注册表映射保留 402，端点不再以本码拦停）
     QUOTA_EXHAUSTED = 15006
     #: 支付未完成，请重新支付（BL6 BL8）
     PAYMENT_INCOMPLETE = 15007
@@ -382,7 +383,7 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
         # 伪装成成功响应，前端只能靠 `notice_*` 猜；402 是语义正确的传输层信号，
         # 客户端库/网关/监控都能直接识别，不必逐层传一个自造字段。
         # **不要**复用 10005 MODEL_QUOTA_EXHAUSTED：那是"上游回传额度不足"
-        # （`model_service.py:669` 的映射分支），与自研侧硬止损是两件事。
+        # （`model_service.py:669` 的映射分支），与自研侧额度判定是两件事。
         402,
         "本月可用量已用完，请联系管理员调整",
         "额度/预算用尽（E-3 个人额度、E-4 租户预算同码；唯一判定点见 usage_service）",

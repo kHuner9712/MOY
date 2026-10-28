@@ -63,9 +63,7 @@ DOCUMENTED_PACKAGES = {
     "sqlalchemy",
     "asyncpg",
     "python-jose",
-    "tenacity",
     "structlog",
-    "slowapi",
     "python-multipart",
     "pyyaml",
     "python-docx",
@@ -82,8 +80,8 @@ DOCUMENTED_PACKAGES = {
 #: **低于此数视为「解析塌陷」→ exit 2**，不能当成「全部合规」：
 #: 读错键名、包名切分失败、package.json 被改成别的结构，都会让条目数骤降，
 #: 而"0 条依赖 = 0 条违规"恰好是门禁最容易自欺的一种绿。
-#: 实测 19 runtime + 17 dev = 36 条（2026-10-27），留 2 条余量。
-FRONTEND_DEPS_MIN = 34
+#: 实测 14 runtime + 17 dev = 31 条（2026-10-28 清理 6 项零引用依赖后），留 2 条余量。
+FRONTEND_DEPS_MIN = 29
 
 #: 非 registry 协议 → 判红（来源不可审计，也无法核验协议白名单）。
 FORBIDDEN_SPEC_PREFIXES: tuple[str, ...] = (
