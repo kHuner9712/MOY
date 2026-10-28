@@ -4,7 +4,7 @@
 # 组成：
 #   - 底座层：dify-api / dify-worker / dify-web（Dify Apache-2.0）
 #   - 业务能力层：keycloak（身份与权限）
-#   - 基础设施层：postgres / valkey / milvus / seaweedfs / etcd
+#   - 基础设施层：postgres / valkey / milvus / seaweedfs
 #   - 自研层：adapter（统一适配层）/ web（前端交互层）
 #
 # 合规说明（总方案 5.3 / 架构文档 2.1）：
@@ -102,22 +102,10 @@ services:
       timeout: 5s
       retries: 10
 
-  etcd:
-    image: quay.io/coreos/etcd:v3.7.2
-    container_name: oa-etcd
-    restart: unless-stopped
-    environment:
-      ETCD_AUTO_COMPACTION_MODE: revision
-      ETCD_AUTO_COMPACTION_RETENTION: "1000"
-      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
-    command: >
-      etcd -advertise-client-urls=http://127.0.0.1:2379
-      -listen-client-urls=http://0.0.0.0:2379
-      --data-dir=/etcd
-    volumes:
-      - etcd-data:/etcd
-    networks: [officeai]
-    logging: *default-logging
+  # ARC-04（审计 2026-10-28）：孤儿 etcd 服务已删除——milvus 实际使用
+  # `milvus-etcd`（见下方 ETCD_ENDPOINTS），此处的独立 etcd 无人依赖，
+  # 其数据卷 etcd-data 内数据无消费者。残留卷可用
+  # `docker volume rm deploy_etcd-data` 清理（卷名前缀以实际 project 名为准）。
 
   milvus-object-store:
     # S3 兼容对象存储（SeaweedFS，Apache-2.0 白名单协议，独立容器运行）
@@ -515,6 +503,12 @@ services:
     build:
       context: ../apps/web
       dockerfile: Dockerfile
+      # H-3（审计 2026-10-28）：npm workspaces 锁在仓库根，build context 只圈了
+      # apps/web。把仓库根挂为额外 context `lockroot`，Dockerfile 用
+      # COPY --from=lockroot 取根锁；锁缺失时 npm ci 构建失败（fail loud），
+      # 不再静默回退 npm install。需 Docker Compose v2.17+。
+      additional_contexts:
+        lockroot: ..
       args:
         NEXT_PUBLIC_ADAPTER_BASE_URL: ${OA_WEB_ADAPTER_BASE_URL:-http://localhost:8000}
         # 统一登录：公开接入信息（不含密钥），**构建期内联**进 bundle。
@@ -593,7 +587,6 @@ services:
 volumes:
   postgres-data:
   valkey-data:
-  etcd-data:
   milvus-etcd-data:
   milvus-object-store-data:
   milvus-data:

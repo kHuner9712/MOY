@@ -54,6 +54,7 @@ from app.middleware.error_handler import AUTH_EXEMPT_PATHS, register_exception_h
 from app.middleware.metrics import MetricsMiddleware
 from app.middleware.trace import AccessLogMiddleware, TraceMiddleware
 from app.services.memory_extractor import warn_missing_memory_app_key_once
+from app.services.model_service import get_model_service
 from app.workers.job_runner import JobRunner, get_job_runner, should_start_runner
 from app.workers.queue_depth import refresh_loop
 from app.workers.tasks.retention_cleanup import schedule_all_tenants
@@ -341,6 +342,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await queue_depth_task
             except asyncio.CancelledError:
                 pass
+        # H-1（审计 2026-10-28）：先停底座连接、再释放业务库——
+        # 与"先停轮询再释放引擎"的关停顺序纪律一致。
+        await get_model_service().aclose()
         await dispose_engine()
         logger.info("adapter_stopping")
 

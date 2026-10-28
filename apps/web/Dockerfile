@@ -14,9 +14,13 @@ FROM node:22-alpine AS deps
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-# 存在锁文件时使用 npm ci 保证可复现；否则回退到 npm install
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# H-3（审计 2026-10-28）：锁文件是 npm workspaces 锁，在仓库根而非本目录。
+# compose 通过 additional_contexts 把仓库根挂为 `lockroot`（见 deploy/docker-compose.yml
+# web.build）。COPY --from=lockroot 在锁缺失时直接构建失败（fail loud），
+# 不再静默回退 npm install 造成镜像依赖不可复现。
+COPY package.json ./
+COPY --from=lockroot package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
 # ---------- builder ----------
 FROM node:22-alpine AS builder

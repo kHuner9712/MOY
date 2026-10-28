@@ -195,6 +195,13 @@ jobs:
         with:
           node-version: '22'
 
+      # H-2（审计 2026-10-28）：uv 供下方 `uv export --frozen` 从锁文件导出清单。
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/adapter/uv.lock
+
       # ------------------------------------------------------------------
       # Python 依赖协议扫描
       # ------------------------------------------------------------------
@@ -205,7 +212,13 @@ jobs:
           # 此前只装了 pip-licenses，脚本一执行到 `yaml.safe_load` 就 NameError，
           # 整条合规门禁恒红（S8 故障点③，2026-10-23）。
           pip install pip-licenses pyyaml
-          pip install -e "apps/adapter[dev]" --quiet
+          # H-2（审计 2026-10-28）：适配层依赖改走 uv.lock 精确清单——
+          # `uv export --frozen` 从锁文件导出 requirements 再照单安装，
+          # 与质量门禁（uv sync --frozen）同源，杜绝两处口径漂移。
+          uv export --frozen --no-emit-project --format requirements-txt \
+            --project apps/adapter -o locked-requirements.txt
+          pip install -r locked-requirements.txt
+          pip install -e "apps/adapter" --no-deps --quiet
           pip-licenses format=markdown --with-urls --with-license-file \
             > python-licenses.md
           echo "[OK] Python 依赖清单已生成"

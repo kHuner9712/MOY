@@ -447,9 +447,13 @@ class DifyClient:
                 response.status_code, body, internal_detail=f"path={path}"
             )
 
-        async for event in self._iter_sse(response):
-            yield event
-        await response.aclose()
+        # H-1（审计 2026-10-28）：try/finally 保证 GeneratorExit（客户端断开/超时
+        # 触发生成器关闭）时 response 也被关闭，不再泄漏 SSE 连接。
+        try:
+            async for event in self._iter_sse(response):
+                yield event
+        finally:
+            await response.aclose()
 
     async def _iter_sse(self, response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
         """解析 SSE 字节流为事件字典。

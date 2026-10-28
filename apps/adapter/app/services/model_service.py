@@ -337,6 +337,10 @@ class ModelService:
         # 于是四档又全跑回同一个默认应用——正是 F-8 的行径。
         self._dify_injected = dify is not None
         self._dify = dify if dify is not None else get_dify_client()
+        # H-1（审计 2026-10-28）：按 app_key 缓存底座客户端，避免每请求新建
+        # 连接池。缓存 key 是 `resolve_app_key` 的返回值；轮换 Dify app key 后
+        # 必须重启进程才生效（与 settings 启动固化的现状一致，非新增约束）。
+        self._dify_clients: dict[str, DifyClient] = {}
         self._policy: PolicyService = policy or get_policy_service(self._settings)
         self._segments: SegmentService = segments or SegmentService(self._settings)
         self._bases: KnowledgeBaseStore = bases or get_knowledge_base_store(self._settings)
@@ -556,7 +560,23 @@ class ModelService:
                 ErrorCode.MODEL_PROFILE_UNAVAILABLE,
                 internal_detail=f"profile app key missing: {profile.value}",
             )
-        return DifyClient.for_app_key(key, self._settings)
+        # H-1（审计 2026-10-28）：查缓存 → 建实例 → 写缓存。临界区内没有任何
+        # await（resolve_app_key 是同步方法），单事件循环内不会被打断，无需加锁。
+        client = self._dify_clients.get(key)
+        if client is None:
+            client = DifyClient.for_app_key(key, self._settings)
+            self._dify_clients[key] = client
+        return client
+
+    async def aclose(self) -> None:
+        """关闭缓存的底座客户端（进程退出与测试清理用）。
+
+        注入路径（`_dify_injected`）不受影响：注入客户端 `_owns_client=False`，
+        其 `aclose` 本就是 no-op。
+        """
+        for client in self._dify_clients.values():
+            await client.aclose()
+        self._dify_clients.clear()
 
     # ------------------------------------------------------------------
     # M1 非流式生成
