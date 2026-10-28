@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -189,5 +188,5 @@ async def test_post_stream_closes_response_on_normal_completion() -> None:
 
     events = [event async for event in client.post_stream("/chat-messages", {})]
 
-    assert json.dumps(events)  # 事件可序列化（结构完整）
+    assert events and all("event" in e for e in events)
     assert response.aclose_calls == 1

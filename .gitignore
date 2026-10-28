@@ -137,3 +137,7 @@ apps/adapter/pytest_run.log
 # ---------------------------------------------------------------------------
 apps/web/coverage/
 apps/web/test-results/
+
+# QA 收口补漏（2026-10-28）：QA 本地回归产物命名与标准工件不同，一并忽略
+apps/adapter/junit_*.xml
+apps/adapter/coverage_*.xml

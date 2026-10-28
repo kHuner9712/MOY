@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -163,9 +162,6 @@ def test_chunked_digest_equals_full_read_digest(
             headers={**_auth_headers(settings), **_IDEMPOTENCY_HEADERS},
         )
     assert response.json()["code"] == 0
-    expected = hashlib.sha256(
-        f"摘要.pdf:{len(payload)}:{hashlib.sha256(payload).hexdigest()}".encode()
-    ).hexdigest()
     # 替身服务收不到摘要本身（摘要只进幂等管理器），这里以「同请求重放命中
     # 幂等」间接验证指纹稳定：同 Idempotency-Key 重发应返回 IDEMPOTENT_DUPLICATE。
     replay = client.post(
@@ -174,4 +170,3 @@ def test_chunked_digest_equals_full_read_digest(
         headers={**_auth_headers(settings), **_IDEMPOTENCY_HEADERS},
     )
     assert replay.json()["code"] == int(ErrorCode.IDEMPOTENT_DUPLICATE)
-    assert expected  # 指纹公式存在且可计算（口径守护）
