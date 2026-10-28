@@ -21,21 +21,22 @@ license = { text = "UNLICENSED" }
 dependencies = [
     "fastapi>=0.156,<0.157",
     "starlette>=1.3.1,<2.0",
-    "uvicorn[standard]>=0.30",
+    # H-2（审计 2026-10-28）：以下 7 项由 `>=` 收敛为 `==` 精确版本（与 uv.lock
+    # 解析结果一致，可复现性由「pyproject pin + uv.lock」双载体兜底）。
+    "uvicorn[standard]==0.54.0",
     "pydantic>=2.7,<3.0",
     "pydantic-settings>=2.3,<3.0",
     "httpx>=0.27,<0.29",
-    "redis>=5.0",
+    "redis==8.1.0",
     # `[asyncio]` 额外项用于拉入 greenlet：SQLAlchemy 2.x 的 `ext.asyncio`
     # 在缺少 greenlet 时**导入即失败**（阶段二 B01 引入异步引擎时实测暴露）。
     "sqlalchemy[asyncio]>=2.0,<3.0",
-    "asyncpg>=0.29",
+    "asyncpg==0.32.0",
     "python-jose[cryptography]>=3.3",
-    "tenacity>=8.2",
-    "structlog>=24.1",
-    "slowapi>=0.1.9",
-    "python-multipart>=0.0.9",
-    "pyyaml>=6.0",
+    "structlog==26.1.0",
+    "slowapi==0.1.10",
+    "python-multipart==0.0.32",
+    "pyyaml==6.0.3",
     # 指标 exposition（阶段四 T4-05.1）：`/metrics` 的标准文本格式。
     # Apache-2.0；直方图分桶与累积由库保证，手写必然出现"抓了算不出来"的偏差。
     "prometheus-client>=0.20,<1.0",
@@ -82,6 +83,8 @@ include = ["app*"]
 # ===========================================================================
 [tool.ruff]
 line-length = 100
+# ENG-05（审计 2026-10-28）：py311 口径 = requires-python 下限（>=3.11）的最低
+# 公共分母；运行时 3.13 向下兼容。升档需与 requires-python 联动，不可单点改。
 target-version = "py311"
 src = ["app", "tests"]
 # 仅检查 Python 源码；README 中的示例代码块不参与格式化
@@ -134,6 +137,8 @@ line-ending = "lf"
 # mypy —— 静态类型检查（架构文档 9.6 强制门禁）
 # ===========================================================================
 [tool.mypy]
+# ENG-05（审计 2026-10-28）：py311 口径 = requires-python 下限（>=3.11）的最低
+# 公共分母；运行时 3.13 向下兼容。升档需与 requires-python 联动，不可单点改。
 python_version = "3.11"
 files = ["app"]
 strict = false
@@ -154,7 +159,8 @@ module = ["jose.*", "yaml.*"]
 ignore_missing_imports = true
 
 # ===========================================================================
-# pytest —— 测试与覆盖率门禁（架构文档 9.6：核心接口覆盖率 ≥ 80%）
+# pytest —— 测试与覆盖率门禁（QA-09，审计 2026-10-28：覆盖率门禁 ≥ 85%
+# [G-05 硬地板，与 ci-adapter.yml 门禁 5 一致]；历史 80% 为阶段一口径已废止）
 # ===========================================================================
 [tool.pytest.ini_options]
 minversion = "8.0"

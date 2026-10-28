@@ -100,13 +100,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-          cache: pip
-          cache-dependency-path: apps/adapter/pyproject.toml
 
-      - name: 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+      # H-2（审计 2026-10-28）：改用 uv 锁定安装——uv.lock 是依赖版本的唯一
+      # 事实源，`--frozen` 禁止现场重新解析，CI 环境与本地锁定环境一致。
+      - name: 安装依赖（uv sync --frozen）
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/adapter/uv.lock
+
+      - run: uv sync --frozen --extra dev
 
       # ------------------------------------------------------------------
       # 准备 PostgreSQL（审计 OA-AUDIT-001 / P0-4）

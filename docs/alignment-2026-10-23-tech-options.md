@@ -644,3 +644,18 @@ apps/web/src/app/page.tsx
 | 5 | 本机全量跑的命令 | 补执行坑：全量跑时 pytest 清理临时目录会触发沙箱批量删除拦截（[safe-delete] … count>50），表现为 **exit 1 且不打印汇总行**，看起来像"挂了"；加 --basetemp=../../.pytest_tmp（跑完删目录）即可拿到汇总 | QA 实测 |
 
 **保留未消项**：单进程 pytest tests/unit tests/security tests/integration 曾出现 1 红（test_endpoints.py::TestAgentEndpoints::test_a2_list_tasks，根因 tests/security/test_attack_object_scope.py 状态泄漏，顺序敏感）。截至本报告最后一次实测仍未修；若已修复以最新为准。**顺序敏感本身就是"跑绿了 ≠ CI 会绿"的证据，不应被当作可忽略项**。
+
+---
+
+## 8. 前端 Lint 豁免清单（ENG-06，审计 2026-10-28 登记）
+
+> 纪律：豁免必须**逐条带理由与到期动作**，登记于此与 `apps/web/eslint.config.mjs`
+> 双处（config 里注释指向本节）。新增豁免 = 修改两处 + 在本表加行；删除豁免同样双处同步。
+
+| # | 豁免项 | 位置 | 理由 | 到期动作 |
+| --- | --- | --- | --- | --- |
+| 1 | `react-hooks/set-state-in-effect: off` | eslint.config.mjs rules | 现有 6 处均为异步加载器的同步 loading 态，功能正确 | 第二阶段 T03 前端收敛（迁 react-query）后重新开启 |
+| 2 | `no-console: warn`（allow warn/error/info） | eslint.config.mjs rules | 非豁免：仅降级为警告；stdout 调试残留由 `--max-warnings=0` 拦截 | 无 |
+| 3 | ignores：`.next-bak*/**`、`.next.stale-*/**`、`build.log`、`tsconfig.tsbuildinfo` | eslint.config.mjs ignores | 构建残留/生成物，非源码 | 无（与仓库根 .gitignore 同一组显式模式） |
+
+除上表外**不存在**其它 lint 豁免；inline `eslint-disable` 当前为零（增列时须同步本表）。

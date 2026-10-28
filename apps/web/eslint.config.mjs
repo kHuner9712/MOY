@@ -1,7 +1,13 @@
 import nextVitals from "eslint-config-next/core-web-vitals";
 
-// Next 16 起 `next lint` 移除，ESLint 9 使用扁平配置（2026-10-21 升级迁移）。
+// Next 16 起 `next lint` 移除，改用扁平配置（2026-10-21 升级迁移；2026-10-28
+// 实测口径修正：仓库现装 ESLint ^10.13.0——扁平配置自 9 起为默认，10 延续）。
 // eslint-config-next 16 原生导出扁平配置数组（Linter.Config[]），直接展开。
+//
+// ENG-06（审计 2026-10-28）：本文件是前端 lint 豁免的**唯一注册处**——
+// 当前全部豁免（rules 关闭项 + ignores 显式模式）的逐条理由与到期动作
+// 见 docs/alignment-2026-10-23-tech-options.md §8「前端 Lint 豁免清单」。
+// 新增/删除豁免必须两处同步；未登记的豁免一律视为违规。
 const eslintConfig = [
   {
     ignores: [
