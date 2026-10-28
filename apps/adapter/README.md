@@ -163,7 +163,12 @@ mypy app                                # 类型检查
 pytest tests -q --cov=app --cov-report=term-missing
 ```
 
-覆盖率门禁：**核心接口 ≥ 80%**（CI 中 `--cov-fail-under=80`）。
+覆盖率门禁：**≥ 85%**（CI 硬地板 `--cov-fail-under=85`，与 `ci-adapter.yml` 门禁 5 一致；
+历史 80% 为阶段一口径已废止）。
+
+> 覆盖率 / 用例数的**唯一权威来源 = CI junit.xml**（`ci-adapter.yml` 门禁 5 产物，
+> 带 `--run-pg` 且 skipped=0）；本地跑测试产生的 `coverage.xml` / `junit.xml` /
+> `pytest_run.log` 是临时工件，不入库、不作为对账口径（QA-03，审计 2026-10-28）。
 
 ## 七、扩展指引
 

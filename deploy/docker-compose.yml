@@ -73,13 +73,19 @@ services:
       # 用 officeai（超级用户）连库会绕过行级安全，多租户隔离失效；
       # /readyz 的 db_privilege 自检会因此判 not_ready。
       - ./init-app-role.sql:/docker-entrypoint-initdb.d/30-init-app-role.sql:ro
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${OA_POSTGRES_USER:-officeai}"]
       interval: 10s
       timeout: 5s
       retries: 10
+    # ARC-02（审计 2026-10-28）：资源限额照抄 lite 栈实测口径（docker-compose.lite.yml）
+    deploy:
+      resources:
+        limits:
+          # 实测 cgroup 上界 191 MiB（shared_buffers 128 MB 时），留 2.5 倍余量
+          memory: 512M
 
   # Redis 的 BSD-3 替代实现（✅ D-06 已批准）
   valkey:
@@ -94,13 +100,20 @@ services:
       --maxmemory-policy allkeys-lru
     volumes:
       - valkey-data:/data
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "valkey-cli -a ${OA_VALKEY_PASSWORD} ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
+    # ARC-02：限额照抄 lite 栈实测口径
+    deploy:
+      resources:
+        limits:
+          # 必须大于 --maxmemory（2gb 时同比例上调；lite 为 256mb→384M）。
+          # ⚠ 全量栈 maxmemory 默认 2gb，限额须覆盖之，否则 OOM killer 先于淘汰动手
+          memory: 3g
 
   # ARC-04（审计 2026-10-28）：孤儿 etcd 服务已删除——milvus 实际使用
   # `milvus-etcd`（见下方 ETCD_ENDPOINTS），此处的独立 etcd 无人依赖，
@@ -124,7 +137,7 @@ services:
     command: ["server", "-dir=/data", "-s3", "-s3.port=8333"]
     volumes:
       - milvus-object-store-data:/data
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
     # 镜像为 BusyBox 基础，无 curl（2026-10-21 实跑修正：原 curl 探针
     # 令容器恒判 unhealthy，实际 S3 网关跨容器可达）；必须显式用
@@ -152,7 +165,7 @@ services:
       -listen-client-urls=http://0.0.0.0:2379
     volumes:
       - milvus-etcd-data:/etcd
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
 
   milvus:
@@ -169,12 +182,14 @@ services:
     volumes:
       - milvus-data:/var/lib/milvus
     ports:
-      - "${OA_MILVUS_PORT:-19530}:19530"
-      - "${OA_MILVUS_METRICS_PORT:-9091}:9091"
+      # ARC-01（审计 2026-10-28）：基础设施组件端口收敛为绑回环——仅本机调试可达，
+      # 不再向外部网卡暴露（milvus 与其 metrics 端口均无鉴权）
+      - "127.0.0.1:${OA_MILVUS_PORT:-19530}:19530"
+      - "127.0.0.1:${OA_MILVUS_METRICS_PORT:-9091}:9091"
     depends_on:
       - milvus-etcd
       - milvus-object-store
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
@@ -182,6 +197,12 @@ services:
       timeout: 20s
       start_period: 90s
       retries: 3
+    # ARC-02：lite 栈无 milvus 条目可抄——按官方 standalone 建议 ≥2G 预留，
+    # 上线后按 `docker stats --no-stream` 观测校准（登记：无 lite 实测基线）
+    deploy:
+      resources:
+        limits:
+          memory: 2g
 
   # 业务对象存储（文档原文件）：S3 兼容，独立容器运行
   # ⚠️ D-06 待决：最终选型需合规确认
@@ -196,9 +217,10 @@ services:
     volumes:
       - object-store-data:/data
     ports:
-      - "${OA_OBJECT_STORE_API_PORT:-8333}:8333"
-      - "${OA_OBJECT_STORE_ADMIN_PORT:-23646}:23646"
-    networks: [officeai]
+      # ARC-01：绑回环，仅本机调试可达（S3 网关凭 AK/SK 鉴权，但 admin 口无鉴权）
+      - "127.0.0.1:${OA_OBJECT_STORE_API_PORT:-8333}:8333"
+      - "127.0.0.1:${OA_OBJECT_STORE_ADMIN_PORT:-23646}:23646"
+    networks: [officeai-backend]
     logging: *default-logging
     # 镜像为 BusyBox 基础，无 curl（2026-10-21 实跑修正：原 curl 探针
     # 令容器恒判 unhealthy，实际 S3 网关跨容器可达）；必须显式用
@@ -269,8 +291,23 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
+    # ARC-03（审计 2026-10-28）：healthcheck 照抄 lite 栈实跑口径
+    healthcheck:
+      # 镜像内有 curl（实测 /usr/bin/curl）；/health 路由见 extensions/ext_app_metrics.py:20
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      # ⚠ 实测首启 78.1 s、二次 84.4 s（固有开销，与迁移无关）；
+      # start_period 过短会在正常启动期判 unhealthy 并连带卡住 adapter
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          # ARC-02：实测 422.9 MiB（冷启动）/ 490.9 MiB（cgroup 上界），抄 lite
+          memory: 1024M
 
   dify-worker:
     image: langgenius/dify-api:1.17.1
@@ -301,8 +338,21 @@ services:
     depends_on:
       - postgres
       - valkey
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
+    # ARC-03：worker 无 HTTP 端点，用 lite 栈实跑的进程存在性探针：
+    # entrypoint `exec celery ...` 使 PID 1 即 celery 本体；镜像内没有 ps，只能读 /proc
+    healthcheck:
+      test: ["CMD-SHELL", "grep -qa 'celery_entrypoint.celery' /proc/1/cmdline"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          # ARC-02：实测 427.7 MiB（冷启动）/ 503.8 MiB（cgroup 上界），抄 lite
+          memory: 768M
 
   dify-worker-beat:
     image: langgenius/dify-api:1.17.1
@@ -324,8 +374,10 @@ services:
     depends_on:
       - postgres
       - valkey
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
+    # ARC-03：beat 无 HTTP 端点且 lite 栈无对应探针可抄——**刻意不加 healthcheck**
+    # （与 Dify 官方 compose 一致），避免后人当缺陷再报。
 
   dify-web:
     image: langgenius/dify-web:1.17.1
@@ -338,7 +390,7 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     depends_on:
       - dify-api
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
 
   dify-sandbox:
@@ -349,8 +401,10 @@ services:
       API_KEY: ${OA_DIFY_SANDBOX_KEY:?必须在 .env 中设置}
       GIN_MODE: release
       WORKER_TIMEOUT: "15"
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
+    # ARC-03：sandbox 无标准健康端点且镜像工具集未实测——不加探针，登记说明
+    # （lite 栈亦无）；误配探针会导致容器恒 unhealthy（SeaweedFS curl 的前车之鉴）。
 
   ssrf_proxy:
     image: ubuntu/squid:6.13-25.04_beta
@@ -358,8 +412,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./squid.conf:/etc/squid/squid.conf:ro
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
+    # ARC-03：squid 无标准 HTTP 健康端点——不加探针，登记说明（lite 栈亦无）。
 
   # ---------------------------------------------------------------------
   # 业务能力层：身份与权限（Keycloak，Apache-2.0）
@@ -404,8 +459,20 @@ services:
       FORCE_VERIFYING_SIGNATURE: "false"
     volumes:
       - plugin-daemon-data:/app/storage
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
+    # ARC-03：探针照抄 lite 栈实跑口径（镜像内有 curl，实测）
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5002/health/check || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          # ARC-02：空载 18.9 MiB，但装 provider 插件会冲到几百 MB，抄 lite
+          memory: 512M
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.1
@@ -422,11 +489,38 @@ services:
       # Keycloak 26 起 KEYCLOAK_ADMIN/PASSWORD 已移除，改用 KC_BOOTSTRAP_ADMIN_*
       KC_BOOTSTRAP_ADMIN_USERNAME: ${OA_KEYCLOAK_ADMIN:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${OA_KEYCLOAK_ADMIN_PASSWORD:?必须在 .env 中设置}
+      # ARC-03：health 探针打管理端口 9000，必须显式开启（lite 栈同款，实测）
+      KC_HEALTH_ENABLED: "true"
+      # ARC-02：限堆是 1024M 内存限额的前提——不限堆时 JVM 按容器内存 25% 取堆，
+      # 仍可能冲破限额；lite 栈实测 384m 堆足够 ≤500 用户签发与管理
+      JAVA_OPTS_APPEND: "-Xms64m -Xmx384m"
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
+    # ARC-03：探针照抄 lite 栈实跑口径——镜像内没有 curl（只有 bash 与 grep），
+    # 用 bash 的 /dev/tcp 手写 HTTP；/health/ready 在管理端口 9000
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - |
+          exec 3<>/dev/tcp/127.0.0.1/9000 || exit 1
+          printf 'GET /health/ready HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' >&3
+          grep -q '"status": "UP"' <&3
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      # JVM 起来 + 建表 + 初始化 realm 实测 81 s（二次启动 48 s）
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          # ARC-02：实测 docker stats 797.6 MiB / cgroup 909.1 MiB；
+          # 不能按 768M 写（会被 OOM killer 反复杀且日志无异常），抄 lite
+          memory: 1024M
 
   # ---------------------------------------------------------------------
   # 自研层：统一适配层（唯一允许接触底座的应用）
@@ -489,12 +583,27 @@ services:
     ports:
       - "${OA_ADAPTER_PORT:-8000}:8000"
     depends_on:
+      # ARC-03（审计 2026-10-28）：启动依赖补全——数据库/向量库/对象存储就绪前
+      # 不启动 adapter，不再靠运气
+      postgres:
+        condition: service_healthy
       valkey:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      object-store:
         condition: service_healthy
       keycloak:
         condition: service_started
-    networks: [officeai]
+    # ARC-01（审计 2026-10-28）：adapter 是唯一双挂网的服务——backend 承载
+    # 它对基础设施/底座的全部出向调用，frontend 承载 web 服务端的入向调用
+    networks: [officeai-backend, officeai-frontend]
     logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          # ARC-02：实测 87.5 MiB（空载）/ 92.2 MiB（cgroup），抄 lite
+          memory: 512M
 
   # ---------------------------------------------------------------------
   # 自研层：前端交互层
@@ -524,7 +633,9 @@ services:
       - "${OA_WEB_PORT:-3000}:3000"
     depends_on:
       - adapter
-    networks: [officeai]
+    # ARC-01：web 只挂 frontend——服务端调用 adapter 走 frontend 网；
+    # 浏览器侧经宿主机端口直达，不受影响（OIDC 兑换在浏览器侧发起）
+    networks: [officeai-frontend]
     logging: *default-logging
 
   # ---------------------------------------------------------------------
@@ -554,7 +665,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
 
   valkey-exporter:
@@ -567,7 +678,7 @@ services:
     depends_on:
       valkey:
         condition: service_healthy
-    networks: [officeai]
+    networks: [officeai-backend]
     logging: *default-logging
 
   prometheus:
@@ -580,9 +691,17 @@ services:
       - ./alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "${OA_PROMETHEUS_PORT:-9090}:9090"
-    networks: [officeai]
+      # ARC-01：Prometheus 无鉴权，绑回环——保留本机调试能力，不对外暴露
+      - "127.0.0.1:${OA_PROMETHEUS_PORT:-9090}:9090"
+    networks: [officeai-backend]
     logging: *default-logging
+    # ARC-03：镜像内实测有 wget（无 curl）
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   postgres-data:
@@ -595,5 +714,12 @@ volumes:
   plugin-daemon-data:
 
 networks:
-  officeai:
+  # ARC-01（审计 2026-10-28）：单一扁平网拆分为双网——
+  #   officeai-backend：postgres/valkey/milvus/object-store/dify 全家/keycloak/
+  #                     exporters/prometheus/adapter（adapter 亦挂 frontend）
+  #   officeai-frontend：adapter、web（对外面收敛到最小）
+  # 隔离的直接证据：从 web 容器解析不到 postgres（`wget postgres:5432` 不可达）。
+  officeai-backend:
+    driver: bridge
+  officeai-frontend:
     driver: bridge

@@ -22,6 +22,7 @@ R4 输出 `stage` / `estimated_remaining_seconds` / `file_size` / `uploaded_at`�
 from __future__ import annotations
 
 import hashlib
+import tempfile
 
 from fastapi import APIRouter, Depends, File, Form, Path, Query, Request, UploadFile
 
@@ -162,14 +163,30 @@ async def upload_document(
     """
     settings = get_request_settings(request)
     file_name = file.filename or "unnamed"
-    # 多读 1 字节用于判断是否超过传输层上限（20008）
-    payload = await file.read(settings.max_upload_bytes + 1)
-    file_size = len(payload)
-    if file_size > settings.max_upload_bytes:
-        raise ApiError(
-            ErrorCode.PAYLOAD_TOO_LARGE,
-            internal_detail=(f"file_size={file_size} limit={settings.max_upload_bytes}"),
-        )
+    # ARC-10（审计 2026-10-28）：分块流式落盘——不再把整文件（≤50MB）一次性读进
+    # 内存。超限判定在**累计写入**过程中进行：读满 limit+1 字节即立即失败，
+    # 超限请求的内存峰值从「整个文件」降到「一个分块（1MB）」。
+    # 校验通过后才从临时文件整体读回一次（此时大小已受控，内存峰值回到原水平）；
+    # 临时文件由 with 上下文保证删除（含异常路径）。
+    limit = settings.max_upload_bytes
+    chunk_size = 1024 * 1024  # 1MB 分块
+    file_size = 0
+    payload_digest = hashlib.sha256()
+    with tempfile.TemporaryFile() as tmp:
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            file_size += len(chunk)
+            if file_size > limit:
+                raise ApiError(
+                    ErrorCode.PAYLOAD_TOO_LARGE,
+                    internal_detail=(f"file_size>{file_size} limit={limit}"),
+                )
+            payload_digest.update(chunk)
+            tmp.write(chunk)
+        tmp.seek(0)
+        payload = tmp.read()
 
     service = get_rag_service()
 
@@ -187,8 +204,10 @@ async def upload_document(
 
     # multipart 请求体已被表单解析器消费，无法二次读取；
     # 以「文件名 + 文件内容摘要」作为幂等指纹的请求体摘要项（架构文档 3.0.5）
+    # ARC-10：内容摘要复用流式读取阶段的增量摘要（与整读 sha256(payload) 等值），
+    # 不再对全量字节做第二次遍历。
     file_digest = hashlib.sha256(
-        f"{file_name}:{file_size}:{hashlib.sha256(payload).hexdigest()}".encode()
+        f"{file_name}:{file_size}:{payload_digest.hexdigest()}".encode()
     ).hexdigest()
 
     result, replayed = await run_idempotent(

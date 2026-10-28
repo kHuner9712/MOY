@@ -26,5 +26,13 @@ export default defineConfig({
     include: ['src/**/*.test.{ts,tsx}'],
     css: false,
     restoreMocks: true,
+    coverage: {
+      provider: 'v8',
+      // QA-04（审计 2026-10-28）：初始阈值 = 2026-10-28 实测基线 44.08% 向下取整。
+      // 纪律：**只升不降**——补测试只许抬高这个数；降低阈值等同拆门禁。
+      thresholds: {
+        lines: 44,
+      },
+    },
   },
 });

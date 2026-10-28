@@ -224,6 +224,14 @@ jobs:
           echo "[OK] Python 依赖清单已生成"
 
       # ------------------------------------------------------------------
+      # Node 依赖漏洞扫描（QA-05，审计 2026-10-28）
+      # ------------------------------------------------------------------
+      - name: npm audit（高危及以上即红）
+        # npm workspaces 锁在仓库根（与 ci-web.yml 同口径），必须在根执行；
+        # audit 读 package-lock.json 上报 registry 漏洞库比对结果。
+        run: npm audit --audit-level=high
+
+      # ------------------------------------------------------------------
       # Node 依赖协议扫描
       # ------------------------------------------------------------------
       - name: 扫描 Node 依赖协议
@@ -249,12 +257,30 @@ jobs:
           import yaml
 
           # 黑名单：GPL / AGPL / SSPL（含各类变体）
+          # ENG-03（审计 2026-10-28）：原 `\b(GPL|AGPL|...)\b` 用精确 token 枚举
+          # 匹配自由文本，`GPLv3` 的 L-v 之间不成立词边界、`GPL-2.0-only` 又不在
+          # 枚举里——两路都漏。改为**前缀锚定式**：`L?GPL` 前缀同时命中
+          # GPLv2/GPLv3/GPL-2.0-only/…；`General Public License` 兜全称写法；
+          # AGPL/SSPL 单列避免语义混淆。
           BLACKLIST = re.compile(
-              r'\b(GPL|AGPL|SSPL|OSL|OSL-3\.0|SSPL-1\.0|AGPL-3\.0|GPL-2\.0|GPL-3\.0)\b',
+              r'(?i)(?:\bAGPL|\bSSPL|\bL?GPL|General\s+Public\s+License|EUPL|OSL)\S*',
               re.IGNORECASE,
           )
-          # 灰名单：仅可独立进程调用，不可引入核心代码（需人工确认）
-          GREYLIST = re.compile(r'\b(LGPL|MPL|CDDL|EPL)\b', re.IGNORECASE)
+          # 灰名单：仅可独立进程调用，不可引入核心代码（需人工确认）。
+          # ⚠ 黑名单优先（`L?GPL` 已含 LGPL——判黑不判灰）；灰名单前缀式改写，
+          # 兜其余 LGPL 写法之外的 MPL/CDDL/EPL。
+          GREYLIST = re.compile(r'(?i)(?:\bMPL|\bCDDL|\bEPL)\S*')
+
+          # ENG-03 负样本自检（与判定同生共死：正则再退化时此步骤直接红）
+          _BLACKLIST_POSITIVES = [
+              "GPLv3", "GPL-2.0-only", "AGPL-3.0-only", "SSPL-1.0",
+              "GNU General Public License v3.0",
+          ]
+          _BLACKLIST_NEGATIVES = ["MIT", "Apache-2.0", "BSD-3-Clause", "MPL-2.0"]
+          assert all(BLACKLIST.search(s) for s in _BLACKLIST_POSITIVES), \
+              "ENG-03 自检失败：黑名单正则漏检了已知 GPL 变体"
+          assert not any(BLACKLIST.search(s) for s in _BLACKLIST_NEGATIVES), \
+              "ENG-03 自检失败：黑名单正则误伤白名单协议（MPL 属灰名单）"
 
           findings = {'black': [], 'grey': []}
 
