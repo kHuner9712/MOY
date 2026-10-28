@@ -10,7 +10,9 @@
 # ---------------------------------------------------------------------------
 
 # ---------- deps ----------
-FROM node:22-alpine AS deps
+# ENG-04（审计 2026-10-28）：FROM 锁 digest（Hub 实查 2026-10-28；登记见
+# deploy/images.lock 的 node 条目）——同 adapter，构建可复现要求。
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS deps
 
 WORKDIR /app
 
@@ -23,7 +25,7 @@ COPY --from=lockroot package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
 # ---------- builder ----------
-FROM node:22-alpine AS builder
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder
 
 WORKDIR /app
 
@@ -50,7 +52,7 @@ COPY . .
 RUN npm run build
 
 # ---------- runner ----------
-FROM node:22-alpine AS runner
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runner
 
 WORKDIR /app
 

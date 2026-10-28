@@ -32,6 +32,7 @@ from typing import Any, Final
 
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
+from app.core.logging import get_logger
 from app.db.repositories.base import BaseRepository
 from app.db.repositories.billing.records import (
     ACTIVE_SUBSCRIPTION_STATUSES,
@@ -57,6 +58,8 @@ from app.db.repositories.billing.records import (
     to_iso,
 )
 from app.db.session import platform_scope, tenant_scope
+
+logger = get_logger(__name__)
 
 #: 套餐目录表名
 PLAN_TABLE: Final[str] = "billing_plan"
@@ -292,6 +295,11 @@ class PostgresBillingStore:
             conditions.append("status = :status")
             parameters["status"] = status
         where_clause = " AND ".join(conditions)
+        # ARC-12①（审计 2026-10-28）：OPS 企业列表加安全上限——接口契约不变
+        # （响应结构无总数字段），只防 `name ILIKE '%kw%'` 全表扫拖垮库。
+        # 超限不报错，截断到上限并在 internal_detail 留痕；完整分页
+        # （limit/offset + COUNT + pg_trgm 索引）涉及契约变更，独立任务再做。
+        limit = 200
         async with platform_scope(self._settings, read_only=True) as uow:
             repo = _TenantTableRepository(uow)
             rows = await repo.fetch_all(
@@ -301,8 +309,14 @@ class PostgresBillingStore:
                 FROM {TENANT_TABLE}
                 WHERE {where_clause}
                 ORDER BY created_at DESC, tenant_id
+                LIMIT :limit
                 """,
-                parameters,
+                {**parameters, "limit": limit},
+            )
+        if len(rows) >= limit:
+            logger.warning(
+                "ops_list_tenants_truncated",
+                detail=f"rows={len(rows)} limit={limit}; 接分页（ARC-12②）",
             )
         return [_to_tenant(row) for row in rows]
 

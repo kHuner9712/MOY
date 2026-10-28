@@ -11,7 +11,10 @@
 # ---------------------------------------------------------------------------
 
 # ---------- builder ----------
-FROM python:3.13-slim AS builder
+# ENG-04（审计 2026-10-28）：FROM 锁 digest（Hub 实查 2026-10-28；登记见
+# deploy/images.lock 的 python 条目）——builder 镜像可被上游重推覆盖 tag，
+# 锁 digest 才能保证构建可复现；升级 = 改两处 FROM + 更新 images.lock。
+FROM python:3.13-slim@sha256:5dde09372dfa8e7762892b2a12619fcf6c23b0b78bce1058a9fa5a3a7a40e68e AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -32,7 +35,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install .
 
 # ---------- runtime ----------
-FROM python:3.13-slim AS runtime
+FROM python:3.13-slim@sha256:5dde09372dfa8e7762892b2a12619fcf6c23b0b78bce1058a9fa5a3a7a40e68e AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

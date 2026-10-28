@@ -97,7 +97,11 @@ services:
       --appendonly yes
       --requirepass ${OA_VALKEY_PASSWORD:?必须在 .env 中设置}
       --maxmemory ${OA_VALKEY_MAXMEMORY:-2gb}
-      --maxmemory-policy allkeys-lru
+      # ARC-14（审计 2026-10-28）：allkeys-lru → volatile-lru——只淘汰带 TTL 的 key，
+      # 无 TTL 的业务键（若误写入）不会被静默驱逐。前提：限流/幂等/队列各 key
+      # 写入处均显式带 TTL（审计已逐处核实）。队列 key 迁独立 db 的方案暂缓
+      # （涉及业务代码与连接配置，收益待多副本阶段再评估）。
+      --maxmemory-policy volatile-lru
     volumes:
       - valkey-data:/data
     networks: [officeai-backend]

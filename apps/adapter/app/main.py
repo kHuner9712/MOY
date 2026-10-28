@@ -301,6 +301,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
         raise
 
+    # ARC-13（审计 2026-10-28）：生产环境 + 进程内幂等/限流后端 = 多副本部署下
+    # 幂等与限流失效（每个副本各记各的）。代码默认保持 memory（保离线单测可跑），
+    # 部署默认已改 redis（deploy/.env.example）；此处只负责让危险组合在启动时被看见。
+    if settings.env == "production" and settings.idempotency_backend == "memory":
+        logger.error(
+            "idempotency_backend_memory_in_production",
+            detail=(
+                "OA_IDEMPOTENCY_BACKEND=memory 且 env=production："
+                "多副本部署下幂等/限流失效；请改配 redis（栈内 Valkey 已就绪）"
+            ),
+        )
+
     # 阶段四 T4-03.2：后台任务轮询（抽取记忆、导出、保留期清理的载体）。
     # **只在 `OA_BACKGROUND_JOBS_ENABLED=true` 且 `env != test` 且确有数据库时启动**：
     # 测试环境起一个永不结束的协程会污染 pytest 事件循环（"Task was destroyed"），
@@ -384,7 +396,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(MetricsMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if conf.env == "development" else [],
+        # QA-06（审计 2026-10-28）：`allow_origins=["*"]` + `allow_credentials=True`
+        # 是浏览器规范明令禁止/告警的组合（带凭据时通配符被拒），还误导排障。
+        # dev 白名单只开本机前端联调端口；非 development 一律为空（同源部署无跨域需求）。
+        allow_origins=(
+            ["http://localhost:3000", "http://127.0.0.1:3000"] if conf.env == "development" else []
+        ),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

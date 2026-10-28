@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Annotated, Any, Final
 
 from fastapi import Depends, Header, Request
@@ -903,6 +904,26 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
             ),
         )
     if conf.tenant_membership_check == "off":
+        # QA-07（审计 2026-10-28）：时效检查——off 且 deadline 已过 = 安全配置错误，
+        # 启动即失败（fail loud）。止血开关不允许"忘了开回来"还一直开着。
+        deadline = conf.tenant_membership_check_deadline
+        if deadline is not None:
+            now = datetime.now(tz=deadline.tzinfo) if deadline.tzinfo else datetime.now()
+            if now > deadline:
+                logger.error(
+                    "security_downgrade_deadline_expired",
+                    env=conf.env,
+                    deadline=deadline.isoformat(),
+                )
+                raise ApiError(
+                    ErrorCode.CONFIG_ERROR,
+                    internal_detail=(
+                        f"OA_TENANT_MEMBERSHIP_CHECK=off 的时效已过期"
+                        f"（OA_TENANT_MEMBERSHIP_CHECK_DEADLINE={deadline.isoformat()}）："
+                        "紧急止血不允许无限期开启。请将 OA_TENANT_MEMBERSHIP_CHECK 改回 auto"
+                        "（如确需延长止血，先修校验问题再更新 deadline）。"
+                    ),
+                )
         if not conf.allow_security_downgrade:
             logger.error("security_downgrade_not_allowed_in_production", env=conf.env)
             raise ApiError(
@@ -912,13 +933,24 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
                     "该开关会跳过跨租户成员校验，等于允许「持 A 租户令牌 + "
                     "X-Tenant-Id: B」跨租户读写。生产/预发禁用安全降级开关；"
                     "如确需临时止血，必须同时显式设置 OA_ALLOW_SECURITY_DOWNGRADE=true，"
-                    "并在变更单里记录恢复时间。"
+                    "并建议配置 OA_TENANT_MEMBERSHIP_CHECK_DEADLINE 限定恢复时限。"
                 ),
             )
-        logger.warning(
-            "security_downgrade_enabled",
-            env=conf.env,
-            tenant_membership_check=conf.tenant_membership_check,
-            hint="安全降级已显式放行：跨租户切换未做成员校验，止血后必须改回 auto",
-        )
+        if conf.env not in _INSECURE_AUTH_ENVS:
+            # QA-07：生产/预发放行的降级必须以 error 横幅出现（不再是 WARNING）——
+            # 此刻系统存在IDOR 窗口：跨租户读写不校验成员关系。
+            logger.error(
+                "security_downgrade_enabled",
+                env=conf.env,
+                tenant_membership_check=conf.tenant_membership_check,
+                deadline=(deadline.isoformat() if deadline else ""),
+                hint="IDOR 窗口已开启：跨租户切换未做成员校验；止血后必须立即改回 auto",
+            )
+        else:
+            logger.warning(
+                "security_downgrade_enabled",
+                env=conf.env,
+                tenant_membership_check=conf.tenant_membership_check,
+                hint="安全降级已显式放行：跨租户切换未做成员校验，止血后必须改回 auto",
+            )
     logger.info("auth_startup_validated", env=conf.env, auth_mode=conf.auth_mode)

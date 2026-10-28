@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from functools import lru_cache
 from typing import Literal
 
@@ -97,6 +98,12 @@ class Settings(BaseSettings):
     #: （`validate_auth_startup` 拦截 30004）。development/test 不受影响：
     #: 本地联调与离线单测需要能构造「关闭校验」的态。
     allow_security_downgrade: bool = False
+
+    #: QA-07（审计 2026-10-28）：安全降级时效——`tenant_membership_check=off` 的
+    #: 截止时间（ISO 8601，可空，如 `2026-11-04T18:00:00+08:00`）。
+    #: `off` 且已过期时**启动即失败**（fail loud，属安全配置错误）：紧急止血
+    #: 不允许无限期开着。为空表示不设时效——存量 off 部署行为不变（只多横幅）。
+    tenant_membership_check_deadline: datetime | None = None
 
     # ------------------------------------------------------------------
     # 底座（Dify）连接配置 —— 仅适配层可见

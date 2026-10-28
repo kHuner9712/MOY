@@ -162,6 +162,29 @@ def collect_compose_references() -> dict[tuple[str, str], str]:
     return references
 
 
+def collect_dockerfile_froms() -> dict[tuple[str, str], str]:
+    """收集全部 Dockerfile 的 ``FROM`` 基础镜像引用（ENG-04）。
+
+    Returns:
+        dict[tuple[str, str], str]: ``(镜像名, 标签)`` 到来源说明的映射。
+    """
+    from_pattern = re.compile(r"^FROM\s+([\w./:-]+)(?:@sha256:[0-9a-f]+)?(?:\s+AS\s+\w+)?\s*$")
+    references: dict[tuple[str, str], str] = {}
+    for dockerfile in sorted(DEPLOY_DIR.parent.glob("apps/*/Dockerfile")):
+        for line in dockerfile.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line.startswith("FROM"):
+                continue
+            match = from_pattern.match(line)
+            if match is None:
+                continue
+            parsed = split_image(match.group(1))
+            if parsed is None:
+                continue
+            references[parsed] = f"{dockerfile.name} / FROM {match.group(1)}"
+    return references
+
+
 def check_consistency(
     locked: dict[str, dict[str, str]], references: dict[tuple[str, str], str]
 ) -> list[str]:
@@ -623,13 +646,17 @@ def main() -> int:
 
     locked = load_lock()
     references = collect_compose_references()
+    # ENG-04（审计 2026-10-28）：Dockerfile 的 FROM 基础镜像同样必须在锁内
+    #（含 digest 登记）——构建期镜像可被上游重推覆盖 tag，不入锁则构建不可复现。
+    dockerfile_froms = collect_dockerfile_froms()
 
     print("=" * 70)
     print("基础设施镜像清单校验（P0 门禁）")
     print("=" * 70)
-    print(f"[INFO] compose 引用 {len(references)} 个镜像，images.lock 登记 {len(locked)} 个")
+    print(f"[INFO] compose 引用 {len(references)} 个镜像，Dockerfile FROM {len(dockerfile_froms)} 个，images.lock 登记 {len(locked)} 个")
 
     failures = check_consistency(locked, references)
+    failures += check_consistency(locked, dockerfile_froms)
     failures += check_exact_versions(locked)
     failures += check_digests(locked)
     if args.check_remote:
