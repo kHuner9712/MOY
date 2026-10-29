@@ -37,7 +37,7 @@ set -uo pipefail
 # CRLF 自检：含 \r 的 .sh 在 bash 下会**静默跳过部分函数体**（不报语法错，函数直接返回 0）。
 # 这不是理论风险：本脚本第一版就是 CRLF，导致第 9c 项恒为"通过"（函数体没执行，退出码 0），
 # 差点把一个本该 FAIL 的检查记成 PASS。宁可在入口拦下。
-if LC_ALL=C grep -q $'\r' "${BASH_SOURCE[0]}" 2>/dev/null; then
+if [ "$(tr -cd '\r' < "${BASH_SOURCE[0]}" | wc -c | tr -d ' ')" != "0" ]; then
   echo "错误：$(basename "${BASH_SOURCE[0]}") 含 CRLF 行尾，bash 会静默跳过函数体。" >&2
   echo "修法：python -c \"import pathlib;p=pathlib.Path('$0');p.write_bytes(p.read_bytes().replace(b'\\\\r\\\\n',b'\\\\n'))\"" >&2
   exit 2
