@@ -37,6 +37,10 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0,<3.0",
     "asyncpg==0.32.0",
     "python-jose[cryptography]>=3.3",
+    # `app/core/crypto.py` 直接 import cryptography（AES-GCM 封装）：直接 import
+    # 的包必须显式声明，不能只靠 python-jose[cryptography] 的 extra 传递引入
+    # （审计 2026-10-29 D2；版本与 uv.lock 解析结果一致，H-2 双载体口径）。
+    "cryptography==50.0.2",
     "structlog==26.1.0",
     "python-multipart==0.0.32",
     "pyyaml==6.0.3",
@@ -94,9 +98,8 @@ src = ["app", "tests"]
 include = ["*.py", "**/*.py"]
 # `qa_probe/` 是联调期手工探针工具（非交付包、非测试、不进镜像），
 # 其行宽与导入顺序长期未纳入门禁；阶段二 B01 起明确排除，避免噪声掩盖真问题。
-# `tests/qa/` 同理：QA 独立验证脚本（不被 pytest 收集、非交付物），
-# 沿用同一口径排除，避免门禁噪声。
-extend-exclude = [".venv", "node_modules", "__pycache__", "qa_probe", "tests/qa"]
+# （2026-10-29 审计清理：tests/qa/ 的一次性验收脚本已删除，排除项随之移除。）
+extend-exclude = [".venv", "node_modules", "__pycache__", "qa_probe"]
 
 [tool.ruff.lint]
 select = [

@@ -8,7 +8,7 @@
 | 登记人 | 齐活林（交付总监） |
 | 依据 | `docs/qa-phase2-test-plan.md` §2.4「门禁不达标须登记门禁编号/理由/补偿措施/到期批次/签字」 |
 | 适用范围 | 第二阶段 B05-B15 |
-| 关联报告 | `docs/qa-phase2-w1-report.md`（QA-P2-03）、`docs/qa-phase2-w1-r02-report.md`（R02 结论） |
+| 关联报告 | `docs/qa-phase2-w1-r03-report.md`（QA-P2-03、R02 结论；原引 `qa-phase2-w1-report.md` 2026-10-29 审计清理已删除、结论并入 r03，原引 `qa-phase2-w1-r02-report.md` 系既有断链、本就不存在，两处均改指 r03） |
 
 > 本单只登记**经交付总监批准的偏离**，不改变门禁脚本本身。任何豁免到期未关闭，阶段门不予放行。
 

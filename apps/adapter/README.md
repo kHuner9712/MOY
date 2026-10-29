@@ -40,7 +40,8 @@ apps/adapter/
 │   │   └── security.py          # 令牌解析、租户上下文、FastAPI 鉴权依赖
 │   ├── middleware/
 │   │   ├── trace.py             # trace_id 注入与透传、访问日志
-│   │   └── error_handler.py     # 统一异常 → {code, message, data} 兜底
+│   │   ├── error_handler.py     # 统一异常 → {code, message, data} 兜底
+│   │   └── metrics.py           # HTTP 请求指标（路由模板/状态类，防时间序列基数爆炸）
 │   ├── schemas/                 # 请求响应契约（common/model/rag/agent/tool/identity + 插件/计费/运维等）
 │   ├── api/v1/                  # 标准接口端点（96 个业务端点，清单见 docs/api/README.md）
 │   ├── business/                # 业务规则层（任务/额度等，不含协议转换）
@@ -100,6 +101,10 @@ apps/adapter/
 | --- | --- | --- |
 | `0` | 成功 | `{"code":0,"message":"success"}` |
 | `10001-14999` | 领域业务错误 | 10001 AI 暂时没有给出回答，请重试 |
+| `15001-15999` | 计费与订阅错误 | 15001 当前套餐不支持该功能，升级后即可使用 |
+| `16001-16099` | 插件域（16001 已注销不复用，从 16002 起） | 16002 该插件已下架，去市场看看其他插件 |
+| `17001-17099` | 任务域 | 17001 该任务无法重试，请查看任务状态 |
+| `18001-18099` | 会话与记忆域 | 18001 该对话已不存在 |
 | `20001-20999` | 通用业务错误 | 20001 请求内容不完整，请检查后重试 |
 | `30001-30999` | 系统错误 | 30003 系统繁忙，请稍后再试 |
 
@@ -164,7 +169,7 @@ curl -H "Authorization: Bearer <token>" -H "X-Tenant-Id: default" \
 ```bash
 ruff check . && ruff format --check .   # Lint + 格式
 mypy app                                # 类型检查
-pytest tests -q --cov=app --cov-report=term-missing
+OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing   # OA_BATCH 必设，缺失即红
 ```
 
 覆盖率门禁：**≥ 85%**（CI 硬地板 `--cov-fail-under=85`，与 `ci-adapter.yml` 门禁 5 一致；
@@ -192,10 +197,16 @@ pytest tests -q --cov=app --cov-report=term-missing
 
 见上文「错误码分段」的注册制流程。
 
-## 八、T01 已知限制
+## 八、已知限制
 
 1. **桩模式**：`OA_DOWNSTREAM_ENABLED=false`（默认），所有服务返回业务化 mock 结果，
-   不产生任何真实底座请求。真实协议转换在 T02 落地（转换函数已按最终形态实现）。
-2. **内存幂等/限流**：多副本部署必须切换 `OA_IDEMPOTENCY_BACKEND=redis`（后端已实现）。
-3. **Agent 状态在内存**：T02 起迁 Redis，适配层保持无状态（架构文档 D-03）。
-4. **工具凭据**：本期连接器不持久化凭据，D-02 待决后确定归属。
+   不产生任何真实底座请求；真实协议转换已随阶段二落地并验收，接真实底座
+   需显式设置 `OA_DOWNSTREAM_ENABLED=true`。
+2. **内存幂等/限流**：多副本部署必须切换 `OA_IDEMPOTENCY_BACKEND=redis`
+   与 `OA_RATELIMIT_BACKEND=redis`（双后端均已实现）。
+3. **任务存储默认内存**：`business_store=memory`（默认）时任务状态存进程内
+   （`InMemoryTaskStore`），重启即失、不支持多副本；持久化/多副本部署必须切
+   `business_store=postgres`（`PostgresTaskStore` / `InMemoryTaskStore` 双后端，
+   见 `app/db/repositories/task/` 与 `app/business/task/`）。
+   适配层保持无状态（架构文档 D-03）。
+4. **工具凭据**：本期连接器不持久化凭据（连接记录不含凭据字段，凭据禁止入库）。

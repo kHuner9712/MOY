@@ -60,6 +60,7 @@
 | `min_platform_version` | ✅ | semver | ≤16 字符 | 平台版本低于它 → 升级被拒（16007） |
 | `changelog` | ❌ | string | ≤300 字，缺省 `""` | 版本变更说明（详情页版本历史） |
 | `requires_plugins` | ❌ | string[] | ≤3 个，缺省 `[]` | 元素须为合法 `plugin_id` 且去重；前置插件未启用 → 安装被拒（16009） |
+| `match_hints` | ❌ | string[] | ≤12 个，缺省 `[]` | 目标匹配提示（`goal_router` 目标路由打分用的领域词，如「邮件」「写信」）；每条 2-8 字、不重复、不得全是功能字（纯虚词不携带领域信号） |
 
 ### 1.3 第②段：授权能力 `capabilities[]`
 
@@ -490,6 +491,7 @@
     { "key": "draft", "name": "邮件正文", "source_step": 1 },
     { "key": "receipt", "name": "发送结果", "source_step": 2 }
   ],
+  "match_hints": ["邮件", "写信", "起草", "回复"],
   "ui_extension": {
     "layout": "task_workspace", "nav_label": "邮件起草", "icon_key": "mail", "order": 6
   }
@@ -720,6 +722,7 @@ steps[]          1-8 步，seq 从 1 连续；action 6 选 1；produces/needs �
                  tool 步必带 tool_type+operation（白名单）；render_file 步必带 render_format；
                  对外动作必带 confirm；timeout_seconds 10-600（缺省 120）
 checklist[]      {key: 产物键, name 2-24, source_step}  2-5 项
+match_hints      2-8 字领域词，≤12 条                可选  （不重复、非纯功能字；goal_router 打分用）
 ```
 
 ## 附录 B · 字段与端点自查口径
@@ -734,7 +737,7 @@ checklist[]      {key: 产物键, name 2-24, source_step}  2-5 项
 | §2 能力枚举与口径 | `apps/adapter/app/plugins/actions.py`（`CAPABILITY_KEYS` / `CAPABILITY_CATALOG` / 映射表） |
 | §3 输入规范 | `schema.py`（`InputSpec`）+ `architecture-phase3.md` §2.1 文件类输入口径 |
 | §4 产物类型 | `schema.py`（`OutputSpec`）+ `app/db/repositories/artifact_repo.py` + `renderer.py` |
-| §5 界面规范 | `schema.py`（`UiExtension`）+ 前端门禁 G-27（`apps/web/scripts/check-plugin-assets.mjs`） |
+| §5 界面规范 | `schema.py`（`UiExtension`）+ 前端门禁 G-27（`apps/web/scripts/check-workbench-host.mjs`，工作台宿主唯一性检查：单宿主 / 零按插件分支 / 零自有样式与三方 UI；占位词扫描另见 `check-no-placeholders.mjs`） |
 | §6 端点清单 | `apps/adapter/app/api/v1/plugins.py`、`app/api/v1/agent.py`、`app/api/v1/artifact_files.py`、`app/api/v1/router.py` |
 | §6.5 工具白名单 | `apps/adapter/app/registry/tool_registry.yaml` |
 | §7 样例 | `apps/adapter/app/plugins/manifests/plg_mail_draft.json` |

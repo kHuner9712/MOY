@@ -15,8 +15,8 @@
 
 | 版本 | 日期 | 修订说明 |
 | --- | --- | --- |
-| v3.0.0 | 2026-10-22 | 首次发布：能力双层模型（授权能力 / 执行原语）、复用 A 域的插件运行时、9 张新表、14 个新端点 + 4 处加性扩展（合计 82）、13 个新错误码、三插件 6 步装配、14 批次（B16-B29）、5 道新门禁、9 条架构决策（D-14~D-22）+ PRD 冲突裁决 6 条 |
-| **v3.1.0** | **2026-10-23** | **吸收 PRD v1.1 勘误 3 条**：① PL4 逐能力返回 `org_switch_enabled`（前端禁硬编码，字段名统一为 `capability_key`）；② 市场页改为「列表照常 + `installable=false`」，`15001` 的拦截点从 PL1/PL2/PL4 后移到 PL5/PL6；③ Offer 金额校验升级为 R1/R2/R3 三规则并明确默认值必须为空。端点数量与基线（14 / 82）不变 |
+| v3.0.0 | 2026-10-22 | 首次发布：能力双层模型（授权能力 / 执行原语）、复用 A 域的插件运行时、9 张新表、16 个新端点 + 4 处加性扩展（累计 84）、13 个新错误码、三插件 6 步装配、14 批次（B16-B29）、5 道新门禁、9 条架构决策（D-14~D-22）+ PRD 冲突裁决 6 条 |
+| **v3.1.0** | **2026-10-23** | **吸收 PRD v1.1 勘误 3 条**：① PL4 逐能力返回 `org_switch_enabled`（前端禁硬编码，字段名统一为 `capability_key`）；② 市场页改为「列表照常 + `installable=false`」，`15001` 的拦截点从 PL1/PL2/PL4 后移到 PL5/PL6；③ Offer 金额校验升级为 R1/R2/R3 三规则并明确默认值必须为空。端点数量与基线（16 / 累计 84）不变 |
 | **v3.2.2** | **2026-10-23** | **PL5 重复安装定案（PRD 勘误第 10 条已确认）**：`200 + already_installed=true` + 现状（**授权与设置不变**），`already_installed` 为**常驻字段**（首次 `false`、重复 `true`）；`16003` 与 PL5 彻底解耦；新增 **D-26** 记录判据（客户端重试时返回「还没有添加」与事实相反）；§5.4 给 `16003`/`16004` 各加「**不要倒置**」注（QA 曾把 `16003` 当「已停用」）；上游输入更新为 PRD v1.2 封版（606 行 / 16 端点 / 10 条勘误 / 117 断言） |
 
 ---
@@ -1237,7 +1237,7 @@ export const pluginApi = {
 
 #### B27 G-27/G-28/G-30 门禁与「可红」证明（7 文件·依赖 B23 B25）
 
-1. `apps/web/scripts/check-plugin-assets.mjs`（**G-27**：插件目录 0 个 `.css/.scss/.jsx/.tsx`；业务组件 import 白名单；宿主无 `if (pluginId ===`；`--self-test`）
+1. `apps/web/scripts/check-workbench-host.mjs`（**G-27**：工作台宿主唯一性检查——`/workbench` 单宿主（唯一 `page.tsx` 且 `[pluginId]` 动态段）+ 零按插件分支（`if (pluginId ===` 与 `plg_` 字面量）+ 零自有样式与三方 UI（插件目录 0 个 `.css/.jsx`、import 白名单）；`--self-test`；占位词扫描另见 `check-no-placeholders.mjs`）
 2. `deploy/validate_plugin_actions.py`（**G-28**：`action` 枚举 + `tool_type/operation` ∈ `tool_registry.yaml` + **插件目录 `docx` import 即红** + 依赖白名单（仅 `python-docx` 可新增）+ `--self-test`）
 3. `deploy/validate_capability_usage.py`（**G-30**：声明能力 ↔ 步骤原语双向一致——"要了没用"与"用了没要"都报错）
 4. `.github/workflows/ci-web.yml` `[改]`（接 G-27 + G-26 声明文案段）
@@ -1283,7 +1283,7 @@ export const pluginApi = {
 | --- | --- | --- | --- |
 | **G-13 扩展（错误码三处一致 + 17002 禁区）** | ① 既有：注册表 / 文档 / `business-errors.ts` 三处码集合一致（`--strict`）；② **新增：`17002` 不得出现在 `business-errors.ts` 的任何映射文案、不得出现在任何 `message`、不得出现在 A3/A4 响应体**（正则扫前端源码 + 后端 `message` 常量 + OpenAPI 示例） | `python apps/adapter/scripts/check_error_catalog.py --strict --forbid-internal 17002` | B18 / B28 |
 | **G-26 声明校验** | ① 6 份声明通过 6 段 schema（`extra="forbid"`）；② `capabilities[]` ⊆ 6 能力枚举；③ 步骤 `seq` 连续 1..8 且 ≤8；④ `render_file` 必带 `render_format`；⑤ 文案字段过禁词+占位词表（PRD §8 第 19-30 行）；⑥ 重复 `plugin_id` 拒绝；⑦ `manifest_sha256` 与 DB 快照一致 | `python deploy/validate_plugins.py` + `node apps/web/scripts/check-banned-terms.mjs --manifest` | B16 / B27 |
-| **G-27 界面一致性** | ① 插件目录（含 3 个轻量插件）0 个 `.css/.scss/.jsx/.tsx`；② `components/{plugin,workbench,workflow}/**` import 白名单（`@/components/ui/*`、`@/lib/*`、`@/hooks/*`、`react`、`lucide-react`）；③ `/workbench` 只有 1 个宿主文件且无 `if (pluginId ===`；④ 不 import `@radix-ui/*`。**扫描口径（按 PRD v1.2 收窄）：只扫可见文本节点；`href`、`data-*`、`id`、`class` 等属性值与路由串一律跳过**——否则 `/workflows`、`plugin-grant` 这类必然出现的字符串会让门禁必红 | `node apps/web/scripts/check-plugin-assets.mjs` + `check-workbench-host.mjs` | B24 / B27 |
+| **G-27 界面一致性** | ① 插件目录（含 3 个轻量插件）0 个 `.css/.scss/.jsx/.tsx`；② `components/{plugin,workbench,workflow}/**` import 白名单（`@/components/ui/*`、`@/lib/*`、`@/hooks/*`、`react`、`lucide-react`）；③ `/workbench` 只有 1 个宿主文件且无 `if (pluginId ===`；④ 不 import `@radix-ui/*`。**扫描口径（按 PRD v1.2 收窄）：只扫可见文本节点；`href`、`data-*`、`id`、`class` 等属性值与路由串一律跳过**——否则 `/workflows`、`plugin-grant` 这类必然出现的字符串会让门禁必红 | `node apps/web/scripts/check-workbench-host.mjs` + `check-no-placeholders.mjs` | B24 / B27 |
 | **G-28 原语与依赖白名单** | ① `steps[].action` ⊆ 6 原语；② `tool_type` ∈ `tool_registry.yaml` 且 `operation` ∈ 该工具 `operations`；③ **插件目录出现 `docx`（及 `docxtpl`/`python-docx-template`）import 即红**——插件只能调 `render_file`，实现见 D-20；④ `pyproject.toml`/`package.json` 除已登记的 `python-docx` 外零新增（白名单比对，且 `DOCUMENTED_PACKAGES` 必须同步为 21 项） | `python deploy/validate_plugin_actions.py` | B27 |
 | **G-29 phase3 端点基线** | ① `set(phase3_paths) == baseline-phase3-16.json` 精确相等；② `core==30 and phase2==38 and phase3==16`；③ `baseline-phase2-38.json` hash 不变；④ 4 处 `[扩展]` 只允许新增可选字段/枚举加宽（G4 逐项断言） | `python deploy/validate_openapi.py` | B21 |
 | **G-30 能力使用一致性** | 按 §2.2 映射表逐条查，双向：声明能力 ↔ 使用位置（"要了没用"与"用了没要"都红）；附加 `render_file` 与 `personal.file.read` **无耦合**校验 | `python deploy/validate_capability_usage.py` | B27 |

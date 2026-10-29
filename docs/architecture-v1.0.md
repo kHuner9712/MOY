@@ -1203,6 +1203,8 @@ sequenceDiagram
 
 ## 6.1 目录树
 
+> ⚠️ **本树为阶段一结构快照（冻结于 V1.0 基线），不随代码演进更新；当前结构以仓库为准（含 business/db/plugins/workers/middleware 等）。**
+
 ```
 officeai/                              # Monorepo 根目录
 ├── apps/
@@ -1236,11 +1238,7 @@ officeai/                              # Monorepo 根目录
 │   │   │   │   ├── tool.py
 │   │   │   │   └── identity.py
 │   │   │   ├── services/              # 协议转换服务（唯一允许写 Dify/Keycloak 调用）
-│   │   │   │   ├── model_service.py
-│   │   │   │   ├── rag_service.py
-│   │   │   │   ├── agent_service.py
-│   │   │   │   ├── tool_service.py
-│   │   │   │   └── identity_service.py
+│   │   │   │   └── model_service.py、rag_service.py、agent_service.py 等（以 app/services 目录为准）
 │   │   │   ├── clients/
 │   │   │   │   ├── dify_client.py     # Dify HTTP 客户端（重试/超时/SSE 解析）
 │   │   │   │   └── keycloak_client.py # Keycloak 客户端
@@ -1248,9 +1246,7 @@ officeai/                              # Monorepo 根目录
 │   │   │   │   ├── profile_routes.yaml  # 能力档位→Dify App 路由表
 │   │   │   │   └── tool_registry.yaml   # 工具类型注册表（Q1 数据驱动）
 │   │   │   └── tools/                 # 工具连接器实现（Q1 新增工具只加这里）
-│   │   │       ├── base.py
-│   │   │       ├── email_connector.py
-│   │   │       └── github_connector.py
+│   │   │       └── base.py、email_connector.py、github_connector.py 等（以 app/tools 目录为准）
 │   │   ├── tests/
 │   │   │   ├── unit/
 │   │   │   └── integration/           # 契约测试（对 Dify mock 服务）
@@ -1400,6 +1396,7 @@ graph LR
 | sqlalchemy | ^2.0 | MIT | 业务库 ORM（审计等轻量场景） |
 | asyncpg | ==0.32.0 | Apache-2.0 | PostgreSQL 异步驱动 |
 | python-jose[cryptography] | ^3.3 | MIT | JWT 解析（**须显式限定 algorithms**，见 8.1.1） |
+| cryptography | ==50.0.2 | Apache-2.0 / BSD-3-Clause 双许可 | AES-GCM 加密封装（`app/core/crypto.py` 直接引用；亦为 python-jose 传递依赖，按「传递依赖必须显式声明」口径独立登记） |
 | structlog | ==26.1.0 | MIT + Apache-2.0 双许可 | 结构化日志 |
 | python-multipart | ==0.0.32 | Apache-2.0 | multipart 文件上传 |
 | pyyaml | ==6.0.3 | MIT | 注册表/路由表 YAML 解析 |
@@ -1420,14 +1417,14 @@ graph LR
 | 包 | 漏洞 ID | 影响 | 处置 |
 | --- | --- | --- | --- |
 | `starlette 0.46.2` | PYSEC-2026-1941 / 1942 / 161 / 2281 / 2280 / 249 / 248（14 项） | **PYSEC-2026-1941 直接命中 R3 文档上传接口**：解析大文件 multipart 时阻塞事件循环，导致**无法接受新连接**（DoS）。我们的上传上限是 50MB，正处风险区间 | ✅ **必须修复**：fastapi 升级至 `^0.156` + starlette 至 `≥1.3.1`（已验证可解析：`fastapi 0.156.4` 允许 `starlette>=0.46.0`）→ **14 项全部消除**（实测复审 0 项） |
-| `python-jose 3.5.0` | PYSEC-2026-4298 | 未显式限定算法时，可接受 DER 编码公钥伪造 HS256 令牌（CVE-2024-33663 不完整修复） | ⚠️ **无上游修复版本**（3.5.0 已最新）。**但我们的用法不受影响**：`app/core/security.py:157` 已显式传 `algorithms=[conf.jwt_algorithm]`，且默认 `HS256` 对称算法，漏洞前提（"algorithms are not explicitly restricted"）不成立 → **接受风险 + 加固约束**：见下方强制项 |
+| `python-jose 3.5.0` | PYSEC-2026-4298 | 未显式限定算法时，可接受 DER 编码公钥伪造 HS256 令牌（CVE-2024-33663 不完整修复） | ⚠️ **无上游修复版本**（3.5.0 已最新）。**但我们的用法不受影响**：`app/core/security.py:158` 已显式传 `algorithms=[conf.jwt_algorithm]`，且默认 `HS256` 对称算法，漏洞前提（"algorithms are not explicitly restricted"）不成立 → **接受风险 + 加固约束**：见下方强制项 |
 | `ecdsa 0.19.2` | PYSEC-2026-1325 | P-256 曲线 Minerva 时序攻击，可泄露 nonce 导致私钥泄露（影响 `SigningKey.sign_digest` / 密钥生成 / ECDH；**验签不受影响**） | ⚠️ **上游明确不修复**（side-channel 视为项目范围外）。**我们的用法不受影响**：适配层仅用 ecdsa **验签**，未使用签名/密钥生成/ECDH → **接受风险** |
 | `pip 26.1.2` | PYSEC-2026-3721 | 双重编码包 URL 可写入任意路径 | ✅ 构建期工具，非运行时依赖；**升级 pip ≥26.2 即可**，不纳入产品依赖清单 |
 
 **强制加固约束（写入适配层开发规范）**：
 
 1. **`jwt.decode()` 必须显式传 `algorithms=[...]`**，**禁止**省略或使用变量外的不受限列表 ——
-   这是 `python-jose` 漏洞的唯一防线，代码评审必须核查（`app/core/security.py:157` 当前合规）；
+   这是 `python-jose` 漏洞的唯一防线，代码评审必须核查（`app/core/security.py:158` 当前合规）；
 2. **禁止**在适配层中引入 `ecdsa` 的签名 / 密钥生成 / ECDH API（仅允许验签）——
    若 Keycloak 未来改用非对称算法（RS256/ES256），须**改用 cryptography 库直接验签**并重新评估；
 3. **starlette 不得低于 1.3.1** —— 由 `fastapi>=0.156` 传递依赖保证，CI 依赖清单门禁须核验实际解析版本；

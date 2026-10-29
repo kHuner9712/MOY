@@ -592,6 +592,6 @@ AST 扫描 2050 个测试函数：`assert` 语句 **6241** 条（≈3.0 条/用�
 **审计自证**：本报告所有门禁类结论均有实跑输出（`validate_import_directions.py` exit 0、`validate_images.py` exit 0、`validate_openapi.py --strict` exit 0、`validate_deps.py` exit 0 + `--self-test` 全绿、`validate_gate_wiring.py` exit 0、`export_plugin_contract.py --check` exit 0、`check-plugin-contract.mjs --generated` 0 差异、`uv lock --check` resolved 58）；H-1 为临时目录最小复现（`npm ci` exit 1）；镜像时间戳由 `docker image inspect` 取得；测试数字由 `pytest` 实跑（两人独立两轮）；变异测试 3/3 在代码副本上进行、仓库零改动。审计全程未修改任何源码/配置/锁文件，`git status` 仅新增 4 份审计报告。
 
 **分报告**：
-- `docs/audit-2026-10-28-r2-arch.md`（架构/依赖许可，17 条）
-- `docs/audit-2026-10-28-r2-eng.md`（代码/安全/性能，21 条）
-- `docs/audit-2026-10-28-r2-qa.md`（测试覆盖与验证体系，13 条）
+- `docs/audit-2026-10-28-r2-arch.md`（架构/依赖许可，17 条；2026-10-29 审计清理已删除，内容已并入本汇总）
+- `docs/audit-2026-10-28-r2-eng.md`（代码/安全/性能，21 条；2026-10-29 审计清理已删除，内容已并入本汇总）
+- `docs/audit-2026-10-28-r2-qa.md`（测试覆盖与验证体系，13 条；2026-10-29 审计清理已删除，内容已并入本汇总）

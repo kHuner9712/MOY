@@ -363,9 +363,9 @@
 2. QA PG 库环境（中）：`moy-qa-pg:55433` 使用 `postgres:18.6-alpine`，不带 pgvector，与仓库标准镜像（CI/compose 均为 `pgvector/pgvector:pg18`）不一致，导致 memory 内核 PG 用例 setup ERROR。**处置：采用 `moy-qa-pg-vec:55434` 为标准 PG 口径库**（已全基线 0001-0011 + vector 0.8.7，35 用例实测通过），旧库不重建、口径写入文档；容器镜像统一留作环境任务。
 3. `scan:capability` 告警（中）：`plg_hr_admin` 多要 `org.directory.read`（phase3 引入，HEAD 同错复现），不在本批门禁清单。
 
-**PG 口径库定版（环境决策）**：标准库 = `moy-qa-pg-vec:55434`（镜像 `pgvector/pgvector:pg18`，与 CI `.github/workflows/ci-adapter.yml` 及 `deploy/docker-compose.yml` 一致；台账 0001-0011 全应用 + vector 0.8.7）。`moy-qa-pg:55433` 使用 `postgres:18.6-alpine`，不提供 pgvector，**不得用于 memory 内核 PG 用例**；该库已补 0010/0011，0009 因缺扩展阻塞，容器镜像统一留作环境任务（不阻塞开发）。口径已写入 `docs/qa-phase3-batch-acceptance-checklist.md` 与 `apps/adapter/tests/qa/README.md`。
+**PG 口径库定版（环境决策）**：标准库 = `moy-qa-pg-vec:55434`（镜像 `pgvector/pgvector:pg18`，与 CI `.github/workflows/ci-adapter.yml` 及 `deploy/docker-compose.yml` 一致；台账 0001-0011 全应用 + vector 0.8.7）。`moy-qa-pg:55433` 使用 `postgres:18.6-alpine`，不提供 pgvector，**不得用于 memory 内核 PG 用例**；该库已补 0010/0011，0009 因缺扩展阻塞，容器镜像统一留作环境任务（不阻塞开发）。口径已写入 `docs/qa-phase3-batch-acceptance-checklist.md` 与 `apps/adapter/tests/qa/README.md`（后者 2026-10-29 审计清理已删除）。
 
-**验证脚本归位**：QA 的两个独立验证脚本移入 `apps/adapter/tests/qa/`（不被 pytest 收集，`ruff extend-exclude` 同步），附 README 说明跑法；内存口径实跑 23 passed。
+**验证脚本归位**：QA 的两个独立验证脚本移入 `apps/adapter/tests/qa/`（不被 pytest 收集，`ruff extend-exclude` 同步），附 README 说明跑法；内存口径实跑 23 passed。（脚本 `qa_w1_v1_verify.py` / `qa_w1_v1_pg_verify.py` 及目录 2026-10-29 审计清理已删除，W1 结论留存于本决策单；正式回归以 `tests/integration/test_stats_tasks.py`、`tests/integration/test_capability_recommend.py` 为准）
 
 ---
 

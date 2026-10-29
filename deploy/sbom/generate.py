@@ -61,8 +61,9 @@ IMAGES_LOCK: Final[Path] = REPO_ROOT / "deploy" / "images.lock"
 #: Node 锁文件
 PACKAGE_LOCK: Final[Path] = REPO_ROOT / "package-lock.json"
 
-#: uv 锁文件（当前仓库没有：适配层用 venv 安装。存在时优先用它——它是全量传递依赖）
-UV_LOCK: Final[Path] = REPO_ROOT / "uv.lock"
+#: uv 锁文件（位于 apps/adapter/：全量传递依赖的真源，优先于 venv 探测；
+#: 审计 2026-10-29 C1 修正——原先错指根级 uv.lock，该文件不存在，pypi 层静默降级）
+UV_LOCK: Final[Path] = REPO_ROOT / "apps" / "adapter" / "uv.lock"
 
 #: 适配层目录（用于 venv 探测与 pyproject 兜底）
 ADAPTER_ROOT: Final[Path] = REPO_ROOT / "apps" / "adapter"

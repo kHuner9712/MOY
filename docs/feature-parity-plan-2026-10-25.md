@@ -421,6 +421,6 @@ GET/PATCH/DELETE /api/v1/agent/schedules/{id}
 | 文档 | 关系 |
 |---|---|
 | `docs/prd-v1.0.md` | 本路线图新增的 24 端点应作为 P0-25~P0-31 增补进 PRD（功能范围扩展） |
-| `docs/assessment-2026-10-25-readiness-and-competitive-positioning.md` | 该文 §2 指出"竞争情报基线缺失"，本文用公开资料补齐了五产品画像，可视为其补齐任务的执行结果 |
+| `docs/assessment-2026-10-25-readiness-and-competitive-positioning.md`（2026-10-29 审计清理已删除，同主题保留件见 `docs/gap-analysis-2026-10-25-commercial-readiness.md`） | 该文 §2 指出"竞争情报基线缺失"，本文用公开资料补齐了五产品画像，可视为其补齐任务的执行结果 |
 | `docs/research-2026-10-25-*` | 工程实践与安全教训的参照，本文不重复 |
 | `docs/plan-v1.0.md` | 阶段划分（4 阶段 24 周）不变；本文的 12 周功能补齐建议并入阶段四之后或作为 V1.1 主线 |

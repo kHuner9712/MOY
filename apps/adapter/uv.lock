@@ -1085,6 +1085,7 @@ version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "prometheus-client" },
@@ -1113,6 +1114,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", specifier = "==0.32.0" },
+    { name = "cryptography", specifier = "==50.0.2" },
     { name = "fastapi", specifier = ">=0.156,<0.157" },
     { name = "httpx", specifier = ">=0.27,<0.29" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },

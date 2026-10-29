@@ -1165,7 +1165,7 @@ docker compose start proxy web
 
 ## 10. 迁移与兼容
 
-### 10.1 迁移编号（**6 条**，最小可回滚粒度）
+### 10.1 迁移编号（**7 条**，最小可回滚粒度）
 
 | 编号 | 文件 | 内容 | 依赖批次 |
 | --- | --- | --- | --- |
@@ -1175,12 +1175,13 @@ docker compose start proxy web
 | `0009` | `0009_user_memory.sql` | `vector` 扩展 + `user_memory`/`memory_embedding`/`user_memory_setting` + RLS | T4-03 |
 | `0010` | `0010_background_job.sql` | `background_job` + RLS | T4-03 |
 | `0011` | `0011_tenant_budget.sql` | `tenant_budget` + RLS | T4-04 |
+| `0012` | `0012_quota_hold.sql` | `document_meta`/`plugin_task` + `hold_reason` 额度挂起标记（`''`/`'quota'`/`'past_due'`）+ 2 条部分索引：把「该行已被额度挂起」变成**库内事实**，重启/多副本不丢挂起态，超额不再继续烧上游（P4-11 / P3-B22-01 ②③，10-28 修复新增） | T4-04（10-28 追加） |
 
 > 为什么不再合并：`0006`/`0007` 是**独立小改动**且 `0006` 卡着 `OA_BATCH=B30` 的 CI 转绿，必须能单独先上；`0008-0011` 各自对应一个能力，回滚粒度决定"出问题能否只退记忆不退会话"。
 
 ### 10.2 down SQL 与回滚机制
 
-- 目录 `deploy/migrations/rollback/`，命名 `0006_plugin_artifact_content_type.down.sql`…`0011_tenant_budget.down.sql`。
+- 目录 `deploy/migrations/rollback/`，命名 `0006_plugin_artifact_content_type.down.sql`…`0012_quota_hold.down.sql`。
 - **`0008`/`0009` 的 down 只删表不删数据副本**：`down` 前脚本强制 `pg_dump -t conversation -t message ...` 到 `rollback/<ts>/`，否则拒绝执行（`R-4`：down 把数据改坏比不能回滚更糟）。
 - `migrate.py` 增 `--rollback <version…>`：倒序执行 `rollback/NNNN_<name>.down.sql`，并在 `schema_migration` 删对应行；**不自动级联**（必须显式给到版本）。回滚前强制整库备份（`pg_dump --no-owner -Fc`），缺 `pg_dump` 直接拒绝。
 - `validate_migrations.py --run-pg` 增三轮用例：`up → down → up` 后行数与关键列值一致（P4-14 ①）。

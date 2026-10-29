@@ -1,8 +1,24 @@
 # 迁移台账与孤儿清理（阶段三 B19 起）
 
-> **阶段三迁移尚未发布**：`0003` / `0004` 在本阶段内仍有改动。任何跑过旧版的开发库、
-> 测试库，`schema_migration` 里的 checksum 会与磁盘不一致——**这是检测机制在正常工作**，
-> 不是缺陷。验证一律用**全新库**；开发库改动后重建即可。
+> **发布状态**：阶段三早已验收，`0003` / `0004` 等阶段三迁移已冻结、不再改动；
+> 迁移线已推进到 `0012_quota_hold`（清单见下表）。
+> 任何跑过未发布期旧版的开发库、测试库，`schema_migration` 里的 checksum 会与磁盘
+> 不一致——**这是检测机制在正常工作**，不是缺陷。验证一律用**全新库**；开发库重建即可。
+
+## 迁移清单（0005–0012，按执行顺序）
+
+| 迁移脚本 | 用途（摘自各 SQL 文件头注释） |
+| --- | --- |
+| `0005_phase3_artifact_content.sql` | `plugin_artifact.content` BYTEA 列：文件类产物（docx/xlsx/zip）字节落库，导出的是真 docx 而非文本预览 |
+| `0006_plugin_artifact_content_type.sql` | `plugin_artifact.content_type` 列：下载产物声明真实 MIME，不再恒回落 `text/plain` |
+| `0007_usage_event_dimensions.sql` | `usage_event` 增 `profile` / `provider` / `prompt_tokens` / `completion_tokens` 四个计量维度 |
+| `0008_conversation_message.sql` | 会话与消息落库（`conversation` / `message`）：对话历史刷新可恢复，自研上下文组装的前提 |
+| `0009_user_memory.sql` | 记忆内核三表（`user_memory` / `memory_embedding` / `user_memory_setting`），依赖 `vector` 扩展（见下文「pgvector 扩展由谁安装」） |
+| `0010_background_job.sql` | 后台任务表：PG 队列 + `FOR UPDATE SKIP LOCKED`，承载记忆抽取、租户导出、保留期清理 |
+| `0011_tenant_budget.sql` | 租户月度预算表（`tenant_budget`）：成本护栏读取，计费表零改动 |
+| `0012_quota_hold.sql` | `document_meta` / `plugin_task` 增 `hold_reason` 额度挂起标记，超额挂起状态落库、重启/多副本不丢 |
+
+`rollback/` 目录自 `0006` 起为每个迁移配对 `*.down.sql` 回退脚本（`0005` 及更早无 down 文件）。
 
 ## 1. 台账三种状态
 
@@ -46,7 +62,7 @@ python -m app.db.migrate --check --prune-orphans --yes
 
 | 场景 | 谁装扩展 | 怎么做 |
 | --- | --- | --- |
-| 新装（initdb 首启） | initdb（超级用户） | `deploy/init-schema-phase4.sql` 开头的 `CREATE EXTENSION IF NOT EXISTS vector` 自动执行 |
+| 新装（initdb 首启） | initdb（超级用户） | `deploy/init-schema-phase4.sql` 建表段之前的 `CREATE EXTENSION IF NOT EXISTS vector`（约第 153 行）自动执行 |
 | 存量库升级 | **DBA** | `psql -U officeai -d officeai -c "CREATE EXTENSION IF NOT EXISTS vector;"` 后重跑 `--apply` |
 | 空库验证路径（`validate_migrations --run-pg` / G-11 临时库） | 超级用户 | 门禁/夹具在建库后、`--apply` 前以属主身份预建扩展 |
 

@@ -111,13 +111,13 @@
 │   ├── images.lock                # 镜像清单：名称 + 标签 + 指纹（digest）
 │   ├── nginx/                     # 入口网关配置
 │   ├── migrations/                # 增量变更脚本（含 rollback/ 下的回退脚本）
-│   ├── sql/                       # DBA 用的一次性脚本（见第 6、11 章）
 │   ├── offline/
 │   │   ├── images/                # 镜像归档 *.tar + checksums.sha256
 │   │   └── plugins/               # 模型服务插件离线包
 │   ├── backup.sh / restore.sh     # 备份 / 恢复
 │   └── validate_*.py              # 交付自检脚本
 ├── docs/                          # 本手册与合规文档
+├── sql/                           # DBA 用的一次性脚本（见第 6、11 章）
 └── (可选) sbom.cdx.json           # 组件清单（供客户安全评审）
 ```
 

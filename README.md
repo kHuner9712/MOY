@@ -55,7 +55,7 @@ officeai/                              # Monorepo 根目录
 │   │   │   │   └── ...
 │   │   │   ├── registry/              # 档位路由表、工具类型注册表（数据驱动）
 │   │   │   └── tools/                 # 工具连接器实现（新增工具只加这里）
-│   │   ├── tests/{unit,integration,e2e}/  # 单元测试 / 集成测试 / 端到端测试
+│   │   ├── tests/{unit,integration,e2e,security}/  # 单元测试 / 集成测试 / 端到端测试 / 安全测试
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   └── README.md
@@ -71,15 +71,16 @@ officeai/                              # Monorepo 根目录
 │   ├── docker-compose.saas.yml        # SaaS 本地联调
 │   ├── .env.example                   # OA_* 全量环境变量样例
 │   ├── init-schema-phase3.sql         # 阶段三 Schema 初值（9 张插件/任务表）
-│   ├── migrations/                    # 0001-0004 迁移（幂等 + 自足 + 双路径门禁）
-│   └── validate_*.py                  # 门禁脚本：端点/迁移/依赖/镜像/插件声明/Schema 保留
+│   ├── migrations/                    # 0002-0012 迁移（11 个，0001 为 RESERVED 基线别名；幂等 + 自足 + 双路径门禁）
+│   └── validate_*.py                  # 门禁脚本 16 个（端点/迁移/依赖/镜像/插件/Schema 保留/批量时钟/配置名/部署/门禁接线/导入方向/离线包/打包/PG 标记/仓库对称/密钥）
 ├── docs/
 │   ├── plan-v1.0.md                   # 开发执行总方案
 │   ├── prd-v1.0.md                    # 产品需求文档
-│   ├── prd-phase{2,3}-increment.md    # 阶段二/三增量 PRD
+│   ├── prd-phase{2,3,4}-increment.md  # 阶段二/三/四增量 PRD
 │   ├── architecture-v1.0.md           # 系统架构设计文档（30 端点冻结基线）
-│   ├── architecture-phase{2,3}.md     # 阶段二/三架构（38 / 16 端点基线 + 批次分解）
-│   ├── phase{1,2,3}-acceptance-report.md  # 各阶段验收报告
+│   ├── architecture-phase{2,3,4}.md   # 阶段二/三/四架构（38 / 16 / 10 端点基线 + 批次分解）
+│   ├── architecture-w1-metrics-entry.md  # W1 增量架构（任务统计 + 能力推荐切片）
+│   ├── phase{1,2,3,4}-acceptance-report.md  # 各阶段验收报告
 │   ├── plugin-dev-guide.md            # 插件开发规范与样例（P0-P3-05）
 │   ├── api/                           # 接口规范（OpenAPI，从适配层生成）
 │   └── adr/                           # 架构决策记录
@@ -135,7 +136,7 @@ cd apps/web
 npm install
 
 # 2) 配置适配层地址
-#    在项目根目录创建 .env.local，写入 NEXT_PUBLIC_ADAPTER_BASE_URL=http://127.0.0.1:8000
+#    创建 apps/web/.env.local，写入 NEXT_PUBLIC_ADAPTER_BASE_URL=http://127.0.0.1:8000
 
 # 3) 开发模式
 npm run dev
@@ -150,7 +151,7 @@ npm run build && npm run start
 cd deploy
 
 cp .env.example .env
-# 按需修改 DEPLOY_MODE=saas|private 与各服务连接串
+# 按需修改 OA_DEPLOY_MODE=saas|private 与各服务连接串
 
 docker compose -f docker-compose.yml up -d        # 私有化
 docker compose -f docker-compose.saas.yml up -d   # SaaS 本地联调
@@ -196,7 +197,7 @@ docker compose -f docker-compose.saas.yml up -d   # SaaS 本地联调
 cd apps/adapter
 ruff check . && ruff format --check .
 mypy app
-pytest tests -q --cov=app --cov-report=term-missing
+OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing
 ```
 
 ## 六、当前进度与已知限制
@@ -208,20 +209,21 @@ pytest tests -q --cov=app --cov-report=term-missing
 | 一：底座与适配层攻坚 | 第 1-8 周 | ✅ 已验收 | `docs/phase1-acceptance-report.md` |
 | 二：基础功能全量对齐 | 第 9-16 周 | ✅ 已验收 | `docs/phase2-acceptance-report.md` |
 | 三：插件体系与标杆场景 | 第 17-20 周 | ✅ 已验收 | `docs/phase3-acceptance-report.md` |
-| 四：商用打磨与交付准备 | 第 21-24 周 | ⬜ 未启动 | — |
+| 四：商用打磨与交付准备 | 第 21-24 周 | ✅ 已验收 | `docs/phase4-acceptance-report.md` |
+| W1：总纲对齐切片（A/B） | — | ✅ 已完成 | `docs/api/baseline-w1-2.json`（2 端点冻结基线） |
 
 第三阶段交付内容：插件声明模型与运行时（6 段声明 + 8 层加载校验 + 6 能力封闭集合）、
 插件市场与全生命周期（PL1-PL14）、任务引擎与工作流可视化（WF1/WF2）、
 3 个标杆场景插件（前端研发 / 内容运营 / 行政人事，均端到端可用）。
 
-### 6.2 当前门禁与质量基线（`develop` 实测）
+### 6.2 当前门禁与质量基线（`main` 实测）
 
 | 项 | 值 |
 | --- | --- |
 | 端点契约 | `core=30 / phase2=38/38 / phase3=16/16 / phase4=10/10 / w1=2/2`，合计 **96**，`--strict` EXIT 0 |
 | 本机测试（无 PG） | **2133 passed / 210 skipped / 0 failed**（收集 2343）——这是 **W3 收口口径**；含 PG 需 `--run-pg` + 真库（**2343 passed / 0 skipped**） |
 | 覆盖率 | 总 `app/*` **合并**覆盖 **91.94%**（含 PG）/ **85.55%**（无 PG），门槛 85% → 余 **+1556 / +123 单位**（≈ +6.94pt / +0.55pt）；行 93.72% / 87.36%，分支 83.34% / 76.78%（`cedd3e9` 实测） |
-| 静态门禁 | `ruff check` / `ruff format` / `mypy`（203 文件）全绿 |
+| 静态门禁 | `ruff check` / `ruff format` / `mypy`（204 文件）全绿 |
 | 部署门禁 | 端点基线 / 迁移双路径 / 依赖白名单 / 镜像锁定 / 插件声明 / 错误码三处一致 均 EXIT 0 |
 | 前端门禁 | 禁词 / 占位词 / 页面三态 / 契约快照 / 能力一致性 / 工作台宿主唯一 均 0 命中 |
 
@@ -237,13 +239,14 @@ pytest tests -q --cov=app --cov-report=term-missing
    分母变化时百分比可能下降而绝对余量反而上涨。判断余量一律看**绝对单位差**
    （`实得 − ceil(85% × 合并单位)`），不看小数点。
    （历史遗留：本文曾写「分支覆盖率余量为 0：`2176/2840` 刚好达到 76.6% 门槛」，
-   两个问题：① 数字早已失真；② **全仓并不存在分支覆盖率门槛**——`pyproject.toml`
-   与 CI 只有 `--cov-fail-under=85`（卡合并覆盖率），grep 不到任何分支阈值配置。
+   两个问题：① 数字早已失真；② **全仓并不存在分支覆盖率门槛**——CI（`ci-adapter.yml`）
+   命令行硬地板 `--cov-fail-under=85`（卡合并覆盖率），pyproject 不设，grep 不到任何分支阈值配置。
    "余量为 0"是在跟一个不存在的门槛比，故整句删除。）
 6. **CI 未实际运行**：GitHub Actions 额度已用尽，上述门禁均为本机实跑（QA 独立复核 + 主理人抽验）；
    CI 配置已就绪，额度恢复后需复跑一次。
-7. **历史遗留错误码**：5 个阶段一/二注册但从未被端点引用的码（`11005/12002/12004/12005/15006`）
-   在错误码目录检查里只打 `[WARN]`，处置方案见架构侧评审记录。
+7. **历史遗留错误码**：已于 B27 收口——`11005`（RETRIEVAL_FAILED）与 `15006`（QUOTA_EXHAUSTED）
+   已接线（R7 检索失败 / 额度用尽软提示走 `data.notice_code`），`12002`/`12005` 已按「注销值不复用」
+   删除，`12004` 转预留（`[RESERVED]` 放行）；处置口径见 `apps/adapter/scripts/check_error_catalog.py`。
 
 ## 七、许可证与开源声明
 

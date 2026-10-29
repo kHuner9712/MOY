@@ -1,6 +1,6 @@
 # K8s 集群编排（SaaS 生产环境）
 
-> **状态：占位，S4 阶段实现**（架构文档 6.1 目录树标注）。
+> **状态：阶段四验收范围外，待排期**（占位目录，manifests 均未创建）。
 >
 > 目标（SaaS 多租户，架构文档 1.3）：
 > - K8s + HPA 弹性扩缩容，web Pod ×N（HPA 2-10）、adapter Pod ×N（HPA 2-8）；
@@ -8,7 +8,7 @@
 > - 核心服务可用率 ≥ 99.5%；
 > - 底座能力层与基础设施层独立伸缩，互不影响。
 >
-> 计划交付内容：
+> 待交付内容（以下 manifests **均未创建**，交付时间待排期）：
 > ```
 > deploy/k8s/
 > ├── base/            # Namespace、ConfigMap、Secret、ServiceAccount

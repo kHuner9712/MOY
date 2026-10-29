@@ -7,7 +7,7 @@
 | 编制时间 | 2026-10-25 |
 | 适用阶段 | 阶段四（商用打磨与交付准备）· Batch 2 |
 | 代码基线 | `main @ 8b8fdaa`（领先 `origin/main` 20 个提交，未 push；工作区仅 `apps/adapter/pytest_run.log` 未跟踪） |
-| 上游输入 | `docs/improvement-plan-2026-10-25.md`（23 条）、`docs/improvement-design-2026-10-25.md`（Batch 1 设计）、`docs/qa-batch1-report-2026-10-25.md`、`docs/qa-batch1-r2-report-2026-10-25.md`、`docs/audit-2026-10-24-full-repo-audit-r2.md`、ADR-0007 / ADR-0008 |
+| 上游输入 | `docs/improvement-plan-2026-10-25.md`（23 条）、`docs/improvement-design-2026-10-25.md`（Batch 1 设计）、`docs/qa-batch1-report-2026-10-25.md`（2026-10-29 审计清理已删除，终版 `docs/qa-batch1-r2-report-2026-10-25.md` 保留）、`docs/qa-batch1-r2-report-2026-10-25.md`、`docs/audit-2026-10-24-full-repo-audit-r2.md`、ADR-0007 / ADR-0008 |
 | 决策口径 | 主理人 2026-10-25 拍板：**Q1=A（本版演示支付）/ Q2=A（删除 `org.directory.read`）/ Q3=A（W-08 只做格式约束）**，落点见 §9 |
 | 下游消费 | 架构师（技术方案）、工程师（实施）、QA（验证） |
 | 口径声明 | 本文只写计划，**不改任何代码**。所有事实均给出 `文件:行号`／提交／本次实测命令；未核实的标「待验证」 |

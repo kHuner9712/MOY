@@ -6,7 +6,7 @@
 | 拍板日期 | 2026-10-24 |
 | 拍板人 | 桐鸣科技创始人（授权主理人齐活林代拍，沿用 2026-10-21 授权口径） |
 | 编制 | 许清楚（产品经理）｜复核：高见远（架构）、严过关（QA）｜汇编：齐活林 |
-| 依据 | L0《Moy 项目总纲》V1.0；`docs/prd-v1.0.md`（已按 ADR-0005 修订）；ADR-0005（D-09~D-29）；`docs/alignment-2026-10-23-charter-vs-prd.md`（AL-01~AL-20）；`docs/audit-2026-10-24-full-repo-audit.md`（57 条问题）；`docs/plan-v1.0.md` |
+| 依据 | L0《Moy 项目总纲》V1.0；`docs/prd-v1.0.md`（已按 ADR-0005 修订）；ADR-0005（D-09~D-29）；`docs/alignment-2026-10-23-charter-vs-prd.md`（AL-01~AL-20）；`docs/audit-2026-10-24-full-repo-audit.md`（57 条问题；2026-10-29 审计清理已删除，57 条结论以本单引用为准，续报见 `docs/audit-2026-10-24-full-repo-audit-r2.md`）；`docs/plan-v1.0.md` |
 | 关联 | `docs/decisions/0005-charter-first-alignment.md`、`docs/prd-w1-metrics-entry.md`、`docs/metrics-definition-v1.0.md` |
 | 决策范围 | ① 已发现问题整理；② AL-01~AL-20 复核；③ AL-21~AL-32 新增差异裁决；④ 对应文档/代码执行清单；⑤ 后续三个 Sprint 切片 |
 
@@ -35,7 +35,7 @@
 
 ## 一、已发现问题整理（截至 2026-10-24 审计）
 
-> 完整证据见 `docs/audit-2026-10-24-full-repo-audit.md`。共 57 条：高 14 / 中 31 / 低 12。
+> 完整证据见 `docs/audit-2026-10-24-full-repo-audit.md`（2026-10-29 审计清理已删除，57 条结论以本单引用为准，续报见 `docs/audit-2026-10-24-full-repo-audit-r2.md`）。共 57 条：高 14 / 中 31 / 低 12。
 
 ### 1.1 按模块分布
 

@@ -32,7 +32,7 @@ on:
     paths:
       - 'deploy/**'
       - 'package-lock.json'
-      - 'uv.lock'
+      - 'apps/adapter/uv.lock'
       - 'apps/adapter/pyproject.toml'
       - '.github/workflows/sbom.yml'
   push:
@@ -40,7 +40,7 @@ on:
     paths:
       - 'deploy/**'
       - 'package-lock.json'
-      - 'uv.lock'
+      - 'apps/adapter/uv.lock'
       - '.github/workflows/sbom.yml'
   schedule:
     # 每周一 03:00 UTC 全量重算：锁文件没变，但上游 advisory 会变，
@@ -76,7 +76,7 @@ jobs:
         with:
           node-version: '22'
 
-      # pypi 层优先读 uv.lock；仓库没有 uv.lock 时降级到 venv。
+      # pypi 层优先读 apps/adapter/uv.lock；缺失时降级到 venv。
       # CI 里没有 venv，所以显式装一遍适配层依赖，让 pypi 层有真实数据源
       # ——否则这一层会退化成 pyproject 的直接依赖（"传递依赖未覆盖"），
       # 四层判据虽然还能过，但 SBOM 的价值打了折扣。

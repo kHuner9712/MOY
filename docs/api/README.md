@@ -20,8 +20,8 @@ with open('../../docs/api/openapi.json', 'w', encoding='utf-8') as fp:
 PY
 ```
 
-CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次合入
-`develop` 时自动生成并作为构件上传，命名 `openapi-spec`。
+CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次
+push / PR 触发时自动生成并作为构件上传，命名 `openapi-spec`。
 
 运行中的服务也可直接访问：
 
@@ -59,12 +59,11 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 | **新域端点合计** | | **38** | |
 
 > 阶段小计 **68 个业务端点**（30 冻结 + 38 新域）。基线文件：
-> `docs/api/baseline-core-30.json`（受 CODEOWNERS 保护，禁止修改）、
+> `docs/api/baseline-core-30.json`（经评审流程保护，禁止修改）、
 > `docs/api/baseline-phase2-38.json`（只允许登记真实已实现端点）。
-> 门禁：`python deploy/validate_openapi.py`（G1-G5，失败退出码非 0）；
-> 现阶段（阶段二历史批次）CI 仍带 `--allow-missing-phase2`。
-> **阶段三没有对应的放宽参数**（见下节），所以 `--allow-missing-phase2` 是唯一
-> 还活着的容差开关，且只作用于阶段二。
+> 门禁：`python deploy/validate_openapi.py`（G1-G7，失败退出码非 0）；
+> 所有放宽开关均已从 CI 移除，CI 全程 `--strict`（脚本 CLI 仍留
+> `--allow-missing-phase2` 供阶段二历史批次复跑，CI 不传）。
 
 **阶段三新域端点（16 个，按 B17-B19 逐批落地；同挂 `/api/v1`，不新增版本）**
 
@@ -85,7 +84,7 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 >
 > 另 **4 处 A 域加性扩展**（A1/A2/A3/A4）不新增端点数，只加可选字段与枚举加宽，
 > 由 G4 加性 diff 逐项覆盖（`baseline-core-30.json` 与 `baseline-phase2-38.json`
-> **一个字节不改**，CI 另有 hash 断言）。
+> **一个字节不改**，经评审流程保护，无机械 hash 断言）。
 
 #### 阶段三严格模式（B21 收口）
 
@@ -146,7 +145,10 @@ CI（`.github/workflows/ci-adapter.yml` 的 `openapi-export` 任务）在每次�
 | --- | --- |
 | `0` | 成功 |
 | `10001-14999` | 领域业务错误（模型 / RAG / Agent / 工具 / 权限） |
-| `15001-15099` | 计费与订阅错误（阶段二新增） |
+| `15001-15999` | 计费与订阅错误（阶段二新增） |
+| `16001-16099` | 插件域错误（阶段三新增；`16001` 已注销不复用，自 `16002` 起） |
+| `17001-17099` | 任务域错误（阶段三新增，重试语义） |
+| `18001-18099` | 会话与记忆域错误（阶段四新增，个人数据对象） |
 | `20001-20999` | 通用业务错误 |
 | `30001-30999` | 系统错误 |
 
@@ -207,10 +209,10 @@ CI 门禁（`.github/workflows/dependency-scan.yml` + `ci-adapter.yml`）
 | 编号 | 问题 | 影响 | 当前处理 |
 | --- | --- | --- | --- |
 | D-01 | SSE 事件集是否作为对外契约冻结 | 前端引用穿插渲染方式 | 已按「随答案穿插」实现，待产品确认 |
-| D-02 | 适配层是否持有业务库 | 工具连接凭据、审计存储归属 | T01 不落库，T02 明确边界 |
+| D-02 | 适配层是否持有业务库 | 工具连接凭据、审计存储归属 | 已决：适配层持有业务库（`app/db/engine` + 8 组 repositories，memory/PG 双后端） |
 | D-03 | 会话与消息的存储归属 | 是否由适配层代理会话 | 上层自持，适配层无状态 |
 | D-07 | `/healthz`、`/readyz` 语义契约 | 编排层探针配置 | `/healthz` 存活、`/readyz` 就绪，待运维确认 |
-| D-06 | 基础设施灰名单组件选型 | Redis/MinIO 协议合规 | 已形成 `docs/adr/0002`，待法务/合规签字 |
+| D-06 | 基础设施灰名单组件选型 | Redis/MinIO 协议合规 | 已形成 `docs/adr/0002`，已批准（D-06） |
 | D-08 | 前端品牌设计令牌基线 | 组件库返工风险 | 已形成 `docs/adr/0003` 占位，待产品经理拍板 |
 
 ---
@@ -221,5 +223,5 @@ CI 门禁（`.github/workflows/dependency-scan.yml` + `ci-adapter.yml`）
 （`.github/workflows/dependency-scan.yml` 构件 `license-scan-report`）。
 
 所有代码级依赖限定于 **MIT / Apache-2.0 / BSD-3-Clause / ISC** 白名单；
-基础设施镜像的灰名单项（Valkey、MinIO、squid）以独立进程方式运行，
+基础设施镜像的灰名单仅 squid（GPL-2.0），以独立进程方式运行，
 详见 `deploy/.env.example` 与架构文档 2.1 / 10.2 D-06。

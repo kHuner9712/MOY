@@ -1,7 +1,7 @@
 # 审计修复执行记录与暂缓登记（2026-10-28）
 
 - **执行人**：工程师 寇豆码
-- **依据**：`docs/remediation-plan-2026-10-28.md`（29 条）
+- **依据**：`docs/remediation-plan-2026-10-28.md`（29 条；2026-10-29 审计清理已删除，执行结论以本日志为准）
 - **分支**：`feature/audit-remediation-2026-10-28`
 
 ## 一、暂缓条目登记（方案 §0.1 裁定「暂缓」，本轮只登记不实施）
@@ -28,7 +28,7 @@
 4. **ARC-02 milvus 限额**：lite 栈无 milvus 条目可抄，按官方 standalone 建议 `2g` 预留并登记「无 lite 实测基线，上线后校准」。
 5. **compose 全栈冒烟（ARC-01/03 验证步骤 3）未执行**：现场 `oa-*` 全栈正在运行，且首轮 `docker compose --env-file .env.example config` 因既有缺变量未能通过，已登记——QA 复跑确认缺密钥共 **5 项**：`OA_PLUGIN_DAEMON_KEY`、`OA_PLUGIN_INNER_API_KEY`、`OA_DB_APP_PASSWORD`、`OA_DIFY_SECRET_KEY`、`OA_DIFY_SANDBOX_KEY`（F-1 收口后 `.env.example` 已补 `OA_DB_APP_PASSWORD` 占位，compose config 已全绿；其余 4 项属真实密钥，留用户填 `deploy/.env`，见下方用户操作清单）。原地 `up` 会用错误环境重建生产栈，故改静态验证，全栈重建冒烟列入用户操作清单。
 6. **e2e 贯穿段未实跑**：`workflow.spec.ts` 贯穿旅程需要真实统一登录测试账号（现场资产），凭据缺失时自动 skip；匿名前置段 2 条本地实跑通过。
-7. **第一 commit 附带文档**：`git add -A` 将未跟踪的 `docs/audit-2026-10-28.md`（审计初稿）一并带入首个 commit，无害保留。
+7. **第一 commit 附带文档**：`git add -A` 将未跟踪的 `docs/audit-2026-10-28.md`（审计初稿；2026-10-29 审计清理已删除，结论并入 `docs/audit-2026-10-28-full-repo.md`，执行结论以本日志为准）一并带入首个 commit，无害保留。
 8. **ENG-04 digest 时点**：python/node 构建镜像 digest 为 2026-10-28 Hub 实查值，已在 images.lock note 标注时点。
 
 ## 四、用户操作清单（QA 收口 F-1 更正）

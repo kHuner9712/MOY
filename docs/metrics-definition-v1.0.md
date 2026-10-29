@@ -16,8 +16,8 @@
 ## 0. 为什么需要这份文档
 
 总纲 §十四 明确：Moy 不以「接入了多少模型、安装了多少插件」为成功标准，而以**真实工作成果**为衡量标准。
-当前实现（`apps/web/src/app/(main)/ops/metrics/page.tsx:46-56`）只有 5 项用量类指标
-（区间活跃企业 / 活跃成员 / 对话次数 / 文档处理 / 用量合计），**总纲 8 项核心指标 0 项落地**。
+当前实现（`apps/web/src/app/(main)/ops/metrics/page.tsx:45-58`）只有 6 项用量类指标
+（企业总数 / 区间活跃企业 / 活跃成员 / 对话次数 / 文档处理 / 用量合计），**总纲 8 项核心指标 0 项落地**。
 
 本文件的作用是：在写代码之前，把「每个指标到底怎么算」定死，避免埋点做完才发现口径不一致（返工成本最高的一种）。
 
@@ -41,7 +41,7 @@
 | `conversation` / `message` | 会话与消息 | 对话类任务量（非工作流任务） | ✅ 已建 |
 | `tool_execution` | 工具调用执行记录 | 跨生态调用量与失败率 | ✅ 已建（当前为桩调用） |
 | `audit_log` | 关键操作 | 故障恢复的人工介入证据 | ✅ 已建 |
-| **`artifact_adoption`（需新增）** | `artifact_id`、`tenant_id`、`user_id`、`action`（download/copy/edit_save）、`created_at` | 采纳率 | ❌ W1 迁移 0012 新建（**append-only 事件表，只记录"发生了什么"，不记录"没发生什么"**） |
+| **`artifact_adoption`（需新增）** | `artifact_id`、`tenant_id`、`user_id`、`action`（download/copy/edit_save）、`created_at` | 采纳率 | ❌ 未落地（原 W1 计划「迁移 0012 新建」；0012 已被 `deploy/migrations/0012_quota_hold.sql` 占用，落地时编号顺延 **0013+**，待排期。**append-only 事件表，只记录"发生了什么"，不记录"没发生什么"**） |
 
 ### 1.5 数据域约定（必读，否则指标会被误读）
 
@@ -113,12 +113,12 @@
   | --- | --- | --- |
   | `download` | 产物下载路由 `GET /files/artifacts/{token}`（`artifact_files.py:35`）；**「导出」在实现上走同一下载路径，合并为本动作，不重复埋点** | 直接采用 |
   | `copy` | 前端「复制」动作（纯前端触发，需新端点接收事件） | 直接采用 |
-  | `edit_save` | 产物编辑 `PUT /agent/tasks/{id}/artifacts/{artifact_id}`（`agent.py:415`）保存成功 | 修改后采用 |
+  | `edit_save` | 产物编辑 `PUT /agent/tasks/{id}/artifacts/{artifact_id}`（`agent.py:450` `edit_artifact`）保存成功 | 修改后采用 |
 - **数据来源**：`plugin_artifact`（分母）+ `plugin_task.finished_at`（窗口过滤）+ `artifact_adoption`（分子）。
 - **采集点**：下载路由与编辑路由在后端直接写事件（最可靠，不受前端改动影响）；`copy` 由前端调用新端点。
   **不设 7 天补记任务**。
 - **看板归属**：运营看板（R4）三档分列；个人中心（R1）仅展示本人产物的采用状态（业务语言）。
-- **当前可得性**：**需埋点**（W1：迁移 `0012_artifact_adoption` + 事件写入 + `copy` 端点 + 看板卡片）。
+- **当前可得性**：**需埋点**（计划：迁移 `0013_artifact_adoption`〔原写 0012，与 `0012_quota_hold.sql` 编号冲突后顺延，见 §6〕+ 事件写入 + `copy` 端点 + 看板卡片；**该采集表尚未落地，口径与实现现状存在差距，待排期**）。
 
 ### M3 工作流任务完成时间
 
@@ -249,7 +249,7 @@
 
 | 看板 | 受众 | 指标 | 呈现原则 |
 | --- | --- | --- | --- |
-| 运营看板 `/ops/metrics` | R4 平台运营 | M1、M2、M3、M4、M6（+ 现有 5 项用量） | 每个卡片必须标注：统计期、样本量、口径版本号；无样本时显示「样本不足」而非 0 |
+| 运营看板 `/ops/metrics` | R4 平台运营 | M1、M2、M3、M4、M6（+ 现有 6 项用量） | 每个卡片必须标注：统计期、样本量、口径版本号；无样本时显示「样本不足」而非 0 |
 | 团队看板 | R2 团队管理员 | M1、M3（按团队过滤） | 只展示本团队成员聚合，不跨租户 |
 | 个人中心 | R1 用户 | M2（本人产物的采用状态） | 业务语言（「已采用 / 已修改后采用」），不出现 token/units |
 | 经营报表（内部） | 创始人 / 交付总监 | M5、M7、M8 | 含成本系数与基础设施分摊脚注；禁止外发 |
@@ -286,12 +286,16 @@
 
 | 序 | 事项 | 归属 | 量 | 依赖 | 完成判据 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 迁移 `0012_artifact_adoption`（`artifact_id`、`tenant_id`、`user_id`、`action ∈ download/copy/edit_save`、`created_at`）+ RLS 策略。**三处同步**（参照 `tenant_budget` 体例）：`deploy/migrations/0012_*.sql` + `deploy/migrations/rollback/0012_*.down.sql` + `deploy/init-schema-phase4.sql` 基线**双写**；另需 **N-1 兼容**：老库无新表时写采纳不得 500，走 `schema_guard` 探测后降级为「不记录」并打 WARNING | 工程 | S | — | 迁移/回滚/基线三处一致；`validate_migrations.py` 通过；老库场景写入不报 500；RLS 隔离用例通过 |
+| 1 | 迁移 `0013_artifact_adoption`（`artifact_id`、`tenant_id`、`user_id`、`action ∈ download/copy/edit_save`、`created_at`）+ RLS 策略。**编号说明（2026-10-29 审计校正）**：原写 0012 已与 `deploy/migrations/0012_quota_hold.sql` 冲突，落地时编号顺延 **0013+**。**三处同步**（参照 `tenant_budget` 体例）：`deploy/migrations/0013_*.sql` + `deploy/migrations/rollback/0013_*.down.sql` + `deploy/init-schema-phase4.sql` 基线**双写**；另需 **N-1 兼容**：老库无新表时写采纳不得 500，走 `schema_guard` 探测后降级为「不记录」并打 WARNING | 工程 | S | — | 迁移/回滚/基线三处一致；`validate_migrations.py` 通过；老库场景写入不报 500；RLS 隔离用例通过 |
 | 2 | 采纳事件写入：`download` 与 `edit_save` 在**后端**路由内直接写（`artifact_files.py` 下载、`agent.py` 产物编辑）；`copy` 新增轻量端点由前端调用。**全部幂等（同一 artifact × action 一分钟内去重）；不设 7 天补记任务** | 工程 | M | 1 | 三动作各自落事件；重复点击不重复计数；表内不存在"未采纳"类记录 |
 | 3 | 统计服务：M1/M2/M3/M4/M6 的 SQL 视图或端点（只读，不改既有契约）；M2 分母按 `finished_at <= now() - interval '7 days'` 过滤 | 工程 | M | 1,2 | 同一批数据可复算出 §2 公式结果；7 天内产物不进入分母 |
 | 4 | 看板卡片：运营看板加 M1/M2/M3/M4/M6；个人中心加「采用状态」 | 工程+产品 | M | 3 | 卡片含数据域/统计期/样本量/口径版本；空态为「样本不足」 |
 | 5 | `units → 成本系数` 口径方案（相对成本指数先行，真实单价后置） | 产品+工程 | S | — | 口径写入 §2 M5；看板脚注声明「非金额」+ 口径版本号 |
 | 6 | 阶段末 M8 人工归集模板 | 产品 | S | — | 每阶段复盘可复用 |
+
+> **落地现状（2026-10-29 审计校正）**：`artifact_adoption` 采集表全仓未落地（grep 仅文档命中），
+> W1 实按「零迁移零新表」交付（见 `docs/prd-w1-metrics-entry.md`「不落 `artifact_adoption` 表」）。
+> **M2 采集口径与实现现状存在差距，待排期**；上表第 1~4 项均以该表落地为前提。
 
 **不在本批**：M7 应用内评分（等有真实付费样本后再做，避免做出来没人用）；`none` 补记任务（已否决，见 §2 M2）。
 

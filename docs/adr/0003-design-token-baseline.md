@@ -1,6 +1,8 @@
-# ADR-0003：前端品牌设计令牌基线（占位，待产品经理拍板）
+# ADR-0003：前端品牌设计令牌基线
 
-- **状态**：**提议中（Proposed）—— 占位 ADR，待产品经理与主理人决策后转为「已接受」**
+> 决议见 `docs/decisions/0003-design-token-baseline-decision-sheet.md`
+
+- **状态**：**已接受（Accepted）—— 2026-10-21 拍板确认（决议见 `docs/decisions/0003-design-token-baseline-decision-sheet.md`），执行中**
 - **日期**：2026-10-21
 - **决策者**：待定（决策人：许清楚（产品经理）拍板，齐活林（交付总监）签核，高见远（架构师）执行落地）
 - **相关文档**：`docs/architecture-v1.0.md` 第 6.1 节（monorepo 结构）、第 9 章（共享知识）、第 10.2 节 D-08；`docs/prd-v1.0.md` 6.2 节（体验验收 AC-04/AC-06）
