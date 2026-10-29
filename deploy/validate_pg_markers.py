@@ -14,7 +14,13 @@
 测试函数参数中出现 PG 夹具（`pg_dsn` / `pg_engine` / `pg_settings`）时，必须满足其一：
 
 1. 函数带 `@pytest.mark.pg` 装饰器；或
-2. 所在模块的 `pytestmark` 含 `pytest.mark.pg`（文件级标记）。
+2. 所在模块的 `pytestmark` 含 `pytest.mark.pg`（文件级标记）；或
+3. **所在类**带 `@pytest.mark.pg` 装饰器（**类级标记对其内所有方法生效**，与 pytest 一致）。
+
+> 类级这一条是 2026-10-29 补的：此前门禁只认函数自身装饰器与文件级 `pytestmark`，
+> 于是**合法的类级 `@pytest.mark.pg` 会被判红**——pytest 会正确跳过这些用例，门禁却
+> 报"缺标记"。守门脚本自己判错比漏标记更该修：它会逼人往方法上加重复标记，从此
+> 再也证明不了门禁支持类级。
 
 ## 退出码
 
@@ -31,6 +37,7 @@ import argparse
 import ast
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 #: 视为「需要真实 PostgreSQL」的夹具名
@@ -92,6 +99,46 @@ def _func_has_pg_decorator(function: ast.FunctionDef | ast.AsyncFunctionDef) -> 
     return any(_is_pg_mark(decorator) for decorator in function.decorator_list)
 
 
+def _class_has_pg_mark(node: ast.ClassDef) -> bool:
+    """判断类装饰器里是否含 `pytest.mark.pg`（类级标记）。
+
+    Args:
+        node: 类定义节点。
+
+    Returns:
+        bool: 类带 pg 标记返回 True。
+    """
+    return any(_is_pg_mark(decorator) for decorator in node.decorator_list)
+
+
+def _iter_scoped_functions(
+    node: ast.AST, inherited_pg: bool = False
+) -> Iterator[tuple[ast.FunctionDef | ast.AsyncFunctionDef, bool]]:
+    """深度优先遍历，产出 `(函数节点, 该函数是否由所在类继承了 pg 标记)`。
+
+    **为什么不用 `ast.walk()`**：它是**无序遍历**，拿不到父子关系。用"遍历到 `ClassDef`
+    就设一个全局标志"的写法，在多类文件里会把前一个类的标记漏给后一个类（`ast.walk`
+    的兄弟节点顺序不保证），类里套类时更会串味。这里显式递归下降，标记的作用域天然
+    与 AST 结构一致：进入类时把"类带了标记"并进 `inherited_pg`，离开类即失效。
+
+    Args:
+        node: 当前遍历到的节点（模块 / 类 / 函数 / 其它）。
+        inherited_pg: 外层作用域是否已带 pg 标记。
+
+    Returns:
+        Iterator[tuple[ast.FunctionDef | ast.AsyncFunctionDef, bool]]: 函数与其继承状态。
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.ClassDef):
+            yield from _iter_scoped_functions(child, inherited_pg or _class_has_pg_mark(child))
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield child, inherited_pg
+            # 函数体内还可能再定义函数（不是 pytest 用例，但别丢节点）
+            yield from _iter_scoped_functions(child, inherited_pg)
+        else:
+            yield from _iter_scoped_functions(child, inherited_pg)
+
+
 def _module_has_pg_mark(tree: ast.Module) -> bool:
     """判断模块级 `pytestmark` 是否含 pg 标记。
 
@@ -147,14 +194,12 @@ def scan(tests_root: Path) -> list[tuple[Path, int, str]]:
             offenders.append((path, 0, "<syntax-error>"))
             continue
         module_marked = _module_has_pg_mark(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
+        for node, class_marked in _iter_scoped_functions(tree):
             if not node.name.startswith("test_"):
                 continue
             if not (_fixture_params(node) & PG_FIXTURES):
                 continue
-            if module_marked or _func_has_pg_decorator(node):
+            if module_marked or class_marked or _func_has_pg_decorator(node):
                 continue
             offenders.append((path, node.lineno, node.name))
     return offenders
@@ -190,17 +235,27 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:  # pragma: no cover - 仅自检临时目录会走这里
             shown = path
         print(f"  - {shown}:{lineno} {name}")
-    print("修复：加 @pytest.mark.pg，或所属文件 pytestmark 加入 pytest.mark.pg。")
+    print(
+        "修复（三者任一）：函数加 @pytest.mark.pg，或所在类加 @pytest.mark.pg，"
+        "或所属文件 pytestmark 加入 pytest.mark.pg。"
+    )
     return 1
 
 
 def _self_test() -> int:
-    """门禁自检：未标记样本必须被拦住，标记样本必须放行。
+    """门禁自检（族 B：成功时 exit 0）。
+
+    三条样本缺一不可：
+      ① 基础样本：函数级标记放行、无标记的被拦（防"恒过"）；
+      ② **类级正样本**：只有一个类级 `@pytest.mark.pg`、方法上完全无标记 → 必须放行；
+      ③ **类级负样本**：类上写的是 `@pytest.mark.integration`（不是 pg），且紧邻另一个
+         同样用 PG 夹具的普通类 → 两个方法都必须被拦住。这条同时验证"标记不会串味"
+         （若实现用全局标志，第二个类的方法会被误放行）。
 
     Returns:
         int: 0 自检通过 / 2 自检失败。
     """
-    sample = """
+    base_sample = """
 import pytest
 
 def pg_dsn():
@@ -213,15 +268,58 @@ def test_dark(pg_dsn):
 def test_marked(pg_dsn):
     pass
 """
+    class_marked_sample = """
+import pytest
+
+def pg_dsn():
+    return "postgresql://x"
+
+
+@pytest.mark.pg
+class TestPgScoped:
+    async def test_first(self, pg_dsn):
+        pass
+
+    def test_second(self, pg_dsn):
+        pass
+"""
+    class_other_mark_sample = """
+import pytest
+
+def pg_dsn():
+    return "postgresql://x"
+
+
+@pytest.mark.integration
+class TestNotPg:
+    def test_in_class(self, pg_dsn):
+        pass
+
+
+class TestPlainSibling:
+    def test_in_sibling(self, pg_dsn):
+        pass
+"""
+    cases = [
+        ("基础（函数级）", base_sample, {"test_dark"}),
+        ("类级正样本（方法无标记）", class_marked_sample, set()),
+        (
+            "类级负样本（非 pg 标记 + 相邻类）",
+            class_other_mark_sample,
+            {"test_in_class", "test_in_sibling"},
+        ),
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "test_sample.py").write_text(sample, encoding="utf-8")
-        offenders = scan(root)
-        names = {name for _path, _lineno, name in offenders}
-        if names != {"test_dark"}:
-            print(f"[FAIL] 自检未按预期拦截：{sorted(names)}")
-            return 2
-    print("[OK] 自检通过：未标记用例被拦截、带标记用例放行")
+        for index, (label, sample, expected) in enumerate(cases):
+            path = root / f"test_sample_{index}.py"
+            path.write_text(sample, encoding="utf-8")
+            names = {name for _path, _lineno, name in scan(path.parent) if _path == path}
+            if names != expected:
+                print(f"[FAIL] 自检「{label}」预期拦截 {sorted(expected)}，实际 {sorted(names)}")
+                return 2
+            print(f"[OK] 自检「{label}」拦截 {sorted(names) or '无（放行）'}（符合预期）")
+    print("[OK] 自检通过：未标记用例被拦截、函数级与类级标记均被识别、标记不跨类串味")
     return 0
 
 

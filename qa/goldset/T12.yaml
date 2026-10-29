@@ -1,0 +1,57 @@
+# 金标任务 T12 —— 行政人事工作台：面试提纲 + 邀约邮件
+# 设计要点：邀约邮件会被发给真人，考「时间/收件人是否可确认」「有没有漏项」。
+id: T12
+title: 面试提纲与邀约邮件
+scenario: 行政人事工作台
+scenario_key: hr
+plugin_id: plg_hr_admin
+deliverable_type: 邮件
+difficulty: 中
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    给进面试的候选人准备面试提纲，再发一封邀约邮件。时间暂定本周四下午两点，
+    面试官是平台研发部的张工，线上会议。
+  plugin_inputs:
+    position: 前端开发工程师
+    department: 平台研发部
+    duties: 负责后台管理系统页面开发；与后端对接接口；参与需求评审。
+    hard_requirements: 3 年以上前端开发经验；熟悉 React。
+    doc_type: 通知
+    doc_points: 不涉及
+
+expected_artifact:
+  kind: message
+  outputs: [outlines, invitation]
+  description: 一份分维度的面试提纲 + 一封待确认后发送的邀约邮件
+  must_contain:
+    - 提纲分技术深度、项目经验、协作沟通三个维度，每维度 ≥3 个问题
+    - 每个问题附「想考察什么」一句
+    - 邀约邮件含候选人称呼、岗位、时间、形式、面试官、时长、需准备事项、联系人
+    - 邀约状态标注为「待确认后发送」
+  must_not_contain:
+    - 编造候选人姓名、邮箱地址或会议室链接
+    - 未确认就声称「已发送」
+
+pass_criteria:
+  completeness:
+    - 三维度提纲齐全，问题数达标
+    - 邀约邮件七要素齐全，缺一即不满分
+    - 时间同时给出绝对日期与星期，避免歧义
+  accuracy:
+    - 「本周四下午两点」被解析为具体日期，且写明依据（今天为基准）
+    - 面试官、形式、部门与输入一致，未替换
+    - 未提供候选人姓名处写成占位并说明需要补充，不得凭空生成
+  usable:
+    - 邮件含明确的邮件主题行，可直接复制发送
+    - 面试提纲可直接打印使用，问题不重复
+    - 需要人工补充的字段集中列出，不用在正文里逐个找
+  no_tech_exposure:
+    - 邮件与提纲中不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 邮件里不得出现内部任务编号、内部系统链接
+  verifiable:
+    - 邀约中的时间可被独立验算（今天 + 到本周四）
+    - 提纲每个问题都能对应到一个考察点
+    - 「待确认后发送」状态与回执字段一致（无回执即写待确认）

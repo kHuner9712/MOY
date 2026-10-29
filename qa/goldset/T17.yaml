@@ -1,0 +1,53 @@
+# 金标任务 T17 —— 通用办公 / 知识库：有依据回答 + 来源标注
+# 设计要点：答案必须带得出处。判分看「引用是否真在库里」而不是「听起来对」。
+id: T17
+title: 依据知识库回答「报销标准是多少」
+scenario: 通用办公
+scenario_key: general_kb
+plugin_id: null
+deliverable_type: 文本
+difficulty: 中
+
+input:
+  channel: kb                     # kb=走 M1 且带 knowledge_base_ids
+  endpoint: POST /api/v1/model/generate
+  profile: general
+  knowledge_base_ids: [kb_admin_policy]
+  user_query: |
+    出差住宿和市内交通的报销标准分别是多少？超标了怎么办？
+  #: 前置条件：知识库中确有《差旅报销管理办法》，含住宿标准、交通标准、超标处理三条
+  precondition:
+    kb_docs: [差旅报销管理办法.md]
+
+expected_artifact:
+  kind: text
+  outputs: []
+  description: 分项回答 + 每条附来源（文档名 + 小节）+ 超标处理的明确步骤
+  must_contain:
+    - 住宿标准、市内交通标准、超标处理三项分别作答
+    - 每条答案后附来源标注（文档名 + 小节名）
+    - 超标处理给出可执行步骤（谁审批、补什么材料）
+  must_not_contain:
+    - 无来源的标准数字
+    - 把知识库中没写的城市分档规则自行补充
+
+pass_criteria:
+  completeness:
+    - 三个子问题全部作答，缺一即不满分
+    - 每条答案都有来源标注
+    - 若某城市档位库中没有，明确说明未覆盖
+  accuracy:
+    - 金额与知识库原文一致，不做换算或四舍五入
+    - 适用条件（如职级、城市级别）随标准一并给出，不孤立给数字
+    - 不得把两条不同制度的条款混成一条
+  usable:
+    - 答案可直接转给员工，无需再查文档
+    - 来源标注精确到小节，不是只写「见附件」
+    - 超标处理按步骤编号，可照着走
+  no_tech_exposure:
+    - 答案全文不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现「根据检索到的资料」「相关资料显示」这类过程话术，直接给结论 + 来源
+  verifiable:
+    - 每个金额都能在所指文档小节里逐字找到
+    - 来源标注的文档名与知识库中的实际文档名一致
+    - 超标步骤与文档中的流程条款可对照

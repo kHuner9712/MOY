@@ -110,7 +110,7 @@ D1 拍板 + 技术事实：`model_service.py` 已完成"单条 `query` + `conver
 **关键约束**（不进实现会出错）：
 1. **跨租户认领**：`background_job` 是 strict RLS 表，runner 认领时需 `SET LOCAL app.tenant_id='__platform__'`（沿用 `p_tenant_isolation` 的平台模式，与 `/ops/**` 同一机制），拿到任务后**立即** `SET LOCAL app.tenant_id = job.tenant_id` 再干活。认领 SQL 必须**同一事务**内完成，否则租约与状态会撕裂。
 2. **租约而非锁**：`locked_by='<host>:<pid>:<uuid>'`、`locked_until=now()+2*interval`，进程崩溃后由下一次认领回收（`status='running' AND locked_until < now()`）。不用 Valkey 锁，避免第二套失效语义。
-3. **按 kind 的重试策略**：`memory_extract` → `max_attempts=1`（PRD §4.6 D-1"丢弃，不重试"）；`tenant_export` → 3 次指数退避；`retention_cleanup` → 3 次。
+3. **按 kind 的重试策略**：`memory_extract` → `max_attempts=1`（PRD §4.6 D-1"丢弃，不重试"）；`retention_cleanup` → 3 次。**`tenant_export` 没有处理器**（2026-10-29：TD1 改同步生成，见 T4-05.3 与 `tasks/__init__.py`）；该 `kind` 仅保留在迁移 `0010` 的 `CHECK` 枚举里——枚举是冻结契约，删一个取值等于改契约，而队列里不会出现该类任务。
 4. **runner 可关**：`OA_BACKGROUND_JOBS_ENABLED`（默认 `true`）。测试与 CI 默认关，避免后台线程污染断言；`-m memory` 用例显式开 `OA_BACKGROUND_JOBS_ENABLED=true` 并**同步驱动**一次 `runner.tick()`（不依赖 sleep）。
 
 ### 2.4 鉴权链（不变，但要把防呆固化）
@@ -478,7 +478,7 @@ tenant(1) ─┬─ conversation(N) ── message(N)          ← 新（个人�
 | 会话不存在/已删除 | **18001** | 404 | 该对话已不存在 | 与 `12001`（任务不存在）区分 |
 | 记忆不存在 | **18002** | 404 | 这条信息已不存在 | — |
 | 删除确认文本不匹配 | **18003** | 400 | 请输入完整的企业名称以确认 | 需独立文案，不能复用 20001 的通用文案 |
-| 额度/预算已用尽 | **15006**（复用） | **402**（由 200 改） | 本月可用量已用完，请联系管理员调整 | E-3/E-4 **同码**；见 §7.3 的兼容处理 |
+| 额度/预算已用尽 | **15006**（复用） | **402**（由 200 改） | 本月可用量已用完，请联系管理员调整 | E-3/E-4 **同码**；见 §7.3 的兼容处理。**2026-10-27 裁决后现状**：本码仅以 `data.notice_code` 出现在成功响应里，**全仓无任何 `raise` 调用点**（`grep -rn "15006" apps/adapter/app/` 可验）；注册值仍保留为 402——错误码表是**对外契约**，删值会让前端 `code=15006` 的处理逻辑失去依据 |
 | 无权限访问他人**任务/产物** | 20003（复用） | **403** | 你没有权限查看该内容 | 沿用既有契约 |
 | 访问他人**会话/记忆** | **18001 / 18002**（与「不存在」同码） | **404** | 该对话已不存在 / 这条信息已不存在 | **防枚举**：返回 403 会泄漏「这个 ID 存在」，个人数据可枚举比文案不统一严重得多 |
 | 记忆已关闭 | **不新增** | 200 | 静默不写 | 状态表达，不打错误码 |
@@ -586,10 +586,10 @@ sequenceDiagram
   API->>API: require_permission? 否（对象级=本人）
   API->>US: check_generation_allowed(tenant, user)
   US->>DB: usage_monthly(tenant) + tenant_budget
-  alt remaining<=0 或 usage>=budget
-    US-->>API: ApiError(15006, 402)
-    API-->>FE: {code:15006,message:"本月可用量已用完，请联系管理员调整"}
-    Note over DF,DY: 上游调用 0 次（mock 计数断言）
+  alt remaining<=0 或 usage>=budget（2026-10-27 裁决后修订：对话不拦停）
+    US-->>API: BudgetStatus(exhausted=True)（**不抛 15006**）
+    API-->>FE: code=0，单次输出限长 + data.notice_code=15006
+    Note over DF,DY: 对话上游调用 **1** 次（裁决的代价，如实标注）；"上游 0 次"只适用于文档上传与自动化任务
   end
   API->>CS: ensure_conversation(conversation_id?)
   CS->>DB: INSERT conversation (conv_ + ULID) [首次]
@@ -786,21 +786,38 @@ def test_empty_key_marks_profile_unavailable(...)  # 置空 code key → M3 目�
 ### 7.2 硬止损（唯一判定点）
 
 ```python
-# UsageService.check_generation_allowed(tenant_id, user_id) -> None | raise ApiError
+# UsageService.check_generation_allowed(tenant_id, user_id) -> BudgetStatus（**只判定、不抛**）
+# 2026-10-27 裁决后修订：不再 raise ApiError(15006)；处置由调用面决定（见下方分流表）
 snap = await self.snapshot(tenant_id=tenant_id, user_id=user_id)   # 与 M4/BL5 同源
-if snap.total_units > 0 and snap.remaining_units <= 0:
-    raise ApiError(ErrorCode.QUOTA_EXHAUSTED, internal_detail="personal quota exhausted")
+exhausted = snap.total_units > 0 and snap.remaining_units <= 0
 budget = await self._budget.get(tenant_id)                          # tenant_budget
 if budget and budget.enabled and budget.monthly_budget_units > 0:
     used = await self._store.tenant_used(tenant_id, current_period())
-    if used >= budget.monthly_budget_units:
-        raise ApiError(ErrorCode.QUOTA_EXHAUSTED, internal_detail="tenant budget exhausted")
+    exhausted = exhausted or used >= budget.monthly_budget_units
+return BudgetStatus(exhausted=exhausted, ...)
 ```
-- **位置**：`generate` / `generate_stream` 的**第一行业务逻辑**（在 `resolve_route` 之后、`_authorized_base_ids` 之前），保证"0 次上游调用"。
-- **注意**：`snapshot()` 会读 DB。P95 目标 ≤300ms；实测该查询是 2 张表的索引扫描，且可加 30s 进程内缓存（`cachetools` 不引入，用简单 `dict` + 时间戳，按 `(tenant,user)` 键，失效于 `record_generation`）。
-- **流式的特殊性**：SSE 一旦开始写就无法返回统一错误体 → 校验必须在 `StreamingResponse` 之前（现有 `precheck` 已遵此原则，`model_service.py:700-710`），把硬止损放在 `precheck` 内。
 
-### 7.3 `15006` 的兼容处理（必须写清楚，否则前端文案分叉）
+**处置分流（本表是 §7.2 的唯一结论，引用它而不是各自复述）**
+
+| 调用面 | 超额后 | 上游调用 | 实现落点 |
+| --- | --- | --- | --- |
+| R3 文档上传 | 收下 + `stage=quota_held`（内容不落库） | **0 次** | `is_capability_exhausted()` + 挂起 |
+| A1 自动化任务 | 照建 + `status=queued` / `hold_reason=quota` | **0 次** | 同上，一步都不执行 |
+| M1/M2 对话 | 继续可用 + 单次输出限长，`code=0` + `notice_code=15006` | **1 次（刻意，裁决的代价）** | `apply_answer_cap()` |
+
+- **位置**：判定是 `generate` / `generate_stream` 的**第一行业务逻辑**（在 `resolve_route` 之后、`_authorized_base_ids` 之前）。
+  对 R3/A1 这条位置等价于"0 次上游调用"；对对话，它决定的是**是否限长**，而不是要不要返回错误——两者别混。
+- **注意**：`snapshot()` 会读 DB。P95 目标 ≤300ms；实测该查询是 2 张表的索引扫描，且可加 30s 进程内缓存（`cachetools` 不引入，用简单 `dict` + 时间戳，按 `(tenant,user)` 键，失效于 `record_generation`）。
+- **流式的特殊性**：SSE 一旦开始写就无法再改响应头/状态码 → 判定与限长必须都在 `StreamingResponse` 之前（现有 `precheck` 已遵此原则，`model_service.py:700-710`）。
+
+### 7.3 历史：402 业务性 4xx 的处理（**2026-10-27 裁决后不再产生**）
+
+> **现在读这一节要知道的前提**：本节的原始前提是"额度用尽会返回 HTTP 402"。
+> 2026-10-27 用户裁决后，**没有任何路径再返回 402**（对话改成"可用 + 限长 + `notice_code`"，
+> 文档/任务改成"挂起不烧钱"，见 §7.2 的分流表）。因此本节**降级为历史记录 + 防御性代码说明**：
+> `apps/web/src/lib/api-client.ts:330-336` 里"把 402 当业务响应解析"的那段**仍然保留**，
+> 理由是防御而非需求——上游/网关/未来某条策略真的回了 402，前端也该展示后端 `message`
+> 而不是"网络异常"。**新代码不应依赖这条路径**，也不要据此认为额度拦截还在。
 
 | 变化 | 前 | 后 |
 | --- | --- | --- |
@@ -1230,7 +1247,7 @@ async def apply_one(self, m: Migration) -> None:
 | ID | 目标 | 涉及文件（相对路径） | 依赖 | 验收命令 | 规模 |
 | --- | --- | --- | --- | --- | --- |
 | **T4-01.1** | **收敛在途整改**：跑全量测试 → 提交 → 记 SHA | 现有 12 改 + 4 新增（`core/security.py`、`core/artifact_token.py`、`api/v1/artifact_files.py`、`core/config.py`、`main.py`、两份 compose、`images.lock`、2 个 CI workflow、3 个测试文件、`deploy/validate_deploy.py`） | — | ① `OA_TEST_DATABASE_URL=<现有测试库应用角色 DSN> OA_BATCH=B21 pytest tests --run-pg -q` → `0 failed`；② `git commit` 后 `git rev-parse --short HEAD` 记录进 `docs/phase4-batch-log.md` | M |
-| **T4-01.2** | 错误码与配置基座：新增 `18001/18002/18003`；`15006` 改 402 + 新文案；`Settings` 增 4 个底座密钥 + 6 个保留期/记忆配置 + 5 个 embedding 配置 | `app/core/errors.py`、`app/core/config.py`、`apps/adapter/tests/unit/test_error_registry.py`、`deploy/.env.example` | T4-01.1 | `python -c "from app.core.errors import ERROR_REGISTRY as R, ErrorCode as E; assert R[E.QUOTA_EXHAUSTED].http_status==402; assert int(E.CONVERSATION_NOT_FOUND)==18001"`；`pytest tests/unit/test_error_registry.py -q`。**注意**：字段实名是 `ErrorSpec.http_status`（`errors.py:182`），`status` 仅为只读别名（`errors.py:196-198`，为兼容旧断言而留）——**新代码一律用 `http_status`，别名不得写进契约** | S |
+| **T4-01.2** | 错误码与配置基座：新增 `18001/18002/18003`；`15006` 改 402 + 新文案（**该 402 只是注册表值：2026-10-27 裁决后 V1.0 无任何阻断调用点，见 §4.2 与 §7.3**）；`Settings` 增 4 个底座密钥 + 6 个保留期/记忆配置 + 5 个 embedding 配置 | `app/core/errors.py`、`app/core/config.py`、`apps/adapter/tests/unit/test_error_registry.py`、`deploy/.env.example` | T4-01.1 | `python -c "from app.core.errors import ERROR_REGISTRY as R, ErrorCode as E; assert R[E.QUOTA_EXHAUSTED].http_status==402; assert int(E.CONVERSATION_NOT_FOUND)==18001"`（此断言验的是**错误码注册表的值**，不是业务路径；V1.0 无阻断调用点，见 §4.2 现状注）；`pytest tests/unit/test_error_registry.py -q`。**注意**：字段实名是 `ErrorSpec.http_status`（`errors.py:182`），`status` 仅为只读别名（`errors.py:196-198`，为兼容旧断言而留）——**新代码一律用 `http_status`，别名不得写进契约** | S |
 | **T4-01.3** | 端点基线扩容：新增 `baseline-phase4-10.json`（先占位 10 条），扩展 `validate_openapi.py` 的 `G3: len(phase4)==10` 与 `core_actual` 扣除 | `docs/api/baseline-phase4-10.json`、`docs/api/openapi.snapshot.json`、`deploy/validate_openapi.py`、`apps/adapter/app/api/v1/router.py` | T4-01.2 | `python deploy/validate_openapi.py` → 输出 `core=30 phase2=38 phase3=16 phase4=10` 且退出 0 | S |
 | **T4-01.4** | 迁移机制修复：`advisory_xact_lock` + DDL/台账同事务 + `--rollback` + `.env.example` 改 `false` + `0003` 哨兵 | `app/db/migrate.py`、`deploy/migrations/rollback/`（**目录已存在，无需新建**；已在建的 down：`0006` / `0007` / `0008`，T4-01.4 只需接上 `--rollback` 执行与 `--run-pg` 三轮用例）、`deploy/init-schema-phase3.sql`、`deploy/.env.example`、`apps/adapter/tests/integration/test_migration_lock.py` | T4-01.1 | `python deploy/validate_migrations.py --run-pg` 三轮 EXIT 0；`pytest tests/integration/test_migration_lock.py --run-pg -q` | M |
 | **T4-01.5** | 迁移 `0006` + `0007` + 两份 down：`content_type` / `usage_event` 四列 | `deploy/migrations/0006_*.sql`、`0007_*.sql`、`rollback/0006_*.down.sql`、`rollback/0007_*.down.sql`、`app/db/repositories/artifact_repo.py`（写 `content_type` 三处）、`app/db/repositories/usage/__init__.py` | T4-01.4 | `pytest tests/integration/test_artifact_content_pg.py --run-pg -q`；`grep -c content_type deploy/migrations/0006_*.sql` ≥1；`OA_BATCH=B30 pytest tests -q` 中 `P3-B22-04` 不再因缺列报红 | M |
@@ -1265,11 +1282,26 @@ async def apply_one(self, m: Migration) -> None:
 | ID | 目标 | 涉及文件 | 依赖 | 验收命令 | 规模 |
 | --- | --- | --- | --- | --- | --- |
 | **T4-04.1** | 档位接线：`api_key=resolve_app_key()` + 降级链 + M3 运行期 `status` + `/readyz` 可用档位 | `app/services/model_service.py`、`app/core/config.py`、`app/registry/loader.py`、`app/api/v1/model.py`、`apps/adapter/tests/unit/test_profile_routing_contract.py` | T4-01.2 | `pytest tests/unit/test_profile_routing_contract.py -q`：4 档 4 个不同 key；`generate` 入参被断言；401 降级成功 | M |
-| **T4-04.2** | 硬止损 + 计量维度落库：`check_generation_allowed` 前置、`usage_event` 四列写入、estimated 标记；**新增 `app/db/schema_guard.py`**（§10.5 ③ 的列存在性守卫，0007 四列的唯一读取口径） | `app/business/usage_service.py`、`app/db/repositories/usage/__init__.py`、`app/services/model_service.py`、**`app/db/schema_guard.py`（新建）**、`apps/adapter/tests/integration/test_quota_hardstop.py` | T4-04.1、T4-01.5 | `pytest tests/integration/test_quota_hardstop.py -q`：额度 0 → `code=15006` 且 mock 上游调用 **0** 次；3 次不同档位 → `profile` 3 个值 + token 非空 | M |
+| **T4-04.2** | 硬止损 + 计量维度落库：`check_generation_allowed` 前置、`usage_event` 四列写入、estimated 标记；**新增 `app/db/schema_guard.py`**（§10.5 ③ 的列存在性守卫，0007 四列的唯一读取口径）。**超额处置按 2026-10-27 用户裁决「三路分流」**（见判据列，勿再按单一"全部拒绝"理解） | `app/business/usage_service.py`、`app/db/repositories/usage/__init__.py`、`app/services/model_service.py`、**`app/db/schema_guard.py`（新建）**、`apps/adapter/tests/integration/test_quota_hardstop.py`、`apps/adapter/tests/integration/test_quota_notice.py` | T4-04.1、T4-01.5 | `pytest tests/integration/test_quota_hardstop.py tests/integration/test_quota_notice.py -q`：**三路对照（2026-10-27 裁决后修订；出处 `docs/prd-phase2-increment.md` §5.3「修订留痕」与 `apps/adapter/app/business/usage_service.py:711-716` "本方法不抛 15006"）**：① **R3 文档上传 = 硬止损**：记录照落 + `stage=quota_held`，向上游传字节 **0** 次；② **A1 自动化任务 = 硬止损**：任务照建 + `status=queued` / `hold_reason=quota`，**一步都不执行**（上游 0 次）；③ **M1/M2 对话 ≠ 硬止损**：≥100% 仍可用，仅单次输出限长，响应 `code=0` + `data.notice_code=15006`，**上游调用恒为 1（这是裁决的代价，如实断言 1，不得再按 0 断言、也不得要求 `code=15006`）**；另：3 次不同档位 → `profile` 3 个值 + token 非空 | M |
 | **T4-04.3** | 租户月度预算（`0011`）+ 80% 提示 + 100% 硬拒 | `deploy/migrations/0011_tenant_budget.sql`、`rollback/0011_*.down.sql`、`app/db/repositories/budget_repo.py`、`app/business/usage_service.py`、`apps/adapter/tests/integration/test_tenant_budget.py` | T4-04.2 | `pytest tests/integration/test_tenant_budget.py -q`：80 → 1 条提示；100 → 下次调用被拒 | M |
 | **T4-04.4** | 任务单步超时 + `pg_advisory_xact_lock` 防重复推进 | `app/business/task_service.py`（`:453` 处）、`apps/adapter/tests/integration/test_task_timeout_lock.py` | T4-01.2 | 配 5s + sleep 10s 步骤 → 状态超时且 `elapsed<8s`，产物可取；两进程同时推进 → 步骤序号只 +1 | M |
 | **T4-04.5** | fail-closed + 白名单 2 条 + 锁文件断言 | `app/core/security.py`、`app/core/permission_whitelist.py`、`docs/security/permission-whitelist.lock`、`apps/adapter/tests/unit/test_permission_whitelist.py` | T4-01.2 | `grep -rn "permission_check_deferred" apps/adapter/app` 仅白名单分支 1 处；`pytest -m security -q` 0 failed | M |
 | **T4-04.6** | 5 类攻击用例（`-m security`） | `apps/adapter/tests/security/test_authn_bypass.py`、`test_cross_tenant.py`、`test_object_privilege.py`、`test_quota_abuse.py`、`test_info_leak.py` | T4-04.2/04.5、T4-02.1 | `pytest -m security -q` 0 failed；故意放开一处 → 仅对应用例红 | L |
+
+> **2026-10-27 裁决后修订（T4-04 判据，勿再按旧口径验收）**
+>
+> 本表 T4-04.2 原判据「额度 0 → `code=15006` 且 mock 上游调用 **0** 次」**已作废**：它把"对话"也当成阻断对象，
+> 与用户 2026-10-27 的裁决冲突。现行口径是**三路分流**，两个文件同时钉住它：
+>
+> | 路径 | 超额后行为 | 上游调用次数 | 判据落点 |
+> | --- | --- | --- | --- |
+> | R3 文档上传 | 收下记录 + `stage=quota_held`（内容不落库） | **0** | `tests/integration/test_quota_hardstop.py` 用例 ① |
+> | A1 自动化任务 | 照建 + `status=queued` / `hold_reason=quota` | **0** | 同上用例 ② |
+> | M1/M2 对话 | 继续可用 + 单次输出限长，`code=0` + `notice_code=15006` | **1（刻意）** | `tests/integration/test_quota_notice.py` |
+>
+> 「对话仍会发起 1 次上游调用」是这次裁决**明知并接受**的代价（单次限长 ≈ 极低额度占比，但**次数无上限**）；
+> 若要彻底阻断对话，需另立「超额限次」策略，PRD 目前没有该定义。**验收时不得以"上游必须 0 次"卡对话用例**——
+> 那是把已撤销的旧口径重新引回，且会让已通过的实现被判红。
 
 ### T4-05 可观测、数据权利与交付形态（W3 - W4）
 
@@ -1277,7 +1309,7 @@ async def apply_one(self, m: Migration) -> None:
 | --- | --- | --- | --- | --- | --- |
 | **T4-05.1** | `/metrics` + 指标埋点 + 标签白名单断言 | `app/core/metrics.py`、`app/main.py`、`app/core/security.py`（中间件挂载）、`apps/adapter/tests/unit/test_metrics_labels.py` | T4-01.2 | `curl -s localhost:8000/metrics \| head` 含 `# HELP http_requests_total`；`pytest tests/unit/test_metrics_labels.py -q` | M |
 | **T4-05.2** | exporter + 4 job 抓取 + 5 条告警规则 | `deploy/docker-compose.yml`、`deploy/prometheus.yml`、`deploy/alert.rules.yml`、`deploy/images.lock` | T4-05.1 | `docker compose config -q`；Prometheus `/targets` 4 job `UP`；`/rules` 5 条 `ok` | M |
-| **T4-05.3** | 数据保留 + 清理任务 + 租户导出/删除 + DBA 审计 SQL；**TD1 同步导出（`status=ready` + `rows`，上限 20 万行）+ TD2 停用式删除（`status=suspended`）** | `app/workers/tasks/retention_cleanup.py`、`app/workers/tasks/tenant_export.py`、`app/business/tenant_data_service.py`、`app/api/v1/tenant_data.py`、`app/api/v1/router.py`、`sql/retention-audit.sql`、`apps/adapter/tests/integration/test_retention_export_delete.py` | T4-03.2 | `pytest tests/integration/test_retention_export_delete.py -q`；保留期 1 天 → 目标表 `count=0` + 日志有行数；导出包 `manifest.json` 行数一致；**TD1**：造 20 万零 1 行 → `20001` + 「数据量较大，请联系管理员分批导出」；正常量 → `status="ready"` 且 `rows.total` 与包内一致、`download_url` 可直接下载（复用 `/files/artifacts/{token}`）；**TD2**：删除后逐表 0，但 `plugin_task`/`plugin_artifact` **各留 1 行**且其业务字段为空；响应含 `retained_tables`（四张知识库表）与 `audit_pending_dba`；`tenant.status=suspended` 且 `suspended_reason` 非空；**TTL 分开**：查 `plugin_artifact` 的 `expires_at - created_at`，`purpose=proof_of_deletion` **>1 天**、导出包 **<1 天**（现状实现 15 分钟）；并验证证明在 `retention_cleanup` 跑过一轮后**仍可下载** | L |
+| **T4-05.3** | 数据保留 + 清理任务 + 租户导出/删除 + DBA 审计 SQL；**TD1 同步导出（`status=ready` + `rows`，上限 20 万行）+ TD2 停用式删除（`status=suspended`）**。**2026-10-29：TD1 改为同步生成（`tenant_data_service.py`），任务处理器按 `tasks/__init__.py` 既有裁决「`tenant_export` 刻意没有处理器」不建**（原 `app/workers/tasks/tenant_export.py` 属过时设计，已从本行移除） | `app/workers/tasks/retention_cleanup.py`、`app/business/tenant_data_service.py`、`app/api/v1/tenant_data.py`、`app/api/v1/router.py`、`sql/retention-audit.sql`、`apps/adapter/tests/integration/test_retention_export_delete.py` | T4-03.2 | `pytest tests/integration/test_retention_export_delete.py -q`；保留期 1 天 → 目标表 `count=0` + 日志有行数；导出包 `manifest.json` 行数一致；**TD1**：造 20 万零 1 行 → `20001` + 「数据量较大，请联系管理员分批导出」；正常量 → `status="ready"` 且 `rows.total` 与包内一致、`download_url` 可直接下载（复用 `/files/artifacts/{token}`）；**TD2**：删除后逐表 0，但 `plugin_task`/`plugin_artifact` **各留 1 行**且其业务字段为空；响应含 `retained_tables`（四张知识库表）与 `audit_pending_dba`；`tenant.status=suspended` 且 `suspended_reason` 非空；**TTL 分开**：查 `plugin_artifact` 的 `expires_at - created_at`，`purpose=proof_of_deletion` **>1 天**、导出包 **<1 天**（现状实现 15 分钟）；并验证证明在 `retention_cleanup` 跑过一轮后**仍可下载** | L |
 | **T4-05.4** | 轻量版编排（9 容器）+ nginx + 资源限制 + healthcheck + `validate_lite_up.sh` | `deploy/docker-compose.lite.yml`、`deploy/nginx/nginx.conf`、`deploy/nginx/lite.conf`、`deploy/validate_lite_up.sh`、`deploy/.env.lite.example` | T4-05.2、T4-03.1 | `bash deploy/validate_lite_up.sh` → `ready in <180s` + `status=ok`；`docker stats` 总内存 < 6GB；`grep -c healthcheck deploy/docker-compose.lite.yml` ≥ 有状态服务数 | L |
 | **T4-05.5** | 离线包 + 升级/回滚脚本 + `images.lock` 增 `digest`；**升级预检含 `vector` 扩展**（§9.3.1） | `deploy/install.sh`、`upgrade.sh`、`rollback.sh`、`backup.sh`、`restore.sh`、**`sql/enable-vector-extension.sql`（新建）**、`deploy/images.lock`、`deploy/validate_packaging.py` | T4-05.4、T4-01.4 | 断网全新环境 `bash install.sh` 一次成功；`sha256sum -c checksums.txt` 全通过；`upgrade→rollback→upgrade` 三轮数据一致；**`vector` 预检**：① 全新装库（initdb 超级用户建过扩展）→ `upgrade.sh` 预检通过、不进中止分支；② 手工 `DROP EXTENSION vector` 后跑 `upgrade.sh` → **退出码 4、未执行任何迁移**、打印 §9.3.1 的逐字文案、`sql/enable-vector-extension.sql` 内容随之输出；**回滚范围**：`bash rollback.sh 0005` → **`exit 7`** + 打印「该版本无自动回滚脚本，请 DBA 按 runbook 手工处理」且**未执行任何 down SQL**；`bash rollback.sh 0008` → 调 `migrate.py --rollback 0008` 成功、`schema_migration` 少一行、`plugin_artifact` 的 `content_type` 列仍在（0008 与 0006 不互相关联，只退 0008）；**薄封装**：`grep -cE "psql|DROP TABLE" deploy/rollback.sh` = 0（脚本内不得出现 DDL，全部走 CLI）；**维护闸门**：不设 `OA_MAINTENANCE=1` → `exit 3`；设了之后 `docker ps` 中 `oal-proxy`/`oal-web` 已停止，结束后恢复 | L |
 | **T4-05.6** | SBOM + `.difypkg` 扫描 + 合规三件套 + About 页；**DBA runbook 顶部单列 `vector` 扩展步骤**（§9.3.1） | `deploy/sbom/generate.py`、`deploy/validate_offline_pkgs.py`、`.github/workflows/sbom.yml`、`docs/compliance/privacy-policy.md`、`dpa-template.md`、`security-whitepaper.md`、`apps/web/src/app/(main)/about/page.tsx` | T4-05.5 | `jq '.components\|length' sbom.cdx.json` >0 且 4 前缀各 ≥1；`python deploy/validate_offline_pkgs.py --self-test` 正样本 0 / 负样本非 0；CI `license-scan` success | L |
@@ -1288,7 +1320,7 @@ async def apply_one(self, m: Migration) -> None:
 | 周 | 批次 | 周门禁 |
 | --- | --- | --- |
 | W1 | T4-01 全部 + T4-02.1/.2 | `production+stub` 启动非 0；`message` 有真实行且跨租户 0 行；`validate_migrations.py --run-pg` 三轮 EXIT 0；测试数字已回填最新口径 |
-| W2 | T4-02.3~.6 + T4-03.1/.2 | 刷新后逐字恢复；跨会话记住并删后失效；4 档 4 key 契约绿；额度 0 → 上游 0 次 |
+| W2 | T4-02.3~.6 + T4-03.1/.2 | 刷新后逐字恢复；跨会话记住并删后失效；4 档 4 key 契约绿；**额度 0 时三路分流成立**：文档/任务上游 0 次且挂起，对话可用但限长（2026-10-27 裁决后修订，原「额度 0 → 上游 0 次」已作废） |
 | W3 | T4-03.3~.7 + T4-04 全部 + T4-05.1/.2 | CI run URL 可开且 `tenant_isolation` 15 passed；SBOM 四层可解析；轻量版 3 分钟起；4 job UP；5 类攻击全绿 |
 | W4 | T4-05.3~.7 | 断网一键部署成功；升级→回滚→再升级三轮一致；合规抽查 10 条无矛盾；金标 20 条可复算 |
 

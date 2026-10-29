@@ -232,7 +232,8 @@ def resolve_tenant_id(request: Request, auth: AuthContext, settings: Settings | 
 #:
 #: 只有这两处允许"无角色令牌"通过 `require_permission` 进入业务能力层做对象级判定；
 #: 其余一律 fail-closed。集合由 `docs/security/permission-whitelist.lock` 快照锁定，
-#: `tests/security/test_permission_whitelist.py` 断言其**未扩张**。
+#: `tests/security/test_permission_fail_closed.py` 断言其**未扩张**
+#: （`test_exactly_two_entries` / `test_lock_file_matches_code` 等 7 条用例）。
 #:
 #: 键是 `(权限点, HTTP 方法)`，值是"为什么必须委派"的理由。
 PERMISSION_WHITELIST: Final[dict[tuple[str, str], str]] = {

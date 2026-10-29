@@ -1,0 +1,55 @@
+# 金标任务 T15 —— 通用办公 / 对话：从零散记录写周报
+# 设计要点：周报最容易被写成流水账。判分看「有没有提炼出成果与风险」。
+id: T15
+title: 把一周零散记录整理成周报
+scenario: 通用办公
+scenario_key: general_chat
+plugin_id: null
+deliverable_type: 文档
+difficulty: 易
+
+input:
+  channel: chat                   # chat=走 M1 /api/v1/model/generate
+  endpoint: POST /api/v1/model/generate
+  profile: general
+  user_query: |
+    帮我把这周的记录整理成周报，发给部门负责人看：
+    周一跟进三个供应商报价；周二把上季度合同归档完；周三参加产品评审会，提了两条意见
+    被采纳；周四写采购制度初稿，写到一半；周五处理了两个员工报销异常单。
+    下周要交采购制度终稿，还得复盘上季度费用。
+  context:
+    history_window: 0
+
+expected_artifact:
+  kind: text
+  outputs: []
+  description: 一份 4 段式周报：本周成果、进行中、问题与风险、下周计划
+  must_contain:
+    - 四段结构齐全
+    - 本周成果条目化，每条带可核查结果（如「归档完成」「两条意见被采纳」）
+    - 进行中含完成度（采购制度初稿写到一半 → 约 50%）
+    - 下周计划两条，与本周未完成项对应
+  must_not_contain:
+    - 按周一到周五逐日罗列（流水账）
+    - 虚构未发生的成果或数字
+
+pass_criteria:
+  completeness:
+    - 四段结构齐全，缺一段即不满分
+    - 五项记录全部被覆盖，无遗漏
+    - 下周计划 ≥2 条
+  accuracy:
+    - 「写到一半」被表达为进行中/未完成，不得写成已完成
+    - 「两条意见被采纳」保持为 2 条，不夸大
+    - 报销异常单数量与原文一致
+  usable:
+    - 可直接粘进邮件或周报系统，无需再改写
+    - 每条一句话，不超过两行
+    - 全文 300-600 字
+  no_tech_exposure:
+    - 周报全文不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现「根据以上输入」「已为您生成」这类机器口吻
+  verifiable:
+    - 四段标题清晰可辨
+    - 每条成果可在用户给的记录里找到出处
+    - 下周计划每条都指向本周一个未完成项

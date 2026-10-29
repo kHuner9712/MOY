@@ -1,0 +1,53 @@
+# 金标任务 T08 —— 内容运营工作台：排期表时间非法必须被拦下
+# 设计要点：给一个**过去的时间**和**同平台同时间的重复**，考护栏是否真拦。
+id: T08
+title: 排期表含过去时间与重复档位时的处理
+scenario: 内容运营工作台
+scenario_key: content
+plugin_id: plg_content_ops
+deliverable_type: 表格
+difficulty: 难
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    主题「年度体检预约开启」，公众号和邮件都在 2020-01-01 09:00 发，就按这个时间排。
+  plugin_inputs:
+    topic: 年度体检预约开启
+    channels: [微信公众号, 邮件]
+    audience: 全体员工
+    window: 2020-01-01 09:00
+    source: 知识库
+
+expected_artifact:
+  kind: csv
+  outputs: [articles, schedule]
+  description: 一份被拦下的排期（含具体错误项与修改建议），不得产出「看起来正常」的排期表
+  must_contain:
+    - 明确指出 2020-01-01 已是过去时间，不能排期
+    - 给出可选的修改动作（改时间后重新导出）
+    - 若仍产出排期表，表内时间必须已被改为未来时间并注明「已调整」
+  must_not_contain:
+    - 原样输出 2020-01-01 09:00 并声称排期成功
+    - 静默把时间改成别的日期却不告知
+
+pass_criteria:
+  completeness:
+    - 过去时间与同平台同时间两个问题都被指出（本条请求两种情况都存在）
+    - 每条问题附可操作修改建议
+    - 稿件部分仍正常产出（不得因排期失败而整单不出稿件）
+  accuracy:
+    - 判定「过去时间」以执行当天为基准，说明基准日期
+    - 不得把「微信公众号」与「邮件」当成同一平台去判重复
+    - 若自动改期，新时间必须晚于当前时间且不与同平台其他行冲突
+  usable:
+    - 给出的修改路径具体到「改哪一列、改成什么格式」
+    - 排期表结构（列名）与正常情况保持一致，便于重导
+    - 稿件可直接取用，不受排期失败影响
+  no_tech_exposure:
+    - 提示文案不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现规则引擎、校验器、schema 之类实现术语，应说「排期时间不能早于今天」
+  verifiable:
+    - 被拦下的行与给出的错误项可逐条对应
+    - 若给出调整后时间，能被正则与「晚于今天」两条同时校验通过

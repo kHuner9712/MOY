@@ -1,0 +1,62 @@
+# 金标任务 T14 —— 行政人事工作台：会议纪要公文（docx 产物）
+# 设计要点：纪要不是流水账。判分看「决议/待办/责任人/截止」四件是否落地。
+id: T14
+title: 从会议要点整理成正式会议纪要
+scenario: 行政人事工作台
+scenario_key: hr
+plugin_id: plg_hr_admin
+deliverable_type: 文档
+difficulty: 中
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    今天开了个办公会，整理成正式纪要发文。会上说：办公用品采购预算压减 10%，
+    由行政部老李月底前出方案；食堂承包商续约先不定，下月再议；消防演练定在 11 月中旬，
+    行政部牵头，各部门配合；另外大家反映会议室不够用，先做个使用统计再说。
+  plugin_inputs:
+    position: 行政专员
+    department: 行政部
+    duties: 行政事务
+    hard_requirements: 无
+    doc_type: 会议纪要
+    doc_points: |
+      会议主题：办公会
+      时间：今天
+      参会：行政部及各部门代表
+      议题要点：采购预算压减、食堂续约、消防演练、会议室使用。
+
+expected_artifact:
+  kind: document
+  outputs: [document]
+  description: 一份 docx 会议纪要：抬头、议题与结论、待办事项表（责任人 + 截止）、未决事项
+  must_contain:
+    - 抬头含会议名称、时间、参会范围、记录人位置
+    - 四项议题各有结论，结论用「已定/未定」区分
+    - 待办事项表含责任人、截止时间、交付物三列
+    - 明确单列「未决事项」（食堂续约、会议室使用统计）
+  must_not_contain:
+    - 把「先做个使用统计再说」写成已决定增建会议室
+    - 编造与会人员姓名、会议地点、会议编号
+
+pass_criteria:
+  completeness:
+    - 四项议题全覆盖，缺一即不满分
+    - 待办表至少 2 条且有责任人与截止
+    - 「未决事项」独立成段
+  accuracy:
+    - 「未定」的两项不得被写成已定，也不得被漏掉
+    - 消防演练的牵头/配合关系与原文一致
+    - 预算压减 10% 写成指标描述，不推算具体金额
+  usable:
+    - 文件为 docx 可直接下发
+    - 待办表是表格形态，不是段落里的散句
+    - 纪要长度 500-1200 字，符合正式纪要体量
+  no_tech_exposure:
+    - 纪要全文不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现内部系统名、任务编号、文件服务器路径
+  verifiable:
+    - 每条待办都能对应到会上某句原话
+    - 「未决事项」每条写明下次讨论时间或触发条件
+    - 时间表述为绝对日期（11 月中旬需展开为具体日期区间）

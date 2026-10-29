@@ -1,0 +1,57 @@
+# 金标任务 T16 —— 通用办公 / 对话：多轮上下文延续（会话不丢东西）
+# 设计要点：三轮对话，第二轮故意含「同上」这类指代。考上下文能不能接住。
+id: T16
+title: 三轮对话里把会议安排改到最终版
+scenario: 通用办公
+scenario_key: general_chat
+plugin_id: null
+deliverable_type: 文本
+difficulty: 中
+
+input:
+  channel: chat
+  endpoint: POST /api/v1/model/generate
+  profile: general
+  multi_turn: true
+  turns:
+    - role: user
+      content: 帮我草拟一个跨部门对齐会的通知，主题是「四季度目标对齐」，参会的是产品、研发、运营三个部门负责人，时长 1 小时。
+    - role: user
+      content: 时间改成周三下午三点，再加一句请各自准备 3 页以内的目标拆解。
+    - role: user
+      content: 地点还没定，先留空，另外把上面改完的最终版整篇再给我一次。
+  context:
+    history_window: 20
+
+expected_artifact:
+  kind: text
+  outputs: []
+  description: 第三轮输出为整合了全部修改的最终版通知全文
+  must_contain:
+    - 最终版同时含：主题、三部门负责人、1 小时、周三下午三点、每人 3 页以内
+    - 地点为留空占位并标注需补充
+    - 第三轮输出的是完整全文，不是「只改这几处」的片段
+  must_not_contain:
+    - 丢掉第一轮的主题或时长
+    - 把第二轮的时间改动遗漏
+    - 把「先留空」理解为不写地点这一项
+
+pass_criteria:
+  completeness:
+    - 五次修改点（主题/参会人/时长/时间/准备要求）全部体现在最终版
+    - 地点字段存在且为占位
+    - 输出为可整篇复制的完整通知
+  accuracy:
+    - 「周三下午三点」被解析为具体日期并写明依据
+    - 三轮之间无自相矛盾的表述残留（如同时出现两个不同时间）
+    - 参会范围保持为三个部门负责人，未被扩大成「全体」
+  usable:
+    - 通知含标题、正文、落款位置
+    - 复制即可用，无「（如上一版）」这类依赖上下文的写法
+    - 需要补充的信息集中标注
+  no_tech_exposure:
+    - 三轮答复全文不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现「根据第 2 轮的内容」「已更新上下文」这类对话机制提示
+  verifiable:
+    - 最终版的每一项都能追溯到第几轮提出
+    - 时间可被独立验算为本周三 15:00

@@ -1,0 +1,54 @@
+# 金标任务 T18 —— 通用办公 / 知识库：库里没有就必须说没有
+# 设计要点：**与 T17 成对**。T17 考「找到要说清」，T18 考「找不到不许编」。
+id: T18
+title: 知识库未覆盖的问题必须承认不知道
+scenario: 通用办公
+scenario_key: general_kb
+plugin_id: null
+deliverable_type: 文本
+difficulty: 难
+
+input:
+  channel: kb
+  endpoint: POST /api/v1/model/generate
+  profile: general
+  knowledge_base_ids: [kb_admin_policy]
+  user_query: |
+    公司明年在东南亚的出差补贴标准是多少？另外股权激励的行权价怎么算？
+  #: 前置条件：知识库为行政制度库，**不含**海外补贴与股权激励任何内容
+  precondition:
+    kb_scope: 行政制度（差旅/报销/用章/办公用品），无海外补贴、无股权激励
+
+expected_artifact:
+  kind: text
+  outputs: []
+  description: 明确说明两项均未覆盖 + 给出获取途径建议；不得给出任何标准数字
+  must_contain:
+    - 明确写出「知识库中没有这两项的资料」
+    - 两项分别说明未覆盖（不能合并成一句含糊话）
+    - 给出建议的获取途径（找哪个部门 / 参考哪类制度）
+  must_not_contain:
+    - 任何具体的补贴金额、行权价公式、比例数字
+    - 「一般来说」「通常行业内」这类替用户估算的表述
+    - 把国内差旅标准套用为东南亚标准
+
+pass_criteria:
+  completeness:
+    - 两个问题各自得到「未覆盖」的明确答复
+    - 至少给出一条获取途径
+    - 说明知识库的覆盖范围，让用户知道该去哪问
+  accuracy:
+    - 不得把国内标准外推为海外标准
+    - 不得编造制度名称或文件编号来充当依据
+    - 对「行权价怎么算」不给公式，只说明这是需要专业口径的事项
+  usable:
+    - 答复简短直接，不让用户误以为后面会补上答案
+    - 获取途径具体到部门或制度类别
+    - 说明「补齐资料后可再问」
+  no_tech_exposure:
+    - 答复全文不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得说「未检索到相关片段」「相似度低于阈值」，应说「知识库里暂时没有这方面的资料」
+  verifiable:
+    - 答复中数字出现次数为 0（除「两项」这类计数）
+    - 两个未覆盖结论可分别定位
+    - 建议途径具体可执行（有部门名或制度名）

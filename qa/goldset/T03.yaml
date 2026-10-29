@@ -1,0 +1,56 @@
+# 金标任务 T03 —— 研发工作台：只做需求拆解（不写代码）
+# 设计要点：考「边界感」——用户只要拆解，给了代码是过度交付，扣完整性分。
+id: T03
+title: 把一段口头需求拆成可排期的开发要点
+scenario: 研发工作台
+scenario_key: dev
+plugin_id: plg_dev_workbench
+deliverable_type: 表格
+difficulty: 易
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    下周要上「企业内部公告」，你先帮我把要做的事拆出来，我要拿去排期。
+    公告要能发全员也能发指定部门，要能置顶，发出去之后不能改只能撤。
+  plugin_inputs:
+    title: 内部公告 需求拆解
+    requirement: |
+      本次只要拆解结果，不要写代码。拆解结果需可用于排期。
+      公告能力：发布范围（全员/指定部门）、置顶、发布后不可编辑只能撤回。
+    repo: platform/portal
+    branch_policy: 新建分支
+    stack: 不限
+
+expected_artifact:
+  kind: table
+  outputs: [key_points]
+  description: 一张可排期的要点表，不含代码文件
+  must_contain:
+    - 表格列至少含：要点、涉及端（前端/后端/数据）、依赖、工作量档位
+    - 覆盖发布范围、置顶、不可编辑只能撤回三个能力
+    - 「撤回」与「删除」被区分开
+  must_not_contain:
+    - 任何代码文件或代码片段（本任务只要拆解）
+    - 无依据的工作量数字（如「约 3.2 人日」）
+
+pass_criteria:
+  completeness:
+    - 三个能力全部拆出对应要点行
+    - 每行都填了涉及端与依赖，无空列
+    - 至少识别 1 条跨端依赖（例如前端置顶展示依赖后端排序字段）
+  accuracy:
+    - 「撤回」描述为对已发布内容的状态变更，「删除」描述为移除记录，两者不得混用
+    - 「指定部门」被识别为一个需要部门数据来源的依赖项
+    - 工作量用档位（小/中/大）而非编造精确人日
+  usable:
+    - 表格为可直接粘贴到表格软件的形式（列头清晰、无合并单元格残缺）
+    - 每行要点以一个动词开头，能被直接排期动作
+    - 行数在 5-12 行之间，既不过粗也不过碎
+  no_tech_exposure:
+    - 表格内容不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现框架/中间件品牌名（只写「后端」「数据」这类端别）
+  verifiable:
+    - 表格中每一个「依赖」都能指向具体已知系统或待确认事项
+    - 三行核心要点可在需求原文中逐字找到对应句子

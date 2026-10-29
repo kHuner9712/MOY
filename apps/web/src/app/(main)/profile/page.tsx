@@ -2,6 +2,8 @@
 
 import * as React from 'react';
 
+import Link from 'next/link';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -114,6 +116,16 @@ export default function ProfilePage(): React.JSX.Element {
           >
             退出登录
           </Button>
+
+          {/* 关于页的入口放这里：它不属于任何业务流程，却需要一个能被找到的位置。
+              侧栏刻意不给它一级菜单（占位成本高于访问频率），个人中心是最后那个
+              "用户会自己翻到"的地方。 */}
+          <p className="text-sm text-muted-foreground">
+            想核对版本号与开源组件？
+            <Link className="ml-1 font-medium text-primary underline underline-offset-2" href="/about">
+              关于本产品
+            </Link>
+          </p>
         </CardContent>
       </Card>
 

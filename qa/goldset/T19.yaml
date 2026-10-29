@@ -1,0 +1,56 @@
+# 金标任务 T19 —— 通用办公 / 对话：差旅报销明细表（表格产物）
+# 设计要点：从一段自然语言里抽结构化行，判分看「不漏行、金额算得对」。
+id: T19
+title: 把一堆票据口述整理成报销明细表
+scenario: 通用办公
+scenario_key: general_chat
+plugin_id: null
+deliverable_type: 表格
+difficulty: 中
+
+input:
+  channel: chat
+  endpoint: POST /api/v1/model/generate
+  profile: general
+  user_query: |
+    帮我做张报销明细表，CSV 格式：
+    9 月 3 日高铁北京到上海 553 元；9 月 3 日上海住宿一晚 480 元；
+    9 月 4 日客户招待 620 元；9 月 4 日打车 68 元；9 月 5 日高铁上海回北京 553 元；
+    9 月 5 日机场大巴 25 元。最后要合计。
+  context:
+    history_window: 0
+
+expected_artifact:
+  kind: csv
+  outputs: []
+  description: 6 行明细 + 1 行合计的 CSV，列含日期、项目、金额、类别
+  must_contain:
+    - 表头 + 6 条明细 + 1 条合计
+    - 合计金额为 2299
+    - 日期为 9 月 3/4/5 日且与明细一一对应
+    - 类别列（交通/住宿/招待）填写合理
+  must_not_contain:
+    - 漏行或多出行
+    - 合计与明细之和不一致
+    - 把两笔高铁合并成一行后仍写 6 条明细
+
+pass_criteria:
+  completeness:
+    - 6 条明细齐全，金额逐个正确
+    - 合计行存在且为 2299
+    - 类别列每行都有值
+  accuracy:
+    - 553 + 480 + 620 + 68 + 553 + 25 = 2299，算式与结果一致
+    - 「北京到上海」与「上海回北京」是两条独立行程，不得合并
+    - 招待费归入招待类，不归入交通类
+  usable:
+    - CSV 首行即表头，可直接导入表格软件
+    - 金额列为纯数字，不带「元」字与千分位
+    - 日期统一为 YYYY-MM-DD 或 MM-DD 单一格式，不混用
+  no_tech_exposure:
+    - 表格与说明中不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得输出 JSON、代码块标记等非表格内容作为最终产物
+  verifiable:
+    - 合计可被独立重算通过
+    - 每行金额可在用户原话中逐字找到
+    - 行数可用程序断言为 7（表头 1 + 明细 6 + 合计 1）

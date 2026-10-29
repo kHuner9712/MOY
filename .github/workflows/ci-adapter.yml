@@ -248,6 +248,32 @@ jobs:
         run: ruff format --check ../../deploy --config pyproject.toml
 
       # ------------------------------------------------------------------
+      # 门禁 2c：scripts/ 同样必须过 lint / format（与 2b 同源，紧邻其后）
+      #
+      # 为什么和 deploy/ 分开写而不合并成一步：两者的"红"指向不同的责任面
+      # （deploy/ 是交付脚本，scripts/ 是仓库内工具与门禁生成器），合成一步后
+      # 一个失败会盖住另一个的报告；分步则两步都报，修完一起绿。
+      #
+      # 死角成因与 2b 完全一样：工作流级 working-directory 是 `apps/adapter`，
+      # 所以 `ruff check .` 扫不到 `scripts/`；而 `scripts/gen_delivery_manifest.py`
+      # 是**清单门禁自己的生成器**——它错了，整份交付清单就跟着错。
+      # 这类"没有人看守的脚本层"必须由 CI 显式点名，否则同类死角会一直平移。
+      #
+      # 当前基线是 **0 error / 0 待格式化**（历史 11 条：probe.py 5 条为既有历史债
+      # —— S603×2 / S310×2 / RUF100×1；gen_delivery_manifest.py 6 条 —— E501×5 /
+      # S603×1；另有一份 CRLF 待转 LF，仓库 `[tool.ruff.format] line-ending = "lf"`）。
+      # 其中仅新增 4 处 `# noqa`（S310×2、S603×2），逐条带行尾理由：命令与 URL
+      # 都是脚本内字面量/常量表，无外部输入。**不允许**加 `--exit-zero`、放宽规则
+      # 或扩大 exclude 把红变绿；S310 若遇到"URL 来自参数/环境"就必须做 scheme
+      # 白名单校验，不能用 noqa 掩盖。
+      # ------------------------------------------------------------------
+      - name: ruff check (scripts/)
+        run: ruff check ../../scripts --config pyproject.toml --output-format=github
+
+      - name: ruff format --check (scripts/)
+        run: ruff format --check ../../scripts --config pyproject.toml
+
+      # ------------------------------------------------------------------
       # 门禁 3：类型检查（mypy 零 error）
       # ------------------------------------------------------------------
       - name: mypy

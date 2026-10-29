@@ -1,0 +1,62 @@
+# 金标任务 T11 —— 行政人事工作台：简历初评（必须可辩驳、含风险列）
+# 设计要点：初评不能只给分。判分看「分数有没有依据」「风险有没有写」。
+id: T11
+title: 三份简历按 JD 出初评表（含风险列）
+scenario: 行政人事工作台
+scenario_key: hr
+plugin_id: plg_hr_admin
+deliverable_type: 表格
+difficulty: 中
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    这三份简历按刚才的 JD 出一张初评表，我想一眼看出谁进面试、为什么、有什么风险。
+  plugin_inputs:
+    position: 前端开发工程师
+    department: 平台研发部
+    duties: 负责后台管理系统页面开发；与后端对接接口；参与需求评审。
+    hard_requirements: 3 年以上前端开发经验；熟悉 React；有中后台系统经验优先。
+    resumes: [resume_a.pdf, resume_b.pdf, resume_c.pdf]
+    doc_type: 通知
+    doc_points: 不涉及
+  #: 前置条件：三份简历中 A 满足全部必备条件，B 满足 2 项、C 的 PDF 无法读取
+  precondition:
+    resume_a: 满足 3 项必备条件
+    resume_b: 满足 2 项必备条件（缺中后台经验，属优先项不扣必备分）
+    resume_c: 文件无法读取
+
+expected_artifact:
+  kind: csv
+  outputs: [screening]
+  description: 一张初评表（候选人、必备项逐条命中、结论、风险）+ 不可读取文件如实标注
+  must_contain:
+    - 表内含候选人姓名列、必备条件命中逐条列、结论列（进面试/待定/不进）、风险列
+    - 每个结论附一句可辩驳的理由（引用简历里的具体事实）
+    - C 简历标注「文件无法读取，未参与评估」，不猜内容
+  must_not_contain:
+    - 只有总分没有分项依据
+    - 对 C 简历给出任何基于猜测的评价
+
+pass_criteria:
+  completeness:
+    - 三份简历各占一行（C 为「未评估」行）
+    - 必备条件逐条列存在且填了命中/未命中
+    - 风险列每行都有内容（可为「未见明显风险」，但不得留白）
+    - 结论列取值限定在三个枚举内
+  accuracy:
+    - B 的「中后台经验」缺失只影响优先项，不得因此判「不进」
+    - 结论与分项命中的加总逻辑自洽，不得出现「必备缺 1 项却判进面试」而不解释
+    - C 的「未读取」与「不合格」用词区分清楚
+  usable:
+    - 表格可直接导入表格软件，列头清晰
+    - 每行理由可被人事原话转述给用人部门
+    - 「待定」的候选人写明待定原因与补充材料要求
+  no_tech_exposure:
+    - 初评表与说明中不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现「评分模型」「权重算法」「置信度」这类术语，只写「命中/未命中」与理由
+  verifiable:
+    - 每条「命中/未命中」都能指到简历中的具体段落或原文
+    - 每个结论都能被两位人事独立复核得到相同判断
+    - 风险列内容与简历事实可对应

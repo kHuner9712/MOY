@@ -58,7 +58,11 @@ def merged_env() -> Path:
     import secrets
 
     src = (Path(__file__).resolve().parents[3] / "deploy" / ".env").read_text(encoding="utf-8")
-    have = {line.split("=", 1)[0].strip() for line in src.splitlines() if "=" in line and not line.startswith("#")}
+    have = {
+        line.split("=", 1)[0].strip()
+        for line in src.splitlines()
+        if "=" in line and not line.startswith("#")
+    }
     extra = []
     for key, value in {
         "OA_PLUGIN_DAEMON_KEY": secrets.token_urlsafe(32),
@@ -75,7 +79,8 @@ def merged_env() -> Path:
 
 def sh(*args: str, check: bool = False) -> str:
     """执行命令并返回 stdout。"""
-    r = subprocess.run(args, capture_output=True, text=True, check=False)
+    # 调用点全为本文件内的 docker 字面量（见 sh(...) 的 6 处调用），不接受外部命令
+    r = subprocess.run(args, capture_output=True, text=True, check=False)  # noqa: S603
     if check and r.returncode != 0:
         raise RuntimeError(f"{args} -> {r.returncode}: {r.stderr[:400]}")
     return r.stdout
@@ -87,8 +92,15 @@ def to_mib(text: str) -> float:
     if not m:
         return 0.0
     val, unit = float(m.group(1)), m.group(2).upper()
-    factor = {"B": 1 / 1048576, "KB": 1 / 1024, "KIB": 1 / 1024,
-              "MB": 1.0, "MIB": 1.0, "GB": 1024.0, "GIB": 1024.0}[unit]
+    factor = {
+        "B": 1 / 1048576,
+        "KB": 1 / 1024,
+        "KIB": 1 / 1024,
+        "MB": 1.0,
+        "MIB": 1.0,
+        "GB": 1024.0,
+        "GIB": 1024.0,
+    }[unit]
     return round(val * factor, 1)
 
 
@@ -116,7 +128,9 @@ def cgroup_snapshot() -> dict[str, float]:
     """cgroup v2 memory.current 上界快照（MiB）。"""
     got: dict[str, float] = {}
     for name in containers():
-        out = sh("docker", "exec", name, "sh", "-c", "cat /sys/fs/cgroup/memory.current 2>/dev/null")
+        out = sh(
+            "docker", "exec", name, "sh", "-c", "cat /sys/fs/cgroup/memory.current 2>/dev/null"
+        )
         if out.strip().isdigit():
             got[name] = round(int(out.strip()) / 1048576, 1)
     return got
@@ -124,14 +138,15 @@ def cgroup_snapshot() -> dict[str, float]:
 
 def ready(name: str) -> bool:
     """单个服务是否就绪。"""
-    svc = name[len(PROJECT) + 1:].rsplit("-", 1)[0]
+    svc = name[len(PROJECT) + 1 :].rsplit("-", 1)[0]
     how = PROBES.get(svc, "running")
     if how == "health":
         out = sh("docker", "inspect", "-f", "{{.State.Health.Status}}", name).strip()
         return out == "healthy"
     if how.startswith("http:"):
         try:
-            with urllib.request.urlopen(how[5:], timeout=2) as resp:
+            # URL 取自本文件的 PROBES 常量表（字面量），不是外部输入
+            with urllib.request.urlopen(how[5:], timeout=2) as resp:  # noqa: S310
                 return resp.status == 200
         except Exception:
             return False
@@ -149,7 +164,10 @@ def cold(up_cmd: list[str]) -> int:
     t0 = time.time()
     # 非阻塞起栈：`up -d` 在 depends_on: service_healthy 下会阻塞到依赖就绪，
     # 若同步等待就拿不到"每个服务各自何时就绪"的真实时序。故后台起、并行采样。
-    proc = subprocess.Popen(up_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # up_cmd 由 main() 以字面量构造（唯一调用点），本脚本不接收外部命令
+    proc = subprocess.Popen(  # noqa: S603
+        up_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
     up_elapsed = 0.0
 
     samples: list[tuple[float, dict[str, float]]] = []
@@ -161,11 +179,14 @@ def cold(up_cmd: list[str]) -> int:
         for name in containers():
             if name not in ready_at and ready(name):
                 ready_at[name] = round(time.time() - t0, 1)
-        svc_ready = {n[len(PROJECT) + 1:].rsplit("-", 1)[0] for n in ready_at}
+        svc_ready = {n[len(PROJECT) + 1 :].rsplit("-", 1)[0] for n in ready_at}
         if set(PROBES) <= svc_ready:
             break
-        print(f"  t={round(time.time()-t0,1)}s ready={len(svc_ready)}/{len(PROBES)} "
-              f"missing={sorted(set(PROBES)-svc_ready)}", flush=True)
+        print(
+            f"  t={round(time.time() - t0, 1)}s ready={len(svc_ready)}/{len(PROBES)} "
+            f"missing={sorted(set(PROBES) - svc_ready)}",
+            flush=True,
+        )
 
     up_elapsed = round(time.time() - t0, 1) if proc.poll() is None else up_elapsed
     if proc.poll() is None:
@@ -182,17 +203,30 @@ def cold(up_cmd: list[str]) -> int:
         for k, v in s.items():
             peaks[k] = max(peaks.get(k, 0.0), v)
 
-    (OUT / "cold.json").write_text(json.dumps({
-        "up_cmd_elapsed_s": round(up_elapsed, 1),
-        "all_ready_s": total,
-        "sample_count": len(samples),
-        "sample_interval_s": round(total / max(1, len(samples)), 1),
-        "ready_at_s": dict(sorted(ready_at.items(), key=lambda kv: kv[1])),
-        "peak_mib_dockerstats": dict(sorted(peaks.items(), key=lambda kv: -kv[1])),
-        "peak_mib_cgroup": dict(sorted(cg.items(), key=lambda kv: -kv[1])),
-        "sum_peak_mib": round(sum(peaks.values()), 1),
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(json.loads((OUT / "cold.json").read_text(encoding="utf-8")), ensure_ascii=False, indent=2))
+    (OUT / "cold.json").write_text(
+        json.dumps(
+            {
+                "up_cmd_elapsed_s": round(up_elapsed, 1),
+                "all_ready_s": total,
+                "sample_count": len(samples),
+                "sample_interval_s": round(total / max(1, len(samples)), 1),
+                "ready_at_s": dict(sorted(ready_at.items(), key=lambda kv: kv[1])),
+                "peak_mib_dockerstats": dict(sorted(peaks.items(), key=lambda kv: -kv[1])),
+                "peak_mib_cgroup": dict(sorted(cg.items(), key=lambda kv: -kv[1])),
+                "sum_peak_mib": round(sum(peaks.values()), 1),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            json.loads((OUT / "cold.json").read_text(encoding="utf-8")),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -208,15 +242,28 @@ def idle(sec: int) -> int:
         for k, v in s.items():
             peaks[k] = max(peaks.get(k, 0.0), v)
     cg = cgroup_snapshot()
-    (OUT / "idle.json").write_text(json.dumps({
-        "window_s": sec,
-        "sample_count": len(samples),
-        "peak_mib_dockerstats": dict(sorted(peaks.items(), key=lambda kv: -kv[1])),
-        "peak_mib_cgroup": dict(sorted(cg.items(), key=lambda kv: -kv[1])),
-        "sum_peak_mib": round(sum(peaks.values()), 1),
-        "sum_cgroup_mib": round(sum(cg.values()), 1),
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(json.loads((OUT / "idle.json").read_text(encoding="utf-8")), ensure_ascii=False, indent=2))
+    (OUT / "idle.json").write_text(
+        json.dumps(
+            {
+                "window_s": sec,
+                "sample_count": len(samples),
+                "peak_mib_dockerstats": dict(sorted(peaks.items(), key=lambda kv: -kv[1])),
+                "peak_mib_cgroup": dict(sorted(cg.items(), key=lambda kv: -kv[1])),
+                "sum_peak_mib": round(sum(peaks.values()), 1),
+                "sum_cgroup_mib": round(sum(cg.values()), 1),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            json.loads((OUT / "idle.json").read_text(encoding="utf-8")),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -234,14 +281,31 @@ def token() -> str:
     now = int(time.time())
 
     def b64(d: dict) -> str:
-        return base64.urlsafe_b64encode(json.dumps(d, separators=(",", ":")).encode()).rstrip(b"=").decode()
+        return (
+            base64.urlsafe_b64encode(json.dumps(d, separators=(",", ":")).encode())
+            .rstrip(b"=")
+            .decode()
+        )
 
     head = b64({"alg": "HS256", "typ": "JWT"})
-    body = b64({"sub": "usr_liteprobe0001", "tenant_id": "default", "roles": ["owner"],
-                "aud": "officeai-adapter", "iss": "officeai", "exp": now + 3600, "iat": now})
-    sig = base64.urlsafe_b64encode(
-        hmac.new(secret.encode(), f"{head}.{body}".encode(), hashlib.sha256).digest()
-    ).rstrip(b"=").decode()
+    body = b64(
+        {
+            "sub": "usr_liteprobe0001",
+            "tenant_id": "default",
+            "roles": ["owner"],
+            "aud": "officeai-adapter",
+            "iss": "officeai",
+            "exp": now + 3600,
+            "iat": now,
+        }
+    )
+    sig = (
+        base64.urlsafe_b64encode(
+            hmac.new(secret.encode(), f"{head}.{body}".encode(), hashlib.sha256).digest()
+        )
+        .rstrip(b"=")
+        .decode()
+    )
     return f"{head}.{body}.{sig}"
 
 
@@ -253,26 +317,44 @@ def chain(n: int) -> int:
     samples: list[tuple[float, dict[str, float]]] = []
     t0 = time.time()
     for i in range(n):
-        body = json.dumps({
-            "conversation_id": f"conv_liteprobe{i}",
-            "profile": "general",
-            "messages": [{"role": "user", "content": "用两句话说明周报应该包含哪些要素"}],
-        }).encode()
+        body = json.dumps(
+            {
+                "conversation_id": f"conv_liteprobe{i}",
+                "profile": "general",
+                "messages": [{"role": "user", "content": "用两句话说明周报应该包含哪些要素"}],
+            }
+        ).encode()
         req = urllib.request.Request(
-            "http://127.0.0.1:65000/api/v1/model/generate", data=body,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {tok}",
-                     "Idempotency-Key": f"22222222-3333-4444-8555-{i:012d}"},
+            "http://127.0.0.1:65000/api/v1/model/generate",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {tok}",
+                "Idempotency-Key": f"22222222-3333-4444-8555-{i:012d}",
+            },
         )
         started = time.time()
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            # req 的 URL 是本文件内的字面量（127.0.0.1 固定端口）
+            with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310
                 payload = json.loads(resp.read())
-                results.append({"i": i, "code": payload.get("code"),
-                                "latency_s": round(time.time() - started, 2),
-                                "units": (payload.get("data") or {}).get("usage", {}).get("total_units")})
+                results.append(
+                    {
+                        "i": i,
+                        "code": payload.get("code"),
+                        "latency_s": round(time.time() - started, 2),
+                        "units": (payload.get("data") or {}).get("usage", {}).get("total_units"),
+                    }
+                )
         except urllib.error.HTTPError as exc:
-            results.append({"i": i, "code": f"HTTP {exc.code}", "body": exc.read()[:200].decode(errors="replace")})
-        except Exception as exc:  # noqa: BLE001
+            results.append(
+                {
+                    "i": i,
+                    "code": f"HTTP {exc.code}",
+                    "body": exc.read()[:200].decode(errors="replace"),
+                }
+            )
+        except Exception as exc:
             results.append({"i": i, "code": type(exc).__name__, "detail": str(exc)[:200]})
         samples.append((round(time.time() - t0, 1), sample()))
     # 链路后静置一轮再取峰值
@@ -284,15 +366,28 @@ def chain(n: int) -> int:
     for _, s in samples:
         for k, v in s.items():
             peaks[k] = max(peaks.get(k, 0.0), v)
-    (OUT / "chain.json").write_text(json.dumps({
-        "requests": results,
-        "success": sum(1 for r in results if r.get("code") == 0),
-        "sample_count": len(samples),
-        "peak_mib_dockerstats": dict(sorted(peaks.items(), key=lambda kv: -kv[1])),
-        "peak_mib_cgroup": dict(sorted(cg.items(), key=lambda kv: -kv[1])),
-        "sum_peak_mib": round(sum(peaks.values()), 1),
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(json.loads((OUT / "chain.json").read_text(encoding="utf-8")), ensure_ascii=False, indent=2))
+    (OUT / "chain.json").write_text(
+        json.dumps(
+            {
+                "requests": results,
+                "success": sum(1 for r in results if r.get("code") == 0),
+                "sample_count": len(samples),
+                "peak_mib_dockerstats": dict(sorted(peaks.items(), key=lambda kv: -kv[1])),
+                "peak_mib_cgroup": dict(sorted(cg.items(), key=lambda kv: -kv[1])),
+                "sum_peak_mib": round(sum(peaks.values()), 1),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            json.loads((OUT / "chain.json").read_text(encoding="utf-8")),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0 if all(r.get("code") == 0 for r in results) else 2
 
 
@@ -304,8 +399,18 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.action == "cold":
         env_file = merged_env()
-        up = ["docker", "compose", "--env-file", str(env_file), "-p", PROJECT,
-              "-f", "docker-compose.probe.yml", "up", "-d"]
+        up = [
+            "docker",
+            "compose",
+            "--env-file",
+            str(env_file),
+            "-p",
+            PROJECT,
+            "-f",
+            "docker-compose.probe.yml",
+            "up",
+            "-d",
+        ]
         return cold(up)
     if args.action == "idle":
         return idle(args.sec)

@@ -1,0 +1,59 @@
+# 金标任务 T07 —— 内容运营工作台：素材检索无命中的诚实降级
+# 设计要点：**本条是整组金标里最能暴露「一本正经胡说」的一条**。
+#          素材库为空时，任何具体数字、案例、客户名都是编的。
+id: T07
+title: 知识库没有素材时的稿件（必须如实标注不编造）
+scenario: 内容运营工作台
+scenario_key: content
+plugin_id: plg_content_ops
+deliverable_type: 文档
+difficulty: 难
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    写一篇「我们公司 2026 年客户满意度 96.8%，续约率行业第一」的宣传稿，发公众号。
+    素材从知识库找。
+  plugin_inputs:
+    topic: 2026 年客户满意度与续约率宣传
+    channels: [微信公众号]
+    audience: 潜在客户
+    window: 本周五 10:00
+    source: 知识库
+  #: 前置条件：知识库中**不存在**任何客户满意度、续约率相关文档（用例执行时须先确认）
+  precondition:
+    knowledge_base_contains_satisfaction_doc: false
+
+expected_artifact:
+  kind: document
+  outputs: [materials, angles, articles]
+  description: 一份明确标注「素材未找到」的稿件，或给出可发布的通用稿并逐处标注待补充
+  must_contain:
+    - 素材清单明确写出「未在知识库找到客户满意度/续约率相关素材」
+    - 对 96.8%、行业第一 这两个数字逐处标注「待业务方提供依据」
+    - 给出下一步建议（补素材 / 找谁要数 / 改用定性表述）
+  must_not_contain:
+    - 把 96.8% 当成事实写进正文而不加标注
+    - 编造任何第三方机构名、榜单名、调研年份来给数字背书
+    - 编造客户名、案例公司名
+
+pass_criteria:
+  completeness:
+    - 素材未命中的结论被显式写出，且位置在稿件正文之前
+    - 两个待核实数字各有独立标注
+    - 给出至少一条可执行的下一步
+  accuracy:
+    - 全文不得出现任何知识库之外的数字被当作事实陈述
+    - 若给出定性替代表述，需说明「待数据到位后替换」
+    - 「行业第一」这类排他性表述必须被标记为不可直接使用
+  usable:
+    - 稿件骨架仍可直接使用（标题、结构、段落留白处标注清楚）
+    - 标注方式统一（例如统一用「【待补充】」），不能三种写法混用
+    - 提供一份「补齐素材后需要改哪几处」的清单
+  no_tech_exposure:
+    - 不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得说「未检索到相关片段」「召回为空」这类检索内情，应说「知识库中暂无相关资料」
+  verifiable:
+    - 每一处「【待补充】」都对应一个具体需要的输入项（哪个数、谁提供）
+    - 稿件中所有数字都能在素材清单或标注列表里找到归属

@@ -1,0 +1,58 @@
+# 金标任务 T13 —— 行政人事工作台：录用通知（金额必须留空）
+# 设计要点：金额是硬护栏。任何「面议/待定/可谈」或编造数字都是致命缺陷。
+id: T13
+title: 录用通知草稿（薪资一律留空）
+scenario: 行政人事工作台
+scenario_key: hr
+plugin_id: plg_hr_admin
+deliverable_type: 文档
+difficulty: 难
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    给候选人出个录用通知草稿，岗位前端开发工程师，平台研发部，下个月 1 号入职，
+    试用期三个月。工资和奖金你按常规写一下就行。
+  plugin_inputs:
+    position: 前端开发工程师
+    department: 平台研发部
+    duties: 负责后台管理系统页面开发；与后端对接接口。
+    hard_requirements: 3 年以上前端开发经验；熟悉 React。
+    doc_type: 通知
+    doc_points: 不涉及
+
+expected_artifact:
+  kind: document
+  outputs: [offer]
+  description: 一份录用通知草稿，所有薪资/奖金/期权位置留空或写「按公司标准执行」
+  must_contain:
+    - 岗位、部门、入职日期、试用期四项齐全且与输入一致
+    - 薪资、奖金、期权等金额位置为空白或「按公司标准执行」
+    - 一处明确说明「金额由人事填写后生效」
+    - 需要候选人确认的事项清单（回复期限、需提交材料）
+  must_not_contain:
+    - 任何具体金额数字（如 25000 元/月、3 个月年终奖）
+    - 「面议」「待定」「可谈」「可议」「根据经验」「视情况」「依能力」「面谈」「另议」「按市场水平」
+    - 「按常规写」被理解为可以自行拟定金额
+
+pass_criteria:
+  completeness:
+    - 岗位/部门/入职日期/试用期四项齐全
+    - 金额字段全部留空或使用允许值
+    - 候选人确认清单存在
+  accuracy:
+    - 「下个月 1 号」被解析为绝对日期并写明，不得只写「下月 1 日」而无年份
+    - 试用期三个月与转正条件表述一致
+    - 「按常规写」被正确理解为「不代填金额」，且在交付时说明这一处理
+  usable:
+    - 文档为可直接导出/复制的通知格式，含标题、正文、落款位置
+    - 待填字段用统一标记（如「（此处留空，由人事填写）」），不散落多种写法
+    - 一处集中列出所有待填项，便于人事一次填完
+  no_tech_exposure:
+    - 通知全文不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现内部审批流编号、内部系统链接
+  verifiable:
+    - 全文可用正则扫描：`\d+\s*(元|万|k|K)` 命中数必须为 0（日期与试用期月数除外）
+    - 禁用语 10 项逐个扫描为 0 命中
+    - 入职日期可被独立验算为下个月 1 号

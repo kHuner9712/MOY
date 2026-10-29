@@ -1,0 +1,56 @@
+# 金标任务 T06 —— 内容运营工作台：三平台稿件 + 排期表（含格式硬约束）
+# 设计要点：排期表是文件产物，判分要能机器校验（列、时间格式、不重复）。
+id: T06
+title: 一个主题三个平台稿件 + 发布排期表
+scenario: 内容运营工作台
+scenario_key: content
+plugin_id: plg_content_ops
+deliverable_type: 表格
+difficulty: 中
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    主题「季度安全培训开始报名」，同时发公众号、邮件、小红书，时间窗是下周一到周三。
+    给我三份不同调性的稿件，再排一张发布表。
+  plugin_inputs:
+    topic: 季度安全培训开始报名
+    channels: [微信公众号, 邮件, 小红书]
+    audience: 全体员工
+    window: 下周一至下周三
+    source: 知识库
+
+expected_artifact:
+  kind: csv
+  outputs: [materials, angles, articles, schedule]
+  description: 三平台各一份稿件 + 一张排期 CSV（平台、计划时间、稿件标题、备注）
+  must_contain:
+    - 三份稿件调性可区分（公众号偏正式、邮件偏通知、小红书偏口语）
+    - 排期表含列：平台、计划时间、稿件标题
+    - 计划时间为 YYYY-MM-DD HH:MM 格式，落在下周一到周三之间
+    - 三个平台各占一行，无同平台同时间的重复行
+  must_not_contain:
+    - 小红书稿件里出现邮件才有的正式称谓与落款
+    - 排期时间写「下周一」这种相对表述（必须是绝对日期）
+
+pass_criteria:
+  completeness:
+    - 三平台稿件各一份，缺一即不满分
+    - 排期表行数 = 平台数，且每行字段填满
+    - 选题与标题候选 ≥3 条
+  accuracy:
+    - 各平台稿件与该平台字数/语气惯例相符（小红书 150-400 字更口语，邮件 200-400 字含主题行）
+    - 排期时间均为未来时间，全部落在给定时间窗内
+    - 同一平台不出现两组相同计划时间
+  usable:
+    - 排期 CSV 可直接导入表格软件，首行即表头、无空行
+    - 三份稿件可分别复制，无需手工拆分
+    - 邮件稿件含「邮件主题」与「正文」两段
+  no_tech_exposure:
+    - 三份稿件与排期表中不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 排期表备注列不得出现内部系统名或任务编号
+  verifiable:
+    - 排期表中每行的稿件标题能在对应平台稿件里逐字找到
+    - 时间格式可被正则 `\d{4}-\d{2}-\d{2} \d{2}:\d{2}` 全部匹配
+    - 三个平台名称与请求中给出的选项逐字一致

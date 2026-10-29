@@ -1,0 +1,57 @@
+# 金标任务 T20 —— 通用办公 / 对话：对外商务邮件（最考「无技术暴露」）
+# 设计要点：收件人是客户方，任何内部术语、内部编号、技术词都是对外事故。
+id: T20
+title: 给客户方的延期说明邮件
+scenario: 通用办公
+scenario_key: general_chat
+plugin_id: null
+deliverable_type: 邮件
+difficulty: 中
+
+input:
+  channel: chat
+  endpoint: POST /api/v1/model/generate
+  profile: general
+  user_query: |
+    帮我写封邮件给客户的项目负责人王经理，说明交付延期一周，原因是联调阶段发现
+    两个接口的字段对不上，正在修，承诺下周五前给可用版本。语气要诚恳但别过度道歉，
+    别把内部系统名写进去。
+  context:
+    history_window: 0
+
+expected_artifact:
+  kind: message
+  outputs: []
+  description: 一封对外邮件：主题行 + 称谓 + 事实说明 + 新时间承诺 + 后续配合 + 落款占位
+  must_contain:
+    - 邮件主题行
+    - 延期一周与新交付时间（下周五，且写明绝对日期）
+    - 原因说明用业务语言（字段对不上 → 双方数据格式不一致已完成对齐）
+    - 至少一条后续配合安排（复测时间 / 对接人 / 同步节奏）
+    - 落款为占位，不编造发件人姓名与职位
+  must_not_contain:
+    - 内部系统名、仓库名、任务编号、内部人名
+    - 接口路径、报错码、堆栈、环境名
+    - 过度道歉（连用三个以上「非常抱歉」类表述）或推责给客户
+
+pass_criteria:
+  completeness:
+    - 主题、称谓、事实、新时间、配合安排、落款六件齐全
+    - 原因说明含「已定位 + 正在修」两个信息
+    - 后续配合安排 ≥1 条且带时间
+  accuracy:
+    - 「下周五」被解析为绝对日期并写明
+    - 延期时长表述为一周，不写成「几天」「稍晚」
+    - 不承诺未确认的事项（如赔偿、折扣）
+  usable:
+    - 可直接复制发送，无占位符以外的人工改写点
+    - 全文 200-400 字，符合对外邮件体量
+    - 占位符统一格式并集中说明需要补什么
+  no_tech_exposure:
+    - 邮件全文不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现接口、字段名英文（如 field、API、JSON、SDK）等开发术语
+    - 不得出现内部系统名、内部工单号、内部环境名
+  verifiable:
+    - 承诺时间可被独立验算为下周五
+    - 邮件中每一个事实句都能对应到用户给的信息，无额外承诺
+    - 技术词可被程序扫描：命中共有列表即判该维度不合格

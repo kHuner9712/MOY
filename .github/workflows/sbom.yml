@@ -1,0 +1,164 @@
+# ===========================================================================
+# SBOM 产出与许可证扫描（阶段四 T4-05.6，架构 §9.5 / §11）
+#
+# 一句话：**把"这次发布的组成"固化成 CycloneDX 文件，并对它做一次许可证体检**。
+#
+# 为什么单独一个 workflow 而不是塞进 ci-*.yml：
+#   1. 它只依赖 `deploy/**` 与两份锁文件，跟前后端测试的失败原因互不相干——
+#      混在 ci-web / ci-adapter 里会让"前端测试挂了"和"SBOM 某层缺源"共用同一个红灯，
+#      排查成本翻倍；
+#   2. 它是**发布期产物**（SBOM 要随离线包交付），需要能单独手动重跑。
+#
+# ⚠️ 现状（2026-10-29）：**CI 额度未恢复**。因此本 workflow 的两个 job 都显式
+#    设置了 `continue-on-error: true`，并且**没有**作为分支保护的必要检查：
+#      · 额度可用时：它是真实门禁，红了就该修；
+#      · 额度不可用时：workflow 根本排不上队，也不阻断任何人的主流程。
+#    额度恢复后的动作（两处，一起改，别只改一处）：
+#      ① 删掉两个 job 上的 `continue-on-error: true`；
+#      ② 在分支保护里把 `sbom / generate` 与 `sbom / license-scan` 加为必需检查。
+#    在此之前，**本地也必须能跑**：`python deploy/sbom/generate.py` 与
+#    `python deploy/validate_offline_pkgs.py --self-test` 是等价的本地判据。
+#
+# 四层判据（架构 §9.5）：`jq '.components|length'` > 0，且 `docker:` / `pypi:` /
+# `npm:` / `difypkg:` 四类 `bom-ref` 前缀各 ≥1。判据写在生成器内部（`verify()`），
+# 所以本地跑与 CI 跑是同一条规则，不存在"CI 松一点"的版本。
+# ===========================================================================
+
+name: SBOM
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - 'package-lock.json'
+      - 'uv.lock'
+      - 'apps/adapter/pyproject.toml'
+      - '.github/workflows/sbom.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - 'package-lock.json'
+      - 'uv.lock'
+      - '.github/workflows/sbom.yml'
+  schedule:
+    # 每周一 03:00 UTC 全量重算：锁文件没变，但上游 advisory 会变，
+    # 许可证/漏洞的结论要跟着变（客户环境断网，不能指望他们自己发现）。
+    - cron: '0 3 * * 1'
+
+concurrency:
+  group: sbom-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # =========================================================================
+  # Job 1：生成 SBOM 并断言四层可解析
+  # =========================================================================
+  generate:
+    name: sbom / generate
+    runs-on: ubuntu-latest
+    # 额度未恢复期：失败不阻断主流程（见文件头 ⚠️）
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 准备 Node（npm 层取自 package-lock.json，无需安装依赖）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # pypi 层优先读 uv.lock；仓库没有 uv.lock 时降级到 venv。
+      # CI 里没有 venv，所以显式装一遍适配层依赖，让 pypi 层有真实数据源
+      # ——否则这一层会退化成 pyproject 的直接依赖（"传递依赖未覆盖"），
+      # 四层判据虽然还能过，但 SBOM 的价值打了折扣。
+      - name: 安装适配层依赖（为 pypi 层提供真实数据源）
+        working-directory: apps/adapter
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e . || echo "::warning::适配层依赖安装失败，pypi 层将降级为 pyproject 直接依赖"
+
+      - name: 生成 SBOM（四层）
+        run: |
+          set -o pipefail
+          python deploy/sbom/generate.py --out dist/sbom.cdx.json
+
+      - name: 断言四层可解析（架构 §9.5 的原始判据）
+        run: |
+          set -o pipefail
+          total=$(jq '.components|length' dist/sbom.cdx.json)
+          echo "components=$total"
+          test "$total" -gt 0
+          for prefix in docker: pypi: npm: difypkg:; do
+            n=$(jq --arg p "$prefix" '[.components[]|select(."bom-ref"|startswith($p))]|length' dist/sbom.cdx.json)
+            echo "$prefix $n"
+            test "$n" -ge 1
+          done
+
+      - name: 上传 SBOM（随离线包交付的那份文件）
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cdx
+          path: dist/sbom.cdx.json
+          retention-days: 90
+
+  # =========================================================================
+  # Job 2：许可证扫描（离线包 + 自检）
+  # =========================================================================
+  license-scan:
+    name: sbom / license-scan
+    runs-on: ubuntu-latest
+    # 额度未恢复期：失败不阻断主流程（见文件头 ⚠️）
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # 先自检：门禁自己能红，才配当门禁（正样本 0 / 负样本非 0）
+      - name: 扫描器自检（正样本退出 0 / 负样本非 0）
+        run: |
+          set -o pipefail
+          python deploy/validate_offline_pkgs.py --self-test
+
+      - name: 扫描离线包（.difypkg 的依赖许可证与已知漏洞）
+        run: |
+          set -o pipefail
+          python deploy/validate_offline_pkgs.py
+
+      - name: 镜像清单与锁文件一致性（SBOM 第一层的数据源要可信）
+        run: |
+          set -o pipefail
+          python deploy/validate_images.py
+
+  # =========================================================================
+  # Job 3：把"门禁当前状态"明确告诉人（额度未恢复时不能只剩沉默）
+  # =========================================================================
+  notice:
+    name: sbom / notice
+    runs-on: ubuntu-latest
+    needs: [generate, license-scan]
+    if: always()
+    steps:
+      - name: 结论与后续动作
+        run: |
+          echo "generate=${{ needs.generate.result }}"
+          echo "license-scan=${{ needs.license-scan.result }}"
+          cat <<'TIP'
+          SBOM workflow 当前**不阻断**主流程（CI 额度未恢复，见本文件头部说明）。
+          发布前请在本机确认这两条命令均为 0：
+            python deploy/sbom/generate.py
+            python deploy/validate_offline_pkgs.py --self-test
+          TIP

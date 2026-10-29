@@ -1,0 +1,59 @@
+# 金标任务 T10 —— 行政人事工作台：招聘说明（JD）
+# 设计要点：给一堆散乱职责，考「能不能变成别人能拿去发的 JD」。
+id: T10
+title: 从散乱职责生成可对外发布的招聘说明
+scenario: 行政人事工作台
+scenario_key: hr
+plugin_id: plg_hr_admin
+deliverable_type: 文档
+difficulty: 易
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    帮我把这个岗位的招聘说明写出来：前端开发，平台研发部。负责后台管理系统页面，
+    跟后端对接接口，参与需求评审。要 3 年以上经验，熟悉 React，最好做过中后台。
+    薪资先不写。
+  plugin_inputs:
+    position: 前端开发工程师
+    department: 平台研发部
+    duties: |
+      负责后台管理系统页面开发；与后端对接接口；参与需求评审与方案讨论。
+    hard_requirements: |
+      3 年以上前端开发经验；熟悉 React；有中后台系统经验优先。
+    doc_type: 通知
+    doc_points: 不涉及
+
+expected_artifact:
+  kind: document
+  outputs: [jd]
+  description: 一份可对外发布的 JD：岗位概述、职责、必备条件、优先条件、投递方式
+  must_contain:
+    - 五段结构齐全（概述/职责/必备/优先/投递）
+    - 职责与条件分开，不混写在同一条
+    - 薪资相关表述为「按公司标准执行」或明确留空
+  must_not_contain:
+    - 编造的薪资区间、期权、补贴数字
+    - 「面议」「待定」「可谈」这类被明确禁止的表述
+
+pass_criteria:
+  completeness:
+    - 五段结构齐全，缺一段即不满分
+    - 硬性要求 3 条全部进入「必备条件」段
+    - 投递方式段给出「投递渠道 + 需要提交的材料」
+  accuracy:
+    - 「做过中后台」被写为优先条件，不得写成必备
+    - 职责描述与输入一致，未增删职责项
+    - 岗位名称与部门名称与输入逐字一致
+  usable:
+    - 可直接粘到招聘平台，无占位符残留（如「XXX」「【】」）
+    - 全文 300-600 字，长度适合一个职位帖
+    - 每条职责以动词开头且句式统一
+  no_tech_exposure:
+    - JD 全文不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 不得出现内部系统名、内部代号、内部工号规则
+  verifiable:
+    - 三个必备条件可在输入原文中找到来源句
+    - 优先条件段每条都带「优先」字样，与必备条件段落不混淆
+    - 薪资占位表述符合「留空 / 按公司标准执行」二选一

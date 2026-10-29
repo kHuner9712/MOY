@@ -1,0 +1,60 @@
+# 金标任务 T04 —— 研发工作台：缺陷修复（复现 → 根因 → 修复 + 回归用例）
+# 设计要点：给的现象是「偶发」，考的是会不会把猜测当根因。
+id: T04
+title: 偶发「导出按钮点了没反应」定位与修复
+scenario: 研发工作台
+scenario_key: dev
+plugin_id: plg_dev_workbench
+deliverable_type: 代码
+difficulty: 难
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    用户反馈导出按钮有时候点了完全没反应，刷新一下又好了。日志里没有报错。
+    你帮我定位一下并修掉，顺便补个用例，别让它再回来。
+  plugin_inputs:
+    title: 导出按钮偶发无响应
+    requirement: |
+      现象：导出按钮偶发点击无响应，刷新后恢复，前后端日志均无异常。
+      已知线索：该按钮所在工具栏会在筛选变化时重新渲染；导出逻辑在一个自定义 hook 里，
+      用 useCallback 包裹，依赖数组为空。
+      要求：给出根因假设与验证办法，再给修复与回归用例。
+    repo: platform/admin-web
+    branch_policy: 新建分支
+    stack: React 18 + TypeScript
+
+expected_artifact:
+  kind: files
+  outputs: [key_points, plan, code_files, test_files]
+  description: 根因假设清单（含如何验证）+ 修复代码 + 回归用例
+  must_contain:
+    - 至少 2 条可验证的根因假设（不得只给 1 条就下结论）
+    - 每条假设附「如何验证」的具体动作
+    - 修复指向 useCallback 依赖数组这个已知线索（或其他被论证过的原因）
+    - 回归用例能复现原现象
+  must_not_contain:
+    - 未经验证就断言「就是依赖数组写错了」
+    - 用「加重试」「加 setTimeout」之类掩盖症状的修法作为最终方案
+
+pass_criteria:
+  completeness:
+    - 假设、验证办法、修复、回归用例四件齐全
+    - 明确指出哪条线索被证实、哪条被排除
+    - 说明了「刷新后恢复」这个现象与根因的因果关系
+  accuracy:
+    - 修复后 hook 的依赖数组补齐或改用 ref/事件直读，二者选一且给出理由
+    - 「刷新恢复」被解释为闭包捕获了旧的筛选状态，而非「缓存问题」这类含糊说法
+    - 不把无日志等同于无异常，需说明为何无日志才会偶发
+  usable:
+    - 修复为最小改动（只动必要行），不是整文件重写
+    - 回归用例可稳定复现（不依赖随机或真实网络）
+    - 改动附带一句「上线后如何确认修好了」的观察点
+  no_tech_exposure:
+    - 面向用户的说明与提交说明中不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 面向业务人员的故障说明中不得出现闭包、hook、依赖数组等技术词（技术分析章节可写）
+  verifiable:
+    - 每条假设都能被一个具体动作判定成立或排除
+    - 回归用例失败于修复前、通过于修复后（需说明这一对照关系）
+    - 提交说明写明「改了什么、为什么这么改」

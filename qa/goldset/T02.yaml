@@ -1,0 +1,60 @@
+# 金标任务 T02 —— 研发工作台：后端接口需求 → 方案先行 + 代码 + 用例
+# 设计要点：故意给一个「有歧义」的需求，考的是「先问清还是先写代码」。
+id: T02
+title: 新增「订单改期」接口（需求含歧义）
+scenario: 研发工作台
+scenario_key: dev
+plugin_id: plg_dev_workbench
+deliverable_type: 代码
+difficulty: 难
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    加一个订单改期接口，前端调它把订单的预约时间往后挪。改期要不要收费我还没跟产品确认，
+    先按不收费做吧，但接口得能扩展。另外改期次数要不要限制你也帮我看看。
+  plugin_inputs:
+    title: 订单改期接口
+    requirement: |
+      1. 新增 POST /orders/{id}/reschedule，请求体含新的预约时间。
+      2. 校验新时间必须晚于当前时间且晚于原预约时间。
+      3. 改期记录要留痕（谁改的、从什么时间改到什么时间）。
+      4. 「是否收费」「是否限制次数」两个点当前未定，需先列成待确认项。
+    repo: platform/order-service
+    branch_policy: 新建分支
+    stack: Python 3.12 + FastAPI
+
+expected_artifact:
+  kind: files
+  outputs: [key_points, plan, code_files, test_files]
+  description: 一份含「待确认项」的技术方案 + 接口实现 + 用例
+  must_contain:
+    - 方案中显式列出至少 2 条待确认项（收费与否、次数上限），并写明「确认前按 X 实现」
+    - 时间校验的两条规则分别可定位（晚于当前、晚于原时间）
+    - 留痕字段含 操作人 / 原时间 / 新时间
+    - 用例覆盖：时间非法被拒、正常改期成功、留痕被写入
+  must_not_contain:
+    - 把未定的收费逻辑硬编码成收费或不收费后当作已确认
+    - 直接跳过「待确认项」而不提
+
+pass_criteria:
+  completeness:
+    - 三条明确约束（路由、双时间校验、留痕）全部实现
+    - 至少两条待确认项被识别并给出默认实现与影响说明
+    - 用例文件存在且覆盖 3 种情况
+  accuracy:
+    - 「晚于当前时间」与「晚于原预约时间」是两条独立校验，且有各自的失败文案
+    - 留痕写入与改期更新在同一事务或同一次提交内（不得只更新不写留痕）
+    - 不得把 404（订单不存在）与 400（时间非法）合并成同一种响应
+  usable:
+    - 路由挂在既有 router 上，路径前缀与仓库约定一致
+    - 请求/响应使用项目既有 schema 风格与错误码风格，不新造错误码体系
+    - 代码可直接运行，无未引入的模块
+  no_tech_exposure:
+    - 方案与待确认项的中文说明中不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 对外错误响应文案不得暴露表名、字段名、堆栈或数据库错误原文
+  verifiable:
+    - 每条待确认项写明「找谁确认 + 不确认的后果」
+    - 用例断言与实现中的校验一一对应，不多不少
+    - 留痕表/字段名在方案与代码中一致

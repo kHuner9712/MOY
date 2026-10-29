@@ -45,13 +45,27 @@ OUT = ROOT / "docs" / "phase4-delivery-manifest.md"
 #: 子任务 → 周次（唯一真源 = `architecture-phase4.md` §11.1 的映射表；改 §11.1 必须同步这里）
 WEEK_MAP: dict[str, str] = {
     "T4-01": "W1",
-    "T4-02.1": "W1", "T4-02.2": "W1",
-    "T4-02.3": "W2", "T4-02.4": "W2", "T4-02.5": "W2", "T4-02.6": "W2",
-    "T4-03.1": "W2", "T4-03.2": "W2",
-    "T4-03.3": "W3", "T4-03.4": "W3", "T4-03.5": "W3", "T4-03.6": "W3", "T4-03.7": "W3",
+    "T4-02.1": "W1",
+    "T4-02.2": "W1",
+    "T4-02.3": "W2",
+    "T4-02.4": "W2",
+    "T4-02.5": "W2",
+    "T4-02.6": "W2",
+    "T4-03.1": "W2",
+    "T4-03.2": "W2",
+    "T4-03.3": "W3",
+    "T4-03.4": "W3",
+    "T4-03.5": "W3",
+    "T4-03.6": "W3",
+    "T4-03.7": "W3",
     "T4-04": "W3",
-    "T4-05.1": "W3", "T4-05.2": "W3",
-    "T4-05.3": "W4", "T4-05.4": "W4", "T4-05.5": "W4", "T4-05.6": "W4", "T4-05.7": "W4",
+    "T4-05.1": "W3",
+    "T4-05.2": "W3",
+    "T4-05.3": "W4",
+    "T4-05.4": "W4",
+    "T4-05.5": "W4",
+    "T4-05.6": "W4",
+    "T4-05.7": "W4",
 }
 
 #: 这些路径是"构建/发布时才产出"的包内产物，不进仓库
@@ -113,9 +127,62 @@ AUDIT_NOTES: dict[str, tuple[str, str]] = {
     # 待确认：目录下只有 P4-35 的轻量探针，不是任务表要求的 httpx+asyncio 压测脚本（§8.2）
     "scripts/bench/*.py": (
         "",
-        "仅有 scripts/bench/lite-probe/probe.py（P4-35 轻量探针）；T4-05.7 要求的压测脚本未建（待确认）",
+        "仅有 scripts/bench/lite-probe/probe.py（P4-35 轻量探针）；"
+        "T4-05.7 要求的压测脚本未建（待确认）",
     ),
 }
+
+#: 「等价实现」登记：清单路径 → (仓库内实际实现路径, 为什么它是等价实现)。
+#:
+#: 为什么要有这个概念（这是机制，不是手工注解）：
+#: 任务表是按"架构设计时的文件划分"写的，而施工时**有时刻意的实现方式更好**——
+#: 例如延迟判权白名单，架构 §2.5 要求"全仓唯一位置"，于是它内联在 `core/security.py`
+#: 而不是单独一个 `permission_whitelist.py`；五类攻击用例也合并成了 4 个文件覆盖。
+#: 这类交付物的正确结论不是"缺失"，也不是"补一个空壳文件让它 ls 得到"（那是造假），
+#: 而是"清单路径不存在，但等价实现存在且有据可查"。
+#:
+#: 三条硬约束（防止等价映射被滥用成掩盖缺失）：
+#:   1. **等价路径必须真实存在**，否则该行判 `待建`，且 `--check` 直接红（见 `check()`）；
+#:   2. 同一等价文件可被多行引用（本表 `test_attack_quota_and_leak.py` 就覆盖两条）；
+#:   3. 理由必须写清"为什么等价"，不允许只写文件名。
+EQUIVALENT_IMPLS: dict[str, tuple[str, str]] = {
+    "apps/adapter/app/core/permission_whitelist.py": (
+        "apps/adapter/app/core/security.py",
+        "白名单以 `PERMISSION_WHITELIST`（:238）内联，架构 §2.5 要求「全仓唯一位置」，"
+        "独立文件反而违背设计",
+    ),
+    "apps/adapter/tests/unit/test_permission_whitelist.py": (
+        "apps/adapter/tests/security/test_permission_fail_closed.py",
+        "7 用例，含 `test_lock_file_matches_code` / `test_exactly_two_entries` 即白名单锁断言",
+    ),
+    "apps/adapter/tests/security/test_authn_bypass.py": (
+        "apps/adapter/tests/security/test_attack_token.py",
+        "攻击 1&2（伪造 / 过期令牌）4 用例",
+    ),
+    "apps/adapter/tests/unit/test_cross_tenant.py": (
+        "apps/adapter/tests/security/test_attack_cross_tenant.py",
+        "攻击 3（跨租户读）",
+    ),
+    "apps/adapter/tests/unit/test_info_leak.py": (
+        "apps/adapter/tests/security/test_attack_quota_and_leak.py",
+        "攻击 5 的信息外泄部分",
+    ),
+    "apps/adapter/tests/unit/test_object_privilege.py": (
+        "apps/adapter/tests/security/test_attack_object_scope.py",
+        "攻击 4（越权对象）5 用例",
+    ),
+    "apps/adapter/tests/unit/test_quota_abuse.py": (
+        "apps/adapter/tests/security/test_attack_quota_and_leak.py",
+        "攻击 5 的额度滥用部分",
+    ),
+    "apps/adapter/tests/unit/test_metrics_labels.py": (
+        "apps/adapter/tests/unit/test_metrics.py",
+        "含 `test_rejects_unknown_labels`（标签白名单断言）+ `test_metrics_contract.py`",
+    ),
+}
+
+#: 状态取值：清单路径不存在、但登记的等价实现存在
+STATUS_EQUIVALENT: str = "已建（等价）"
 
 ROW_RE = re.compile(r"^\|\s*\*\*(T4-\d\d(?:\.\d+)?)\*\*\s*\|")
 
@@ -137,7 +204,8 @@ class Row:
 
 def sh(*args: str) -> str:
     """跑命令拿 stdout。"""
-    return subprocess.run(args, cwd=ROOT, capture_output=True, text=True).stdout
+    # args 全为本文件内的字面量（git 子命令，见 sh() 的调用点），无外部输入
+    return subprocess.run(args, cwd=ROOT, capture_output=True, text=True).stdout  # noqa: S603
 
 
 def tracked_files() -> list[str]:
@@ -230,7 +298,7 @@ def parse_tasks() -> list[tuple[str, list[tuple[str, bool]]]]:
         paths: list[str] = []
         for m2 in re.finditer(r"`([^`]+)`", files_col):
             token = m2.group(1)
-            optional = "（若需）" in files_col[m2.end():m2.end() + 6]
+            optional = "（若需）" in files_col[m2.end() : m2.end() + 6]
             p = resolve(token, all_files)
             if p and p not in seen:
                 seen.add(p)
@@ -267,8 +335,43 @@ def human_size(path: str) -> str:
     return f"{n:,} B / {n / 1024:.1f} KiB"
 
 
+def equivalent_of(path: str) -> tuple[str, str] | None:
+    """清单路径未建时，登记的等价实现是否可用。
+
+    Args:
+        path: 清单里的交付物路径。
+
+    Returns:
+        tuple[str, str] | None: (等价实现路径, 理由)；没有登记、或等价路径本身
+        也不存在（相当于没建）时返回 None——**不能在等价路径缺席时"认账"**，
+        否则这张映射表就成了掩盖缺失的工具。
+    """
+    entry = EQUIVALENT_IMPLS.get(path)
+    if entry is None:
+        return None
+    real, reason = entry
+    if status_of(real) != "已建":
+        return None
+    return real, reason
+
+
+def status_with_equivalent(path: str) -> str:
+    """最终状态：已建 / 已建（等价）/ 待建。"""
+    if status_of(path) == "已建":
+        return "已建"
+    if equivalent_of(path) is not None:
+        return STATUS_EQUIVALENT
+    return "待建"
+
+
 def note_of(path: str, status: str) -> str:
-    """备注列：按状态取 `AUDIT_NOTES` 里对应的一条，无则"—"。"""
+    """备注列：按状态取值——等价实现 > `AUDIT_NOTES` > "—"。"""
+    if status == STATUS_EQUIVALENT:
+        entry = EQUIVALENT_IMPLS.get(path)
+        if entry is not None:
+            real, reason = entry
+            return f"等价实现：`{real}` —— {reason}"
+        return "—"
     built_note, missing_note = AUDIT_NOTES.get(path, ("", ""))
     if status == "已建":
         template = built_note
@@ -306,10 +409,20 @@ def build() -> tuple[str, list[Row]]:
     kept = existing_evidence()
     for task, paths in parse_tasks():
         for path, optional in paths:
-            status = "不适用" if (optional and not (ROOT / path).exists()) else status_of(path)
+            status = (
+                "不适用"
+                if (optional and not (ROOT / path).exists())
+                else status_with_equivalent(path)
+            )
             auto = first_commit(path) if status == "已建" else ""
             if status == "不适用":
                 auto = "可选交付物（任务表标「若需」），未建不影响验收"
+            elif status == STATUS_EQUIVALENT:
+                # 等价实现：证据列回填等价文件自己的短 SHA，交付总监点开就能核
+                equivalent = equivalent_of(path)
+                auto = first_commit(equivalent[0]) if equivalent else ""
+                if not auto:
+                    auto = "待补"
             elif status == "已建" and not auto:
                 # 文件在盘上但尚未入库：不编造 SHA，留给交付总监在合并后重跑刷新
                 auto = "待补"
@@ -326,50 +439,63 @@ def build() -> tuple[str, list[Row]]:
             )
     rows.sort(key=lambda r: (r.task, r.path))
 
-    n_built = sum(1 for r in rows if r.status == "已建")
+    n_eq = sum(1 for r in rows if r.status == STATUS_EQUIVALENT)
+    n_built = sum(1 for r in rows if r.status in {"已建", STATUS_EQUIVALENT})
     n_na = sum(1 for r in rows if r.status == "不适用")
     n_todo = len(rows) - n_built - n_na
     by_task: dict[str, list[Row]] = {}
     for r in rows:
         by_task.setdefault(r.task, []).append(r)
 
-    head = f"""# 阶段四交付物清单（P4 delivery manifest）
+    head = (
+        f"""# 阶段四交付物清单（P4 delivery manifest）
 
 | 项 | 内容 |
 | --- | --- |
 | 维护人 | **严过关（QA）** —— 只管"状态"是否与实际一致 |
 | 复核人 | **齐活林（交付总监）** —— 验收时逐行核对 |
 | 生成方式 | `python scripts/gen_delivery_manifest.py`（**勿手写**；`--check` 可只校验不写盘） |
-| 真源 | `docs/architecture-phase4.md` §11 任务表（清单与归属）+ §11.1 周次映射 + `git ls-files`（是否已建） |
+| 真源 | §11 任务表（清单与归属）+ §11.1 周次映射 + `git ls-files` + `EQUIVALENT_IMPLS` |
 | 生成时间 | 每次重跑自动刷新；本文件不记录时间戳（避免"看起来新、其实旧"） |
 
 ## 核对口径（验收时照此执行）
 
-1. **`已建` 项必须 `ls` 得到**：`python scripts/gen_delivery_manifest.py --check` 退出 0 即通过；该命令还校验
-   清单是否失真（已建却写"待建"、或反之）——9 个已建交付物曾被标"待建"（D-28 / LED-043），故为硬门禁。
+1. **`已建` 项必须 `ls` 得到**：`python scripts/gen_delivery_manifest.py --check` 退出 0 即通过；
+   该命令还校验清单是否失真（已建却写"待建"、或反之）——9 个已建交付物曾被标"待建"
+   （D-28 / LED-043），故为硬门禁。
 2. **`待建` 项在阶段四验收时必须为 0**；若不为 0，要么补建，要么在 §13 明确"不进 V1.0"。
-3. **`证据` 列是唯一允许手改的列**（可写"已核对 / 客户现场验证 / 对应 PR"）；重跑时人工文字原样保留、自动短 SHA 刷新，未入库的写 `待补`。
-4. **`备注` 列由脚本按 `AUDIT_NOTES` 生成**（D-28 的路径/大小核实、确属缺失项的归属），不接受手改。
-5. **不要手工往表里加行**——交付物归属变了，请改 `architecture-phase4.md` 的任务表再重跑。
-6. `包内产物` 类（离线包内的 `manifest.json` / SBOM / 金标集）**不入仓库**，其"待建"指"随发布产出"。
-7. **`状态` 只回答"这个文件 ls 得到吗"，不回答"这个任务做完了没"**。对"改既有文件"类任务（如 T4-01.1
-   收敛整改、T4-03.7 扩词），`已建` 不代表改动已完成——完成度以任务表验收命令为准，本清单不得宣称进度。
+   `已建（等价）` 不计入待建：它表示"清单路径不存在，但登记的等价实现真实存在"（见下条）。
+3. **`已建（等价）` 是脚本判定的结果，不是手工标注**：判定顺序 = 清单路径存在 → `已建`；
+   否则 `EQUIVALENT_IMPLS` 登记的等价路径存在 → `已建（等价）`；两者都无 → `待建`。
+   **等价路径本身不存在时该行判 `待建` 且 `--check` 红**——这条映射不能用来把缺失写成熟。
+4. **`证据` 列是唯一允许手改的列**；重跑时人工文字原样保留、自动短 SHA 刷新，未入库的写 `待补`
+   （可写"已核对 / 客户现场验证 / 对应 PR"）。等价实现行的自动证据 = 等价文件自己的短 SHA。
+5. **`备注` 列由脚本生成**（`AUDIT_NOTES` 的路径/大小核实、`EQUIVALENT_IMPLS` 的等价实现与理由），
+   不接受手改。
+6. **不要手工往表里加行**——交付物归属变了，请改 `architecture-phase4.md` 的任务表再重跑。
+7. `包内产物` 类（离线包内的 `manifest.json` / SBOM / 金标集）**不入仓库**，其"待建"指"随发布产出"。
+8. **`状态` 只回答"这个文件 ls 得到吗"，不回答"这个任务做完了没"**。对"改既有文件"类任务（如 T4-01.1
+   收敛整改、T4-03.7 扩词），`已建` 不代表改动已完成——完成度以任务表验收命令为准，
+   本清单不得宣称进度。
 
 ## 汇总
 
-- 合计 **{len(rows)}** 行：**已建 {n_built}** / **待建 {n_todo}** / **不适用 {n_na}**
-- 按批次：""" + " / ".join(
-        f"{w} {sum(1 for r in rows if week_of(r.task) == w)}"
-        for w in ("W1", "W2", "W3", "W4")
-    ) + """
+- 合计 **{len(rows)}** 行：**已建 {n_built}**（其中等价实现 {n_eq}）/ **待建 {n_todo}** /
+  **不适用 {n_na}**
+- 按批次："""
+        + " / ".join(
+            f"{w} {sum(1 for r in rows if week_of(r.task) == w)}" for w in ("W1", "W2", "W3", "W4")
+        )
+        + """
 
 ## 清单
 
 | ID | 交付物路径 | 所属任务 | 批次 | 类型 | 状态 | 验收证据 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 """
+    )
     body = []
-    for task in sorted(by_task, key=lambda t: (t, )):
+    for task in sorted(by_task, key=lambda t: (t,)):
         for r in by_task[task]:
             body.append(
                 f"| `{r.task}` | `{r.path}` | {r.task} | {week_of(r.task)} | {r.kind} "
@@ -411,6 +537,18 @@ def check(text: str, rows: list[Row]) -> int:
         elif r.status == "待建" and actual != "待建":
             problems.append(f"待建但文件已存在：{r.task} {r.path}")
 
+    # 等价实现的反向校验：登记的等价路径必须真实存在。
+    # 没有这一条，`EQUIVALENT_IMPLS` 就能把"两个文件都没建"写成"已建（等价）"，
+    # 门禁从此失去意义——这是本机制唯一的滥用口子，必须堵死。
+    for listed, (real, reason) in sorted(EQUIVALENT_IMPLS.items()):
+        if status_of(listed) == "已建":
+            continue
+        if status_of(real) != "已建":
+            problems.append(
+                f"等价实现也不存在：{listed} → {real}（{reason}）；"
+                "等价映射不得用于掩盖缺失，请补建或删除该条映射"
+            )
+
     stored = disk_statuses()
     if not stored:
         problems.append(f"清单不存在或为空：{OUT.relative_to(ROOT)}，请先跑一次生成")
@@ -435,7 +573,10 @@ def check(text: str, rows: list[Row]) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"[OK] {len(rows)} 行；已建 {sum(1 for r in rows if r.status == '已建')}；清单与磁盘一致")
+    n_built = sum(1 for r in rows if r.status in {"已建", STATUS_EQUIVALENT})
+    n_eq = sum(1 for r in rows if r.status == STATUS_EQUIVALENT)
+    n_todo = sum(1 for r in rows if r.status == "待建")
+    print(f"[OK] {len(rows)} 行；已建 {n_built}（其中等价 {n_eq}）；待建 {n_todo}；清单与磁盘一致")
     return 0
 
 
@@ -450,9 +591,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return check(text, rows)
     OUT.write_text(text, encoding="utf-8")
-    print(f"[OK] 写出 {OUT.relative_to(ROOT)}：{len(rows)} 行 / 已建 {sum(1 for r in rows if r.status == '已建')}")
+    n_built = sum(1 for r in rows if r.status in {"已建", STATUS_EQUIVALENT})
+    n_eq = sum(1 for r in rows if r.status == STATUS_EQUIVALENT)
+    n_todo = sum(1 for r in rows if r.status == "待建")
+    print(
+        f"[OK] 写出 {OUT.relative_to(ROOT)}：{len(rows)} 行 / "
+        f"已建 {n_built}（其中等价 {n_eq}）/ 待建 {n_todo}"
+    )
     if unresolved:
-        print(f"[WARN] {len(unresolved)} 个 token 无法归一到仓库路径（未计入清单，请补全路径或登记 PREFIX_HINTS）：")
+        print(
+            f"[WARN] {len(unresolved)} 个 token 无法归一到仓库路径"
+            "（未计入清单，请补全路径或登记 PREFIX_HINTS）："
+        )
         for t in sorted(unresolved):
             print(f"       - {t}")
     return 0

@@ -63,6 +63,10 @@ const PLUGIN_NAV_HREF = '/plugins';
 const EXTRA_TITLES: ReadonlyArray<{ prefix: string; label: string }> = [
   { prefix: '/workbench', label: '工作台' },
   { prefix: '/ops', label: '运营后台' },
+  // 关于页同样不进一级菜单：企业产品里「关于」属于偶发查询，占一个常驻菜单位
+  // 会挤掉真正的日常入口；但它的标题必须稳定，否则从 /profile 点进来会顶着
+  // 上一个页面的标题。入口在「个人中心」里（见 profile/page.tsx）。
+  { prefix: '/about', label: '关于' },
 ];
 
 /**

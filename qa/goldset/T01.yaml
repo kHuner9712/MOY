@@ -1,0 +1,64 @@
+# 金标任务 T01 —— 研发工作台：给既有页面加一个功能点，产出代码与用例
+# 设计要点：这是「最小可交付改动」形态，不是从零起项目。判分看「能不能直接贴进仓库」。
+id: T01
+title: 订单列表页新增「批量导出」按钮
+scenario: 研发工作台
+scenario_key: dev
+plugin_id: plg_dev_workbench
+deliverable_type: 代码
+difficulty: 中
+
+input:
+  channel: plugin                 # plugin=走 A1 任务（真实插件链路）
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    订单列表页要加一个「批量导出」按钮：勾选若干订单后点导出，把勾选的行导成 CSV 下载；
+    导出过程中按钮要禁用并显示进度，失败了要能提示并让人重试。别改现有的筛选和分页逻辑。
+  plugin_inputs:
+    title: 订单列表批量导出
+    requirement: |
+      1. 列表页工具栏新增「批量导出」按钮，未勾选行时置灰不可点。
+      2. 点击后把勾选行导出为 CSV 下载，CSV 首行为中文表头（订单号、客户、金额、状态、下单时间）。
+      3. 导出进行中按钮禁用，并显示「已导出 N/M」进度。
+      4. 导出失败给出可读提示和一个「重试」入口，不能只弹技术错误。
+      5. 现有筛选条件与分页行为不得改变。
+    repo: platform/admin-web
+    branch_policy: 新建分支
+    stack: React 18 + TypeScript + TanStack Query
+
+expected_artifact:
+  kind: files
+  outputs: [key_points, plan, code_files, test_files, commit]
+  description: 至少 1 个改动文件（列表工具栏组件或新增导出 hook）+ 1 个用例文件 + 一份需求要点表
+  must_contain:
+    - 需求要点表中能看出「禁用态/进度/失败重试/不影响筛选分页」四条被单独拆出
+    - 代码文件为完整可粘贴文件（含 import 与导出），不是片段或伪代码
+    - CSV 表头为中文且与需求中的 5 列一一对应
+    - 用例文件覆盖「未勾选不可点」「导出中禁用」「失败可重试」三种情况
+    - 提交步骤给出仓库、分支名与提交说明
+  must_not_contain:
+    - 技术实现词（见 pass_criteria.no_tech_exposure）出现在需求要点表与提交说明中
+    - 省略号占位（如「其余逻辑不变」「此处省略」）冒充完整文件
+
+pass_criteria:
+  completeness:
+    - 需求要点覆盖需求的全部 5 条约束，缺一条即判不满分
+    - 代码文件、用例文件、提交记录三类产出齐全（提交受连接器成熟度限制可为「待人工提交」，但必须如实标注）
+    - 技术方案里说明改动落点（哪个文件、新增还是修改）
+  accuracy:
+    - 代码中「未勾选置灰」的判断与「导出中禁用」的禁用态是两个独立条件，不得合并成一个 disabled
+    - CSV 列顺序与需求列出的 5 列顺序一致
+    - 失败分支有 try/catch 或等价错误处理，且给出人类可读文案
+    - 不得声称「已提交到仓库」而实际未产生 commit 链接
+  usable:
+    - 文件可直接保存进仓库并通过 TypeScript 编译（无未定义标识符、无缺失 import）
+    - 组件遵循仓库既有命名与目录约定，不引入新依赖
+    - 用例文件可直接被现有测试框架识别（describe/it 或 test 成对闭合）
+  no_tech_exposure:
+    - 需求要点表、技术方案摘要、提交说明中不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 代码标识符与代码注释不在此限（允许出现 token / index 等编程语义词）
+    - 失败提示文案面向业务人员，不得出现堆栈、异常类名、HTTP 状态码裸数字
+  verifiable:
+    - 提交记录必须给出可点击或可复制的仓库 + 分支 + 提交标识（无连接器时标注「待人工提交」并给出确切的目标分支名）
+    - 每条需求要点能在代码文件中定位到对应位置（文件 + 函数/组件名）
+    - 用例文件里每个 it 的描述与它断言的行为一致

@@ -1,0 +1,56 @@
+# 金标任务 T05 —— 内容运营工作台：单平台稿件 + 配图建议
+# 设计要点：单平台最小闭环，判分重点在「稿件能不能直接发」。
+id: T05
+title: 公众号单篇推文（含配图建议）
+scenario: 内容运营工作台
+scenario_key: content
+plugin_id: plg_content_ops
+deliverable_type: 文档
+difficulty: 易
+
+input:
+  channel: plugin
+  endpoint: POST /api/v1/agent/tasks
+  user_query: |
+    写一篇公众号推文，主题是「公司食堂下周上新三个档口」，面向全体员工，下周一发。
+    素材从知识库找，有就引用，没有就别编。
+  plugin_inputs:
+    topic: 公司食堂下周上新三个档口
+    channels: [微信公众号]
+    audience: 全体员工
+    window: 下周一 09:00
+    source: 知识库
+
+expected_artifact:
+  kind: document
+  outputs: [materials, angles, articles, image_hints]
+  description: 一篇公众号稿件 + 3 条标题候选 + 配图建议 + 素材来源清单
+  must_contain:
+    - 标题候选 ≥3 条且互不相同
+    - 稿件含开头钩子、三个档口的分段、结尾行动指引
+    - 配图建议 ≥2 条，每条说明画什么、放哪一段
+    - 素材清单标注每条的来源（知识库命中/未命中）
+  must_not_contain:
+    - 编造的档口名称、菜品名或价格（知识库未命中时必须标注「待补充」）
+    - 未经确认的发布日期被写成肯定句
+
+pass_criteria:
+  completeness:
+    - 标题候选、稿件、配图建议、素材清单四类产出齐全
+    - 稿件结构完整：开头 / 主体三段 / 结尾，缺一段即扣分
+    - 三个档口各有独立段落
+  accuracy:
+    - 稿件中凡引用知识库内容处，与素材清单条目可一一对应
+    - 知识库未命中的部分明确写「待补充」，不得用看起来合理的名字填空
+    - 发布时间写作「计划下周一 09:00」，不写成已确定事实
+  usable:
+    - 稿件可直接复制进公众号编辑器，无 Markdown 标记残留、无占位尖括号
+    - 字数在 400-900 字之间，适合一篇推文
+    - 配图建议可直接交给设计执行（写明画面主体与文字位置）
+  no_tech_exposure:
+    - 稿件与配图建议中不得出现：模型名、GPT、Claude、Qwen、DeepSeek、向量、embedding、RAG、Agent、召回、分块、索引、相似度、阈值、prompt、token、top_k
+    - 素材清单不得出现「命中片段」「相似度得分」这类检索过程术语，只写「来源文档名 + 小节」
+  verifiable:
+    - 每条素材都能指到具体文档名
+    - 每个档口段落能对应到一条素材或一条「待补充」
+    - 配图建议与段落编号对应关系明确
