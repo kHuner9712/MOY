@@ -589,7 +589,13 @@ class UsageService:
             event_counts=counts,
         )
 
-    async def budget_status(self, *, tenant_id: str, user_id: str) -> BudgetStatus:
+    async def budget_status(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        snapshot: UsageSnapshot | None = None,
+    ) -> BudgetStatus:
         """取一次"能否继续生成"的判定快照（**只读、不抛**）。
 
         判据有两条，任一用尽即拦停：
@@ -600,18 +606,29 @@ class UsageService:
         两者都"没有额度"时（免费壳/桩模式，`total_units == 0` 且预算未设）
         **不拦**——这是既有行为，不能因为加了护栏让离线演示与免费用户全挂。
 
+        **R2-ENG-08**：`snapshot` 允许由调用方传入同一请求内已取到的用量快照，
+        避免"额度判定算一遍、超额提示再算一遍"。`UsageService.snapshot()` 单次
+        要做 4 次存储往返（月度行 / 套餐 / 日趋势 / 事件计数），首 token 之前
+        重复一次就是 4 次多余往返。传入快照与自取快照**计算结果完全一致**
+        （同一个 `(tenant, user, 当期)` 下是同一份数据），不改变任何判定语义。
+
         Args:
             tenant_id: 租户 ID。
             user_id: 用户 ID。
+            snapshot: 可选的既有用量快照；`None` 时按需自取。
 
         Returns:
             BudgetStatus: 判定结果（含预警比例）。
         """
-        snapshot = await self.snapshot(tenant_id=tenant_id, user_id=user_id)
+        usage_snapshot = (
+            snapshot
+            if snapshot is not None
+            else await self.snapshot(tenant_id=tenant_id, user_id=user_id)
+        )
         budget = await self._budgets.get(tenant_id)
         used = await self.tenant_total(tenant_id=tenant_id) if budget.effective else 0
 
-        plan_exhausted = snapshot.total_units > 0 and snapshot.remaining_units <= 0
+        plan_exhausted = usage_snapshot.total_units > 0 and usage_snapshot.remaining_units <= 0
         budget_exhausted = budget.exhausted(used)
         # 阶段四 T4-05.1：私有化模式才有的 gauge（SaaS 下未注册 → 这里自动跳过）
         if TENANT_BUDGET_USED_RATIO is not None and budget.effective:
@@ -620,13 +637,13 @@ class UsageService:
         if TENANT_BUDGET_USED_RATIO is not None and budget.effective:
             TENANT_BUDGET_USED_RATIO.set(budget.usage_ratio(used))
         plan_warn = (
-            snapshot.total_units > 0
+            usage_snapshot.total_units > 0
             and not plan_exhausted
-            and snapshot.usage_percent >= DEFAULT_PLAN_WARN_PERCENT
+            and usage_snapshot.usage_percent >= DEFAULT_PLAN_WARN_PERCENT
         )
         status = BudgetStatus(
-            plan_total_units=snapshot.total_units,
-            plan_remaining_units=snapshot.remaining_units,
+            plan_total_units=usage_snapshot.total_units,
+            plan_remaining_units=usage_snapshot.remaining_units,
             budget_units=budget.monthly_budget_units,
             budget_used_units=used,
             budget_ratio=budget.usage_ratio(used),
@@ -710,7 +727,12 @@ class UsageService:
         )
 
     async def check_capability_allowed(
-        self, *, capability: str, tenant_id: str, user_id: str
+        self,
+        *,
+        capability: str,
+        tenant_id: str,
+        user_id: str,
+        snapshot: UsageSnapshot | None = None,
     ) -> BudgetStatus:
         """额度判定（**只判定、不抛**，P4-11 ①；2026-10-27 按 PRD 5.3 ① 改为软限制）。
 
@@ -729,15 +751,19 @@ class UsageService:
         （底座侧的 429/配额错误），与自研侧的额度判定是两件事——复用会让排障时
         分不清"我们的额度用完了"还是"上游说我们额度用完了"。
 
+        **R2-ENG-08**：`snapshot` 透传给 `budget_status()`，供调用方复用同一请求内
+        已取到的用量快照（首 token 前少一轮重复查询）。不传时行为与修复前完全一致。
+
         Args:
             capability: 作用域（`chat` / `document` / `automation`），只用于归因。
             tenant_id: 租户 ID。
             user_id: 用户 ID。
+            snapshot: 可选的既有用量快照（同一请求内复用）。
 
         Returns:
             BudgetStatus: 判定结果（`exhausted` 时由调用方决定限长还是挂起）。
         """
-        status = await self.budget_status(tenant_id=tenant_id, user_id=user_id)
+        status = await self.budget_status(tenant_id=tenant_id, user_id=user_id, snapshot=snapshot)
         if status.exhausted:
             logger.warning(
                 "budget_exhausted",
@@ -797,7 +823,13 @@ class UsageService:
             )
         return bool(status.exhausted)
 
-    async def quota_notice(self, *, tenant_id: str, user_id: str) -> tuple[int, str]:
+    async def quota_notice(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        snapshot: UsageSnapshot | None = None,
+    ) -> tuple[int, str]:
         """取"额度将要用尽"的**非阻断提示**（B27 `15006` 的唯一出品口）。
 
         为什么是"非阻断"：PRD 5.3 的软限制要求是「提醒而不是拦停」——超额用户
@@ -813,20 +845,28 @@ class UsageService:
         判据自带"无订阅不提示"：`over_quota_warning` 的表达式含 `total_units > 0`，
         所以无订阅 / 免费壳 / 桩模式（额度总量为 0）天然不提示。
 
+        **R2-ENG-08**：`snapshot` 允许调用方传入同一请求内已取到的用量快照。
+        修复前 M1/M2 每条请求都会"额度判定查一次快照 + 提示再查一次快照"，
+        首 token 之前白白多出 4 次存储往返。复用同一份快照不改变任何判定结果
+        （同一 `(tenant, user, 当期)` 的数据在同一次请求内是同一份）。
+
         Args:
             tenant_id: 租户 ID。
             user_id: 用户 ID（提示按**个人**额度口径，与企业视图无关）。
+            snapshot: 可选的既有用量快照；`None` 时按需自取。
 
         Returns:
             tuple[int, str]: `(错误码, 业务文案)`；未达额度上限时为 `(0, "")`。
         """
         if not tenant_id or not user_id:
             return 0, ""
-        try:
-            snapshot = await self.snapshot(tenant_id=tenant_id, user_id=user_id)
-        except Exception as exc:  # 提示失败绝不能影响主流程（对话/上传/建任务）
-            logger.warning("quota_notice_failed", detail=type(exc).__name__)
-            return 0, ""
+        effective = snapshot
+        if effective is None:
+            try:
+                effective = await self.snapshot(tenant_id=tenant_id, user_id=user_id)
+            except Exception as exc:  # 提示失败绝不能影响主流程（对话/上传/建任务）
+                logger.warning("quota_notice_failed", detail=type(exc).__name__)
+                return 0, ""
         # 阶段四 T4-04.3：租户月度预算达预警线（默认 80%）→ 非阻断提示。
         # 放在"套餐已超额"判定之前：已超额时走的是硬止损（402），不会走到这里。
         try:
@@ -838,7 +878,7 @@ class UsageService:
                     return int(spec.code), BUDGET_WARN_MESSAGE
         except Exception as exc:  # 预算读取失败同样不得影响主流程
             logger.warning("budget_notice_failed", detail=type(exc).__name__)
-        if not snapshot.over_quota_warning:
+        if not effective.over_quota_warning:
             return 0, ""
         spec = ERROR_REGISTRY[ErrorCode.QUOTA_EXHAUSTED]
         return int(spec.code), spec.message

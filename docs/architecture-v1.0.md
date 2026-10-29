@@ -14,13 +14,14 @@
 
 | 版本 | 日期 | 修订人 | 修订说明 |
 | --- | --- | --- | --- |
+| V1.0.9 | 2026-10-29 | 高见远（架构师） | **基础设施版本同步（R2-ARC-04）+ 两条门禁判据落地（R2-ARC-07 / R2-ARC-14）**：① §2.1 选型表、§8.1/§8.2 说明、§10.3 D-06 的 Valkey/SeaweedFS 版本号同步为实际值（Valkey 9.2 / SeaweedFS 4.48，与 `deploy/images.lock` 一致）；**基础设施版本升级，接口路径、字段名、错误码取值与协议（RESP / S3）均不变**，适配层与前端零改动 ② §9.6 G-37 判据补「文件级循环依赖（SCC）」与基线 `due_batch` 到期约束 ③ §9.6 镜像门禁补「精确标签正则」与「架构文档版本口径交叉校验」。**本次修订不改动任何接口路径、字段名、错误码取值。** |
 | V1.0.8 | 2026-10-23 | 许清楚（产品经理，代架构师登记） | 按 ADR-0005（D-09/D-13）对齐总纲：标题与文档层级声明改为 L0/L1/L2 体系，需求来源补总纲；**不改动任何接口路径、字段名、错误码取值、门禁判据** |
 | V1.0.7 | 2026-10-23 | 齐活林（阶段三收口） | 第三阶段文档同步（B29 第 5 项，**不改动任何接口路径、字段名、错误码取值**）：§9.6 CI 门禁追加 G-26 ~ G-31 六道阶段三门禁（插件声明 schema / 插件界面唯一宿主 / 能力原语白名单 / phase3 端点基线 / 前端契约快照 / Schema 保留策略）与 G-13 扩展（内部码禁区）。判据与命令以 `docs/architecture-phase3.md` §10 为唯一真源，本文档仅登记存在性与入口，避免两处演化出不同判据。 |
 | V1.0.6 | 2026-10-21 | 齐活林（实联调） | 第一阶段实跑联调修订（T02 真实协议转换层，**不改动任何接口路径、字段名、错误码取值**）：① 登记三项底座载荷口径修正 —— M1/M2/A1 调用必须携带终端用户标识 `user`（Dify ≥ 0.6 强制，缺失即 400）、工作流运行详情端点为 `/v1/workflows/run/{id}`（单数，非 `/runs/`）、blocking 模式须映射 `data.status` 终态 ② §9.5 环境变量表 `OA_MINIO_*` → `OA_OBJECT_STORE_*`（P2-4）③ §10.3 D-06/D-08 转「已拍板生效」（docs/decisions/0004）④ 登记第一阶段验收结论（docs/phase1-acceptance-report.md） |
 | V1.0 | 2026-10-21 | 高见远 | 首次发布：五层架构落地设计、技术选型、适配层五大标准接口规范 v1.0、时序图、monorepo 结构、第一阶段任务、依赖清单、共享约定、待明确事项 |
 | V1.0.1 | 2026-10-21 | 高见远 | Sprint 0 QA 反馈修订：① 第 3 章补「端点总数 30 + 2 探针」显式声明（消除 29/30 歧义）② 8.2 补登记 postcss / autoprefixer / tailwindcss-animate 三个构建期依赖 ③ 新增 3.0.5「幂等指纹与冲突判定口径」，明确指纹含请求体 SHA-256、同键异体判 20005 冲突且禁止回放（BUG-05 规范根因堵死）④ 3.0.3 的 20005 内部含义补注幂等键请求体不一致。**本次修订不改动任何接口路径、字段名、错误码取值。** |
 | V1.0.2 | 2026-10-21 | 高见远 | Sprint 0 QA 复核 P0 修订：① 8.2 与 §2.1 更正 MinIO 锁定标签为 `RELEASE.2021-04-22T15-44-28Z`（原 `RELEASE.2021-04-22T23-11-00Z` 为拼接合成、上游不存在）② 8.2 补「镜像标签引用强制规范」（先核验后引用）与「Valkey 客户端命令约定」（用 `valkey-cli`，禁用 `redis-cli`）③ 9.6 CI 门禁补依赖清单包名+版本双校验、`deploy/images.lock` 精确匹配+存在性校验、健康检查命令静态校验 ④ §10.3 D-06 状态更新。**本次修订不改动任何接口路径、字段名、错误码取值。** |
-| V1.0.5 | 2026-10-21 | 高见远 | 对象存储选型根本变更：② §2.1 选型表与 §8.2 改为 **SeaweedFS 3.80**（MinIO 上游 Docker Hub 仓库已整体下架，制品不可获取，「锁定 AGPL 前版本线」前提失效）③ §8.2 镜像标签规范升级为**双通道核验**（git tag 校验版本号 + Registry 校验可拉取性，「git tag 存在 ≠ 镜像可拉取」）④ §10.3 D-06 状态更新。**本次修订不改动任何接口路径、字段名、错误码取值。** |
+| V1.0.5 | 2026-10-21 | 高见远 | 对象存储选型根本变更：② §2.1 选型表与 §8.2 改为 **SeaweedFS**（MinIO 上游 Docker Hub 仓库已整体下架，制品不可获取，「锁定 AGPL 前版本线」前提失效；当时锁定的是 3.80 线，版本号已由 V1.0.9 同步为 4.48）③ §8.2 镜像标签规范升级为**双通道核验**（git tag 校验版本号 + Registry 校验可拉取性，「git tag 存在 ≠ 镜像可拉取」）④ §10.3 D-06 状态更新。**本次修订不改动任何接口路径、字段名、错误码取值。** |
 | V1.0.4 | 2026-10-21 | 高见远 | 依赖门禁工具化：9.6 补 `deploy/validate_deps.py` 四合一门禁（清单一致性 / 最低安全版本 / 加固约束静态检查 / 漏洞扫描）、「传递依赖必须显式声明」与「ACCEPTED_RISKS 豁免白名单」口径；6.1 目录树登记两个门禁脚本。**本次修订不改动任何接口路径、字段名、错误码取值。** |
 | V1.0.3 | 2026-10-21 | 高见远 | Sprint 0 BLK-04 依赖漏洞实跑修订：① 8.1 fastapi 约束 `^0.115` → `^0.156`、新增 starlette `^1.3` 条目（修复 14 项漏洞，含直接命中 R3 上传接口的大文件 DoS）② 新增 8.1.1「依赖漏洞基线与处置结论」：17 个漏洞的逐条调用面适用性评估、4 条强制加固约束 ③ 9.6 补依赖漏洞扫描门禁（要求逐条适用性评估而非二值结论）④ 8.2 补「官方镜像命名空间约定」。**本次修订不改动任何接口路径、字段名、错误码取值。** |
 
@@ -182,9 +183,9 @@ graph TB
 | 前端 | 样式 | Tailwind CSS | MIT | 原子化 CSS，设计令牌落地快 |
 | 前端 | 组件库 | shadcn/ui + Radix UI | MIT / MIT | 组件源码级可控、无供应商锁定；满足「100% 统一组件库」硬约束 |
 | 身份 | IAM | Keycloak | Apache-2.0 | 总方案指定；OIDC/OAuth2/SAML 全协议；组织/角色/细粒度权限 |
-| 数据 | 关系库 | PostgreSQL 16 | PostgreSQL License（类 BSD/MIT） | RLS 多租户隔离、JSON 支持、生态成熟 |
-| 缓存 / 幂等 | Valkey 7.2 | **BSD-3-Clause** | Redis 协议兼容的社区分支，永久宽松许可；**已决策替代 Redis 7**（RSALv2/SSPL 触黑名单），适配层业务代码零改动，仅换镜像与连接地址。详见 ADR-0002 |
-| 存储 | 对象存储 | **SeaweedFS 3.80** | **Apache-2.0**（白名单） | S3 兼容，可单机可集群，私有化友好。**替代 MinIO**（其上游 Docker Hub 仓库已整体下架，制品不可获取），协议直接落入白名单、无需版本线锁定；独立容器运行（见 8.2 说明与 ADR-0002 §2.2） |
+| 数据 | 关系库 | PostgreSQL 18.6 | PostgreSQL License（类 BSD/MIT） | RLS 多租户隔离、JSON 支持、生态成熟。镜像 `pgvector/pgvector:0.8.7-pg18-bookworm`（PG 18.6 + pgvector 0.8.7），版本以 `deploy/images.lock` 的 `doc_version` 为唯一事实来源，由 `deploy/validate_images.py` 交叉校验（R2-ARC-04） |
+| 缓存 / 幂等 | Valkey 9.2 | **BSD-3-Clause** | Redis 协议兼容的社区分支，永久宽松许可；**已决策替代 Redis 7**（RSALv2/SSPL 触黑名单），适配层业务代码零改动，仅换镜像与连接地址。详见 ADR-0002（版本以 `deploy/images.lock` 为唯一事实来源，见 §8.1 基础设施组件说明） |
+| 存储 | 对象存储 | **SeaweedFS 4.48** | **Apache-2.0**（白名单） | S3 兼容，可单机可集群，私有化友好。**替代 MinIO**（其上游 Docker Hub 仓库已整体下架，制品不可获取），协议直接落入白名单、无需版本线锁定；独立容器运行（见 8.2 说明与 ADR-0002 §2.2） |
 | 运维 | 监控 | Prometheus | Apache-2.0 | 云原生事实标准。**Grafana 已于 V1.0 移除**（AGPL-3.0 且 AGPL 前版本线在 Docker Hub 已不存在，看板不属 V1.0 验收项，见 `docs/decisions/0004` 第二章） |
 
 ## 2.2 关键决策论证
@@ -1285,7 +1286,10 @@ officeai/                              # Monorepo 根目录
 │   ├── docker-compose.yml             # 私有化一键部署
 │   ├── docker-compose.saas.yml        # SaaS 本地联调
 │   ├── images.lock                    # 基础设施镜像唯一事实来源（Sprint 1，ADR-0002）
-│   ├── validate_images.py            # 镜像清单门禁（一致性/精确版本/上游存在性）
+│   ├── validate_images.py            # 镜像清单门禁（一致性/精确标签/digest/文档口径/上游存在性）
+│   ├── validate_import_directions.py # 分层方向门禁 G-37（12×12 矩阵 + 文件级 SCC 判环）
+│   ├── import_direction_baseline.txt # G-37 方向基线（每条带 due_batch 到期批次）
+│   ├── same_layer_cycle_baseline.txt # G-37 文件级循环依赖（SCC）基线，只许减不许增
 │   ├── validate_deps.py              # 依赖门禁（清单一致性/最低安全版本/加固约束/漏洞）
 │   ├── k8s/                           # SaaS 集群 manifests（S4）
 │   └── offline/                       # 离线镜像打包脚本（S4）
@@ -1435,7 +1439,7 @@ graph LR
 > 判断依据不是版本号，而是**我们的实际调用方式**。这正是总方案 5.4「输入输出做安全过滤」在依赖层的落地：
 > 依赖漏洞必须结合调用面评估，不能只看扫描报告。
 
-> **基础设施组件说明**：`redis` 为 Python 客户端库（MIT），服务端为 **Valkey 7.2（BSD-3-Clause）**，二者通过标准 RESP 协议通信，非代码链接；镜像与协议决策见 ADR-0002。
+> **基础设施组件说明**：`redis` 为 Python 客户端库（MIT），服务端为 **Valkey 9.2（BSD-3-Clause）**，二者通过标准 RESP 协议通信，非代码链接；镜像与协议决策见 ADR-0002。版本号与 `deploy/images.lock` 逐一对应（`valkey/valkey:9.2-alpine`），由 `deploy/validate_images.py` 交叉校验（R2-ARC-04）。
 
 ## 8.2 Node（前端 `apps/web`）
 
@@ -1460,7 +1464,7 @@ graph LR
 > 全量 MIT/Apache-2.0/ISC，无传染性协议。
 >
 > **构建期依赖说明**：`postcss` / `autoprefixer` / `tailwindcss-animate` 三项**仅在构建阶段参与 CSS 编译与前缀补全，不进入运行时产物**（不随 `next build` 输出到客户端 bundle，也不随容器镜像进入运行时依赖），故与运行时依赖分列标注。三者均为 MIT 协议，无 GPL/AGPL/SSPL 风险。
-> **对象存储说明（基础设施，非代码依赖）**：采用 **SeaweedFS 3.80**（`chrislusf/seaweedfs:3.80`，Apache-2.0 白名单协议），以**独立容器**方式运行。**替代 MinIO 的原因**：MinIO 主线自 2021 年转 AGPL-3.0，且官方已停止分发容器镜像、Docker Hub 仓库整体下架（QA BLK-03 实测：任何 tag 均 404），「锁定 AGPL 前版本线」的技术前提已不成立。选型证据（三重：registry 可用性 200 / 拉取量 3386 万 / 上游 LICENSE 首行 Apache-2.0）见 ADR-0002 §2.2。
+> **对象存储说明（基础设施，非代码依赖）**：采用 **SeaweedFS 4.48**（`chrislusf/seaweedfs:4.48`，Apache-2.0 白名单协议），以**独立容器**方式运行。**替代 MinIO 的原因**：MinIO 主线自 2021 年转 AGPL-3.0，且官方已停止分发容器镜像、Docker Hub 仓库整体下架（QA BLK-03 实测：任何 tag 均 404），「锁定 AGPL 前版本线」的技术前提已不成立。选型证据（三重：registry 可用性 200 / 拉取量 3386 万 / 上游 LICENSE 首行 Apache-2.0）见 ADR-0002 §2.2。版本号以 `deploy/images.lock` 为唯一事实来源，由 `deploy/validate_images.py` 交叉校验（R2-ARC-04）。
 > ⚠️ **镜像标签引用强制规范（三次同型缺陷的共同教训）**：任何镜像标签写入文档或编排文件前，**必须双通道核验** —— ① `git ls-remote` 确认版本号真实存在（防「日期×时间戳交叉拼接」的合成标签）；② **Registry API 确认镜像可拉取**（防仓库下架 / 仓库名不存在）。**git tag 存在 ≠ 镜像可拉取** —— MinIO 案例已证明二者解耦。CI 门禁须做**精确标签匹配 + 双通道存在性校验**（不使用前缀正则），唯一事实来源为 `deploy/images.lock`，并以 `--self-test` 固化历史负样本（ADR-0002 第 2.2.2 / 2.4 节）。
 > **Valkey 客户端命令约定**：Valkey 官方镜像的客户端二进制名为 `valkey-cli`，**镜像内不存在 `redis-cli`**。compose 中 Valkey 服务的健康检查命令一律使用 `valkey-cli`，禁止照抄 Redis 文档改写（ADR-0002 第 2.5 节）。
 > **官方镜像命名空间约定**：Docker 官方镜像（`postgres` 等）在 Hub 上实际托管于 `library/` 命名空间（引用时可省略前缀）。门禁脚本须做命名空间归一化，否则会把官方镜像误判为「标签不存在」（ADR-0002 第 2.2.1 节）。
@@ -1569,6 +1573,8 @@ graph LR
 - **依赖清单同步门禁**：代码依赖的**包名 + 版本约束**必须同时出现在本文档第 8 章清单内，缺一即失败；
 - **镜像清单门禁（`deploy/images.lock`，Sprint 1）**：
   - compose 中每个 `image:` 引用必须能在 `deploy/images.lock` 中找到 `name:tag` **精确匹配**项，**禁止前缀正则**（前缀正则会对拼错的合成标签同样判 PASS，给错误配置签发合规通行证）；
+  - **精确标签判据（R2-ARC-14，2026-10-29）**：禁止浮动别名（`latest`/`main`/`master`/`stable`/`edge`…）；tag 必须含 `主版本.次版本`（正则 `^v?\d+\.\d+`），`pg18` 这类**只约束大版本**的滚动标签直接判红（同一 tag 在不同时间拉到不同制品，与 `latest` 同源缺陷）；确需豁免的镜像在 `validate_images.py` 的 `TAG_EXCEPTIONS` 里显式写明理由（当前仅 `node:22-alpine`，附改造条件）；
+  - **文档版本口径交叉校验（R2-ARC-04，2026-10-29）**：本文档 §2.1 / §8.1 / §8.2 / §10.3 出现的 Valkey、SeaweedFS 版本号必须与 `images.lock` 的 tag **字面一致**；文档里完全没有版本声明同样判红（删掉声明不能成为绕过手段）。此前本门禁只查锁文件内部一致，不查设计文档，导致「文档写 7.2 / 锁文件是 9.2」长期无人发现；
   - `images.lock` 中每个 tag 须通过**上游存在性校验**（Registry API 或 `git ls-remote`）；私有化断网流水线走**离线模式**（已核验条目放行）；
   - Valkey 服务健康检查命令含 `redis-cli` 即失败（镜像内只有 `valkey-cli`）；
   - 详见 ADR-0002 第 2.4 / 2.5 节。
@@ -1607,13 +1613,21 @@ graph LR
 
   | 门禁 | 判据 | 命令 |
   | --- | --- | --- |
-  | **G-37 分层依赖方向** | `app/` 的 12 个二级包按**允许矩阵**判定 import 方向（同层自引用恒允许，**违规 = 矩阵补集**，rule_id 形如 `R-DB-BIZ`）；三分类：模块级 / 函数体延迟导入 / `if TYPE_CHECKING:`（只统计不判红）；相对导入与 `__init__` 归一化后判定 | `python deploy/validate_import_directions.py --baseline deploy/import_direction_baseline.txt` |
-  | **G-37 可红证明** | `--self-test` 在临时目录合成样本树：模块级检出 / 延迟导入检出（含函数内嵌套）/ `for`-`while`-`match` 分支体内检出（形态必须 `module`，白名单式递归漏检过的四类语句在此钉住）/ `services→business` 放行 / 相对导入检出 / `TYPE_CHECKING` 不判红 / 基线命中 WARN exit 0 / 基线外 exit 1 / stale exit 1 / 格式错误与 `rule_id` 不符 exit 2 / **app-root 不存在-非目录-空目录-文件数低于下限 exit 2（fail-open 护栏）** | `python deploy/validate_import_directions.py --self-test` |
+  | **G-37 分层依赖方向** | `app/` 的 12 个二级包按**允许矩阵**判定 import 方向（同层自引用恒允许，**违规 = 矩阵补集**，rule_id 形如 `R-DB-BIZ`）；三分类：模块级 / 函数体延迟导入 / `if TYPE_CHECKING:`（只统计不判红）；相对导入与 `__init__` 归一化后判定；**另跑文件级 import 图的 Tarjan 强连通分量（R2-ARC-07）**——分量内 ≥2 个文件即一个环，登记于 `deploy/same_layer_cycle_baseline.txt`，**新增环即红** | `python deploy/validate_import_directions.py --baseline deploy/import_direction_baseline.txt`（环基线默认 `deploy/same_layer_cycle_baseline.txt`） |
+  | **G-37 可红证明** | `--self-test` 在临时目录合成样本树：模块级检出 / 延迟导入检出（含函数内嵌套）/ `for`-`while`-`match` 分支体内检出（形态必须 `module`，白名单式递归漏检过的四类语句在此钉住）/ `services→business` 放行 / 相对导入检出 / `TYPE_CHECKING` 不判红 / 基线命中 WARN exit 0 / 基线外 exit 1 / stale exit 1 / 格式错误、`rule_id` 不符、**缺 `due_batch`** exit 2 / **豁免到期 exit 1（未到期放行）** / **人为新增一处同层环 → SCC 检出 exit 1（登记后放行、环消失未删行 stale exit 1）** / **app-root 不存在-非目录-空目录-文件数低于下限 exit 2（fail-open 护栏）** | `python deploy/validate_import_directions.py --self-test` |
 
   > **基线 `deploy/import_direction_baseline.txt` 只许减不许增**：脚本**不提供**
   > `--update-baseline`，新增豁免必须走评审并写明审计编号与消除计划；违规修好后必须
   > **删掉**对应基线行，否则报 `[FAIL] stale` 并 exit 1（防止基线长期挂账变成免死金牌）。
-  > 基线格式：`<rule_id> <file> <imported_module> <mode> -- <审计编号> <消除计划>`，全字段精确匹配、禁通配。
+  > 基线格式：`<rule_id> <file> <imported_module> <mode> -- <审计编号> due_batch=<批次号> <消除计划>`，全字段精确匹配、禁通配。
+  > **`due_batch` 到期约束（R2-ARC-07）**：每条豁免必须写到期批次（与 `apps/adapter/tests/expected_xfail.py`
+  > 的 `DEFECT_LEDGER`、`deploy/validate_batch_clock.py` **同一套 `OA_BATCH` 时钟**），当前批次 ≥ `due_batch`
+  > 即 exit 1，缺该字段 exit 2。此前 24 条豁免全部"无期限"，门禁对存量零约束力——批号是把"登记"变成"欠账"的关键。
+  > **文件级循环依赖（SCC，R2-ARC-07）**：层矩阵对同层环（`business ↔ business`、`workers ↔ workers`）**完全无感**，
+  > 且 `core ↔ business` 这类跨层环会被拆成"一条合法 + 一条已登记"两条记录、看不出闭合成环。故额外对文件级
+  > import 图（`module` + `deferred` 边）跑 Tarjan，环的规范化表示是成员路径升序元组；基线
+  > `deploy/same_layer_cycle_baseline.txt` 登记 3 组存量环（订单↔订阅 / core↔policy / job_runner↔tasks），
+  > **新增环即红、环消失未删行 stale 判红**，同样受 `due_batch` 约束。
   > **fail-open 护栏**：扫描前校验 `app-root` 存在且 `.py` 文件数 ≥ `MIN_SCANNED_FILES`（默认 100，实测 152），
   > 不满足即 exit 2——否则目录被移动时门禁会打印「扫描 0 个文件」并变绿。`--min-files` 仅供 `--self-test` 下调用，
   > **CI 不得传**。
@@ -1684,7 +1698,7 @@ graph LR
 | D-03 | 会话与消息的存储归属 | 会话列表/历史消息由上层维护还是适配层代理 Dify 会话？建议上层自持（业务库），适配层只做无状态生成，避免适配层有状态化 | 架构师 + 工程师 |
 | D-04 | Agent 长任务的回调机制 | V1.0 建议「轮询 + SSE 推送」双通道，Webhook 回调留 V1.x；需确认是否接受 | 产品经理 |
 | D-05 | 多租户隔离实现细节 | PostgreSQL RLS + 应用层 tenant_id 双保险已定；需确认 SaaS 是否接受共享 Milvus 实例按 partition/collection 前缀隔离 | 架构师 + 主理人 |
-| D-06 | Redis 7 许可证与对象存储合规方案 | Redis 7 为 RSALv2/SSPL 双许可、MinIO 主线为 AGPL-3.0 且上游仓库已整体下架；**已拍板生效**：缓存改用 Valkey（BSD-3）、对象存储改用 SeaweedFS 3.80（Apache-2.0），二者均直接落入白名单；另裁定 Grafana V1.0 移除、Dify 三条规避约束（`docs/decisions/0004`） | ✅ 已批准 |
+| D-06 | Redis 7 许可证与对象存储合规方案 | Redis 7 为 RSALv2/SSPL 双许可、MinIO 主线为 AGPL-3.0 且上游仓库已整体下架；**已拍板生效**：缓存改用 Valkey（BSD-3）、对象存储改用 SeaweedFS 4.48（Apache-2.0），二者均直接落入白名单；另裁定 Grafana V1.0 移除、Dify 三条规避约束（`docs/decisions/0004`） | ✅ 已批准 |
 | D-07 | 适配层健康检查与就绪探针契约 | `/healthz`、`/readyz` 语义（ready 依赖 Redis/Dify 连通性）需与运维对齐 | 工程师 + 主理人 |
 | D-08 | 前端设计令牌（品牌色/字体/圆角）基线 | **已拍板**：主色 #2563EB、V1.0 不做深色、私有化镜像内置开源中文字体（`docs/decisions/0003` 回执 + `docs/decisions/0004` 第六章） | ✅ 已批准 |
 
@@ -1697,7 +1711,7 @@ graph LR
 | D-03 | 已定（上层自持） | ADR-0001 推论 | 落地即可 | — |
 | D-04 | 待确认 | — | 产品经理确认 V1.0 采用轮询 + SSE | T05 前 |
 | D-05 | 待确认 | — | 架构师 + 主理人确认 Milvus 隔离方式 | Sprint 1 |
-| **D-06** | ✅ **已拍板生效（2026-10-21）** | `docs/adr/0002-infrastructure-license-compliance.md` + `docs/decisions/0004` | 创始人授权主理人批准：Valkey 7.2（BSD-3）+ SeaweedFS 3.80（Apache-2.0）；Docker daemon 实测 `docker pull` 通过（签字前置条件满足）。另裁定：Grafana V1.0 移除（AGPL-3.0 且 AGPL 前版本线已不可获取）；Dify 修改版 Apache-2.0 的三条规避约束（SaaS 不用多租户 / 不修改代码 / 不展示品牌） | — |
+| **D-06** | ✅ **已拍板生效（2026-10-21）** | `docs/adr/0002-infrastructure-license-compliance.md` + `docs/decisions/0004` | 创始人授权主理人批准：Valkey 9.2（BSD-3）+ SeaweedFS 4.48（Apache-2.0）；Docker daemon 实测 `docker pull` 通过（签字前置条件满足）。另裁定：Grafana V1.0 移除（AGPL-3.0 且 AGPL 前版本线已不可获取）；Dify 修改版 Apache-2.0 的三条规避约束（SaaS 不用多租户 / 不修改代码 / 不展示品牌）。**版本号随月度巡检升级（架构文档 9.6），决策本身（协议选型）不变** | — |
 | D-07 | 待确认 | `docs/api/README.md` 第五节 | 与运维对齐探针语义 | T01 内 |
 | **D-08** | ✅ **已拍板（2026-10-21）** | `docs/adr/0003-design-token-baseline.md` + `docs/decisions/0003-...-decision-sheet.md` 回执 | 创始人授权主理人代拍：Q1 选 A（#2563EB）、Q2 同意不做深色（配套两条硬约束）、Q3 同意私有化镜像内置开源中文字体（SIL OFL 1.1，走引入审核）；第 1 章 30 余项按推荐执行 | — |
 

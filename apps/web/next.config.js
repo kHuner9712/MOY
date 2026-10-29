@@ -17,6 +17,48 @@ const nextConfig = {
     const baseline = [
       { key: 'X-Content-Type-Options', value: 'nosniff' },
       { key: 'X-Frame-Options', value: 'DENY' },
+      // R2-ENG-06：强制 HTTPS。同源部署下由编排层反代终止 TLS，本头仍要下发
+      // ——浏览器只要看到它，后续对该主机的明文请求就会被升级，
+      // 从而消除「首跳被中间人降级」的窗口。`includeSubDomains` 与私有化现场的
+      // 单域名部署不冲突（子域若确实只有 HTTP，需要现场改这一段）。
+      {
+        key: 'Strict-Transport-Security',
+        value: 'max-age=31536000; includeSubDomains',
+      },
+      // R2-ENG-06：显式关停不需要的浏览器能力。三个都置空（`()` = 全部拒绝），
+      // 产品当前不采集摄像头/麦克风/定位，默认全开只会给钓鱼页留越多越好的面。
+      {
+        key: 'Permissions-Policy',
+        value: 'camera=(), microphone=(), geolocation=()',
+      },
+      // R2-ENG-06：CSP。
+      //
+      // ⚠ 这是**可用的保守起点**，不是最终形态。为什么必须留 `'unsafe-inline'`：
+      // Next.js App Router 的 RSC 载荷是以内联 `<script>`（`self.__next_f.push(...)`）
+      // 注入的，纯 `script-src 'self'` 会让页面首帧白屏且控制台只有一条难以归因的
+      // CSP 违规。要收紧到无 `'unsafe-inline'`，需改用 nonce 方案（middleware 生成
+      // 每请求 nonce 并经 `next/headers` 透传给 `<Script nonce>`），这超出本次修复范围。
+      //
+      // `img-src` 保留 `data:`（内联图标）与 `https:`（外部头像/预览图）；
+      // `connect-src` 放开 `http:` 是为了私有化现场「前端与适配层不同源且只有 HTTP」，
+      // 该场景下收紧会直接打断登录。`frame-ancestors 'none'` 与上面的
+      // `X-Frame-Options: DENY` 是同一条约束的两种声明（现代浏览器只认 CSP），
+      // 保留两者是为了兼容旧浏览器。
+      {
+        key: 'Content-Security-Policy',
+        value: [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-inline'",
+          "style-src 'self' 'unsafe-inline'",
+          "img-src 'self' data: https:",
+          "font-src 'self' data:",
+          "connect-src 'self' http: https:",
+          "object-src 'none'",
+          "base-uri 'self'",
+          "form-action 'self'",
+          "frame-ancestors 'none'",
+        ].join('; '),
+      },
     ];
     return [
       {

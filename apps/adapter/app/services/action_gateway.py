@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Final
 
@@ -171,7 +172,12 @@ class ServicesActionGateway:
             elif action == "tool":
                 result = await self._run_tool(ctx, params)
             elif action == "render_file":
-                result = self._run_render(ctx, params)
+                # R2-ENG-07（本轮）：`_run_render` 是**同步**方法（docx/md/csv 渲染
+                # 是纯 CPU 工作），直接调用会把事件循环钉住数百毫秒——同进程的
+                # `/healthz` 探针与其余请求一起排队，表现为"整个服务卡了一下"。
+                # 用 `asyncio.to_thread` 丢到默认线程池执行；`_run_render` 的
+                # 签名与返回类型**不变**，只是不再占用事件循环。
+                result = await asyncio.to_thread(self._run_render, ctx, params)
             else:  # summarize
                 result = self._run_summarize(ctx, params)
         except ApiError as exc:

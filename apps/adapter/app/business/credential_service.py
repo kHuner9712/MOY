@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final, Literal, Protocol
 
+from app.core.cache_backend import DEFAULT_HEALTH_CHECK_INTERVAL, DEFAULT_SOCKET_TIMEOUT
 from app.core.config import Settings, get_settings
 from app.core.crypto import CredentialCipher, CredentialDecryptError
 from app.core.errors import ApiError, ErrorCode
@@ -211,7 +212,18 @@ class RedisCredentialCache:
         try:
             import redis.asyncio as redis_asyncio
 
-            self._client = redis_asyncio.from_url(self._redis_url, decode_responses=True)
+            # R2-ENG-01（审计 2026-10-29）：**必须显式传超时**。
+            # redis-py 的 `socket_timeout` 默认是 `None`，语义不是"很快超时"而是
+            # **永久阻塞**——Valkey 一旦 hang，所有等待这个客户端的请求会一起挂死。
+            # 同一组常量在 `core/cache_backend.py` 里定义了共享客户端用的值，
+            # 这里复用，避免"一处加了超时、另一处没加"的分叉。
+            self._client = redis_asyncio.from_url(
+                self._redis_url,
+                decode_responses=True,
+                socket_timeout=DEFAULT_SOCKET_TIMEOUT,
+                socket_connect_timeout=DEFAULT_SOCKET_TIMEOUT,
+                health_check_interval=DEFAULT_HEALTH_CHECK_INTERVAL,
+            )
             await self._client.ping()
         except Exception:  # 缓存不可用不得阻断业务
             logger.warning("credential_cache_degraded", reason="redis_unavailable")

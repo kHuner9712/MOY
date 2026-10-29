@@ -38,7 +38,8 @@ services:
     # 阶段四 T4-03 起改为 **pgvector 官方镜像**：迁移 0009 第一步是
     # `CREATE EXTENSION vector`，纯 postgres 镜像没有该扩展 → 记忆三表建不出来。
     # 同一 PG 大版本（18），只多一个扩展；登记见 deploy/images.lock。
-    image: pgvector/pgvector:pg18
+    # R2-ARC-14（2026-10-29）：滚动 tag `pg18` → 精确标签 `0.8.7-pg18-bookworm`。
+    image: pgvector/pgvector:0.8.7-pg18-bookworm
     container_name: oa-postgres
     restart: unless-stopped
     environment:

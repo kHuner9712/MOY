@@ -57,20 +57,50 @@ rule_id 形如 `R-<源层缩写>-<目标层缩写>`（如 `R-DB-BIZ` = `db → b
 
 ## 基线（`--baseline`）
 
-格式：`<rule_id> <file> <imported_module> <mode> -- <审计编号> <理由>`
+格式：`<rule_id> <file> <imported_module> <mode> -- <审计编号> due_batch=<Bn> <理由>`
 
 - 基线内的违规 → `[WARN]`，不阻断（这是「已登记、有消除计划」的口径）；
 - 基线外的违规 → `[FAIL]`，exit 1；
 - 基线条目在本轮扫描里已消失 → `[FAIL] stale`，exit 1（**防腐烂**：
   修完了必须把基线行删掉，否则基线会慢慢变成一张免死金牌）；
-- 基线格式错误（列数不足 / 缺审计编号 / rule_id 与实测不符 / 重复行）→ exit 2；
+- 基线格式错误（列数不足 / 缺审计编号 / 缺 `due_batch` / rule_id 与实测不符 / 重复行）→ exit 2；
 - **不提供 `--update-baseline`**：基线只许减不许增，新增豁免必须走评审。
+
+### `due_batch`（R2-ARC-07：让基线带到期约束）
+
+R2 审计指出：24 条豁免**全部**在基线内，门禁对存量**零约束力**——「登记即永久
+免死」。因此每条豁免必须写 `due_batch=B<n>`（与 `apps/adapter/tests/expected_xfail.py`
+的 `DEFECT_LEDGER` 同一套批次号，同一套 `OA_BATCH` 时钟，见 `deploy/validate_batch_clock.py`）。
+
+- 到期口径：当前批次 `>=` `due_batch` 即 **exit 1**（到该批次时必须已消除，不是"到期后才开始修"）；
+- 缺 `due_batch` 字段 → **exit 2**（不允许"无期限豁免"这条捷径）；
+- 当前批次取 `OA_BATCH` 环境变量（与 CI 同源），也可用 `--batch B23` 显式指定；
+  两者都没有时打印 `[WARN]` 并**跳过**到期判定（本地随手跑不影响；CI 的 job 级
+  `env: OA_BATCH` 恒存在，因此 CI 不会落进这个分支）。
+
+## 文件级循环依赖（SCC 检测，R2-ARC-07）
+
+层矩阵只管**跨层方向**：同层内部（`business ↔ business`、`workers ↔ workers`）
+文件之间互相 import 完全在矩阵的盲区里；`core ↔ business` 这类跨层环也会因为
+两个方向各自「一个合法、一个已登记」而被拆散到两条记录里，看不出它们其实闭成了环。
+
+因此每轮扫描都把**文件级 import 图**（顶点 = `app/**/*.py`，边 = 解析到的模块文件；
+边集 = `module` + `deferred`，`type_checking` 不产生运行时依赖故不计）跑一遍
+**Tarjan 强连通分量**：分量内顶点数 `>= 2` 即判定为一个环，环的规范化表示是
+**成员路径升序元组**（顺序无关，成员变化即视为不同的环）。
+
+`--cycle-baseline deploy/same_layer_cycle_baseline.txt`（默认即此文件）：
+
+- 格式：`CYCLE <file> <file> [<file>...] -- <审计编号> due_batch=<Bn> <理由>`；
+- 扫描到的环不在基线内 → `[FAIL]`，exit 1（**新增环即红**，这是本规则的全部价值）；
+- 基线的环在本轮已不存在 → `[FAIL] stale`，exit 1；环内增减成员 → 旧记录 stale + 新环 FAIL；
+- 同样受 `due_batch` / `OA_BATCH` 约束。
 
 ## 退出码
 
-- 0：无违规，或全部违规都已在基线登记；
-- 1：存在基线外违规，或基线条目已 stale；
-- 2：矩阵未完整登记（12×12 有缺口）/ 出现未登记顶层包 / 基线格式错误 / 自检失败。
+- 0：无违规，或全部违规/环都已在基线登记且未到期；
+- 1：存在基线外违规、stale 条目、基线外的环，或豁免已到期；
+- 2：矩阵未完整登记（12×12 有缺口）/ 出现未登记顶层包 / 基线（方向或环）格式错误 / 自检失败。
 
 ## 已知盲区：动态导入
 
@@ -95,13 +125,17 @@ rule_id 形如 `R-<源层缩写>-<目标层缩写>`（如 `R-DB-BIZ` = `db → b
 `for`-`while`-`match` 分支体内检出（形态必须是 `module`）/ `services→business` 放行 /
 相对导入检出 / `TYPE_CHECKING` 不判红 / 基线命中 WARN 且 exit 0 / 基线外违规 exit 1 /
 stale exit 1 / 格式错误 exit 2 / `rule_id` 与实测不符 exit 2 /
-**app-root 不存在-非目录-空目录-文件数低于下限 exit 2**。
+**app-root 不存在-非目录-空目录-文件数低于下限 exit 2** /
+**人为新增一处同层环 → SCC 检出并 exit 1** / **基线缺 `due_batch` → exit 2** /
+**豁免到期（`--batch` 达到 `due_batch`）→ exit 1**。
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -175,6 +209,20 @@ DEFAULT_APP_ROOT: Final[Path] = REPO_ROOT / "apps" / "adapter" / "app"
 #: 默认基线文件
 DEFAULT_BASELINE: Final[Path] = Path(__file__).resolve().parent / "import_direction_baseline.txt"
 
+#: 默认「文件级循环依赖（SCC）」基线文件（R2-ARC-07）
+DEFAULT_CYCLE_BASELINE: Final[Path] = (
+    Path(__file__).resolve().parent / "same_layer_cycle_baseline.txt"
+)
+
+#: 批次号格式（与 `deploy/validate_batch_clock.py` / `tests/expected_xfail.py` 同一套）
+BATCH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^B([1-9][0-9]*)$")
+
+#: `due_batch=` 字段（基线里必须显式写出，禁止「无期限豁免」）
+DUE_FIELD_PREFIX: Final[str] = "due_batch="
+
+#: 基线条目允许的审计编号前缀：P0/P1/P2 为历史审计编号，R2-ARC 为本轮架构审计编号
+AUDIT_ID_PREFIXES: Final[tuple[str, ...]] = ("P0-", "P1-", "P2-", "R2-")
+
 #: 扫描文件数下限（**fail-open 护栏**）。
 #:
 #: 门禁最大的失效方式不是判错，而是**什么都没判就变绿**：`--app-root` 指错、
@@ -240,6 +288,7 @@ class BaselineEntry:
         imported_module: 被导入模块的完整名。
         mode: 导入形态。
         audit_id: 审计编号（如 `P1-4`）。
+        due_batch: 到期批次（如 `B25`）——到该批次必须已消除。
         reason: 消除计划/理由。
         lineno: 该条目在基线文件里的行号（报错定位用）。
     """
@@ -249,6 +298,7 @@ class BaselineEntry:
     imported_module: str
     mode: str
     audit_id: str
+    due_batch: str
     reason: str
     lineno: int
 
@@ -262,6 +312,76 @@ class BaselineEntry:
         return (self.file, self.imported_module, self.mode)
 
 
+@dataclass(frozen=True, slots=True)
+class CycleEntry:
+    """一条「文件级循环依赖」基线豁免（R2-ARC-07）。
+
+    Attributes:
+        members: 环内文件路径（升序元组，相对仓库根，posix 分隔）。
+        audit_id: 审计编号（如 `R2-ARC-07`）。
+        due_batch: 到期批次（如 `B25`）。
+        reason: 消除计划/理由。
+        lineno: 该条目在基线文件里的行号。
+    """
+
+    members: tuple[str, ...]
+    audit_id: str
+    due_batch: str
+    reason: str
+    lineno: int
+
+
+def parse_batch(value: str) -> int:
+    """把 `B23` 解析为 23（与 `validate_batch_clock.py` 同口径）。
+
+    Args:
+        value: 批次号字符串。
+
+    Returns:
+        int: 批次序号。
+
+    Raises:
+        BaselineFormatError: 格式不符。
+    """
+    match = BATCH_PATTERN.match(value.strip())
+    if match is None:
+        raise BaselineFormatError(f"批次号格式非法 {value!r}（应形如 B23）")
+    return int(match.group(1))
+
+
+def current_batch(explicit: str | None = None) -> str | None:
+    """取当前批次号（`--batch` 优先，其次 `OA_BATCH`）。
+
+    Args:
+        explicit: 命令行显式指定的批次号。
+
+    Returns:
+        str | None: 批次号；两者都没有时返回 None（调用方跳过到期判定）。
+    """
+    raw = (explicit or os.environ.get("OA_BATCH", "")).strip()
+    if not raw:
+        return None
+    parse_batch(raw)  # 格式非法直接抛 BaselineFormatError
+    return raw
+
+
+def expired(entry_due: str, batch: str | None) -> bool:
+    """判断某条豁免是否已到期。
+
+    口径：当前批次 `>=` `due_batch` 即到期（到该批次必须已消除，不是"到期后才开始修"）。
+
+    Args:
+        entry_due: 条目登记的到期批次（`B25`）。
+        batch: 当前批次；None 表示时钟不可用（跳过判定）。
+
+    Returns:
+        bool: 已到期返回 True。
+    """
+    if batch is None:
+        return False
+    return parse_batch(batch) >= parse_batch(entry_due)
+
+
 @dataclass
 class ScanResult:
     """一次扫描的结构化结果。
@@ -270,6 +390,8 @@ class ScanResult:
         violations: 判红口径的违规（`module` + `deferred`），键为 `(file, module, mode)`。
         type_checking_edges: 仅统计的 `TYPE_CHECKING` 边（`(rule_id, file, module)`）。
         edges: 12×12 实边计数，键为 `(源层, 目标层)`，值为去重后的边数。
+        file_graph: 文件级 import 图（`module` + `deferred` 边），键/值均为相对路径。
+        cycles: Tarjan 检出的强连通分量（成员数 >= 2），成员为升序元组。
         dynamic_imports: 动态导入盲区提示（`(file, lineno, 摘要)`）。
         scanned_files: 实际扫描的文件数。
     """
@@ -277,6 +399,8 @@ class ScanResult:
     violations: dict[tuple[str, str, str], Violation] = field(default_factory=dict)
     type_checking_edges: list[tuple[str, str, str]] = field(default_factory=list)
     edges: dict[tuple[str, str], int] = field(default_factory=dict)
+    file_graph: dict[str, set[str]] = field(default_factory=dict)
+    cycles: list[tuple[str, ...]] = field(default_factory=list)
     dynamic_imports: list[tuple[str, int, str]] = field(default_factory=list)
     scanned_files: int = 0
 
@@ -502,6 +626,86 @@ def _resolve_import_from(module_name: str, is_package: bool, node: ast.ImportFro
     return [base]
 
 
+def _resolve_module_file(module: str, app_root: Path) -> Path | None:
+    """把点分模块名解析到磁盘上的 `.py` 文件（`module` 或 `package/__init__.py`）。
+
+    只做**静态路径映射**，不 import 任何东西（与全脚本零依赖同风格）。解析不到
+    （第三方模块名、被删的模块、仅存在于 `plugins` 目录下的动态包）返回 None，
+    调用方跳过——**宁可漏记一条边，也不能把环算错**。
+
+    Args:
+        module: 完整模块名（`app.business.order_service`）。
+        app_root: `app` 包根目录（其父目录即包导入根）。
+
+    Returns:
+        Path | None: 解析到的文件路径；解析不到返回 None。
+    """
+    segments = module.split(".")
+    if not segments or segments[0] != "app":
+        return None
+    base = app_root.parent
+    candidate = base.joinpath(*segments)
+    module_file = candidate.with_suffix(".py")
+    if module_file.is_file():
+        return module_file
+    package_init = candidate / "__init__.py"
+    if package_init.is_file():
+        return package_init
+    return None
+
+
+def find_cycles(graph: dict[str, set[str]]) -> list[tuple[str, ...]]:
+    """用 Tarjan 算法找**文件级**强连通分量（成员数 >= 2 即一个环）。
+
+    为什么不用 `networkx`：本脚本零依赖（只用标准库）是刻意的（见模块 docstring），
+    而 Tarjan 只有二十来行。递归深度 = 最长简单路径，`app` 树实测 200 余个文件、
+    深度远小于 Python 默认递归上限。
+
+    自环（文件 import 自己）在 `scan()` 侧已被剔除（`target == source` 直接跳过），
+    这种写法在 Python 里不构成真实的互相依赖。
+
+    Args:
+        graph: 邻接表，键/值均为文件相对路径。
+
+    Returns:
+        list[tuple[str, ...]]: 每个环的成员（升序元组），列表按首个成员排序。
+    """
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    on_stack: dict[str, bool] = {}
+    stack: list[str] = []
+    counter = [0]
+    components: list[tuple[str, ...]] = []
+
+    def strongconnect(node: str) -> None:
+        index[node] = low[node] = counter[0]
+        counter[0] += 1
+        stack.append(node)
+        on_stack[node] = True
+        for neighbour in sorted(graph.get(node, ())):
+            if neighbour not in index:
+                strongconnect(neighbour)
+                low[node] = min(low[node], low[neighbour])
+            elif on_stack.get(neighbour, False):
+                low[node] = min(low[node], index[neighbour])
+        if low[node] == index[node]:
+            members: list[str] = []
+            while True:
+                popped = stack.pop()
+                on_stack[popped] = False
+                members.append(popped)
+                if popped == node:
+                    break
+            if len(members) > 1:
+                components.append(tuple(sorted(members)))
+
+    for vertex in sorted(graph):
+        if vertex not in index:
+            strongconnect(vertex)
+
+    return sorted(components)
+
+
 def _dynamic_import_warnings(path: Path, text: str, shown: str) -> list[tuple[str, int, str]]:
     """在「可能动态导入」的文件里做文本兜底扫描。
 
@@ -592,8 +796,6 @@ def scan(app_root: Path, *, repo_root: Path = REPO_ROOT) -> ScanResult:
         if "__pycache__" in path.parts:
             continue
         source_layer = _source_layer(path, app_root)
-        if source_layer is None:
-            continue
         module_name, is_package = _module_name(path, app_root)
         try:
             shown = path.relative_to(repo_root).as_posix()
@@ -605,8 +807,9 @@ def scan(app_root: Path, *, repo_root: Path = REPO_ROOT) -> ScanResult:
         except SyntaxError as exc:
             print(f"[FAIL] 无法解析 {shown}: {exc}")
             raise
-        result.scanned_files += 1
-        result.dynamic_imports.extend(_dynamic_import_warnings(path, text, shown))
+        if source_layer is not None:
+            result.scanned_files += 1
+            result.dynamic_imports.extend(_dynamic_import_warnings(path, text, shown))
 
         for node, mode in _iter_nested_imports(tree):
             if isinstance(node, ast.Import):
@@ -615,6 +818,19 @@ def scan(app_root: Path, *, repo_root: Path = REPO_ROOT) -> ScanResult:
                 targets = _resolve_import_from(module_name, is_package, node)
             for target in targets:
                 if not target.startswith("app"):
+                    continue
+                # ---- 文件级 import 图（R2-ARC-07：SCC 判环的输入）----
+                # `type_checking` 边不产生运行时依赖，不进图（否则会把「只在类型注解里
+                # 互相引用」判成死锁，纯噪声）；`target == path` 的自环同样剔除。
+                if mode != MODE_TYPE_CHECKING:
+                    target_file = _resolve_module_file(target, app_root)
+                    if target_file is not None and target_file != path:
+                        try:
+                            target_shown = target_file.relative_to(repo_root).as_posix()
+                        except ValueError:  # pragma: no cover - 仅自检临时目录
+                            target_shown = target_file.as_posix()
+                        result.file_graph.setdefault(shown, set()).add(target_shown)
+                if source_layer is None:
                     continue
                 target_layer = _target_layer(target, app_root)
                 if target_layer is None:
@@ -651,6 +867,7 @@ def scan(app_root: Path, *, repo_root: Path = REPO_ROOT) -> ScanResult:
                         target_layer=existing.target_layer,
                         lines=merged,
                     )
+    result.cycles = find_cycles(result.file_graph)
     return result
 
 
@@ -664,7 +881,7 @@ def load_baseline(path: Path) -> list[BaselineEntry]:
         list[BaselineEntry]: 基线条目（按文件行序）。
 
     Raises:
-        BaselineFormatError: 格式错误（列数不足 / 缺审计编号 / 未知形态 / 重复行）。
+        BaselineFormatError: 格式错误（列数不足 / 缺审计编号 / 缺 due_batch / 未知形态 / 重复行）。
     """
     entries: list[BaselineEntry] = []
     seen: dict[tuple[str, str, str], int] = {}
@@ -677,21 +894,17 @@ def load_baseline(path: Path) -> list[BaselineEntry]:
         if not separator:
             raise BaselineFormatError(f"{path.name}:{lineno} 缺少 `--` 审计编号段：{raw.strip()}")
         head_parts = head.split()
-        tail_parts = tail.split(maxsplit=1)
         if len(head_parts) < 4:
             raise BaselineFormatError(
                 f"{path.name}:{lineno} 列数不足（需 rule_id file module mode）：{raw.strip()}"
             )
-        if not tail_parts:
-            raise BaselineFormatError(f"{path.name}:{lineno} 缺少审计编号：{raw.strip()}")
         rule, file_name, imported_module, mode = head_parts[:4]
-        audit_id = tail_parts[0]
-        reason = tail_parts[1].strip() if len(tail_parts) > 1 else ""
+        audit_id, due_batch, reason = _parse_tail(path.name, lineno, tail, raw)
         if mode not in {MODE_MODULE, MODE_DEFERRED, MODE_TYPE_CHECKING}:
             raise BaselineFormatError(f"{path.name}:{lineno} 未知导入形态 `{mode}`")
-        if not audit_id.startswith(("P1-", "P2-", "P0-")):
+        if not audit_id.startswith(AUDIT_ID_PREFIXES):
             raise BaselineFormatError(
-                f"{path.name}:{lineno} 审计编号不合规 `{audit_id}`（应形如 P1-4）"
+                f"{path.name}:{lineno} 审计编号不合规 `{audit_id}`（应形如 P1-4 / R2-ARC-07）"
             )
         entry = BaselineEntry(
             rule_id=rule,
@@ -699,6 +912,7 @@ def load_baseline(path: Path) -> list[BaselineEntry]:
             imported_module=imported_module,
             mode=mode,
             audit_id=audit_id,
+            due_batch=due_batch,
             reason=reason,
             lineno=lineno,
         )
@@ -708,6 +922,99 @@ def load_baseline(path: Path) -> list[BaselineEntry]:
             )
         seen[entry.key] = lineno
         entries.append(entry)
+    return entries
+
+
+def _parse_tail(name: str, lineno: int, tail: str, raw: str) -> tuple[str, str, str]:
+    """解析 `--` 之后的 `<审计编号> due_batch=<Bn> <理由>` 三段。
+
+    `due_batch` 是**必填**：R2-ARC-07 的根因就是「登记了、但没有任何到期约束」，
+    缺这一字段等于永久免死，因此缺失直接判格式错误（exit 2），而不是告警放行。
+
+    Args:
+        name: 文件名（报错定位用）。
+        lineno: 行号（报错定位用）。
+        tail: `--` 之后的内容。
+        raw: 原始行（报错回显用）。
+
+    Returns:
+        tuple[str, str, str]: `(审计编号, 批次号, 理由)`。
+
+    Raises:
+        BaselineFormatError: 缺审计编号 / 缺 due_batch / 批次号格式非法。
+    """
+    parts = tail.split()
+    if not parts:
+        raise BaselineFormatError(f"{name}:{lineno} 缺少审计编号：{raw.strip()}")
+    audit_id = parts[0]
+    due_batch = ""
+    for index, token in enumerate(parts[1:], start=1):
+        if token.startswith(DUE_FIELD_PREFIX):
+            due_batch = token[len(DUE_FIELD_PREFIX) :].strip()
+            parts = [*parts[:index], *parts[index + 1 :]]
+            break
+    if not due_batch:
+        raise BaselineFormatError(
+            f"{name}:{lineno} 缺少 `{DUE_FIELD_PREFIX}B<n>` 到期字段"
+            f"（无期限豁免 = 永久免死，R2-ARC-07 禁止）：{raw.strip()}"
+        )
+    parse_batch(due_batch)
+    reason = " ".join(parts[1:]).strip()
+    return audit_id, due_batch, reason
+
+
+def load_cycle_baseline(path: Path) -> list[CycleEntry]:
+    """读取并校验「文件级循环依赖」基线（R2-ARC-07）。
+
+    格式：`CYCLE <file> <file> [<file>...] -- <审计编号> due_batch=<Bn> <理由>`
+    成员顺序不敏感（加载时排序），其余全字段精确匹配。
+
+    Args:
+        path: 基线文件路径。
+
+    Returns:
+        list[CycleEntry]: 环基线条目（按文件行序）。
+
+    Raises:
+        BaselineFormatError: 格式错误（非 CYCLE 开头 / 成员不足 2 个 / 缺审计编号 /
+            缺 due_batch / 重复环）。
+    """
+    entries: list[CycleEntry] = []
+    seen: dict[tuple[str, ...], int] = {}
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        head, separator, tail = line.partition("--")
+        if not separator:
+            raise BaselineFormatError(f"{path.name}:{lineno} 缺少 `--` 审计编号段：{raw.strip()}")
+        head_parts = head.split()
+        if not head_parts or head_parts[0] != "CYCLE":
+            raise BaselineFormatError(f"{path.name}:{lineno} 必须以 `CYCLE` 开头：{raw.strip()}")
+        members = tuple(sorted(head_parts[1:]))
+        if len(members) < 2:
+            raise BaselineFormatError(
+                f"{path.name}:{lineno} 环成员不足 2 个（单个文件不构成互相依赖）"
+            )
+        audit_id, due_batch, reason = _parse_tail(path.name, lineno, tail, raw)
+        if not audit_id.startswith(AUDIT_ID_PREFIXES):
+            raise BaselineFormatError(
+                f"{path.name}:{lineno} 审计编号不合规 `{audit_id}`（应形如 R2-ARC-07）"
+            )
+        if members in seen:
+            raise BaselineFormatError(
+                f"{path.name}:{lineno} 与第 {seen[members]} 行重复（同一组成员）"
+            )
+        seen[members] = lineno
+        entries.append(
+            CycleEntry(
+                members=members,
+                audit_id=audit_id,
+                due_batch=due_batch,
+                reason=reason,
+                lineno=lineno,
+            )
+        )
     return entries
 
 
@@ -741,6 +1048,55 @@ def evaluate(
         warnings.append((entry, violation))
     stales = [entry for entry in baseline if entry.key not in matched]
     return warnings, failures, stales
+
+
+def evaluate_cycles(
+    result: ScanResult, baseline: list[CycleEntry]
+) -> tuple[list[CycleEntry], list[tuple[str, ...]], list[CycleEntry]]:
+    """把检出的环与环基线对齐（只许减不许增）。
+
+    Args:
+        result: 扫描结果（含 `cycles`）。
+        baseline: 环基线条目。
+
+    Returns:
+        tuple: `(基线内, 基线外新增环, 已消失 stale)`。
+    """
+    by_members = {entry.members: entry for entry in baseline}
+    matched: list[CycleEntry] = []
+    new_cycles: list[tuple[str, ...]] = []
+    seen: set[tuple[str, ...]] = set()
+    for members in result.cycles:
+        entry = by_members.get(members)
+        if entry is None:
+            new_cycles.append(members)
+            continue
+        seen.add(members)
+        matched.append(entry)
+    stales = [entry for entry in baseline if entry.members not in seen]
+    return matched, new_cycles, stales
+
+
+def find_expired(entries: list[tuple[str, str, str, int]], batch: str | None) -> list[str]:
+    """找出已到期的豁免（当前批次 `>=` due_batch）。
+
+    Args:
+        entries: `(审计编号, due_batch, 描述, 行号)` 列表。
+        batch: 当前批次；None 表示时钟不可用。
+
+    Returns:
+        list[str]: 到期项描述；空列表表示无到期项。
+    """
+    failures: list[str] = []
+    if batch is None:
+        return failures
+    for audit_id, due_batch, description, lineno in entries:
+        if expired(due_batch, batch):
+            failures.append(
+                f"{description}（基线第 {lineno} 行，{audit_id}）已到期："
+                f"当前批次 {batch} >= due_batch {due_batch}，必须在本批次消除或续期评审"
+            )
+    return failures
 
 
 def print_edges(result: ScanResult) -> None:
@@ -795,6 +1151,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="校验 app/ 分层依赖方向（G-37）")
     parser.add_argument("--app-root", type=Path, default=DEFAULT_APP_ROOT)
     parser.add_argument("--baseline", type=Path, default=None, help="基线豁免文件")
+    parser.add_argument(
+        "--cycle-baseline",
+        type=Path,
+        default=DEFAULT_CYCLE_BASELINE,
+        help="文件级循环依赖（SCC）基线（默认 deploy/same_layer_cycle_baseline.txt）",
+    )
+    parser.add_argument(
+        "--batch",
+        default=None,
+        help="当前批次号（默认读 OA_BATCH；两者都没有则跳过到期判定）",
+    )
     parser.add_argument("--show-edges", action="store_true", help="打印 12×12 实边计数矩阵")
     parser.add_argument(
         "--min-files",
@@ -850,6 +1217,49 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[FAIL] 基线格式错误：{exc}")
         return 2
 
+    # ---- 环基线（R2-ARC-07）----
+    cycle_baseline: list[CycleEntry] = []
+    try:
+        if not args.cycle_baseline.is_file():
+            print(f"[FAIL] 环基线文件不存在：{args.cycle_baseline}")
+            return 2
+        cycle_baseline = load_cycle_baseline(args.cycle_baseline)
+    except BaselineFormatError as exc:
+        print(f"[FAIL] 环基线格式错误：{exc}")
+        return 2
+    cycle_ok, cycle_new, cycle_stale = evaluate_cycles(result, cycle_baseline)
+
+    # ---- 到期判定（当前批次 >= due_batch 即红）----
+    try:
+        batch = current_batch(args.batch)
+        if batch is None:
+            print(
+                "[WARN] 未设置 OA_BATCH（也未传 --batch）：跳过豁免到期判定。"
+                "CI 的 job 级 env 恒有该变量，此分支只应出现在本地随手跑"
+            )
+        expired_items = find_expired(
+            [
+                (entry.audit_id, entry.due_batch, f"{entry.rule_id} {entry.file}", entry.lineno)
+                for entry in baseline
+            ],
+            batch,
+        )
+        expired_items += find_expired(
+            [
+                (
+                    entry.audit_id,
+                    entry.due_batch,
+                    f"CYCLE {' + '.join(entry.members)}",
+                    entry.lineno,
+                )
+                for entry in cycle_baseline
+            ],
+            batch,
+        )
+    except BaselineFormatError as exc:
+        print(f"[FAIL] 批次时钟异常：{exc}")
+        return 2
+
     for entry, violation in warnings:
         print(f"[WARN] {_format_violation(violation)} -- {entry.audit_id} {entry.reason}".rstrip())
     for violation in failures:
@@ -859,6 +1269,22 @@ def main(argv: list[str] | None = None) -> int:
             f"[FAIL] stale {entry.rule_id} {entry.file} `{entry.imported_module}` ({entry.mode})"
             f" -- {entry.audit_id}：该违规已消失，请删掉这条基线（基线只许减不许增）"
         )
+    for entry in cycle_ok:
+        print(
+            f"[WARN] CYCLE {' + '.join(entry.members)} -- {entry.audit_id} {entry.reason}".rstrip()
+        )
+    for members in cycle_new:
+        print(
+            f"[FAIL] 新增文件级循环依赖 {' + '.join(members)}"
+            "（同层环不在 12×12 矩阵里；必须修，或评审后登记进环基线）"
+        )
+    for entry in cycle_stale:
+        print(
+            f"[FAIL] stale CYCLE {' + '.join(entry.members)}"
+            f" -- {entry.audit_id}：该环已消失，请删掉这条基线（基线只许减不许增）"
+        )
+    for item in expired_items:
+        print(f"[FAIL] 豁免到期 {item}")
 
     if result.dynamic_imports:
         print(f"[WARN] 动态导入盲区（共 {len(result.dynamic_imports)} 处，不判红，需人工确认）：")
@@ -869,11 +1295,13 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(
         f"结论：违规 {total} 条（基线内 {len(warnings)} / 基线外 {len(failures)} / "
-        f"stale {len(stales)}），扫描 {result.scanned_files} 个文件"
+        f"stale {len(stales)}），环 {len(result.cycles)} 个"
+        f"（基线内 {len(cycle_ok)} / 新增 {len(cycle_new)} / stale {len(cycle_stale)}），"
+        f"扫描 {result.scanned_files} 个文件，批次时钟 {batch or '未启用'}"
     )
-    if failures or stales:
+    if failures or stales or cycle_new or cycle_stale or expired_items:
         return 1
-    print("[OK] 分层依赖方向合规")
+    print("[OK] 分层依赖方向合规（无新增文件级循环依赖，豁免未到期）")
     return 0
 
 
@@ -1035,13 +1463,17 @@ def _self_test() -> int:
 
         # 用例 6：基线命中 → WARN 且 exit 0
         # 基线条目由「期望集合」直接生成：样本一变，基线跟着变，不会写漏写错。
+        # `due_batch=B99` 是"永远不到期"，避免自测结果被 CI 的 OA_BATCH 时钟左右。
+        empty_cycle_baseline = root / "cycle_baseline_empty.txt"
+        empty_cycle_baseline.write_text("# 自检样本：无登记环\n", encoding="utf-8")
+
         good_baseline = root / "baseline_good.txt"
         good_baseline.write_text(
             "\n".join(
                 [
                     "# 自检样本：只许减不许增",
                     *(
-                        f"R-DB-BIZ {file} {module} {mode} -- P1-4 自检样本"
+                        f"R-DB-BIZ {file} {module} {mode} -- P1-4 due_batch=B99 自检样本"
                         for file, module, mode in sorted(_SELF_TEST_EXPECTED)
                     ),
                 ]
@@ -1049,16 +1481,15 @@ def _self_test() -> int:
             + "\n",
             encoding="utf-8",
         )
-        code = main(
-            [
-                "--app-root",
-                str(app_root),
-                "--baseline",
-                str(good_baseline),
-                "--min-files",
-                _SELF_TEST_MIN_FILES,
-            ]
-        )
+        _base_args = [
+            "--app-root",
+            str(app_root),
+            "--cycle-baseline",
+            str(empty_cycle_baseline),
+            "--min-files",
+            _SELF_TEST_MIN_FILES,
+        ]
+        code = main([*_base_args, "--baseline", str(good_baseline)])
         if code != 0:
             print(f"[FAIL] 用例 6：基线命中应 exit 0，实际 {code}")
             return 2
@@ -1067,19 +1498,10 @@ def _self_test() -> int:
         partial_baseline = root / "baseline_partial.txt"
         partial_baseline.write_text(
             "R-DB-BIZ app/db/probe_module_level.py app.business.audit_service "
-            "module -- P1-4 自检样本\n",
+            "module -- P1-4 due_batch=B99 自检样本\n",
             encoding="utf-8",
         )
-        code = main(
-            [
-                "--app-root",
-                str(app_root),
-                "--baseline",
-                str(partial_baseline),
-                "--min-files",
-                _SELF_TEST_MIN_FILES,
-            ]
-        )
+        code = main([*_base_args, "--baseline", str(partial_baseline)])
         if code != 1:
             print(f"[FAIL] 用例 7：基线外违规应 exit 1，实际 {code}")
             return 2
@@ -1088,19 +1510,10 @@ def _self_test() -> int:
         stale_baseline = root / "baseline_stale.txt"
         stale_baseline.write_text(
             good_baseline.read_text(encoding="utf-8")
-            + "R-DB-BIZ app/db/probe_gone.py app.db.x module -- P1-4 已修复未删\n",
+            + "R-DB-BIZ app/db/probe_gone.py app.db.x module -- P1-4 due_batch=B99 已修复未删\n",
             encoding="utf-8",
         )
-        code = main(
-            [
-                "--app-root",
-                str(app_root),
-                "--baseline",
-                str(stale_baseline),
-                "--min-files",
-                _SELF_TEST_MIN_FILES,
-            ]
-        )
+        code = main([*_base_args, "--baseline", str(stale_baseline)])
         if code != 1:
             print(f"[FAIL] 用例 7b：stale 应 exit 1，实际 {code}")
             return 2
@@ -1110,16 +1523,7 @@ def _self_test() -> int:
         broken_baseline.write_text(
             "R-DB-BIZ app/db/probe_module_level.py -- P1-4 列数不足\n", encoding="utf-8"
         )
-        code = main(
-            [
-                "--app-root",
-                str(app_root),
-                "--baseline",
-                str(broken_baseline),
-                "--min-files",
-                _SELF_TEST_MIN_FILES,
-            ]
-        )
+        code = main([*_base_args, "--baseline", str(broken_baseline)])
         if code != 2:
             print(f"[FAIL] 用例 8：格式错误应 exit 2，实际 {code}")
             return 2
@@ -1128,21 +1532,48 @@ def _self_test() -> int:
         wrong_rule_baseline = root / "baseline_wrong_rule.txt"
         wrong_rule_baseline.write_text(
             "R-BIZ-DB app/db/probe_module_level.py app.business.audit_service "
-            "module -- P1-4 编号写反\n",
+            "module -- P1-4 due_batch=B99 编号写反\n",
             encoding="utf-8",
         )
-        code = main(
-            [
-                "--app-root",
-                str(app_root),
-                "--baseline",
-                str(wrong_rule_baseline),
-                "--min-files",
-                _SELF_TEST_MIN_FILES,
-            ]
-        )
+        code = main([*_base_args, "--baseline", str(wrong_rule_baseline)])
         if code != 2:
             print(f"[FAIL] 用例 8b：rule_id 不符应 exit 2，实际 {code}")
+            return 2
+
+        # 用例 8c：缺少 due_batch → exit 2（R2-ARC-07：不允许无期限豁免）
+        no_due_baseline = root / "baseline_no_due.txt"
+        no_due_baseline.write_text(
+            "\n".join(
+                f"R-DB-BIZ {file} {module} {mode} -- P1-4 没有到期字段"
+                for file, module, mode in sorted(_SELF_TEST_EXPECTED)
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        code = main([*_base_args, "--baseline", str(no_due_baseline)])
+        if code != 2:
+            print(f"[FAIL] 用例 8c：缺 due_batch 应 exit 2，实际 {code}")
+            return 2
+
+        # 用例 8d：豁免到期（当前批次 >= due_batch）→ exit 1
+        # 这是 R2-ARC-07 的核心诉求：存量豁免必须带到期约束，否则形同免死金牌。
+        expired_baseline = root / "baseline_expired.txt"
+        expired_baseline.write_text(
+            "\n".join(
+                f"R-DB-BIZ {file} {module} {mode} -- P1-4 due_batch=B25 到期样本"
+                for file, module, mode in sorted(_SELF_TEST_EXPECTED)
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        code = main([*_base_args, "--baseline", str(expired_baseline), "--batch", "B25"])
+        if code != 1:
+            print(f"[FAIL] 用例 8d：豁免到期应 exit 1，实际 {code}")
+            return 2
+        # 反向对照：同一份基线，时钟未到（B24 < B25）→ 必须放行（防"恒红"）
+        code = main([*_base_args, "--baseline", str(expired_baseline), "--batch", "B24"])
+        if code != 0:
+            print(f"[FAIL] 用例 8d：时钟未到时不应判红，实际 {code}")
             return 2
 
         # 用例 9：**fail-open 护栏** —— app-root 不存在 / 不是目录 / 空目录 /
@@ -1175,11 +1606,102 @@ def _self_test() -> int:
             print(f"[FAIL] 用例 9d：文件数低于默认下限应 exit 2，实际 {code}")
             return 2
 
+        # 用例 10：**人为新增一处同层环 → 必须检出**（R2-ARC-07 负样本）
+        # 两个同层文件互相 import（一个 module、一个 deferred），12×12 矩阵对此完全
+        # 无感（同层自引用恒允许），只有 SCC 检测能抓到。
+        cycle_root = root / "cycle_case"
+        cycle_app = cycle_root / "app"
+        for relative, content in {
+            "__init__.py": "",
+            "business/__init__.py": "",
+            "business/loop_a.py": (
+                "from __future__ import annotations\n\n"
+                "from app.business.loop_b import helper\n\n"
+                '__all__ = ["helper"]\n'
+            ),
+            "business/loop_b.py": (
+                "from __future__ import annotations\n\n\n"
+                "def helper() -> None:\n"
+                "    from app.business.loop_a import (  # noqa: F401\n"
+                "        helper as _inner,\n"
+                "    )\n"
+                "    return None\n"
+            ),
+        }.items():
+            target = cycle_app / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+
+        try:
+            cycle_result = scan(cycle_app, repo_root=cycle_root)
+        except (MatrixError, UnregisteredPackageError, SyntaxError) as exc:  # pragma: no cover
+            print(f"[FAIL] 用例 10：扫描异常 {exc}")
+            return 2
+        expected_cycle = (
+            "app/business/loop_a.py",
+            "app/business/loop_b.py",
+        )
+        if cycle_result.cycles != [expected_cycle]:
+            print(f"[FAIL] 用例 10：同层环未被正确检出，实际 {cycle_result.cycles}")
+            return 2
+        # 10b：环不在基线里 → exit 1（新增环即红）
+        code = main(
+            [
+                "--app-root",
+                str(cycle_app),
+                "--cycle-baseline",
+                str(empty_cycle_baseline),
+                "--min-files",
+                "4",
+            ]
+        )
+        if code != 1:
+            print(f"[FAIL] 用例 10b：新增环应 exit 1，实际 {code}")
+            return 2
+        # 10c：环已登记 → exit 0（登记后不阻断）
+        registered_cycle_baseline = root / "cycle_baseline_registered.txt"
+        registered_cycle_baseline.write_text(
+            "CYCLE app/business/loop_a.py app/business/loop_b.py"
+            " -- R2-ARC-07 due_batch=B99 自检样本\n",
+            encoding="utf-8",
+        )
+        code = main(
+            [
+                "--app-root",
+                str(cycle_app),
+                "--cycle-baseline",
+                str(registered_cycle_baseline),
+                "--min-files",
+                "4",
+            ]
+        )
+        if code != 0:
+            print(f"[FAIL] 用例 10c：已登记环应 exit 0，实际 {code}")
+            return 2
+        # 10d：环已消失但基线未删 → stale，exit 1（只许减不许增）
+        code = main(
+            [
+                "--app-root",
+                str(app_root),
+                "--baseline",
+                str(good_baseline),
+                "--cycle-baseline",
+                str(registered_cycle_baseline),
+                "--min-files",
+                _SELF_TEST_MIN_FILES,
+            ]
+        )
+        if code != 1:
+            print(f"[FAIL] 用例 10d：环基线 stale 应 exit 1，实际 {code}")
+            return 2
+
     print(
         "[OK] 自检通过：模块级检出 / 延迟检出 / for-while-match 分支体检出（module）/ "
         "函数内嵌套导入检出（deferred）/ services→business 放行 / 相对导入检出 / "
         "TYPE_CHECKING 不判红 / 基线 WARN exit 0 / 基线外 exit 1 / stale exit 1 / "
-        "格式错误与 rule_id 不符 exit 2 / app-root 不存在-非目录-空目录-文件数不足 exit 2"
+        "格式错误-rule_id 不符-缺 due_batch exit 2 / 豁免到期 exit 1（未到期放行）/ "
+        "同层环 SCC 检出 exit 1（登记后放行、stale 判红）/ "
+        "app-root 不存在-非目录-空目录-文件数不足 exit 2"
     )
     return 0
 

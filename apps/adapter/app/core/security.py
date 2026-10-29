@@ -705,7 +705,7 @@ async def run_idempotent(
         context.user_id,
         digest,
     )
-    return await effective.execute(key, fingerprint, factory)
+    return await effective.execute(key, fingerprint, factory, tenant_id=context.tenant_id)
 
 
 async def _read_body_digest(request: Request) -> str:

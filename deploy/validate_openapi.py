@@ -40,7 +40,15 @@ python deploy/validate_openapi.py                        # 严格模式（阶段
 python deploy/validate_openapi.py --strict               # 阶段四/W1 missing>0 亦判红（W2 起 CI 用）
 python deploy/validate_openapi.py --allow-missing-phase2 # 仅阶段二历史批次可用
 python deploy/validate_openapi.py --update-snapshot      # 端点变更后更新快照（PR 需贴 diff）
+python deploy/validate_openapi.py --self-test            # 负样本自检（命中 = 退出码 1）
 ```
+
+**为什么需要 `--self-test`（L-20）**：本脚本是最重要的契约门禁（端点基线），
+但此前是 14 个门禁里**唯一**没有自检的——它只能靠"CI 一直是绿的"来证明自己，
+而"一直是绿的"恰恰是门禁变哑时最典型的表现。`--self-test` 注入三类内联负样本
+（删除 core 端点 / 改 method / 收窄 enum），全部命中才返回 1，用机械方式证明
+G1 与 G4 在该红的场景**确实会红**，且不在磁盘上留下任何改动（合成 schema 在内存里构造，
+不碰 `openapi.snapshot.json`）。
 
 **W1 增量为什么照 phase4 先例（G7）**：W1 的两个端点（任务统计 / 能力推荐）
 跨 T01（登记）→ T02/T03（实现）落地，登记当天就让门禁红，唯一"解法"就是删基线。
@@ -690,6 +698,227 @@ def gate_leak_scan(schema: dict[str, Any]) -> list[GateFailure]:
 
 
 # ===========================================================================
+# --self-test：门禁可红证明（全程内存合成，不碰仓库里的真实快照）
+# ===========================================================================
+#: 挂在自检靶端点 200 响应上的三值枚举（供 G4「enum 收窄」负样本使用）
+_SELF_TEST_ENUM: Final[tuple[str, ...]] = ("active", "paused", "retired")
+
+#: 收窄枚举时被删掉的那个值（`_SELF_TEST_ENUM` 的最后一个）
+_SELF_TEST_ENUM_REMOVED: Final[str] = "retired"
+
+#: 五套基线文件的文件名（自检按名读取，只读，不改）
+_SELF_TEST_BASELINES: Final[tuple[tuple[str, str], ...]] = (
+    ("core_baseline", "baseline-core-30.json"),
+    ("phase2_baseline", "baseline-phase2-38.json"),
+    ("phase3_baseline", "baseline-phase3-16.json"),
+    ("phase4_baseline", "baseline-phase4-10.json"),
+    ("w1_baseline", "baseline-w1-2.json"),
+)
+
+
+def _self_test_operation(schema: Any | None = None) -> dict[str, Any]:
+    """构造一个最小 OpenAPI 操作对象（含 200/422 两个 JSON 响应）。
+
+    Args:
+        schema: 200 响应用的 `application/json` schema；缺省为最简 `object`。
+
+    Returns:
+        dict[str, Any]: 操作对象。
+    """
+    response_schema = schema if schema is not None else {"type": "object"}
+    empty = {"content": {"application/json": {"schema": {"type": "object"}}}}
+    return {
+        "responses": {
+            "200": {"content": {"application/json": {"schema": response_schema}}},
+            "422": dict(empty),
+        }
+    }
+
+
+def _self_test_baselines() -> dict[str, set[tuple[str, str]]]:
+    """按文件名读取五套基线（只读；自检的端点全集来源）。
+
+    Returns:
+        dict[str, set[tuple[str, str]]]: 键与 `collect_failures` 的形参同名。
+    """
+    docs = REPO_ROOT / "docs" / "api"
+    return {name: load_baseline(docs / filename) for name, filename in _SELF_TEST_BASELINES}
+
+
+def _self_test_schema(
+    baselines: dict[str, set[tuple[str, str]]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """用基线的端点全集合成一份「应当全绿」的 schema 与同源快照。
+
+    端点集合取自仓库里的五套基线（只读），因此正样本天然满足
+    core=30 / phase2=38 / phase3=16 / phase4=10 / w1=2；若基线本身被人为改动，
+    正样本会先失败——这正是我们想让它先炸出来的场景。
+
+    Args:
+        baselines: `_self_test_baselines()` 的返回值。
+
+    Returns:
+        tuple[dict[str, Any], dict[str, Any]]: (当前 schema, 冻结快照)。
+    """
+    paths: dict[str, Any] = {}
+    for operations in baselines.values():
+        for method, path in operations:
+            paths.setdefault(path, {})[method.lower()] = _self_test_operation()
+    # 给「排序第一的 core 端点」的 200 响应挂一个三值 enum，作为 G4 收窄靶子；
+    # 其余端点保持最简 object，避免 diff 噪声。
+    target = min(baselines["core_baseline"], key=operation_sort_key)
+    paths[target[1]][target[0].lower()] = _self_test_operation(
+        {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": list(_SELF_TEST_ENUM)}},
+        }
+    )
+    schema: dict[str, Any] = {"openapi": "3.1.0", "paths": paths}
+    snapshot = json.loads(json.dumps(schema))  # 深拷贝＝「改动前」的冻结快照
+    return schema, snapshot
+
+
+def _gate_failures_of(
+    schema: dict[str, Any],
+    snapshot: dict[str, Any],
+    baselines: dict[str, set[tuple[str, str]]],
+) -> list[GateFailure]:
+    """跑一遍 `collect_failures`（`--strict` 口径），供负样本断言命中。
+
+    Args:
+        schema: 待判定的 schema。
+        snapshot: 冻结快照。
+        baselines: 五套基线。
+
+    Returns:
+        list[GateFailure]: 失败清单。
+    """
+    failures, _ = collect_failures(
+        schema,
+        core_baseline=baselines["core_baseline"],
+        phase2_baseline=baselines["phase2_baseline"],
+        phase3_baseline=baselines["phase3_baseline"],
+        phase4_baseline=baselines["phase4_baseline"],
+        w1_baseline=baselines["w1_baseline"],
+        snapshot=snapshot,
+        strict_phase4=True,
+    )
+    return failures
+
+
+def _match_failure(failures: list[GateFailure], gate: str, needle: str) -> GateFailure | None:
+    """在失败清单里找「指定门禁 + 明细含指定文本」的第一条。
+
+    Args:
+        failures: 失败清单。
+        gate: 门禁编号（如 `G1` / `G4`）。
+        needle: 需要在 `detail` 里出现的文本（如 `POST /api/v1/x` / `enum 收窄`）。
+
+    Returns:
+        GateFailure | None: 命中的失败记录；未命中返回 None。
+    """
+    for failure in failures:
+        if failure.gate == gate and needle in failure.detail:
+            return failure
+    return None
+
+
+def _pick_isolated_post(schema: dict[str, Any], core: set[tuple[str, str]]) -> tuple[str, str]:
+    """挑一条「独占该 path」的 POST core 端点，供「改 method」负样本使用。
+
+    独占（`len(paths[path]) == 1`）可以保证把 POST 改成 GET 之后，operations
+    集合里该 path 上确实只剩一条操作，G1 的「缺失 + 多出」判据不会互相抵消。
+
+    Args:
+        schema: 合成 schema（用于判断 path 上的操作数）。
+        core: 核心基线端点集合。
+
+    Returns:
+        tuple[str, str]: `(METHOD, path)`；若无独占 POST 则退回排序第一条 core 端点。
+    """
+    ordered = sorted(core, key=operation_sort_key)
+    for method, path in ordered:
+        if method == "POST" and len(schema["paths"].get(path, {})) == 1:
+            return method, path
+    return ordered[0]
+
+
+def run_self_test() -> int:
+    """注入三类负样本，证明门禁**确实会红**（全程内存合成，不碰真实快照）。
+
+    三类负样本分别对应门禁最容易"变哑"的判据：
+
+    1. **删除**一条 core 端点 → G1「精确集合相等」必须报「缺失」；
+    2. **改 method**（POST → GET）→ G1 必须报「缺失」（改动前的操作消失）；
+    3. **收窄 enum**（删一个枚举值）→ G4 加性 diff 必须报「enum 收窄」。
+
+    Returns:
+        int: 三类负样本**全部命中**返回 1（本仓库约定：自检成功 = exit 1，
+        供 CI 用 `-ne 1` 断言）；任一未命中返回 0。
+    """
+    baselines = _self_test_baselines()
+    if not all(baselines.values()):
+        print("[FAIL] 自检无法进行：docs/api 下的基线文件缺失或为空")
+        return 0
+    schema, snapshot = _self_test_schema(baselines)
+
+    # 0) 正样本必须全绿：否则后面"红了"说明不了任何事
+    positive = _gate_failures_of(schema, snapshot, baselines)
+    if positive:
+        print("[FAIL] 自检正样本不干净，判据本身有问题：")
+        for failure in positive:
+            print(f"       {failure.render()}")
+        return 0
+    print("[OK]   正样本（基线全集 + 同源快照）G1-G7 全绿")
+
+    notes: list[str] = []
+
+    # 1) 删除一条 core 端点 → 期望 G1 报「缺失」
+    deleted = min(baselines["core_baseline"], key=operation_sort_key)
+    deleted_label = f"{deleted[0]} {deleted[1]}"
+    mutated = json.loads(json.dumps(schema))
+    del mutated["paths"][deleted[1]][deleted[0].lower()]
+    if not mutated["paths"][deleted[1]]:
+        del mutated["paths"][deleted[1]]
+    failure = _match_failure(_gate_failures_of(mutated, snapshot, baselines), "G1", deleted_label)
+    if failure is None:
+        print(f"[FAIL] 负样本1（删除 core 端点 {deleted_label}）未被 G1 命中")
+        return 0
+    notes.append(f"[OK]   负样本1（删除 core 端点 {deleted_label}）被拦住：{failure.render()}")
+
+    # 2) 改 method（POST → GET）→ 期望 G1 报「缺失」（原操作消失）
+    source_method, method_path = _pick_isolated_post(schema, baselines["core_baseline"])
+    target_method = "GET" if source_method != "GET" else "POST"
+    source_label = f"{source_method} {method_path}"
+    mutated = json.loads(json.dumps(schema))
+    operation = mutated["paths"][method_path].pop(source_method.lower())
+    mutated["paths"][method_path][target_method.lower()] = operation
+    failure = _match_failure(_gate_failures_of(mutated, snapshot, baselines), "G1", source_label)
+    if failure is None:
+        print(f"[FAIL] 负样本2（把 {source_label} 改为 {target_method}）未被 G1 命中")
+        return 0
+    notes.append(f"[OK]   负样本2（{source_label} → {target_method}）被拦住：{failure.render()}")
+
+    # 3) 收窄 enum（删一个枚举值）→ 期望 G4 报「enum 收窄」
+    enum_target = min(baselines["core_baseline"], key=operation_sort_key)
+    mutated = json.loads(json.dumps(schema))
+    enum_node = mutated["paths"][enum_target[1]][enum_target[0].lower()]["responses"]["200"][
+        "content"
+    ]["application/json"]["schema"]["properties"]["status"]
+    enum_node["enum"] = [value for value in enum_node["enum"] if value != _SELF_TEST_ENUM_REMOVED]
+    failure = _match_failure(_gate_failures_of(mutated, snapshot, baselines), "G4", "enum 收窄")
+    if failure is None:
+        print("[FAIL] 负样本3（收窄 enum）未被 G4 命中")
+        return 0
+    notes.append(f"[OK]   负样本3（enum 收窄）被拦住：{failure.render()}")
+
+    for note in notes:
+        print(note)
+    print("[OK]   自检通过：删除端点 / 改 method / 收窄 enum 三类负样本全部被拦截")
+    return 1
+
+
+# ===========================================================================
 # 主流程
 # ===========================================================================
 def collect_failures(
@@ -830,6 +1059,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="不写出 docs/api/openapi.json（默认会写出，供构建产物归档）",
     )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="负样本自检：注入删除端点/改 method/收窄 enum 三类负样本（命中 = 退出码 1）",
+    )
     return parser
 
 
@@ -843,6 +1077,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         int: 0 通过；1 门禁失败；2 环境问题。
     """
     args = _build_parser().parse_args(argv)
+
+    if args.self_test:
+        # 自检在内存里合成 schema，不构建真实 OpenAPI、不写任何文件、不碰快照
+        return run_self_test()
 
     docs_dir = REPO_ROOT / "docs" / "api"
     core_path = docs_dir / "baseline-core-30.json"

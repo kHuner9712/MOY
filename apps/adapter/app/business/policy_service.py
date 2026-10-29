@@ -27,9 +27,10 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Final, Generic, TypeVar
 
 from app.core.builtin_roles import BUILTIN_ROLE_KEYS as _BUILTIN_ROLE_KEYS
 from app.core.builtin_roles import BUILTIN_ROLE_PERMISSIONS as _BUILTIN_ROLE_PERMISSIONS
@@ -70,6 +71,147 @@ BASE_ID_PREFIX: Final[str] = "kb_"
 
 #: 部门 ID 前缀（B08 唯一规范形态）
 DEPARTMENT_ID_PREFIX: Final[str] = "dept_"
+
+#: 进程内权限快照缓存条数上限（R2-ENG-09）
+DEFAULT_PERMISSION_CACHE_MAX_ENTRIES: Final[int] = 4096
+
+_K = TypeVar("_K")
+_V = TypeVar("_V")
+
+
+class BoundedLRUCache(Generic[_K, _V]):
+    """有界 LRU 缓存（R2-ENG-09）：`OrderedDict` 自实现，**不引第三方依赖**。
+
+    **为什么必须有上限**：快照缓存的键是「租户 × 用户」（插件授权还多一维插件），
+    条数随用户数线性增长，而每条快照携带 `permissions` / `granted_base_ids`
+    / `permission_points` 三张表，单条可达数百字节到数 KB。无上限时这些条目
+    **永不释放**——TTL 只决定"什么时候重建"，不决定"什么时候删"（惰性清理只在
+    同键再次被访问时触发）。容器里的进程通常连续运行数周，内存只会单调上涨，
+    最后被 OOMKilled，而 killer 的日志不会告诉运维"是权限缓存吃掉的"。
+
+    **为什么上限取 4096**：TTL 只有 5 秒，稳态命中集合 = 最近 5 秒内活跃的用户数。
+    4096 条足以覆盖「单副本、5 秒内 4000+ 活跃用户」（约 800 QPS 的并发面）。
+    超过这个量级时，进程内缓存的收益已经被"每副本各自一份 + 失效延迟"抵消，
+    本就该切到分布式缓存——这条上限同时也是「该扩容/该换方案」的信号。
+    按单条数 KB 估，4096 条的极端占用约 10~20 MB，对容器内存限制是可控量级。
+
+    **为什么不用 `functools.lru_cache`**：那是同步装饰器，用在 `async def` 上
+    会把 coroutine 对象本身缓存住（而不是结果），且不支持外部 `invalidate`。
+    **为什么不用 `cachetools`**：它不在 `uv.lock` 里，加依赖要重新 lock，
+    影响面远超一次缺陷修复。
+
+    **淘汰口径是 LRU 而非 FIFO**：权限判定的访问模式是热点集中——管理员与高频
+    操作者会在 5 秒内反复命中。FIFO 会按写入顺序淘汰仍在热点的条目，命中率明显更差。
+
+    Attributes:
+        _entries: 键 → 值，按访问顺序排列（尾部为最近使用）。
+        _max_entries: 条目上限（至少为 1）。
+    """
+
+    __slots__ = ("_entries", "_max_entries")
+
+    def __init__(self, max_entries: int = DEFAULT_PERMISSION_CACHE_MAX_ENTRIES) -> None:
+        """初始化缓存。
+
+        Args:
+            max_entries: 条目上限；小于 1 时按 1 处理（0 会让缓存完全失效但仍占结构）。
+        """
+        self._max_entries: int = max(int(max_entries), 1)
+        self._entries: OrderedDict[_K, _V] = OrderedDict()
+
+    def get(self, key: _K) -> _V | None:
+        """读取并标记为最近使用。
+
+        Args:
+            key: 缓存键。
+
+        Returns:
+            _V | None: 命中返回值；未命中返回 `None`。
+        """
+        value = self._entries.get(key)
+        if value is None:
+            return None
+        self._entries.move_to_end(key)
+        return value
+
+    def __getitem__(self, key: _K) -> _V:
+        """按字典语义读取（不改变最近使用顺序的写法请用 `get`）。
+
+        Args:
+            key: 缓存键。
+
+        Returns:
+            _V: 缓存值。
+
+        Raises:
+            KeyError: 键不存在。
+        """
+        return self._entries[key]
+
+    def __setitem__(self, key: _K, value: _V) -> None:
+        """写入并淘汰最久未使用的条目，保证不超过上限。
+
+        Args:
+            key: 缓存键。
+            value: 缓存值。
+        """
+        self._entries[key] = value
+        self._entries.move_to_end(key)
+        while len(self._entries) > self._max_entries:
+            # last=False → 弹出最早插入/最早被访问的一端（LRU 端）
+            self._entries.popitem(last=False)
+
+    def pop(self, key: _K, default: _V | None = None) -> _V | None:
+        """删除条目。
+
+        Args:
+            key: 缓存键。
+            default: 键不存在时的返回值。
+
+        Returns:
+            _V | None: 被删除的值；键不存在时返回 `default`。
+        """
+        return self._entries.pop(key, default)
+
+    def clear(self) -> None:
+        """清空缓存。"""
+        self._entries.clear()
+
+    def __len__(self) -> int:
+        """当前条目数。
+
+        Returns:
+            int: 条目数。
+        """
+        return len(self._entries)
+
+    def __contains__(self, key: object) -> bool:
+        """判断键是否存在（不计入最近使用顺序）。
+
+        Args:
+            key: 缓存键。
+
+        Returns:
+            bool: 存在返回 True。
+        """
+        return key in self._entries
+
+    def __iter__(self) -> Iterator[_K]:
+        """遍历键的快照（**允许遍历期间 `pop`**，与直接遍历 dict 不同）。
+
+        Returns:
+            Iterator[_K]: 键的迭代器。
+        """
+        return iter(list(self._entries))
+
+    def items(self) -> list[tuple[_K, _V]]:
+        """返回 (键, 值) 列表的快照。
+
+        Returns:
+            list[tuple[_K, _V]]: 快照列表。
+        """
+        return list(self._entries.items())
+
 
 # ===========================================================================
 # 角色与权限点矩阵（审计 P1-4 / P1-7：已下沉 `app.core.builtin_roles`）
@@ -226,6 +368,7 @@ class PolicyService:
         _bases: 知识库元数据存储。
         _grants: 授权存储。
         _clock: 单调时钟（测试可注入）。
+        _cache: 进程内快照缓存（**有界 LRU**，见 `BoundedLRUCache`，R2-ENG-09）。
     """
 
     def __init__(
@@ -234,6 +377,7 @@ class PolicyService:
         bases: KnowledgeBaseStore | None = None,
         grants: GrantStore | None = None,
         clock: Callable[[], float] | None = None,
+        max_cache_entries: int = DEFAULT_PERMISSION_CACHE_MAX_ENTRIES,
     ) -> None:
         """初始化服务。
 
@@ -242,12 +386,15 @@ class PolicyService:
             bases: 可选知识库存储（测试注入）。
             grants: 可选授权存储（测试注入）。
             clock: 可选单调时钟（测试注入，用于验证 5s 缓存失效）。
+            max_cache_entries: 快照缓存条数上限（默认 4096，测试可注入小值）。
         """
         self._settings = settings or get_settings()
         self._bases: KnowledgeBaseStore = bases or get_knowledge_base_store(self._settings)
         self._grants: GrantStore = grants or get_grant_store(self._settings)
         self._clock: Callable[[], float] = clock or time.monotonic
-        self._cache: dict[tuple[str, str], PolicySnapshot] = {}
+        self._cache: BoundedLRUCache[tuple[str, str], PolicySnapshot] = BoundedLRUCache(
+            max_cache_entries
+        )
 
     # ------------------------------------------------------------------
     # 快照
@@ -664,6 +811,7 @@ __all__: list[str] = [
     "BUILTIN_ROLE_KEYS",
     "BUILTIN_ROLE_PERMISSIONS",
     "BUSINESS_PERMISSIONS",
+    "DEFAULT_PERMISSION_CACHE_MAX_ENTRIES",
     "DEPARTMENT_ID_PREFIX",
     "GUEST_ROLES",
     "KNOWN_PERMISSION_POINTS",
@@ -676,6 +824,7 @@ __all__: list[str] = [
     "ROLE_OWNER",
     "VISIBILITY_ORGANIZATION",
     "WILDCARD_ROLE",
+    "BoundedLRUCache",
     "PolicyService",
     "PolicySnapshot",
     "get_policy_service",

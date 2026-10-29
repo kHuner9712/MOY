@@ -1,0 +1,33 @@
+# 文件级循环依赖（SCC）基线 —— R2-ARC-07（审计 2026-10-29）
+# 校验器：deploy/validate_import_directions.py（`--cycle-baseline` 指向本文件，默认即此路径）
+#
+# 为什么需要单独一份：G-37 的 12×12 层矩阵只判**跨层方向**。
+#   · 同层文件之间互相 import（business ↔ business、workers ↔ workers）在矩阵里
+#     属于「同层自引用恒允许」，**完全不进判定**；
+#   · `core ↔ business` 这类跨层环会被拆成两条记录（一条合法、一条已登记），
+#     从基线上看不出它们其实闭成了环 —— 运行期就是延迟初始化顺序的定时炸弹。
+# 因此每轮扫描额外跑一遍文件级 import 图的 Tarjan 强连通分量（成员数 >= 2 即一个环）。
+#
+# 格式：
+#   CYCLE <file> <file> [<file>...] -- <审计编号> due_batch=<Bn> <消除计划>
+#   · 成员顺序不敏感（加载时按路径排序后精确匹配），成员增减即视为「不同的环」；
+#   · 只许减不许增：新增环 = [FAIL] exit 1；环消失但没删行 = [FAIL] stale exit 1；
+#   · due_batch 与 import_direction_baseline.txt 同源（OA_BATCH 时钟），到期即红。
+#
+# 当前登记 3 组（切片 1 收口后实测，R2-ARC-07 复核确认）：
+# ==========================================================================
+
+# 1) 真实业务闭环：订阅 ↔ 订单。order_service 模块级 import SubscriptionService，
+#    subscription_service 在函数体内 deferred import OrderService（第 155 行）。
+#    二者互查对方状态，属真正的双向依赖，消除方式是把「订单→订阅状态」改为事件/注入。
+CYCLE apps/adapter/app/business/order_service.py apps/adapter/app/business/subscription_service.py -- R2-ARC-07 due_batch=B25 订阅与订单互相查询对方状态（一侧 deferred import）；改为按事件解耦或由组合根注入查询接口后消除
+
+# 2) 内核 ↔ 权限：core/security 在函数体内 deferred import policy_service（登记在
+#    P1-7 的 R-CORE-BIZ），而 policy_service 反向依赖 core 的内置角色常量，
+#    合起来闭成 core ↔ business 的环。修复随 P1-7 的「注入权限判定」一并消除。
+CYCLE apps/adapter/app/business/policy_service.py apps/adapter/app/core/security.py -- R2-ARC-07 due_batch=B27 与 P1-7（core→business 方向）合成闭环；随「组合根注入权限判定」改造一并消除
+
+# 3) worker 内部闭环：job_runner 在函数体内 import tasks.build_default_runner，
+#    tasks/retention_cleanup 又顶层 import job_runner 的注册表。
+#    消除方式：把「任务注册表」下沉为独立模块，两侧都只依赖注册表（单向下沉）。
+CYCLE apps/adapter/app/workers/job_runner.py apps/adapter/app/workers/tasks/__init__.py apps/adapter/app/workers/tasks/retention_cleanup.py -- R2-ARC-07 due_batch=B25 job_runner 与 tasks 包互引；把任务注册表下沉为独立模块（job_registry）后消除

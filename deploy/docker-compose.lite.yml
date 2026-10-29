@@ -59,7 +59,9 @@ services:
   postgres:
     # 必须是 **pgvector 官方镜像**：迁移 0009 第一步是 `CREATE EXTENSION vector`，
     # 纯 postgres:18 镜像的 extension 目录里没有 vector（实测只有 pg_trgm）。
-    image: pgvector/pgvector:pg18
+    # R2-ARC-14（2026-10-29）：tag 由滚动的 `pg18` 改为**精确标签**（PG 版本 + 扩展
+    # 版本都可追溯到具体构建）；digest 已在 deploy/images.lock 登记，`docker pull` 实测通过。
+    image: pgvector/pgvector:0.8.7-pg18-bookworm
     container_name: oal-postgres
     restart: unless-stopped
     environment:
@@ -120,7 +122,12 @@ services:
       --appendonly yes
       --requirepass ${OA_VALKEY_PASSWORD:?必须在 .env.lite 中设置}
       --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
+      # R2-ENG-13（审计 2026-10-29）：与全量栈对齐为 volatile-lru。
+      # 原 allkeys-lru 会**优先淘汰没有 TTL 的键**（如幂等记录被踢掉 → 重复请求
+      # 被当首次处理），而 volatile-lru 只淘汰带 TTL 的键，语义更贴合"缓存"定位。
+      # 代价：若存在大量无 TTL 键会退化为"不淘汰直接 OOM"——256mb 下需关注
+      # `used_memory` 与 keyspace 的 TTL 覆盖，扩容优先级见 docs/ 的容量说明。
+      --maxmemory-policy volatile-lru
     volumes:
       - valkey-data:/data
     healthcheck:
@@ -473,6 +480,12 @@ services:
     build:
       context: ../apps/web
       dockerfile: Dockerfile
+      # R2-ARC-01（审计 2026-10-29）：lockroot 指向仓库根，供 Dockerfile 的
+      # `COPY --from=lockroot package.json / package-lock.json` 取 workspaces 根
+      # 布局。**三套编排都必须声明**——漏配会在解析 Dockerfile 时直接报
+      # `invalid from flag value lockroot`，镜像产不出来。
+      additional_contexts:
+        lockroot: ..
       args:
         # ⚠ NEXT_PUBLIC_* 是**构建期**常量（Next.js 会把值内联进 bundle），
         # 运行期改环境变量无效。轻量版一律走**相对路径**（空串 → `/api/v1/...`），
@@ -513,7 +526,9 @@ services:
   # 唯一入口（**只有它映射宿主端口**）
   # ---------------------------------------------------------------------
   proxy:
-    image: nginx:1.29-alpine
+    # R2-ARC-14（2026-10-29）：1.29 是 **mainline（奇数分支，开发线）**，
+    # 稳定线是 1.28 —— 改为 `1.28-alpine`（实测镜像内 nginx/1.28.3）。
+    image: nginx:1.28-alpine
     container_name: oal-proxy
     restart: unless-stopped
     volumes:

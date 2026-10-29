@@ -21,6 +21,10 @@ import time
 from dataclasses import dataclass
 from typing import Final
 
+from app.business.policy_service import (
+    DEFAULT_PERMISSION_CACHE_MAX_ENTRIES,
+    BoundedLRUCache,
+)
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
@@ -30,6 +34,12 @@ logger = get_logger(__name__)
 
 #: 授权快照缓存 TTL（秒）——与阶段二 `policy_service` 保持一致
 GRANT_CACHE_TTL_SECONDS: Final[float] = 5.0
+
+#: 授权快照缓存条数上限（R2-ENG-09）。
+#: 键是「租户 × 插件 × 成员」三维组合，比 `policy_service` 的两维组合更快增长，
+#: 因此**必须**有界；上限与 `policy_service` 取同一值（4096），
+#: 依据见 `policy_service.DEFAULT_PERMISSION_CACHE_MAX_ENTRIES` 的说明。
+GRANT_CACHE_MAX_ENTRIES: Final[int] = DEFAULT_PERMISSION_CACHE_MAX_ENTRIES
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,19 +61,28 @@ class PluginGrantService:
     Attributes:
         _settings: 配置实例。
         _store: 插件存储。
-        _cache: 进程内快照缓存（`(tenant, plugin, user) → (过期时刻, 能力集合)`）。
+        _cache: 进程内快照缓存（`(tenant, plugin, user) → (过期时刻, 能力集合)`，
+            **有界 LRU**，见 `BoundedLRUCache`，R2-ENG-09）。
     """
 
-    def __init__(self, settings: Settings | None = None, store: PluginStore | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        store: PluginStore | None = None,
+        max_cache_entries: int = GRANT_CACHE_MAX_ENTRIES,
+    ) -> None:
         """初始化服务。
 
         Args:
             settings: 可选配置实例。
             store: 可选插件存储（测试注入）。
+            max_cache_entries: 缓存条数上限（默认 4096，测试可注入小值）。
         """
         self._settings = settings or get_settings()
         self._store: PluginStore = store or get_plugin_store(self._settings)
-        self._cache: dict[tuple[str, str, str], _CacheEntry] = {}
+        self._cache: BoundedLRUCache[tuple[str, str, str], _CacheEntry] = BoundedLRUCache(
+            max_cache_entries
+        )
 
     @property
     def store(self) -> PluginStore:
@@ -202,6 +221,7 @@ def reset_plugin_grant_service() -> None:
 
 
 __all__: list[str] = [
+    "GRANT_CACHE_MAX_ENTRIES",
     "GRANT_CACHE_TTL_SECONDS",
     "PluginGrantService",
     "get_plugin_grant_service",

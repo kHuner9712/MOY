@@ -235,13 +235,19 @@ jobs:
       # Node 依赖协议扫描
       # ------------------------------------------------------------------
       - name: 扫描 Node 依赖协议
-        working-directory: apps/web
+        # R2-ARC-13（审计 2026-10-29）：原实现是 `working-directory: apps/web` +
+        # `npm install`——两个问题叠在一起：
+        # 1. **`npm install` 会重新解析依赖树**，产出可能与 `package-lock.json`
+        #    锁定的版本不同（尤其 `^` 范围 + 上游新发版时）。于是「许可扫描的对象」
+        #    不是「要交付的对象」——而 R2-ARC-03 的 LGPL 判定正好依赖这一点；
+        # 2. workspaces 锁在**仓库根**，在 `apps/web` 下装依赖拿不到锁树。
+        # 现在改为仓库根 `npm ci`（与 `npm audit` 同源），`--start .` 从根扫
+        # workspaces 全树，输出路径保持不变（下游读 `apps/web/node-licenses.json`）。
         run: |
-          npm install --no-audit --no-fund --silent
-          npm ls --all --json > /dev/null 2>&1 || true
+          npm ci --no-audit --no-fund --silent
           npm install -g license-checker --silent
-          license-checker --json --production > node-licenses.json
-          echo "[OK] Node 依赖清单已生成"
+          license-checker --json --production --start . > apps/web/node-licenses.json
+          echo "[OK] Node 依赖清单已生成（源自 package-lock.json 锁树）"
 
       # ------------------------------------------------------------------
       # 黑名单协议判定（总方案 5.3）
@@ -262,8 +268,22 @@ jobs:
           # 枚举里——两路都漏。改为**前缀锚定式**：`L?GPL` 前缀同时命中
           # GPLv2/GPLv3/GPL-2.0-only/…；`General Public License` 兜全称写法；
           # AGPL/SSPL 单列避免语义混淆。
+          # R2-ARC-06（审计 2026-10-29）：补 fair-code / source-available 类许可。
+          #
+          # 干扰前提：ENG-03 只覆盖了 GPL 族 + SSPL，而产业界近三年「源码可用」的
+          # 转让组件里只命中 SSPL 一个——HashiCorp（Terraform/Vault）转 BUSL-1.1、
+          # Elastic 转 Elastic-2.0、Sentry/Nomad 系用 PolyForm、Redis 转 RSALv2、
+          # 部分模型/数据集用 CC-BY-NC。这些许可对**私有化交付**同样不可用
+          # （BUSL 的"四年后转 Apache"条款改变不了交付时的限制），漏检即放行。
+          #
+          # 前缀式追加，与既有 GPL 族写法保持一致；`\b` 只加在可能误伤英文单词的
+          # 缩写上（BUSL/PolyForm/RSAL），全称用 `\s+` 连写。
           BLACKLIST = re.compile(
-              r'(?i)(?:\bAGPL|\bSSPL|\bL?GPL|General\s+Public\s+License|EUPL|OSL)\S*',
+              r'(?i)(?:'
+              r'\bAGPL|\bSSPL|\bL?GPL|General\s+Public\s+License|EUPL|OSL'
+              r'|\bBUSL|Business\s+Source|\bPolyForm|Commons\s+Clause'
+              r'|Elastic-2|Elastic\s+License|CC-BY-NC|\bRSAL'
+              r')\S*',
               re.IGNORECASE,
           )
           # 灰名单：仅可独立进程调用，不可引入核心代码（需人工确认）。
@@ -271,16 +291,21 @@ jobs:
           # 兜其余 LGPL 写法之外的 MPL/CDDL/EPL。
           GREYLIST = re.compile(r'(?i)(?:\bMPL|\bCDDL|\bEPL)\S*')
 
-          # ENG-03 负样本自检（与判定同生共死：正则再退化时此步骤直接红）
+          # R2-ARC-06 负样本自检：GPL 族 + fair-code 族都必须命中；
+          # 白名单协议与灰名单（MPL）必须不命中。
           _BLACKLIST_POSITIVES = [
               "GPLv3", "GPL-2.0-only", "AGPL-3.0-only", "SSPL-1.0",
               "GNU General Public License v3.0",
+              # fair-code / source-available（R2-ARC-06）
+              "BUSL-1.1", "Business Source License 1.1",
+              "PolyForm-Noncommercial-1.0.0", "Commons Clause",
+              "Elastic-2.0", "RSALv2", "CC-BY-NC-4.0",
           ]
           _BLACKLIST_NEGATIVES = ["MIT", "Apache-2.0", "BSD-3-Clause", "MPL-2.0"]
           assert all(BLACKLIST.search(s) for s in _BLACKLIST_POSITIVES), \
-              "ENG-03 自检失败：黑名单正则漏检了已知 GPL 变体"
+              "ENG-03/R2-ARC-06 自检失败：黑名单正则漏检了已知 GPL 变体或 fair-code 许可"
           assert not any(BLACKLIST.search(s) for s in _BLACKLIST_NEGATIVES), \
-              "ENG-03 自检失败：黑名单正则误伤白名单协议（MPL 属灰名单）"
+              "ENG-03/R2-ARC-06 自检失败：黑名单正则误伤白名单协议（MPL 属灰名单）"
 
           findings = {'black': [], 'grey': []}
 
@@ -351,7 +376,15 @@ jobs:
           # 它会让任何正确删除 MinIO 的仓库恒红（S8 故障点②，2026-10-23）。
 
           if any(n == 'valkey/valkey' for n, _ in locked_images):
-              findings['grey'].append('[infra] 缓存使用 Valkey（BSD-3-Clause），D-06 待决')
+              # R2-ARC-13（审计 2026-10-29）：原文案写「D-06 待决」——**事实错误**。
+              # D-06 已于 2026-10-21 批准（`docs/architecture-v1.0.md:1700`），
+              # Valkey(BSD-3-Clause) 是白名单。恒打印"待决"会让复核者以为缓存
+              # 选型仍悬而未决（本轮审计第一遍读就被误导）。
+              # 保留在 grey 里是为了"人工可见"，但文案必须说真话。
+              findings['grey'].append(
+                  '[infra] 缓存使用 Valkey（BSD-3-Clause，白名单）：'
+                  'D-06 已于 2026-10-21 批准，无需人工确认'
+              )
           if any(n == 'redis' for n, _ in locked_images):
               findings['grey'].append('[infra] 使用 Redis 7（RSALv2/SSPL），须独立进程运行')
 

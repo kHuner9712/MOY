@@ -22,7 +22,8 @@ services:
     # 阶段四 T4-03 起改为 **pgvector 官方镜像**：迁移 0009 第一步是
     # `CREATE EXTENSION vector`，纯 postgres 镜像没有该扩展 → 记忆三表建不出来。
     # 同一 PG 大版本（18），只多一个扩展；登记见 deploy/images.lock。
-    image: pgvector/pgvector:pg18
+    # R2-ARC-14（2026-10-29）：滚动 tag `pg18` → 精确标签 `0.8.7-pg18-bookworm`。
+    image: pgvector/pgvector:0.8.7-pg18-bookworm
     container_name: oa-saas-postgres
     restart: unless-stopped
     environment:
@@ -72,7 +73,8 @@ services:
       --appendonly yes
       --requirepass ${OA_VALKEY_PASSWORD:?必须在 .env 中设置}
       --maxmemory ${OA_VALKEY_MAXMEMORY:-4gb}
-      --maxmemory-policy allkeys-lru
+      # R2-ENG-13（审计 2026-10-29）：与全量栈对齐为 volatile-lru（理由见 lite 同处注释）。
+      --maxmemory-policy volatile-lru
     volumes:
       - saas-valkey-data:/data
     networks: [officeai]
@@ -398,6 +400,12 @@ services:
     build:
       context: ../apps/web
       dockerfile: Dockerfile
+      # R2-ARC-01（审计 2026-10-29）：lockroot 指向仓库根，供 Dockerfile 的
+      # `COPY --from=lockroot package.json / package-lock.json` 取 workspaces 根
+      # 布局。**三套编排都必须声明**——漏配会在解析 Dockerfile 时直接报
+      # `invalid from flag value lockroot`，镜像产不出来。
+      additional_contexts:
+        lockroot: ..
       args:
         NEXT_PUBLIC_ADAPTER_BASE_URL: ${OA_WEB_ADAPTER_BASE_URL:-http://localhost:8000}
         # 统一登录：公开接入信息（不含密钥），**构建期内联**进 bundle。

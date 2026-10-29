@@ -2,8 +2,9 @@
 
 策略：
 - 固定窗口计数，按「租户 + 用户 + 路径」维度限流；
-- 适配层无状态、多副本部署，内存实现仅适用于单实例；
-  `redis` 后端已实现，T02/T04 通过 `OA_RATELIMIT_BACKEND=redis` 切换；
+- 适配层无状态，**内存实现仅适用于单副本**（V1.0 三套编排均无 replicas，故默认正确）；
+- 多副本必须切 `OA_RATELIMIT_BACKEND=redis`（R2-ENG-01 起该配置项真实生效，
+  装配点见 `build_ratelimit_store`；此前的注释承诺的能力并不存在）；
 - 触发限流统一抛 `ErrorCode.RATE_LIMITED`，前端展示业务语言文案。
 """
 
@@ -16,6 +17,7 @@ from typing import Any, Final, Protocol
 
 from fastapi import Request
 
+from app.core.cache_backend import get_shared_redis
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
@@ -163,6 +165,38 @@ class RedisRateLimitStore:
         return allowed, max(limit - count, 0), window_seconds
 
 
+def build_ratelimit_store(conf: Settings) -> RateLimitStore:
+    """按配置构造限流存储。
+
+    R2-ENG-01（审计 2026-10-29）：修复前 `RateLimiter()` 恒用
+    `InMemoryRateLimitStore`，而 `RedisRateLimitStore` 全仓零实例化——
+    文件头注释却声称「通过 `OA_RATELIMIT_BACKEND=redis` 切换」，
+    且 `config.py` 里**根本没有**这个配置项。注释承诺的能力不存在，
+    比"没实现"更危险：接手者会以为只差一个环境变量。
+
+    Args:
+        conf: 配置实例。
+
+    Returns:
+        RateLimitStore: 进程内或 Redis 实现。
+
+    Raises:
+        ApiError: 声明 redis 后端但无法取得客户端（30004）。
+    """
+    if conf.ratelimit_backend == "redis":
+        client = get_shared_redis(conf)
+        if client is None:
+            raise ApiError(
+                ErrorCode.CONFIG_ERROR,
+                internal_detail=(
+                    "OA_RATELIMIT_BACKEND=redis 但未能取得 Redis 客户端"
+                    "（OA_REDIS_URL 为空或依赖缺失）"
+                ),
+            )
+        return RedisRateLimitStore(client)
+    return InMemoryRateLimitStore()
+
+
 class RateLimiter:
     """限流器。
 
@@ -180,13 +214,18 @@ class RateLimiter:
         """初始化限流器。
 
         Args:
-            store: 限流存储，缺省使用内存实现。
+            store: 限流存储，缺省按配置选择（`OA_RATELIMIT_BACKEND`）。
             settings: 可选配置实例。
         """
         conf = settings or get_settings()
-        self._store: RateLimitStore = store or InMemoryRateLimitStore()
+        self._store: RateLimitStore = store or build_ratelimit_store(conf)
         self._enabled: bool = conf.ratelimit_enabled
         self._default_limit: int = conf.ratelimit_default_per_minute
+
+    @property
+    def store_name(self) -> str:
+        """当前**实际**装配的存储实现类名（启动期断言用，见 R2-ENG-01）。"""
+        return type(self._store).__name__
 
     @property
     def enabled(self) -> bool:

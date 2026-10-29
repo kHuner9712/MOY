@@ -29,7 +29,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import partial
 from typing import Any, Final
@@ -40,9 +40,11 @@ from fastapi.openapi.utils import get_openapi
 
 from app.api.v1.artifact_files import router as artifact_files_router
 from app.api.v1.router import include_all_routers
+from app.core.cache_backend import aclose_shared_redis, validate_cache_backend_startup
 from app.core.config import Settings, get_settings
 from app.core.crypto import validate_startup as validate_credential_startup
 from app.core.errors import ApiError
+from app.core.idempotency import configure_idempotency_manager
 from app.core.logging import configure_logging, get_logger
 from app.core.metrics import configure_deploy_mode_metrics
 from app.core.ratelimit import RateLimiter
@@ -238,6 +240,29 @@ def build_openapi(app: FastAPI) -> dict[str, Any]:
     return schema
 
 
+async def _release_on_shutdown(step: str, closer: Callable[[], Awaitable[None]]) -> None:
+    """执行一步关停释放；**异常只记日志**，绝不中断后续步骤（L-14）。
+
+    修复前 `finally` 里是三条裸 `await` 顺序执行：`aclose()` 抛一次，
+    后面 `dispose_engine()` / `aclose_shared_redis()` 全部被跳过——进程带着
+    未释放的引擎与 Redis 连接退出，对端表现为连接缓慢堆积，现场只能靠重启兜。
+    关停路径的每一步都应当"尽最大努力做完"，而不是"遇到第一个错就放弃"。
+
+    为什么参数是"无参可等待对象工厂"而不是现成的 coroutine：若直接传
+    coroutine 对象，异常发生前它已被创建；一旦前一步抛错，后续 coroutine
+    就再也没人 await（`RuntimeWarning: coroutine was never awaited`）。
+    传工厂则在真正轮到这一步时才调用，跳过就是纯粹地不执行。
+
+    Args:
+        step: 步骤名（写进日志，便于定位是哪一步失败）。
+        closer: 无参异步可调用对象，执行该步骤的释放动作。
+    """
+    try:
+        await closer()
+    except Exception as exc:  # 关停路径不得因为单步失败而中断
+        logger.warning("shutdown_step_failed", step=step, detail=type(exc).__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期钩子。
@@ -301,15 +326,70 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
         raise
 
-    # ARC-13（审计 2026-10-28）：生产环境 + 进程内幂等/限流后端 = 多副本部署下
-    # 幂等与限流失效（每个副本各记各的）。代码默认保持 memory（保离线单测可跑），
-    # 部署默认已改 redis（deploy/.env.example）；此处只负责让危险组合在启动时被看见。
-    if settings.env == "production" and settings.idempotency_backend == "memory":
+    # R2-ENG-01（审计 2026-10-29）：把「幂等/限流后端」从**配置幻觉**变成真实装配。
+    #
+    # 修复前两处失效叠加：
+    # 1. `IdempotencyManager()` / `RateLimiter()` 都是无参构造，恒用进程内实现，
+    #    `RedisIdempotencyStore` / `RedisRateLimitStore` 全仓**只在 tests 里**实例化；
+    # 2. 告警条件恰好是「配成 memory」→ **配成 redis 反而让告警永久沉默**，
+    #    运维看到的是"配置是 redis、日志也干净"的假象。
+    #
+    # 现在：先 fail-fast 校验（声明 redis 就必须有 url），再主动装配，最后
+    # **断言装配结果与配置一致**——比类名，不比配置字符串。
+    try:
+        validate_cache_backend_startup(settings)
+    except ApiError:
+        await dispose_engine()
+        raise
+
+    # 主动装配一次：幂等管理器是懒加载单例，不主动取的话，装配偏差要等首个写请求
+    # 才暴露（那时已经在服务真实流量了）。
+    #
+    # 用 `configure_idempotency_manager(settings)` 而不是 `get_idempotency_manager()`：
+    # 后者是 FastAPI 依赖（`Depends(get_idempotency_manager)` 有 20+ 处）**签名必须无参**，
+    # 且它读的是进程级 `get_settings()`，在测试注入场景下未必等于 `app.state.settings`。
+    try:
+        idempotency_store = configure_idempotency_manager(settings).store_name
+    except ApiError:
+        await dispose_engine()
+        raise
+    ratelimit_store = app.state.rate_limiter.store_name
+    logger.info(
+        "cache_backend_assembled",
+        idempotency_declared=settings.idempotency_backend,
+        idempotency_actual=idempotency_store,
+        ratelimit_declared=settings.ratelimit_backend,
+        ratelimit_actual=ratelimit_store,
+    )
+
+    def _matches(declared: str, actual: str) -> bool:
+        """配置声明与装配结果是否一致（redis 家族 vs 进程内）。"""
+        return ("Redis" in actual) if declared == "redis" else ("Redis" not in actual)
+
+    if not _matches(settings.idempotency_backend, idempotency_store) or not _matches(
+        settings.ratelimit_backend, ratelimit_store
+    ):
+        # 装配与声明不符属**代码缺陷**（不是配置问题），必须响亮
         logger.error(
-            "idempotency_backend_memory_in_production",
+            "cache_backend_assertion_failed",
+            detail="幂等/限流后端的实际装配结果与配置声明不一致——配置在说谎",
+            idempotency_declared=settings.idempotency_backend,
+            idempotency_actual=idempotency_store,
+            ratelimit_declared=settings.ratelimit_backend,
+            ratelimit_actual=ratelimit_store,
+        )
+
+    if settings.env == "production" and (
+        "Redis" not in idempotency_store or "Redis" not in ratelimit_store
+    ):
+        # 单副本交付下这是**合法形态**（V1.0 三套编排均无 replicas），故用 warn 而
+        # 非 error；但扩容前必须切——否则幂等静默失效、限流按副本数放大 N 倍。
+        logger.warning(
+            "cache_backend_memory_in_production",
             detail=(
-                "OA_IDEMPOTENCY_BACKEND=memory 且 env=production："
-                "多副本部署下幂等/限流失效；请改配 redis（栈内 Valkey 已就绪）"
+                "生产环境使用进程内幂等/限流后端：单副本下行为正确，"
+                "但**扩容（compose --scale / k8s 多 Pod）前必须**改配 "
+                "OA_IDEMPOTENCY_BACKEND=redis 与 OA_RATELIMIT_BACKEND=redis"
             ),
         )
 
@@ -347,7 +427,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         # 先停轮询再释放连接池：反序会让 in-flight 任务拿到已 dispose 的引擎
         if runner is not None:
-            await runner.stop()
+            await _release_on_shutdown("job_runner", runner.stop)
         if queue_depth_task is not None:
             queue_depth_task.cancel()
             try:
@@ -356,8 +436,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 pass
         # H-1（审计 2026-10-28）：先停底座连接、再释放业务库——
         # 与"先停轮询再释放引擎"的关停顺序纪律一致。
-        await get_model_service().aclose()
-        await dispose_engine()
+        #
+        # L-14（本轮）：三步各自独立 `try/except`（见 `_release_on_shutdown`）。
+        # **顺序不许调换**（底座 → 业务库 → Redis）：反序同样会把一次干净停机
+        # 变成一串 `InterfaceError` 日志。异常只降级为 WARN，后续步骤照常执行。
+        # 用 lambda 而非直接传方法：`get_model_service()` 本身也可能抛异常，
+        # 提前求值会把"取单例失败"变成又一次中断后续释放的机会。
+        await _release_on_shutdown("model_service", lambda: get_model_service().aclose())
+        await _release_on_shutdown("db_engine", dispose_engine)
+        # R2-ENG-01（审计 2026-10-29）：共享 Redis 客户端纳入统一关停，
+        # 否则进程退出时连接池留在对端（Valkey 侧表现为连接缓慢堆积）。
+        await _release_on_shutdown("shared_redis", aclose_shared_redis)
         logger.info("adapter_stopping")
 
 

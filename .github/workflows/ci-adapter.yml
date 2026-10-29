@@ -58,10 +58,15 @@ jobs:
     # 镜像必须带 pgvector：迁移 0009 第一步就是 `CREATE EXTENSION vector`，
     # 纯 `postgres:18.6-alpine` 缺该扩展，会让记忆内核的用例在 CI 里必然红。
     # 与 `deploy/images.lock` 的 `pgvector/pgvector` 条目保持一致。
+    #
+    # R2-ARC-14（审计 2026-10-29）：tag 必须**精确**，不能再用滚动别名 `pg18`。
+    # `pg18` 会随 PG 18.x 补丁滚动，CI 测的库与部署交付的库可以不是同一个版本；
+    # 而 images.lock 已锁 `0.8.7-pg18-bookworm`（镜像内 PG 18.6，实测可拉取）。
+    # 这处与 compose/lock 同源，否则「CI 全绿」证明不了交付物。
     # ==================================================================
     services:
       postgres:
-        image: pgvector/pgvector:pg18
+        image: pgvector/pgvector:0.8.7-pg18-bookworm
         env:
           POSTGRES_USER: officeai
           POSTGRES_PASSWORD: oa_ci_pw
@@ -109,7 +114,38 @@ jobs:
           enable-cache: true
           cache-dependency-glob: apps/adapter/uv.lock
 
+      # R2-QA-08（审计 2026-10-29）：`--frozen` 只保证「不更新锁文件」，
+      # **不校验锁与 pyproject 是否一致**（那是 `--locked` / `uv lock --check` 的职责）。
+      # 缺这一步时，「有人改了 pyproject 依赖但忘了 uv lock」这类漂移会在 CI 里
+      # 静默放行——本地可复现性破口，而 CI 全绿。成本实测约 3ms。
+      - name: 校验锁新鲜度（uv lock --check）
+        run: uv lock --check
+
       - run: uv sync --frozen --extra dev
+
+      # R2-QA-01（审计 2026-10-29）：`astral-sh/setup-uv` **只把 `uv` 本身加入 PATH**
+      # （其 `activate-environment` 参数默认 false），而 `uv sync` 把依赖装进
+      # `apps/adapter/.venv` 后并不会把该目录导出。于是下面所有 `ruff` / `mypy` /
+      # `pytest` 裸命令在 runner 上都会 `command not found` —— 门禁在第 1 个 step
+      # 就红，后面 20 余道门禁一步都跑不到。
+      #
+      # 这里显式导出而不是依赖 action 的参数名：`$GITHUB_PATH` 是 GitHub 的稳定
+      # 契约，action 的入参名会随版本变。`$PWD` 是 job 的 working-directory
+      # （apps/adapter），与 uv 创建 venv 的位置一致。
+      - name: 把项目 venv 加入 PATH（R2-QA-01）
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$PWD/.venv/bin" || {
+            echo "[FAIL] $PWD/.venv/bin 不存在：uv sync 未按预期创建 venv，门禁命令将不可用" >&2
+            exit 1
+          }
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          # 自检证据：写进日志，便于远端核对 PATH 是否生效
+          ls -1 "$PWD/.venv/bin" | grep -E '^(ruff|mypy|pytest)$' || {
+            echo "[FAIL] venv 内缺 ruff/mypy/pytest：请确认 uv sync 带了 --extra dev" >&2
+            exit 1
+          }
 
       # ------------------------------------------------------------------
       # 准备 PostgreSQL（审计 OA-AUDIT-001 / P0-4）
@@ -164,6 +200,17 @@ jobs:
           $PSQL -tAc "SELECT 'app_role_bypassrls=' || rolbypassrls FROM pg_roles WHERE rolname='officeai_app'" | grep -q 'bypassrls=f'
           $PSQL -tAc "SELECT 'tables=' || count(*) FROM information_schema.tables WHERE table_schema='public'"
           $PSQL -tAc "SELECT 'policies=' || count(*) FROM pg_policies"
+
+      # ------------------------------------------------------------------
+      # 门禁 0：批次时钟（R2-QA-16，审计 2026-10-29）
+      #
+      # `OA_BATCH` 是硬编码批次号，台账用 `due_batch` 表达"最迟哪批前必须处理完"。
+      # 两者过去靠人记得同步：把 B21 一直留着永远合法、永远绿，而台账里
+      # `due_batch=B30` 的到期缺陷就永远不会被判过期（静默放行）。
+      # 本步把"时钟停了"变成红。
+      # ------------------------------------------------------------------
+      - name: 批次时钟校验（OA_BATCH vs 台账 due_batch）
+        run: python ../../deploy/validate_batch_clock.py
 
       # ------------------------------------------------------------------
       # 门禁 1：Lint（ruff check）

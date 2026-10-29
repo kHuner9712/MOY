@@ -1,5 +1,9 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+# R2-ARC-02（审计 2026-10-29）：构建期依赖也要有上界。无上界意味着同一个
+# pyproject 在不同时间可能用不同版本的 setuptools 打包，产物（尤其是
+# wheel 内的元数据与 package discovery 行为）不可复现。上界取宽松值即可——
+# 目的是"可复现 + 不被破坏性大版本突袭"，不是追逐最新。
+requires = ["setuptools>=68,<85", "wheel>=0.44,<1.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -181,7 +185,16 @@ markers = [
     "security: 安全红线用例（阶段四 T4-04.6：五类攻击）",
 ]
 filterwarnings = [
-    "ignore::DeprecationWarning:httpx.*",
+    # R2-ARC-17（审计 2026-10-29）：这里原本有一条
+    # `ignore::DeprecationWarning:httpx.*`，三个实测证明它是 **no-op 空转配置**：
+    # `filterwarnings` 的 module 段匹配的是「告警**发出**模块」，而
+    # `StarletteDeprecationWarning: Using httpx with starlette.testclient is
+    # deprecated` 由 `fastapi.testclient` 发出，`httpx.*` 根本不匹配
+    # （带该过滤器与不带，输出逐字相同）。
+    #
+    # 空转配置比没有配置更糟：它暗示"弃用噪音已处理"，却在将来 httpx 真开始发
+    # 源告警时把它静默吞掉。故删除。starlette → httpx2 的迁移信号改由
+    # `docs/dependency-upgrade-watchlist.md` 集中跟踪（带到期判据）。
 ]
 
 [tool.coverage.run]

@@ -130,6 +130,10 @@ deploy/backups/
 
 # 适配层本地 pytest 运行日志（只在本机排障时落盘，不入库；CI 的 pytest 输出由 job 自己采集）
 apps/adapter/pytest_run.log
+# QA/开发者本地实跑的临时产物（basetemp 目录 + 日志）：R2-QA-11 后续防复发。
+# 2026-10-29 实际发生过一次：QA 把 basetemp 指到仓库内产生 `.qa_basetemp/`，
+# 收口时差点被 `git add -A` 带进提交（里面是 test_cli_* 的空临时目录）。
+apps/adapter/.qa_*
 
 # ---------------------------------------------------------------------------
 # QA-04（审计 2026-10-28）：前端本地测试工件不入库

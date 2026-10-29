@@ -1167,7 +1167,14 @@ class TaskRunner:
         if render_format is None and artifact.type in {"doc", "draft"}:
             render_format = "md"
         if render_format is not None:
-            blob = self._deps.sanitizer.render_file(
+            # R2-ENG-07（本轮）：渲染是**同步 CPU 密集**操作（docx 打包、md 转码、
+            # csv 序列化），大文档单次可达数百毫秒。直接在协程里调用会阻塞整个
+            # 事件循环——同一进程里的 `/healthz` 探针、其他用户的对话流、后台轮询
+            # 全部停摆，k8s 甚至可能因为探针超时把健康的 Pod 重启掉。
+            # `asyncio.to_thread` 把它挪到默认线程池：函数签名与返回类型不变，
+            # 调用方感知不到差别，唯一的变化是事件循环不再被占住。
+            blob = await asyncio.to_thread(
+                self._deps.sanitizer.render_file,
                 render_format=render_format,
                 name=artifact.name or artifact.output_key,
                 payload={"title": artifact.name, "content": sanitized},

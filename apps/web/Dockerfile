@@ -16,13 +16,31 @@ FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf
 
 WORKDIR /app
 
-# H-3（审计 2026-10-28）：锁文件是 npm workspaces 锁，在仓库根而非本目录。
-# compose 通过 additional_contexts 把仓库根挂为 `lockroot`（见 deploy/docker-compose.yml
-# web.build）。COPY --from=lockroot 在锁缺失时直接构建失败（fail loud），
-# 不再静默回退 npm install 造成镜像依赖不可复现。
-COPY package.json ./
-COPY --from=lockroot package-lock.json ./
-RUN npm ci --no-audit --no-fund
+# H-3（审计 2026-10-28）→ R2-ARC-01（审计 2026-10-29 复审修复）：
+#
+# 锁文件是 npm **workspaces** 锁（根 `package.json` 声明 `workspaces:["apps/*"]`，
+# 锁的根条目是 `officeai`），而 build context 只圈了 `apps/web`。`npm ci` 会校验
+# 「锁 ↔ 根 package.json ↔ workspace 包 package.json」三者是否同处一个 workspaces
+# 布局，因此**必须先在 /app 还原出仓库根布局**，否则报：
+#   npm error Conflicting peer dependency: @types/node@26.6.5 ... from vitest@5.0.5
+#
+# 还原方式：从 `lockroot`（compose 的 additional_contexts，指向仓库根）取根
+# `package.json` 与根锁，把 context 内的子包 package.json 放到 `./apps/web/`。
+# 这样 npm 看到的目录结构与仓库一致，`npm ci` 正常通过。
+#
+# ⚠️ 三套编排（全量 / lite / saas）**都必须**声明
+#    `additional_contexts: { lockroot: .. }`，漏配会在解析本行时报
+#    `invalid from flag value lockroot: context "lockroot" not found`（比 npm ci 更早失败）。
+COPY --from=lockroot package.json ./package.json
+COPY --from=lockroot package-lock.json ./package-lock.json
+COPY package.json ./apps/web/package.json
+
+# R2-ARC-03（审计 2026-10-29）：`--omit=optional` 排除 sharp 及其拉入的
+# `@img/sharp-libvips-*`（`package-lock.json` 标注 `LGPL-3.0-or-later`）。
+# 全仓 `next/image` 零使用，构建与运行都不需要 sharp；不排除则 LGPL 原生库会
+# 以 Node 原生模块形式**进程内**加载进生产镜像，违反本项目「LGPL 仅可独立进程」
+# 的灰名单政策（`docs/architecture-v1.0.md` §8.2）。
+RUN npm ci --no-audit --no-fund --omit=optional
 
 # ---------- builder ----------
 FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder

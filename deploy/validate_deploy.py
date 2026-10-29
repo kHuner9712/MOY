@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -68,6 +69,102 @@ SUPERUSER_VAR: Final[str] = "${OA_POSTGRES_USER"
 
 #: 必须在 adapter environment 中显式声明的键
 REQUIRED_ADAPTER_KEYS: Final[tuple[str, ...]] = ("OA_ENV", "OA_AUTH_MODE")
+
+#: 参与 R4（Dockerfile 命名上下文 ↔ 编排声明）比对的编排文件。
+#:
+#: R1/R2/R3 沿用 `COMPOSE_FILES`（不改变既有判据行为）；R4 必须覆盖**三套交付形态**
+#: ——R2-ARC-01 的根因正是「改一套漏两套」：H-3 给全量栈加了
+#: `additional_contexts.lockroot`，lite / saas 漏配，而 `apps/web/Dockerfile` 硬依赖
+#: `COPY --from=lockroot`，于是两套真正交付给客户的编排连镜像都产不出来。
+NAMED_CONTEXT_COMPOSE_FILES: Final[tuple[str, ...]] = (
+    "docker-compose.yml",
+    "docker-compose.lite.yml",
+    "docker-compose.saas.yml",
+)
+
+
+def _dockerfile_named_context_refs(dockerfile: Path) -> set[str]:
+    """返回 Dockerfile 中被 `COPY --from=<name>` 引用的**外部命名上下文**。
+
+    两类值不算命名上下文，需排除：
+    - 构建阶段名（`FROM ... AS deps` 里的 `deps`，属内部阶段）；
+    - 数字索引（`COPY --from=0`）。
+
+    Args:
+        dockerfile: Dockerfile 路径。
+
+    Returns:
+        set[str]: 小写化的命名上下文集合。
+    """
+    stages: set[str] = set()
+    refs: set[str] = set()
+    for raw in dockerfile.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        upper = line.upper()
+        if upper.startswith("FROM "):
+            match = re.search(r"\bAS\s+([A-Za-z0-9_.-]+)", line, re.IGNORECASE)
+            if match:
+                stages.add(match.group(1).lower())
+        if upper.startswith("COPY "):
+            for match in re.finditer(r"--from=([A-Za-z0-9_.-]+)", line, re.IGNORECASE):
+                refs.add(match.group(1).lower())
+    return {ref for ref in refs if ref not in stages and not ref.isdigit()}
+
+
+def _check_named_contexts(target: Path) -> list[dict[str, str]]:
+    """R4：Dockerfile 引用的命名上下文必须在该编排的 `build.additional_contexts` 中声明。
+
+    为什么需要：CI 不构建镜像，静态门禁若也不校验这条跨文件约束，那么
+    「Dockerfile 引用了 named context、但某套编排没声明」只能等到真实
+    `docker build` 时暴露——而真实构建根本不在自动化里，于是三套编排全坏
+    也能一路绿灯（审计 2026-10-29 的 H-1 就是这么来的）。
+
+    Args:
+        target: 部署目录。
+
+    Returns:
+        list[dict[str, str]]: 违规项（rule=R4）。
+    """
+    violations: list[dict[str, str]] = []
+    for name in NAMED_CONTEXT_COMPOSE_FILES:
+        path = target / name
+        if not path.is_file():
+            continue
+        data = _load(path)
+        for service_name, service in _services(data).items():
+            if not isinstance(service, dict):
+                continue
+            build = service.get("build")
+            if not isinstance(build, dict):
+                continue
+            context_dir = (target / str(build.get("context", "."))).resolve()
+            dockerfile = context_dir / str(build.get("dockerfile", "Dockerfile"))
+            if not dockerfile.is_file():
+                continue
+            refs = _dockerfile_named_context_refs(dockerfile)
+            if not refs:
+                continue
+            declared = build.get("additional_contexts") or {}
+            declared_keys = (
+                {str(key).lower() for key in declared} if isinstance(declared, dict) else set()
+            )
+            missing = sorted(refs - declared_keys)
+            if missing:
+                violations.append(
+                    {
+                        "rule": "R4",
+                        "file": name,
+                        "detail": (
+                            f"服务 {service_name} 的 {dockerfile.name} 引用了命名上下文 "
+                            f"{missing}，但本编排 build.additional_contexts 未声明"
+                            f"（已声明：{sorted(declared_keys) or '无'}）——"
+                            "镜像会在解析 Dockerfile 阶段直接失败"
+                        ),
+                    }
+                )
+    return violations
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -222,6 +319,10 @@ def check_dir(target: Path) -> list[dict[str, str]]:
                         ),
                     }
                 )
+
+    # R4：Dockerfile 的 `COPY --from=<name>` ↔ 各编排 `build.additional_contexts` 键集合
+    # （R2-ARC-01：三套编排的 web 镜像全靠这条才能被静态拦住）
+    violations.extend(_check_named_contexts(target))
     return violations
 
 
@@ -264,10 +365,21 @@ def run_self_test() -> int:
             ),
             encoding="utf-8",
         )
+        # R4 负样本：Dockerfile 引用命名上下文 `lockroot`，但编排**未**声明
+        # `build.additional_contexts` —— 这正是 R2-ARC-01 的形态（lite/saas 漏配），
+        # 真实后果是镜像在解析 Dockerfile 阶段直接构建失败。
+        (root / "web").mkdir(parents=True, exist_ok=True)
+        (root / "web" / "Dockerfile").write_text(
+            "FROM node:22-alpine AS deps\nCOPY --from=lockroot package.json ./\nCOPY . .\n",
+            encoding="utf-8",
+        )
+        with (root / "docker-compose.yml").open("a", encoding="utf-8") as fh:
+            fh.write("  web:\n    build:\n      context: ./web\n      dockerfile: Dockerfile\n")
+
         found = {item["rule"] for item in check_dir(root)}
-        expected = {"R1", "R2", "R3"}
+        expected = {"R1", "R2", "R3", "R4"}
         if found == expected:
-            print("[OK] 自检通过：R1/R2/R3 三类负样本均被拦截")
+            print("[OK] 自检通过：R1/R2/R3/R4 四类负样本均被拦截")
             return 1
         print(f"[FAIL] 自检未命中预期负样本：期望 {sorted(expected)}，实际 {sorted(found)}")
         return 0
@@ -303,7 +415,10 @@ def main(argv: list[str] | None = None) -> int:
             for item in violations:
                 print(f"  - [{item['rule']}] {item['file']}: {item['detail']}")
         else:
-            print("[OK] 部署形态一致：应用角色 DSN / 鉴权显式声明 / initdb 挂载集合一致")
+            print(
+                "[OK] 部署形态一致：应用角色 DSN / 鉴权显式声明 / initdb 挂载集合一致 / "
+                "Dockerfile 命名上下文已声明"
+            )
     return 1 if violations else 0
 
 

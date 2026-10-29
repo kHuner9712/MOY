@@ -323,3 +323,81 @@ jobs:
             "apps/web/src/**/*.{ts,tsx,css}" \
             "apps/web/*.{json,js}" \
             || (echo "[WARN] 格式问题请执行: npx prettier --write ." && exit 1)
+
+  # ------------------------------------------------------------------
+  # 门禁 5：浏览器级 e2e（R2-QA-02，审计 2026-10-29）
+  #
+  # 修复前：`ci-web.yml` 明写「E2E 暂不进 CI」，且 `workflow.spec.ts` 缺凭据时
+  # describe 级 skip —— 主链路「登录 → 兑换 → 工作台 → 插件」零浏览器级回归防线，
+  # 而所有地方看到的都是"绿"。
+  #
+  # 修复后：
+  # 1. `workflow.spec.ts` 缺凭据**改为必红**（除非显式 OA_E2E_ALLOW_SKIP=1），
+  #    杜绝"静默跳过冒充通过"；
+  # 2. 本 job 起一个真实适配层（stub 鉴权 + 内存存储 = config 默认值），
+  #    让匿名前置段（未登录被带回登录页）在 CI 里真跑；
+  # 3. 贯穿旅程仍需真实统一登录测试账号（现场资产，不入库），故本 job 显式
+  #    设 OA_E2E_ALLOW_SKIP=1 —— **这是已知缺口，不是已闭环**：账号就绪后
+  #    删掉该变量，job 即会强制跑贯穿段。
+  # ------------------------------------------------------------------
+  e2e-gate:
+    name: E2E 浏览器冒烟（匿名段必跑 / 贯穿段待测试账号）
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装前端依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/adapter/uv.lock
+
+      - name: 安装适配层依赖
+        working-directory: apps/adapter
+        run: uv sync --frozen
+
+      - name: 安装 Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: 跑 e2e（含适配层生命周期管理）
+        env:
+          OA_E2E_ADAPTER_BASE_URL: http://127.0.0.1:8000
+          OA_E2E_ALLOW_SKIP: '1'
+          PLAYWRIGHT_CHANNEL: chromium
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          set -euo pipefail
+
+          # 适配层：config 默认即 auth_mode=stub / business_store=memory，
+          # 不连数据库也能起，足以回答 /healthz 与匿名跳转断言。
+          cd apps/adapter
+          .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/adapter.log 2>&1 &
+          ADAPTER_PID=$!
+          cd ../..
+          trap 'kill "$ADAPTER_PID" 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+              echo "[PASS] adapter /healthz 就绪（第 ${i} 次探测）"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "[FAIL] adapter 120s 内未就绪，e2e 前置不成立" >&2
+              cat /tmp/adapter.log >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          npm run test:e2e --workspace apps/web

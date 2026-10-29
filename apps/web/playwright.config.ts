@@ -17,7 +17,10 @@ export default defineConfig({
   use: {
     ...devices['Desktop Chrome'],
     baseURL: 'http://localhost:3100',
-    channel: 'chrome',
+    // 本地默认用系统 Chrome（离线/内网环境装不上 Playwright 自带 Chromium）；
+    // CI 通过 PLAYWRIGHT_CHANNEL=chromium 切到 `playwright install` 装的那个
+    // （R2-QA-02：e2e 要进 CI，就不能依赖 runner 上恰好装了什么浏览器）。
+    channel: process.env.PLAYWRIGHT_CHANNEL ?? 'chrome',
     headless: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

@@ -36,13 +36,33 @@ test.beforeEach(async ({ request }) => {
   }
 });
 
-test.describe('贯穿旅程（需真实测试账号）', () => {
-  test.skip(
-    !E2E_USERNAME || !E2E_PASSWORD,
-    '未设置 OA_E2E_USERNAME / OA_E2E_PASSWORD，无法走真实统一登录',
-  );
+const HAS_E2E_CREDS = Boolean(E2E_USERNAME && E2E_PASSWORD);
 
-  test('统一登录 → 兑换会话 → 进入工作台 → 安装插件', async ({ page }) => {
+/**
+ * 显式豁免开关（R2-QA-02，审计 2026-10-29）。
+ *
+ * 背景：原实现用 describe 级 `test.skip(!USER || !PASS)` —— 缺凭据时**静默跳过**，
+ * 本机与 CI 看到的都是"绿"，而「登录 → 兑换 → 工作台 → 插件」这条主链路的
+ * 唯一浏览器级回归防线等于不存在（实测 5 passed / 1 skipped，skip 的正是它）。
+ * 「缺凭据自动 skip」正是"等于没测"的成因。
+ *
+ * 现在：缺凭据 → 注册一条**必然失败**的用例，把"没测"变成看得见的红；
+ * 只有显式设置 `OA_E2E_ALLOW_SKIP=1`（本地确实没有测试账号时）才允许跳过。
+ * CI 不设该变量 → 缺凭据即失败。
+ */
+const ALLOW_E2E_SKIP = process.env.OA_E2E_ALLOW_SKIP === '1';
+
+test.describe('贯穿旅程（需真实测试账号）', () => {
+  if (!HAS_E2E_CREDS && !ALLOW_E2E_SKIP) {
+    test('缺少 OA_E2E_USERNAME / OA_E2E_PASSWORD（缺失即失败，见 R2-QA-02）', () => {
+      throw new Error(
+        '未设置 OA_E2E_USERNAME / OA_E2E_PASSWORD，「登录 → 兑换 → 工作台 → 插件」主链路无法验证。' +
+          '这不是环境噪音：跳过它等于让主链路没有回归防线。' +
+          '若本次运行确实不需要该旅程（例如只跑匿名冒烟），请显式设置 OA_E2E_ALLOW_SKIP=1。',
+      );
+    });
+  } else if (HAS_E2E_CREDS) {
+    test('统一登录 → 兑换会话 → 进入工作台 → 安装插件', async ({ page }) => {
     // ① 登录页：统一登录入口存在且诚实展示
     await page.goto('/login');
     await expect(page.getByRole('button', { name: '统一登录' })).toBeVisible();
@@ -75,7 +95,8 @@ test.describe('贯穿旅程（需真实测试账号）', () => {
     // 安装抽屉打开（授权配置面板）即证明安装链路入口可达；真实提交依赖底座
     // 插件运行时，抽屉内提交留给插件域专项用例（grant-drawer 单测已覆盖逻辑）。
     await expect(page.getByRole('dialog').or(page.getByText('能力授权'))).toBeVisible();
-  });
+    }); // ← 结束 test('统一登录 → …')
+  }     // ← 结束 else if (HAS_E2E_CREDS)
 });
 
 test.describe('贯穿旅程的匿名前置段（零夹具，随时可跑）', () => {

@@ -355,6 +355,15 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     idempotency_backend: IdempotencyBackend = "memory"
     idempotency_ttl_seconds: int = Field(default=86_400, ge=60)
+    #: 限流后端（R2-ENG-01，审计 2026-10-29）。
+    #:
+    #: 为什么独立于 `idempotency_backend` 而不是复用它：该字段此前被三个消费者
+    #: 共用（幂等、限流、凭据缓存），语义已经超载——"我要切限流"和"我要切幂等"
+    #: 是两个独立的运维动作，绑在一起会让"只切一半"变成不可能表达的状态。
+    #:
+    #: 默认 `memory`：单副本交付（V1.0 实际形态，三套编排均无 replicas）下行为正确，
+    #: 且离线单测无需 Redis。**扩容前必须改 `redis`**，否则限流按副本数放大。
+    ratelimit_backend: IdempotencyBackend = "memory"
     ratelimit_enabled: bool = True
     ratelimit_default_per_minute: int = Field(default=120, ge=1)
 

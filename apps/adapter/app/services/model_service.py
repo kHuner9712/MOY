@@ -33,7 +33,13 @@ from app.business.conversation_service import (
 )
 from app.business.policy_service import PolicyService, get_policy_service, normalize_base_id
 from app.business.segment_service import SegmentHit, SegmentService, build_key
-from app.business.usage_service import CAP_CHAT, BudgetStatus, UsageService, get_usage_service
+from app.business.usage_service import (
+    CAP_CHAT,
+    BudgetStatus,
+    UsageService,
+    UsageSnapshot,
+    get_usage_service,
+)
 from app.clients.dify_client import DifyClient, get_dify_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ERROR_REGISTRY, ApiError, ErrorCode
@@ -600,7 +606,12 @@ class ModelService:
         self.resolve_route(request.profile)
         # P4-11 ①（2026-10-27 用户裁决）：额度判定在**任何上游调用之前**做，
         # 但**不再拦截**——超额时只把回答限长（常规模式），`code` 仍为 0。
-        budget = await self._resolve_generation_budget(auth)
+        #
+        # R2-ENG-08（本轮）：判定与提示**共用同一份用量快照**
+        # （`_generation_budget_and_notice`）。修复前两者各查一遍库，`snapshot()`
+        # 单次 4 次存储往返，首 token 之前白白多付 4 次。合并后仍发生在任何
+        # 下游请求之前，"先判定后花钱"的顺序纪律不变。
+        budget, notice = await self._generation_budget_and_notice(auth)
         authorized = await self._authorized_base_ids(request, auth)
         logger.info(
             "model_generate_requested",
@@ -611,7 +622,8 @@ class ModelService:
         )
         # 非阻断额度提示（B27 `15006`）：判据 = 与 M4/BL5 同源的 `over_quota_warning`。
         # 只挂在 `data.notice_*` 上，外层 `code` 恒为 0——超额**不拦停**（PRD 5.3）。
-        notice = await self._quota_notice(auth)
+        # R2-ENG-08：`notice` 已在上一步与 `budget` 一起取回（共用同一份用量快照），
+        # 这里**不再**单独调用 `_quota_notice`——重复查库正是本次修复要消除的。
         # 超额时提示**必须**是常规模式文案（PRD 5.3 ①）：`_quota_notice` 给的是
         # 「本月可用量已用完，请联系管理员调整」——那是"要停服"的口径，
         # 与本条"继续可用、只限长"矛盾。两者都指向 15006，但文案必须说清出路。
@@ -800,7 +812,9 @@ class ModelService:
                 detail=type(exc).__name__,
             )
 
-    async def _resolve_generation_budget(self, auth: AuthContext | None) -> BudgetStatus | None:
+    async def _resolve_generation_budget(
+        self, auth: AuthContext | None, snapshot: UsageSnapshot | None = None
+    ) -> BudgetStatus | None:
         """取本次生成可用的额度判定结果（**不再拦截**，P4-11 ① 软限制）。
 
         为什么改名：它曾叫 `_enforce_generation_budget`，在超额时抛 `15006` 拦停。
@@ -815,6 +829,7 @@ class ModelService:
 
         Args:
             auth: 鉴权上下文（无用户时跳过判定：内部/桩调用不计入个人额度）。
+            snapshot: 同一请求内已取到的用量快照（R2-ENG-08，避免重复查库）。
 
         Returns:
             BudgetStatus | None: 判定结果；无用户或判定失败时返回 None（按"未超额"处理）。
@@ -824,7 +839,10 @@ class ModelService:
             return None
         try:
             return await self._usage.check_capability_allowed(
-                capability=CAP_CHAT, tenant_id=self._tenant_of(auth), user_id=user_id
+                capability=CAP_CHAT,
+                tenant_id=self._tenant_of(auth),
+                user_id=user_id,
+                snapshot=snapshot,
             )
         except Exception as exc:  # 判定失败不阻断（与 `_quota_notice` 同口径）
             logger.warning(
@@ -918,7 +936,9 @@ class ModelService:
             )
             return False
 
-    async def _quota_notice(self, auth: AuthContext | None) -> tuple[int, str]:
+    async def _quota_notice(
+        self, auth: AuthContext | None, snapshot: UsageSnapshot | None = None
+    ) -> tuple[int, str]:
         """取本次请求的非阻断额度提示（B27 `15006`）。
 
         单一真源：委托 `UsageService.quota_notice()`，其判据就是 M4/BL5 的同一份
@@ -926,6 +946,7 @@ class ModelService:
 
         Args:
             auth: 鉴权上下文（`None` 或缺失用户时无提示）。
+            snapshot: 同一请求内已取到的用量快照（R2-ENG-08，避免重复查库）。
 
         Returns:
             tuple[int, str]: `(提示码, 提示文案)`；无提示时为 `(0, "")`。
@@ -933,7 +954,50 @@ class ModelService:
         user_id = auth.user_id if auth is not None else ""
         if not user_id:
             return 0, ""
-        return await self._usage.quota_notice(tenant_id=self._tenant_of(auth), user_id=user_id)
+        return await self._usage.quota_notice(
+            tenant_id=self._tenant_of(auth), user_id=user_id, snapshot=snapshot
+        )
+
+    async def _generation_budget_and_notice(
+        self, auth: AuthContext | None
+    ) -> tuple[BudgetStatus | None, tuple[int, str]]:
+        """一次取齐「额度判定」与「非阻断额度提示」（R2-ENG-08）。
+
+        为什么合并：这两件事的**输入是同一份用量快照**，修复前却各自查了一遍库
+        （`_resolve_generation_budget` → `UsageService.snapshot()`，
+        `_quota_notice` → `UsageService.snapshot()`）。`snapshot()` 单次要打
+        4 次存储往返（月度行 / 套餐 / 日趋势 / 事件计数），于是**首 token 之前**
+        白白多出 4 次往返——在冷启动或远端库上，这正是"感觉慢半拍"的来源。
+
+        语义**完全不变**：
+        - 快照取失败时两个子调用各自回落到"自取快照"的旧路径，判定仍按未超额、
+          提示仍为空（护栏失败不影响可用性这条纪律原样保留）；
+        - 判定结果与提示码仍由原方法产出，本方法只负责共享输入。
+
+        Args:
+            auth: 鉴权上下文（无用户时返回 `(None, (0, ""))`）。
+
+        Returns:
+            tuple[BudgetStatus | None, tuple[int, str]]:
+                `(额度判定结果, (提示码, 提示文案))`。
+        """
+        user_id = auth.user_id if auth is not None else ""
+        if not user_id:
+            return None, (0, "")
+        tenant_id = self._tenant_of(auth)
+        snapshot: UsageSnapshot | None = None
+        try:
+            snapshot = await self._usage.snapshot(tenant_id=tenant_id, user_id=user_id)
+        except Exception as exc:
+            # 快照取不到：留 None，让两个子调用各自按旧路径兜底（行为与修复前一致）
+            logger.warning(
+                "generation_usage_snapshot_failed",
+                user_id=user_id,
+                detail=type(exc).__name__,
+            )
+        budget = await self._resolve_generation_budget(auth, snapshot=snapshot)
+        notice = await self._quota_notice(auth, snapshot=snapshot)
+        return budget, notice
 
     def _build_downstream_payload(
         self, request: GenerateRequest, user_id: str = "", *, query_override: str = ""
@@ -1153,7 +1217,8 @@ class ModelService:
         # 在 SSE 上按字截断要跨帧缓冲、还要避免切断多字节字符与引用标记，
         # 处理不当会让前端拿到半句话或坏帧（比"答案长一点"严重得多）。
         # 故降级为"只加终帧提示、不截断"，该边界已写进 PRD 5.3 ① 的注。
-        budget = await self._resolve_generation_budget(auth)
+        # R2-ENG-08（本轮）：流式与 M1 同口径，判定与提示共用同一份用量快照。
+        budget, notice = await self._generation_budget_and_notice(auth)
 
         authorized = await self._authorized_base_ids(request, auth)
         tenant_id = self._tenant_of(auth)
@@ -1166,7 +1231,7 @@ class ModelService:
         # 非阻断额度提示（B27 `15006`）：**在流开始前算好**，只挂在终帧 `done` 上。
         # 为什么不中途插帧：流式期间插入非 delta 帧会打断前端渲染与自动滚动；
         # 为什么不改 `error` 帧：超额不是错误，PRD 5.3 要求"提醒而非拦停"。
-        notice = await self._quota_notice(auth)
+        # R2-ENG-08：`notice` 已随 `budget` 一起取回（共用同一份用量快照），这里不再查库。
         # 超额时**必须**带 15006 提示（即使 `_quota_notice` 因套餐口径没算出提示）：
         # 流式不截断是已知边界，这条 `notice` 就是用户唯一能感知"进入常规模式"的地方。
         if notice[0] == 0 and budget is not None and budget.exhausted:

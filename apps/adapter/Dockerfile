@@ -27,12 +27,32 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
+# R2-ARC-02（审计 2026-10-29）：生产镜像必须消费 `uv.lock`。
+#
+# 原实现只 COPY `pyproject.toml` + `app/`，由 `pip install .` 在**构建当天**现场
+# 解析 `>=` 区间——CI 用 `uv sync --frozen` 验的是锁树，交付的却是"当天 PyPI
+# 最新匹配版本"的树，两者可以不同（如 sqlalchemy 2.1.6 vs 2.2.x）。
+#
+# 现方案：单一真源仍是 `uv.lock`（不新增入库的 requirements 文件，避免双锁漂移）。
+# 镜像内固定版本装 uv，用 `uv export --frozen` 导出**精确 `==` 清单**，再交给 pip：
+#   - `--frozen` 保证 uv 不会在镜像内改写锁文件；
+#   - `--no-dev` 不把测试依赖带进生产镜像；
+#   - `--no-emit-project` 让项目自身不进入清单，改由下一步 `--no-deps` 安装，
+#     避免 pip 重新解析项目依赖（那样又会落回"现场解析"）。
+# 同时删除 `pip install --upgrade pip`：让包管理器自身也浮动，等于锁住了依赖却
+# 没锁解析器。
+ARG UV_VERSION=0.13.1
+
+COPY pyproject.toml README.md uv.lock ./
 COPY app ./app
 
 RUN python -m venv /opt/venv \
-    && /opt/venv/bin/pip install --upgrade pip \
-    && /opt/venv/bin/pip install .
+    && /opt/venv/bin/pip install --no-cache-dir "uv==${UV_VERSION}" \
+    && /opt/venv/bin/uv export --frozen --no-dev --no-hashes --no-emit-project \
+         --output-file /tmp/requirements.lock \
+    && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.lock \
+    && /opt/venv/bin/pip install --no-cache-dir --no-deps . \
+    && rm -f /tmp/requirements.lock
 
 # ---------- runtime ----------
 FROM python:3.13-slim@sha256:5dde09372dfa8e7762892b2a12619fcf6c23b0b78bce1058a9fa5a3a7a40e68e AS runtime
