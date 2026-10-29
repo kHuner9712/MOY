@@ -92,7 +92,7 @@
 | `T4-03.3` | `apps/adapter/app/business/memory_service.py` | T4-03.3 | W3 | 代码 | 已建 | 79250db | — |
 | `T4-03.3` | `apps/adapter/app/db/repositories/memory/__init__.py` | T4-03.3 | W3 | 代码 | 已建 | 4e8c36c | — |
 | `T4-03.3` | `apps/adapter/app/services/memory_extractor.py` | T4-03.3 | W3 | 代码 | 已建 | 79250db | — |
-| `T4-03.3` | `apps/adapter/tests/e2e/test_memory_recall.py` | T4-03.3 | W3 | 测试 | 已建 | 待补 | — |
+| `T4-03.3` | `apps/adapter/tests/e2e/test_memory_recall.py` | T4-03.3 | W3 | 测试 | 已建 | 18eff2e | — |
 | `T4-03.3` | `apps/adapter/tests/unit/test_memory_extract.py` | T4-03.3 | W3 | 测试 | 已建 | 79250db | — |
 | `T4-03.4` | `apps/adapter/tests/unit/test_memory_recall_degrade.py` | T4-03.4 | W3 | 测试 | 已建 | 98d726d | — |
 | `T4-03.5` | `apps/adapter/app/api/v1/memory.py` | T4-03.5 | W3 | 代码 | 已建 | 98d726d | — |
@@ -106,14 +106,14 @@
 | `T4-04.1` | `apps/adapter/tests/unit/test_profile_routing_contract.py` | T4-04.1 | W3 | 测试 | 已建 | 8e9f43f | — |
 | `T4-04.2` | `apps/adapter/app/business/usage_service.py` | T4-04.2 | W3 | 代码 | 已建 | 6eca802 | — |
 | `T4-04.2` | `apps/adapter/app/db/schema_guard.py` | T4-04.2 | W3 | 代码 | 已建 | 8e9f43f | — |
-| `T4-04.2` | `apps/adapter/tests/integration/test_quota_hardstop.py` | T4-04.2 | W3 | 测试 | 已建 | 待补 | — |
+| `T4-04.2` | `apps/adapter/tests/integration/test_quota_hardstop.py` | T4-04.2 | W3 | 测试 | 已建 | 18eff2e | — |
 | `T4-04.2` | `apps/adapter/tests/integration/test_quota_notice.py` | T4-04.2 | W3 | 测试 | 已建 | ae99eb7 | — |
 | `T4-04.3` | `apps/adapter/app/db/repositories/budget_repo.py` | T4-04.3 | W3 | 代码 | 已建 | 8e9f43f | — |
-| `T4-04.3` | `apps/adapter/tests/integration/test_tenant_budget.py` | T4-04.3 | W3 | 测试 | 已建 | 待补 | — |
+| `T4-04.3` | `apps/adapter/tests/integration/test_tenant_budget.py` | T4-04.3 | W3 | 测试 | 已建 | 18eff2e | — |
 | `T4-04.3` | `deploy/migrations/0011_tenant_budget.sql` | T4-04.3 | W3 | 迁移 | 已建 | 8e9f43f | — |
 | `T4-04.3` | `deploy/migrations/rollback/0011_*.down.sql` | T4-04.3 | W3 | 迁移 | 已建 | 8e9f43f | — |
 | `T4-04.4` | `apps/adapter/app/business/task_service.py` | T4-04.4 | W3 | 代码 | 已建 | b6effcf | — |
-| `T4-04.4` | `apps/adapter/tests/integration/test_task_timeout_lock.py` | T4-04.4 | W3 | 测试 | 已建 | 待补 | — |
+| `T4-04.4` | `apps/adapter/tests/integration/test_task_timeout_lock.py` | T4-04.4 | W3 | 测试 | 已建 | 18eff2e | — |
 | `T4-04.5` | `apps/adapter/app/core/permission_whitelist.py` | T4-04.5 | W3 | 代码 | 已建（等价） | f46544f | 等价实现：`apps/adapter/app/core/security.py` —— 白名单以 `PERMISSION_WHITELIST`（:238）内联，架构 §2.5 要求「全仓唯一位置」，独立文件反而违背设计 |
 | `T4-04.5` | `apps/adapter/tests/unit/test_permission_whitelist.py` | T4-04.5 | W3 | 测试 | 已建（等价） | 2c85efb | 等价实现：`apps/adapter/tests/security/test_permission_fail_closed.py` —— 7 用例，含 `test_lock_file_matches_code` / `test_exactly_two_entries` 即白名单锁断言 |
 | `T4-04.5` | `docs/security/permission-whitelist.lock` | T4-04.5 | W3 | 代码 | 已建 | 2c85efb | — |
@@ -140,20 +140,20 @@
 | `T4-05.5` | `deploy/backup.sh` | T4-05.5 | W4 | 代码 | 已建 | 5d1f29b | D-28 核实：已建（19,513 B / 19.1 KiB） |
 | `T4-05.5` | `deploy/install.sh` | T4-05.5 | W4 | 代码 | 已建 | e5f031a | D-28 核实：已建（45,701 B / 44.6 KiB） |
 | `T4-05.5` | `deploy/restore.sh` | T4-05.5 | W4 | 代码 | 已建 | 5d1f29b | D-28 核实：已建（19,086 B / 18.6 KiB） |
-| `T4-05.5` | `deploy/rollback.sh` | T4-05.5 | W4 | 代码 | 已建 | 待补 | — |
-| `T4-05.5` | `deploy/upgrade.sh` | T4-05.5 | W4 | 代码 | 已建 | 待补 | — |
+| `T4-05.5` | `deploy/rollback.sh` | T4-05.5 | W4 | 代码 | 已建 | 18eff2e | — |
+| `T4-05.5` | `deploy/upgrade.sh` | T4-05.5 | W4 | 代码 | 已建 | 18eff2e | — |
 | `T4-05.5` | `deploy/validate_packaging.py` | T4-05.5 | W4 | 代码 | 已建 | d55a959 | — |
 | `T4-05.5` | `sql/enable-vector-extension.sql` | T4-05.5 | W4 | 代码 | 已建 | 364b8cc | D-28 核实：已建（5,462 B / 5.3 KiB） |
-| `T4-05.6` | `.github/workflows/sbom.yml` | T4-05.6 | W4 | 代码 | 已建 | 待补 | — |
-| `T4-05.6` | `apps/web/src/app/(main)/about/page.tsx` | T4-05.6 | W4 | 代码 | 已建 | 待补 | — |
-| `T4-05.6` | `deploy/sbom/generate.py` | T4-05.6 | W4 | 代码 | 已建 | 待补 | — |
-| `T4-05.6` | `deploy/validate_offline_pkgs.py` | T4-05.6 | W4 | 代码 | 已建 | 待补 | — |
-| `T4-05.6` | `docs/compliance/dpa-template.md` | T4-05.6 | W4 | 文档 | 已建 | 待补 | — |
-| `T4-05.6` | `docs/compliance/privacy-policy.md` | T4-05.6 | W4 | 文档 | 已建 | 待补 | — |
-| `T4-05.6` | `docs/compliance/security-whitepaper.md` | T4-05.6 | W4 | 文档 | 已建 | 待补 | — |
-| `T4-05.7` | `docs/deployment-guide.md` | T4-05.7 | W4 | 文档 | 已建 | 待补 | — |
-| `T4-05.7` | `docs/key-rotation-checklist.md` | T4-05.7 | W4 | 文档 | 已建 | 待补 | — |
-| `T4-05.7` | `docs/perf-disclosure.md` | T4-05.7 | W4 | 文档 | 已建 | 待补 | — |
-| `T4-05.7` | `docs/user-guide.md` | T4-05.7 | W4 | 文档 | 已建 | 待补 | — |
-| `T4-05.7` | `qa/goldset/*` | T4-05.7 | W4 | 代码 | 已建 | 待补 | — |
-| `T4-05.7` | `scripts/bench/*.py` | T4-05.7 | W4 | 代码 | 已建 | ed199f4 | — |
+| `T4-05.6` | `.github/workflows/sbom.yml` | T4-05.6 | W4 | 代码 | 已建 | 18eff2e | — |
+| `T4-05.6` | `apps/web/src/app/(main)/about/page.tsx` | T4-05.6 | W4 | 代码 | 已建 | 18eff2e | — |
+| `T4-05.6` | `deploy/sbom/generate.py` | T4-05.6 | W4 | 代码 | 已建 | 18eff2e | — |
+| `T4-05.6` | `deploy/validate_offline_pkgs.py` | T4-05.6 | W4 | 代码 | 已建 | 18eff2e | — |
+| `T4-05.6` | `docs/compliance/dpa-template.md` | T4-05.6 | W4 | 文档 | 已建 | 18eff2e | — |
+| `T4-05.6` | `docs/compliance/privacy-policy.md` | T4-05.6 | W4 | 文档 | 已建 | 18eff2e | — |
+| `T4-05.6` | `docs/compliance/security-whitepaper.md` | T4-05.6 | W4 | 文档 | 已建 | 18eff2e | — |
+| `T4-05.7` | `docs/deployment-guide.md` | T4-05.7 | W4 | 文档 | 已建 | 18eff2e | — |
+| `T4-05.7` | `docs/key-rotation-checklist.md` | T4-05.7 | W4 | 文档 | 已建 | 18eff2e | — |
+| `T4-05.7` | `docs/perf-disclosure.md` | T4-05.7 | W4 | 文档 | 已建 | 18eff2e | — |
+| `T4-05.7` | `docs/user-guide.md` | T4-05.7 | W4 | 文档 | 已建 | 18eff2e | — |
+| `T4-05.7` | `qa/goldset/*` | T4-05.7 | W4 | 代码 | 已建 | 18eff2e | — |
+| `T4-05.7` | `scripts/bench/*.py` | T4-05.7 | W4 | 代码 | 已建 | 18eff2e | — |
