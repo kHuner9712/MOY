@@ -28,8 +28,8 @@
 # ==========================================================================
 
 #
-# 当前登记 24 条（切片 1 收口后实测，随后续切片逐步减少）：
-#   P1-3  api → db        6 条  HTTP 层直接使用仓储/引擎，绕过业务层唯一入口
+# 当前登记 23 条（切片 1 收口后实测 + 2026-10-30 P1-8 收口 1 条，随后续切片逐步减少）：
+#   P1-3  api → db        5 条  HTTP 层直接使用仓储/引擎，绕过业务层唯一入口
 #   P1-7  core → 上层     5 条  核心内核依赖 business / db / schemas
 #   P2-9  business → 编排 3 条  业务层反向依赖 services / workers
 #   P2-10 services → db   6 条  服务层直接使用仓储（切片 1 新发现，切片 2 收口）
@@ -40,10 +40,14 @@
 #   · P1-4 db → business   audit_repo（动作常量 + 记录器）→ core/audit_actions + db/audit_recorder
 #   · P1-5 schemas → biz   schemas/tenant_data.py（EXPORT_SCOPES）→ core/tenant_data
 #   · P1-6 business → api  task_service（plugin_deps）→ 组合根注入 gateway_factory
+# 2026-10-30 整改再消除 1 条：
+#   · P1-3 api → db        artifact_files.py（产物查询）→ 新增 business/artifact_service 查询入口
 # ==========================================================================
 
 # --- P1-3：api 直接使用仓储/引擎（绕过业务层） ---------------------------
-R-API-DB apps/adapter/app/api/v1/artifact_files.py app.db.repositories.artifact_repo module -- P1-3 due_batch=B27 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
+# （P1-3 首条 artifact_files.py 于 2026-10-30 收口：新增业务层查询入口
+#   `app/business/artifact_service.py`，api 改走 api→business→db 合法链路，
+#   基线行已删除。）
 R-API-DB apps/adapter/app/api/v1/conversation.py app.db.repositories.conversation module -- P1-3 due_batch=B27 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/identity_ext.py app.db.repositories.audit_repo module -- P1-3 due_batch=B27 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除
 R-API-DB apps/adapter/app/api/v1/memory.py app.db.repositories.memory module -- P1-3 due_batch=B27 api 直接使用仓储（绕过 services），改为 services 暴露查询入口后消除

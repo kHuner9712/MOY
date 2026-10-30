@@ -15,20 +15,20 @@
 # —— 基线不允许靠「历史遗留」长期挂账。
 # ==========================================================================
 #
-# 当前登记 3 行（切片 2A 实测，20 个单元）：
-#   P1-8a  grant R2 3 条  内存实现多出三个便捷写口，PG 侧没有同名方法；
-#                         调用点已带 `type: ignore[attr-defined]`，2C 收口为
-#                         `set_subject_*` 批量接口后逐行删除。
+# 当前登记 0 行（P1-8a 于 2026-10-30 收口后全清）：
 #
-#                         逐方法各一行（而不是压成一条 `/` 连接的 subject）：
-#                         修好其中两个时，第三行会独立留下并继续 WARN，
-#                         不会被"组"一起放行。
+# P1-8a  grant R2 3 条（set_user_departments / set_user_roles / set_subject_name）
+#        **已消除（2026-10-30）**：三个便捷写口经核查为测试模式专属
+#        （docstring 原文"设置测试/内存模式下…"，app/ 内零调用点，仅 tests/ 使用），
+#        按校验器原生 TEST_HOOKS 机制显式归类为测试钩子（见
+#        validate_repository_parity.py::TEST_HOOKS 注释），基线 3 行随之删除。
+#        PG 侧成员关系归 org / role 存储持有，grant 不复制写路径——PG 出现
+#        同名方法反而判红。原「2C 收口为 set_subject_* 批量接口」计划取消：
+#        不存在需要收口的生产调用面。
 #
-# 另：R4 在本轮实测中命中了 `role.RoleRecord` 的构造点不对称（内存侧少写
+# 另：R4 在切片 2A 实测中命中过 `role.RoleRecord` 构造点不对称（内存侧少写
 # `member_count`），即 P1-8b 的机械证据；该漂移已在切片 2A **修复**（内存
 # `get_role` 改返回真实计数，并加 `test_get_role_reports_real_member_count`
 # 用例），因此**不登记**进基线——修好的东西不许挂账。
 #
-R2 grant set_user_departments -- P1-8a 内存实现独有的便捷写口（别名/便捷入口），PG 侧无同名方法；2C 收口为 set_subject_* 批量接口后删除本行
-R2 grant set_user_roles -- P1-8a 内存实现独有的便捷写口（批量分配角色），PG 侧无同名方法；2C 收口为 set_subject_* 批量接口后删除本行
-R2 grant set_subject_name -- P1-8a 内存实现独有的便捷写口（写主体展示名），PG 侧无同名方法；2C 收口为 set_subject_* 批量接口后删除本行
+# （空基线合法：校验器无违规可对账时全绿；新增违规没有登记通道，只能修。）

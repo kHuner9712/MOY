@@ -73,8 +73,10 @@ v1 有两条洗白通道，QA 用副本各实证了一次，两条都能让真�
 代价与边界：只在一侧直接构造、另一侧走映射器/服务层的 record 无法比对 → `[INFO]` 跳过
 （这是"看不到"，不是"没问题"，所以 INFO 会逐条打印出来，方便评审时人工确认）。
 
-**`TEST_HOOKS = {"clear", "counts"}`**：测试隔离钩子只允许存在于内存侧——PG 侧出现
-同名方法说明有人把测试钩子带进了生产实现。
+**`TEST_HOOKS = {"clear", "counts", "set_user_departments", "set_user_roles",
+"set_subject_name"}`**：测试隔离钩子只允许存在于内存侧——PG 侧出现
+同名方法说明有人把测试钩子带进了生产实现（grant 三写口的归类依据见
+`TEST_HOOKS` 定义处注释，审计 2026-10-30 P1-8a）。
 
 **R3 不判返回注解**：`-> list[X]` 与 `-> Sequence[X]` 都是合法收敛，判红只会制造噪声；
 真正要防的是"参数形状不一致导致调用在一侧静默走默认值"。
@@ -149,7 +151,15 @@ DEFAULT_BASELINE: Final[Path] = Path(__file__).resolve().parent / "repository_pa
 MIN_UNITS: Final[int] = 15
 
 #: 测试隔离钩子：只允许出现在内存侧。
-TEST_HOOKS: Final[frozenset[str]] = frozenset({"clear", "counts"})
+#:
+#: 审计 2026-10-30 P1-8a 收口：`set_user_departments` / `set_user_roles` /
+#: `set_subject_name` 三个便捷写口按本机制显式归类为**测试钩子**（docstring 原文
+#: 即"设置测试/内存模式下…"，app/ 内零调用点，仅 tests/ 使用）。PG 侧的部门/角色
+#: 成员关系归 org / role 存储持有，grant 存储**不复制**这条写路径——因此它们
+#: 与 `clear` / `counts` 同类：内存侧专属，PG 侧出现同名方法反而要判红。
+TEST_HOOKS: Final[frozenset[str]] = frozenset(
+    {"clear", "counts", "set_user_departments", "set_user_roles", "set_subject_name"}
+)
 
 #: 允许"没有协议"的单元（有实现必有协议之外的唯一例外）。
 NO_PROTOCOL_UNITS: Final[frozenset[str]] = frozenset({"audit"})

@@ -17,11 +17,11 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import Response
 
+from app.business.artifact_service import fetch_artifact
 from app.core.artifact_token import parse_token
 from app.core.config import Settings, get_request_settings
 from app.core.errors import ApiError
 from app.core.ratelimit import get_request_rate_limiter
-from app.db.repositories.artifact_repo import get_artifact_store
 
 router = APIRouter(prefix="/files/artifacts", tags=["产物下载"])
 
@@ -74,7 +74,7 @@ async def download_artifact(
         except ApiError:
             return Response(status_code=429, content="请求过于频繁，请稍后再试".encode())
 
-    record = await get_artifact_store(settings).get(claims.tenant_id, claims.artifact_id)
+    record = await fetch_artifact(settings, claims.tenant_id, claims.artifact_id)
     if record is None or _is_expired(record.expires_at):
         return Response(status_code=404, content=_INVALID_LINK_TEXT.encode())
     content = record.content
