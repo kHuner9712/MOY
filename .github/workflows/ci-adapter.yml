@@ -202,15 +202,33 @@ jobs:
           $PSQL -tAc "SELECT 'policies=' || count(*) FROM pg_policies"
 
       # ------------------------------------------------------------------
-      # 门禁 0：批次时钟（R2-QA-16，审计 2026-10-29）
+      # 门禁 0：批次时钟（R2-QA-16，审计 2026-10-29；P1-5 于 2026-10-30 固化口径）
       #
       # `OA_BATCH` 是硬编码批次号，台账用 `due_batch` 表达"最迟哪批前必须处理完"。
       # 两者过去靠人记得同步：把 B21 一直留着永远合法、永远绿，而台账里
       # `due_batch=B30` 的到期缺陷就永远不会被判过期（静默放行）。
       # 本步把"时钟停了"变成红。
+      #
+      # `--check-docs` 再加一道：文档/本地脚本里硬编码的批次号（README ×2、
+      # apps/adapter/README、qa/phase4-verify.sh）必须与 CI 这个值一致。
+      # 升批时**每处都要改**，漏一处即红并列出具体行号——否则文档讲 B21、
+      # 门禁按 B30 判，两套口径都自洽，评审无法判断哪个是真的。
       # ------------------------------------------------------------------
-      - name: 批次时钟校验（OA_BATCH vs 台账 due_batch）
-        run: python ../../deploy/validate_batch_clock.py
+      - name: 批次时钟校验（OA_BATCH vs 台账 due_batch + 文档口径）
+        run: python ../../deploy/validate_batch_clock.py --check-docs
+
+      # 自检：**期望退出码 1**（落后 / 格式非法 / fixed 豁免 / 文档漂移 四类负样本必须命中）
+      - name: 批次时钟门禁自检（期望退出码 1）
+        run: |
+          set +e
+          python ../../deploy/validate_batch_clock.py --self-test
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "[FAIL] 批次时钟自检退出码 $code，期望 1（0 说明门禁失效）"
+            exit 1
+          fi
+          echo "[PASS] 批次时钟自检命中全部负样本（落后/格式/豁免/文档漂移）"
 
       # ------------------------------------------------------------------
       # 门禁 1：Lint（ruff check）
@@ -560,6 +578,25 @@ jobs:
               sys.exit(1)
           print("[OK] 带 PG 口径 0 跳过、0 失败")
           PY
+
+      # ------------------------------------------------------------------
+      # 门禁 5b：PG 仓储实现覆盖下限（P1，审计 2026-10-30 M1 收口）
+      #
+      # 钉住的盲区：无 PG 口径下 `db/repositories/*/postgres.py` 覆盖仅
+      # 16%~31%（task 16.48 / billing 22.61 / plugin 25.38 / org 26.87 /
+      # usage 30.61），总覆盖率 85% 门禁由内存实现撑起——生产主路径（PG）
+      # 反而是本地覆盖盲区。本步骤在**带 PG 的覆盖率数据**上单算 postgres.py
+      # 分项合计，低于下限即红，防止总指标好看但 PG 实现裸奔。
+      #
+      # 下限 50 为保守起点：带 PG 口径 210+ 条真库用例直打这些模块，预期远高
+      # 于此。首次实跑后按实测校准上调（只升不降，与 G-05 同纪律）。
+      # ------------------------------------------------------------------
+      - name: PG 仓储覆盖下限（db/repositories/*/postgres.py ≥ 50%）
+        run: |
+          coverage report \
+            --include="*/db/repositories/*/postgres.py" \
+            --show-missing \
+            --fail-under=50
 
       - name: 上传测试报告
         if: always()
