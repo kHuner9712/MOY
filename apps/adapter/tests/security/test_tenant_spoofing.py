@@ -22,10 +22,10 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
+import jwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from jose import jwt
 
 from app.core import security as security_module
 from app.core.config import Settings

@@ -15,7 +15,10 @@ requires-python = ">=3.11"
 license = { text = "UNLICENSED" }
 
 # 依赖严格限定在架构文档 8.1 清单及其版本约束内；
-# 全部为 MIT / Apache-2.0 / BSD-3-Clause，无 GPL/AGPL/SSPL。
+# 许可证实测口径（2026-10-30 审计 M4）：直接依赖 MIT / Apache-2.0 / BSD-3-Clause，
+# 传递链含 MPL-2.0（certifi，灰名单：随交付保留许可证文本）/ PSF-2.0 / MIT-0 /
+# BSD-2-Clause 等宽松协议；无 GPL/AGPL/SSPL。旧表述「全部为 MIT / Apache-2.0 /
+# BSD-3-Clause」经 pip-licenses 全量实测证伪，已修正。
 #
 # 版本约束说明（架构文档 8.1 / 8.1.1）：
 # - fastapi `^0.156`：修复 starlette 传递依赖带来的 14 项漏洞；
@@ -36,10 +39,16 @@ dependencies = [
     # 在缺少 greenlet 时**导入即失败**（阶段二 B01 引入异步引擎时实测暴露）。
     "sqlalchemy[asyncio]>=2.0,<3.0",
     "asyncpg==0.32.0",
-    "python-jose[cryptography]>=3.3",
+    # P0（审计 2026-10-30 H1/M7）：JWT 库由 python-jose 迁移至 PyJWT（MIT）。
+    # 原因：python-jose 3.5.0 命中 CVE-2026-85394（HMAC 初始化接受 DER 公钥，
+    # 可伪造 HS256 令牌通过验签）且**无修复版**，其传递链 ecdsa 另有未修侧信道
+    # CVE-2024-23342，整链事实上低维护。PyJWT 活跃维护且 API 兼容
+    # （decode/encode 调用签名一致），`app/core/security.py` 显式限定
+    # algorithms 单算法的既有缓解行为保持不变。
+    "pyjwt>=2.8,<3.0",
     # `app/core/crypto.py` 直接 import cryptography（AES-GCM 封装）：直接 import
-    # 的包必须显式声明，不能只靠 python-jose[cryptography] 的 extra 传递引入
-    # （审计 2026-10-29 D2；版本与 uv.lock 解析结果一致，H-2 双载体口径）。
+    # 的包必须显式声明（审计 2026-10-29 D2；版本与 uv.lock 解析结果一致，
+    # H-2 双载体口径）。
     "cryptography==50.0.2",
     "structlog==26.1.0",
     "python-multipart==0.0.32",
@@ -161,7 +170,7 @@ ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["jose.*", "yaml.*"]
+module = ["jwt.*", "yaml.*"]
 ignore_missing_imports = true
 
 # ===========================================================================
@@ -188,6 +197,10 @@ markers = [
     "security: 安全红线用例（阶段四 T4-04.6：五类攻击）",
 ]
 filterwarnings = [
+    # P0（审计 2026-10-30）：PyJWT 2.15 起对 HMAC 密钥 <32 字节发
+    # InsecureKeyLengthWarning。测试夹具刻意使用可读短密钥（15~27 字节），
+    # 单轮跑出 142 条告警噪声。本过滤为**类别级**（非 module 级空转配置），
+    # 只在 pytest 进程内生效；生产环境密钥过短的告警仍会进运行日志。
     # R2-ARC-17（审计 2026-10-29）：这里原本有一条
     # `ignore::DeprecationWarning:httpx.*`，三个实测证明它是 **no-op 空转配置**：
     # `filterwarnings` 的 module 段匹配的是「告警**发出**模块」，而
@@ -198,6 +211,7 @@ filterwarnings = [
     # 空转配置比没有配置更糟：它暗示"弃用噪音已处理"，却在将来 httpx 真开始发
     # 源告警时把它静默吞掉。故删除。starlette → httpx2 的迁移信号改由
     # `docs/dependency-upgrade-watchlist.md` 集中跟踪（带到期判据）。
+    "ignore::jwt.warnings.InsecureKeyLengthWarning",
 ]
 
 [tool.coverage.run]

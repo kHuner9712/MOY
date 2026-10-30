@@ -142,14 +142,25 @@ def _decode_token(token: str, conf: Settings) -> dict[str, Any]:
         ApiError: 令牌非法或校验失败（20002）。
     """
     try:
-        from jose import jwt
+        import jwt
+        from jwt.types import Options as JwtOptions
     except ImportError as exc:  # pragma: no cover - 依赖缺失属环境问题
-        raise ApiError(ErrorCode.CONFIG_ERROR, internal_detail="python-jose not installed") from exc
+        raise ApiError(ErrorCode.CONFIG_ERROR, internal_detail="PyJWT not installed") from exc
 
-    options: dict[str, Any] = {"verify_signature": conf.auth_mode != "stub"}
     if conf.auth_mode == "stub":
-        options["verify_aud"] = False
-        options["verify_iss"] = False
+        # 桩模式（仅开发态）：不验签、不校验 aud/iss。
+        # P0（审计 2026-10-30）：PyJWT 语义与 python-jose 相反——`verify_signature=False`
+        # 时 `verify_exp` 默认**一并放行**（jwt/api_jwt.py::_merge_options 防御性默认），
+        # 而过期拒绝是既有红线（tests/unit/test_security.py::
+        # test_resolve_rejects_expired_token），故必须显式置回 True。
+        options: JwtOptions = {
+            "verify_signature": False,
+            "verify_exp": True,
+            "verify_aud": False,
+            "verify_iss": False,
+        }
+    else:
+        options = {"verify_signature": True}
 
     try:
         claims = jwt.decode(
@@ -166,7 +177,7 @@ def _decode_token(token: str, conf: Settings) -> dict[str, Any]:
             internal_detail=f"token validation failed: {type(exc).__name__}",
         ) from exc
 
-    if not isinstance(claims, dict):  # pragma: no cover - jose 保证返回 dict
+    if not isinstance(claims, dict):  # pragma: no cover - PyJWT 保证返回 dict
         raise ApiError(ErrorCode.UNAUTHORIZED, internal_detail="token claims not a mapping")
     return claims
 

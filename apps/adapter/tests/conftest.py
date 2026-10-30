@@ -5,7 +5,7 @@
 - 默认 `OA_BUSINESS_STORE=memory`（不依赖 PostgreSQL）；需要真实库的用例
   用 `--run-pg` 显式启用（QA 门禁口径：带 `--run-pg` 时 skipped 必须为 0）；
 - 每个用例拿到独立的配置、服务单例与幂等/限流存储，避免相互污染；
-- 令牌通过 `python-jose` 现场签发，遵循 `OA_AUTH_MODE=stub`（不验签）。
+- 令牌通过 `PyJWT` 现场签发，遵循 `OA_AUTH_MODE=stub`（不验签）。
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
 
+import jwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from jose import jwt
 
 from app.business.audit_service import reset_audit_recorder
 from app.business.context_assembler import reset_context_assembler

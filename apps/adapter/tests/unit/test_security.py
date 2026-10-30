@@ -46,7 +46,7 @@ def test_resolve_extracts_realm_access_roles(settings: Settings) -> None:
     """兼容 realm_access.roles 形态的角色声明。"""
     import time
 
-    from jose import jwt
+    import jwt
 
     now = int(time.time())
     token = jwt.encode(
@@ -80,7 +80,7 @@ def test_resolve_rejects_token_without_subject(settings: Settings) -> None:
     """缺少 subject 声明的令牌必须返回 20002。"""
     import time
 
-    from jose import jwt
+    import jwt
 
     now = int(time.time())
     token = jwt.encode({"exp": now + 600}, settings.jwt_secret, algorithm=settings.jwt_algorithm)
@@ -93,7 +93,7 @@ def test_resolve_falls_back_to_default_tenant(settings: Settings) -> None:
     """无 tenant_id 声明时回落到配置默认租户。"""
     import time
 
-    from jose import jwt
+    import jwt
 
     now = int(time.time())
     token = jwt.encode(

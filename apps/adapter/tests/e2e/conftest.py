@@ -1295,7 +1295,7 @@ def _token(settings: Settings, *, tenant_id: str, user_id: str, roles: list[str]
     Returns:
         dict[str, str]: 请求头。
     """
-    from jose import jwt
+    import jwt
 
     token = jwt.encode(
         {

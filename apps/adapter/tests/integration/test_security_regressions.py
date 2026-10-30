@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import time
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
-from jose import jwt
 
 from app.core.config import Settings
 from app.core.errors import ErrorCode

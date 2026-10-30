@@ -17,10 +17,10 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
+import jwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from jose import jwt
 
 from app.core.config import Settings
 from app.main import create_app

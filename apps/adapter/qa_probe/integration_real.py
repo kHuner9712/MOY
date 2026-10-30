@@ -35,7 +35,7 @@ results: list[tuple[str, bool, str]] = []
 
 
 def _token() -> str:
-    from jose import jwt
+    import jwt
 
     now = int(time.time())
     return jwt.encode(

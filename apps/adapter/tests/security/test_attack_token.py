@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
-from jose import jwt
 from tests.security.conftest import (
     TENANT_A,
     TENANT_B,
@@ -105,8 +105,8 @@ class TestForgedToken:
     def test_alg_none_is_rejected(self, oidc_client: TestClient) -> None:
         """`alg=none` 的令牌（无签名）被拒绝。
 
-        这个 token 是**手搓**的：`python-jose` 拒绝"用 none 签名"，而攻击者不会用
-        jose——他们直接拼 `header.payload.`（第三段留空）。这正是要防的形态。
+        这个 token 是**手搓**的：`PyJWT` 拒绝"用 none 签名"，而攻击者不会用
+        现成库——他们直接拼 `header.payload.`（第三段留空）。这正是要防的形态。
         """
         token = _unsigned_token(TENANT_A)
 
