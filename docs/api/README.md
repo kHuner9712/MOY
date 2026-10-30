@@ -62,8 +62,8 @@ push / PR 触发时自动生成并作为构件上传，命名 `openapi-spec`。
 > `docs/api/baseline-core-30.json`（经评审流程保护，禁止修改）、
 > `docs/api/baseline-phase2-38.json`（只允许登记真实已实现端点）。
 > 门禁：`python deploy/validate_openapi.py`（G1-G7，失败退出码非 0）；
-> 所有放宽开关均已从 CI 移除，CI 全程 `--strict`（脚本 CLI 仍留
-> `--allow-missing-phase2` 供阶段二历史批次复跑，CI 不传）。
+> **无任何放宽参数**：阶段二历史用的 `--allow-missing-phase2` 已于 2026-10-29
+> 审计清理中从脚本本体一并移除（38/38 已交付），CI 全程 `--strict`。
 
 **阶段三新域端点（16 个，按 B17-B19 逐批落地；同挂 `/api/v1`，不新增版本）**
 

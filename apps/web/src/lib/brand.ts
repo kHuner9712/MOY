@@ -16,6 +16,5 @@ export const BRAND = {
   /** 中文主张 */
   promise: '与你一起把工作做好',
   /** 产品描述（metadata / 登录页共用） */
-  description:
-    '麦子（Moy）是面向广泛工作需求的 AI 工作平台，帮助你更准确、更高效地完成工作。',
+  description: '麦子（Moy）是面向广泛工作需求的 AI 工作平台，帮助你更准确、更高效地完成工作。',
 } as const;

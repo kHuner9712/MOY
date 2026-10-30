@@ -186,10 +186,7 @@ export function AppSidebar(): React.JSX.Element {
           );
         })}
       </nav>
-      <div className="border-t p-4 text-xs text-muted-foreground">
-        遇到问题？联系你的团队管理员
-      </div>
+      <div className="border-t p-4 text-xs text-muted-foreground">遇到问题？联系你的团队管理员</div>
     </aside>
   );
 }
-

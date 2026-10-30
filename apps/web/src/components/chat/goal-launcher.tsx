@@ -88,7 +88,13 @@ function buildInputsHint(inputs: CapabilityInputBrief[]): string {
  * @param props - 组件属性
  * @returns 推荐卡元素
  */
-function CapabilityCardView({ card, goal }: { card: CapabilityCard; goal: string }): React.JSX.Element {
+function CapabilityCardView({
+  card,
+  goal,
+}: {
+  card: CapabilityCard;
+  goal: string;
+}): React.JSX.Element {
   const router = useRouter();
   const reason = buildMatchReason(card);
   const inputsHint = buildInputsHint(card.inputs);

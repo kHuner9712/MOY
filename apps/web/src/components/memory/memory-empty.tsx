@@ -42,7 +42,12 @@ export function MemoryEmpty({
 
   if (kind === 'failed') {
     return (
-      <ErrorState message={copy.title} description={copy.description} onRetry={onRetry} className={className} />
+      <ErrorState
+        message={copy.title}
+        description={copy.description}
+        onRetry={onRetry}
+        className={className}
+      />
     );
   }
 
@@ -70,5 +75,12 @@ export function MemoryEmpty({
     );
   }
 
-  return <EmptyState title={copy.title} description={copy.description} action={action} className={className} />;
+  return (
+    <EmptyState
+      title={copy.title}
+      description={copy.description}
+      action={action}
+      className={className}
+    />
+  );
 }

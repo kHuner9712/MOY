@@ -43,7 +43,11 @@ import {
 import { CapabilityList } from '@/components/plugin/capability-list';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { formatDateTime, orPlaceholder } from '@/lib/format';
-import type { CapabilityPolicyItem, CapabilityPolicyRequestItem, OrganizationMember } from '@/lib/types';
+import type {
+  CapabilityPolicyItem,
+  CapabilityPolicyRequestItem,
+  OrganizationMember,
+} from '@/lib/types';
 
 /** 角色展示映射（业务语言） */
 const ROLE_LABELS: Readonly<Record<string, string>> = {
@@ -244,7 +248,12 @@ export default function TeamPage(): React.JSX.Element {
               <CardTitle>成员</CardTitle>
               <Tooltip content="只有所有者与企业管理员可以邀请成员" disabled={canManage}>
                 <span>
-                  <Button type="button" size="sm" disabled={!canManage} onClick={() => setInviteOpen(true)}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!canManage}
+                    onClick={() => setInviteOpen(true)}
+                  >
                     <UserPlus className="h-4 w-4" />
                     邀请成员
                   </Button>
@@ -456,7 +465,9 @@ export default function TeamPage(): React.JSX.Element {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {orPlaceholder(log.actor_name)}
-                        {log.actor_role ? `（${ROLE_LABELS[log.actor_role] ?? log.actor_role}）` : ''}
+                        {log.actor_role
+                          ? `（${ROLE_LABELS[log.actor_role] ?? log.actor_role}）`
+                          : ''}
                       </TableCell>
                       <TableCell>
                         <StatusBadge
@@ -480,12 +491,7 @@ export default function TeamPage(): React.JSX.Element {
             </Table>
 
             {logTotal > 20 ? (
-              <Pagination
-                page={logPage}
-                pageSize={20}
-                total={logTotal}
-                onPageChange={setLogPage}
-              />
+              <Pagination page={logPage} pageSize={20} total={logTotal} onPageChange={setLogPage} />
             ) : null}
           </CardContent>
         </Card>
@@ -589,13 +595,15 @@ function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.El
       updated_by_name: '',
       updated_at: '',
     }));
-    const orgRows: CapabilityPolicyItem[] = (marketQuery.data?.org_capabilities ?? []).map((item) => ({
-      capability_key: item.capability_key,
-      display_name: '',
-      org_switch_enabled: item.org_switch_enabled,
-      updated_by_name: '',
-      updated_at: '',
-    }));
+    const orgRows: CapabilityPolicyItem[] = (marketQuery.data?.org_capabilities ?? []).map(
+      (item) => ({
+        capability_key: item.capability_key,
+        display_name: '',
+        org_switch_enabled: item.org_switch_enabled,
+        updated_by_name: '',
+        updated_at: '',
+      }),
+    );
     return [...personalRows, ...orgRows];
   }, [saved, marketQuery.data]);
 
@@ -613,8 +621,7 @@ function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.El
   }, [rows]);
 
   const saveMutation = useApiMutation(
-    (policies: CapabilityPolicyRequestItem[]) =>
-      pluginsApi.setCapabilityPolicy({ policies }),
+    (policies: CapabilityPolicyRequestItem[]) => pluginsApi.setCapabilityPolicy({ policies }),
     {
       invalidateKeys: [['plugins']],
       onSuccess: (data) => {
@@ -688,7 +695,10 @@ function OrgCapabilityPanel({ canManage }: { canManage: boolean }): React.JSX.El
                         checked={checked}
                         disabled={personal || !canManage || saveMutation.isPending}
                         onChange={(event) =>
-                          setDraft((prev) => ({ ...prev, [row.capability_key]: event.target.checked }))
+                          setDraft((prev) => ({
+                            ...prev,
+                            [row.capability_key]: event.target.checked,
+                          }))
                         }
                       />
                       {personal ? '恒开启' : checked ? '已开启' : '已关闭'}

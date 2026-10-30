@@ -38,7 +38,12 @@ import { QUERY_KEYS, useApiMutation, useApiQuery } from '@/hooks/use-api';
 import { pluginsApi, toolApi, toolsExtApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { formatDateTime, orPlaceholder } from '@/lib/format';
-import type { InstalledPluginItem, PluginCategoryItem, PluginMarketItem, PluginMarketSort } from '@/lib/types';
+import type {
+  InstalledPluginItem,
+  PluginCategoryItem,
+  PluginMarketItem,
+  PluginMarketSort,
+} from '@/lib/types';
 
 /** 市场每页条数（与后端默认一致） */
 const MARKET_PAGE_SIZE = 12;

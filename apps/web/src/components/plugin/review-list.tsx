@@ -4,7 +4,14 @@ import * as React from 'react';
 
 import { EmptyState, LoadingState } from '@/components/ui/feedback';
 import { Rating } from '@/components/ui/rating';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { formatDateTime, orPlaceholder } from '@/lib/format';
 import type { PluginReviewItem } from '@/lib/types';
 

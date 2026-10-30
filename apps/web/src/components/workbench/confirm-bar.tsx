@@ -57,7 +57,10 @@ export function ConfirmBar({
             任务已暂停，等你确认后继续（第 {confirm?.step_seq ?? '—'} 步）
           </p>
           <p className="text-amber-900/80">
-            {orPlaceholder(confirm?.reason, '确认内容后可继续执行；这不是故障，确认后任务会从当前步骤继续')}
+            {orPlaceholder(
+              confirm?.reason,
+              '确认内容后可继续执行；这不是故障，确认后任务会从当前步骤继续',
+            )}
           </p>
         </div>
       </div>
@@ -83,7 +86,9 @@ export function ConfirmBar({
         <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onCancel}>
           放弃本次
         </Button>
-        <span className="text-xs text-amber-900/70">15 分钟内不会自动继续，你可以先去处理别的事</span>
+        <span className="text-xs text-amber-900/70">
+          15 分钟内不会自动继续，你可以先去处理别的事
+        </span>
       </div>
     </section>
   );

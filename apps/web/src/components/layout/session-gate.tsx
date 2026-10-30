@@ -279,12 +279,7 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
   );
 
   if (phase === 'error') {
-    return (
-      <SessionErrorState
-        message={toBusinessMessage(profileError)}
-        onRetry={refreshProfile}
-      />
-    );
+    return <SessionErrorState message={toBusinessMessage(profileError)} onRetry={refreshProfile} />;
   }
 
   if (phase !== 'ready') {

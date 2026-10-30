@@ -1529,8 +1529,9 @@ s = create_app().openapi()
 paths = [(m.upper(), p) for p, ms in s['paths'].items() if p.startswith('/api/v1') for m in ms]
 print(len(paths))
 PY
-python deploy/validate_openapi.py            # 现阶段应为 core=30 phase2=0（新域未实现）→ 需 --allow-missing-phase2
-python deploy/validate_openapi.py --allow-missing-phase2
+python deploy/validate_openapi.py            # 现阶段应为 core=30 phase2=0（新域未实现）→
+                                             # （当时需 --allow-missing-phase2 放宽；该参数已随
+                                             #  38/38 交付于 2026-10-29 审计清理中整体移除）
 cd apps/adapter && pytest tests/integration/test_endpoint_baseline.py -q
 ```
 

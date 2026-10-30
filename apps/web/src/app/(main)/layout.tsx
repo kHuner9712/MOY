@@ -29,11 +29,7 @@ import { QueryProvider } from '@/lib/query-client';
  * @param props - 布局属性
  * @returns 主布局元素
  */
-export default function MainLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}): React.JSX.Element {
+export default function MainLayout({ children }: { children: React.ReactNode }): React.JSX.Element {
   const pathname = usePathname();
   const current = resolveNavItem(pathname);
   const [offline, setOffline] = React.useState<boolean>(false);
@@ -64,12 +60,7 @@ export default function MainLayout({
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="flex h-16 items-center justify-between gap-3 border-b px-4 md:px-6">
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                <BrandMark
-                  size="sm"
-                  showName={false}
-                  showLatin={false}
-                  className="md:hidden"
-                />
+                <BrandMark size="sm" showName={false} showLatin={false} className="md:hidden" />
                 <h1 className="min-w-0 truncate whitespace-nowrap text-base font-semibold">
                   {current?.label ?? ''}
                 </h1>

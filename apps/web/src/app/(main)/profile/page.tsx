@@ -122,7 +122,10 @@ export default function ProfilePage(): React.JSX.Element {
               "用户会自己翻到"的地方。 */}
           <p className="text-sm text-muted-foreground">
             想核对版本号与开源组件？
-            <Link className="ml-1 font-medium text-primary underline underline-offset-2" href="/about">
+            <Link
+              className="ml-1 font-medium text-primary underline underline-offset-2"
+              href="/about"
+            >
               关于本产品
             </Link>
           </p>

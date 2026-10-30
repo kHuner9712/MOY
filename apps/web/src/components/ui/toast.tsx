@@ -1,6 +1,6 @@
 'use client';
 
-import type React from "react";
+import type React from 'react';
 
 import { Toaster as SonnerToaster } from 'sonner';
 

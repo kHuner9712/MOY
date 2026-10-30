@@ -69,9 +69,13 @@ export function RolePermissionDialog({
   orgId,
   canManage,
 }: RolePermissionDialogProps): React.JSX.Element {
-  const permissionsQuery = useApiQuery(QUERY_KEYS.permissions(), () => identityExtApi.listPermissions(), {
-    enabled: open,
-  });
+  const permissionsQuery = useApiQuery(
+    QUERY_KEYS.permissions(),
+    () => identityExtApi.listPermissions(),
+    {
+      enabled: open,
+    },
+  );
   const rolesQuery = useApiQuery(QUERY_KEYS.roles(orgId), () => identityExtApi.listRoles(orgId), {
     enabled: open && Boolean(orgId),
   });
@@ -108,7 +112,9 @@ export function RolePermissionDialog({
       const exists = current.includes(permission);
       return {
         ...prev,
-        [roleKey]: exists ? current.filter((item) => item !== permission) : [...current, permission],
+        [roleKey]: exists
+          ? current.filter((item) => item !== permission)
+          : [...current, permission],
       };
     });
   };
@@ -225,14 +231,19 @@ export function RolePermissionDialog({
                             : (draft[role.role_key] ?? []).includes(permission.permission);
                           const locked = !editing || isOwner || !canManage;
                           return (
-                            <td key={`${role.role_id}-${permission.permission}`} className="text-center">
+                            <td
+                              key={`${role.role_id}-${permission.permission}`}
+                              className="text-center"
+                            >
                               <input
                                 type="checkbox"
                                 aria-label={`${role.display_name || role.role_key} 的 ${permission.display_name}`}
                                 className="h-4 w-4 cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-60"
                                 checked={checked}
                                 disabled={locked}
-                                onChange={() => togglePermission(role.role_key, permission.permission)}
+                                onChange={() =>
+                                  togglePermission(role.role_key, permission.permission)
+                                }
                               />
                             </td>
                           );

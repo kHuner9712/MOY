@@ -130,9 +130,7 @@ export default function AboutPage(): React.JSX.Element {
       <Card>
         <CardHeader>
           <CardTitle>开源组件与许可证</CardTitle>
-          <CardDescription>
-            本产品使用了下列开源组件，我们在此如实列明各自的许可证
-          </CardDescription>
+          <CardDescription>本产品使用了下列开源组件，我们在此如实列明各自的许可证</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <ul className="divide-y">
@@ -171,7 +169,8 @@ export default function AboutPage(): React.JSX.Element {
                 <p className="mt-1 text-xs text-muted-foreground">{doc.description}</p>
                 {complianceBase === '' ? (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    在交付包的 <code className="rounded bg-muted px-1 py-0.5">docs/compliance/</code>{' '}
+                    在交付包的{' '}
+                    <code className="rounded bg-muted px-1 py-0.5">docs/compliance/</code>{' '}
                     目录下可直接打开该文件。
                   </p>
                 ) : (

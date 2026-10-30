@@ -107,13 +107,19 @@ describe('collectFieldErrors（提交前跑完全部字段）', () => {
   });
 
   it('邮箱格式非法 → 提示应用内文案（不是浏览器气泡）', () => {
-    const errors = collectFieldErrors([...SPECS.slice(0, 4), REQUIRED_EMAIL], values('not-an-email'));
+    const errors = collectFieldErrors(
+      [...SPECS.slice(0, 4), REQUIRED_EMAIL],
+      values('not-an-email'),
+    );
 
     expect(errors).toEqual({ notify: '请填写有效的邮箱地址' });
   });
 
   it('邮箱合法 → 无错误（此时才会组装提交载荷）', () => {
-    const errors = collectFieldErrors([...SPECS.slice(0, 4), REQUIRED_EMAIL], values('dev@example.com'));
+    const errors = collectFieldErrors(
+      [...SPECS.slice(0, 4), REQUIRED_EMAIL],
+      values('dev@example.com'),
+    );
 
     expect(errors).toEqual({});
   });
@@ -192,7 +198,10 @@ describe('表单关闭原生校验（W-06 机械锁）', () => {
    * @returns 文件内容
    */
   const readWebSource = (relativePath: string): string => {
-    const candidates = [resolve(process.cwd(), relativePath), resolve(process.cwd(), 'apps/web', relativePath)];
+    const candidates = [
+      resolve(process.cwd(), relativePath),
+      resolve(process.cwd(), 'apps/web', relativePath),
+    ];
     const found = candidates.find((candidate) => existsSync(candidate));
     if (!found) {
       throw new Error(`找不到源码文件 ${relativePath}（已尝试：${candidates.join(' | ')}）`);

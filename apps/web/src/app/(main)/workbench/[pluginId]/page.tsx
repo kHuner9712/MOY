@@ -382,7 +382,9 @@ export default function WorkbenchPage(): React.JSX.Element {
                   <CardHeader>
                     <CardTitle>执行步骤</CardTitle>
                     <CardDescription>
-                      {taskId ? '失败或等待确认的步骤会展开显示原因与建议动作' : '发起任务后这里会按步骤展示进度'}
+                      {taskId
+                        ? '失败或等待确认的步骤会展开显示原因与建议动作'
+                        : '发起任务后这里会按步骤展示进度'}
                     </CardDescription>
                   </CardHeader>
                   <CardContent>

@@ -75,7 +75,13 @@ export function DeclarationForm({
         if (spec.type === 'multi_select') {
           const picked = Array.isArray(value) ? value : [];
           return (
-            <Field key={spec.key} label={spec.label} required={spec.required} error={errors[spec.key]} hint={hint}>
+            <Field
+              key={spec.key}
+              label={spec.label}
+              required={spec.required}
+              error={errors[spec.key]}
+              hint={hint}
+            >
               <div className="flex flex-wrap gap-3" role="group" aria-label={spec.label}>
                 {(spec.options ?? []).map((option) => {
                   const checked = picked.includes(option);

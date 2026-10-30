@@ -1,6 +1,6 @@
 'use client';
 
-import type React from "react";
+import type React from 'react';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -20,11 +20,7 @@ const SEARCH_DEBOUNCE_MS = 400;
  * @param props - 组件属性
  * @returns 检索组件元素
  */
-export default function DocumentSearch({
-  baseId,
-}: {
-  baseId: string;
-}): React.JSX.Element {
+export default function DocumentSearch({ baseId }: { baseId: string }): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [segments, setSegments] = useState<SearchSegment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -101,9 +97,7 @@ export default function DocumentSearch({
               <li key={`${segment.document_id}-${index}`} className="rounded-md border p-3">
                 <div className="mb-1 flex items-center justify-between">
                   <span className="text-sm font-medium">{segment.document_name}</span>
-                  <Badge variant="secondary">
-                    相关度 {(segment.score * 100).toFixed(0)}%
-                  </Badge>
+                  <Badge variant="secondary">相关度 {(segment.score * 100).toFixed(0)}%</Badge>
                 </div>
                 <p className="text-sm leading-relaxed text-muted-foreground">
                   {segment.segment_content}

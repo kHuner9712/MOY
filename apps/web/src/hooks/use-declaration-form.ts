@@ -210,11 +210,7 @@ export function mergeMissingDefaults(
       changed = true;
       continue;
     }
-    if (
-      spec.type === 'select' &&
-      (spec.options?.length ?? 0) > 0 &&
-      isBlankValue(prev[spec.key])
-    ) {
+    if (spec.type === 'select' && (spec.options?.length ?? 0) > 0 && isBlankValue(prev[spec.key])) {
       next[spec.key] = defaultValueOf(spec);
       changed = true;
     }
@@ -341,18 +337,15 @@ export function useDeclarationForm(
     setValues((prev) => (prev[target.key] ? prev : { ...prev, [target.key]: initial }));
   }, [initial, inputs]);
 
-  const setValue = useCallback(
-    (key: string, value: DeclarationValue): void => {
-      setValues((prev) => ({ ...prev, [key]: value }));
-      setErrors((prev) => {
-        if (!prev[key]) return prev;
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-    },
-    [],
-  );
+  const setValue = useCallback((key: string, value: DeclarationValue): void => {
+    setValues((prev) => ({ ...prev, [key]: value }));
+    setErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
 
   const validate = useCallback((): boolean => {
     const nextErrors = collectFieldErrors(inputs, values);

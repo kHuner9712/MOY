@@ -5,7 +5,9 @@
 1. 当前 30 个核心端点全部通过 G1，且集合与 `docs/api/baseline-core-30.json` **完全一致**；
 2. 故意删一个端点 → 门禁失败且打印缺失路径；
 3. 故意改响应字段类型 → G4 报 type changed；
-4. `--allow-missing-phase2` 期间 CI 绿（新域端点按批次补齐，不允许写假端点）；
+4. **恒严格（无任何放宽参数）**：阶段二/阶段三「已登记但未实现」一律判红——
+   历史放宽参数 `--allow-missing-phase2` 已于 2026-10-29 审计清理中整体移除
+   （38/38 早已交付，放宽通道已死），删一个新域端点必须立刻变红；
 5. **B21 收口**：阶段三 `phase3 == 16` 精确相等，且**没有** `--allow-missing-phase3`
    这类放宽参数——删一个插件域端点必须立刻变红；
 6. **W1 增量**：`baseline-w1-2.json` 精确 2 条，且从 core 扣除（与 phase4 同口径）；
@@ -138,8 +140,8 @@ def test_snapshot_exists_and_covers_core_endpoints() -> None:
         assert path in snapshot["paths"], f"快照缺少路径 {path}"
 
 
-def test_repository_passes_gates_with_allow_missing_phase2() -> None:
-    """当前仓库状态在 `--allow-missing-phase2` 下 G1-G5 全绿。
+def test_repository_passes_all_gates() -> None:
+    """当前仓库状态 G1-G7 全绿（全量严格，无任何放宽参数）。
 
     阶段三自 B21 起无放宽参数，故这里断言 `phase3 == 16`（精确值）。
     W1 同 phase4：基线必须一并传入（它是 core 的扣除项之一）。
@@ -155,7 +157,6 @@ def test_repository_passes_gates_with_allow_missing_phase2() -> None:
         # W1 基线同口径：漏传会把 2 条登记端点算进 core，且 G7 判"基线不足 2 条"
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         snapshot=_load_snapshot(),
-        allow_missing_phase2=True,
         skip_diff=False,
     )
     assert failures == [], [item.render() for item in failures]
@@ -176,11 +177,6 @@ def _load_snapshot() -> dict[str, Any]:
     import json
 
     return json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
-
-
-def test_cli_returns_zero_with_allow_missing_phase2() -> None:
-    """CLI 在 `--allow-missing-phase2` 下退出码为 0（阶段二历史口径）。"""
-    assert validator.main(["--allow-missing-phase2", "--no-write-openapi"]) == 0
 
 
 def test_cli_returns_zero_in_strict_mode_after_b10() -> None:
@@ -238,41 +234,47 @@ def test_g1_reports_extra_endpoint_path() -> None:
 # ===========================================================================
 # 3. G2 / G3：新域基线与计数
 # ===========================================================================
-def test_g2_tolerates_missing_when_allowed() -> None:
-    """`--allow-missing-phase2` 期间，未实现的新域端点不阻断 CI。"""
+def test_g2_missing_endpoint_is_red() -> None:
+    """已登记但未实现的新域端点 → G2 失败（恒严格，无放宽通道）。
+
+    历史：`--allow-missing-phase2` 时期该条件不判红；放宽参数已于
+    2026-10-29 审计清理中整体移除，「已登记但未实现」必须阻断。
+    """
     declared = {("PUT", "/api/v1/knowledge/bases/{base_id}/credential-binding")}
-    assert validator.gate_phase2_baseline(set(), declared, allow_missing=True) == []
-    assert validator.gate_phase2_baseline(set(), declared, allow_missing=False)
+    failures = validator.gate_phase2_baseline(set(), declared)
+    assert failures
+    assert "credential-binding" in failures[0].detail
 
 
 def test_g2_rejects_unregistered_new_endpoint() -> None:
     """已实现但未登记的新域端点 → G2 失败。"""
     actual = {("PUT", "/api/v1/knowledge/bases/{base_id}/credential-binding")}
-    failures = validator.gate_phase2_baseline(actual, set(), allow_missing=True)
+    failures = validator.gate_phase2_baseline(actual, set())
     assert failures
     assert "credential-binding" in failures[0].detail
 
 
 def test_g3_core_count_is_frozen() -> None:
     """核心端点数量漂移即失败。"""
-    assert validator.gate_counts(30, 0, 16, allow_missing=True) == []
-    assert validator.gate_counts(29, 0, 16, allow_missing=True)
+    assert validator.gate_counts(30, 38, 16) == []
+    assert validator.gate_counts(29, 38, 16)
 
 
-def test_g3_phase2_upper_bound_in_allow_mode() -> None:
-    """放宽模式下新域端点不得超过冻结上限 38。"""
-    assert validator.gate_counts(30, 39, 16, allow_missing=True)
+def test_g3_phase2_count_is_frozen() -> None:
+    """新域端点数量漂移即失败（恒严格：少一条、多一条都红）。"""
+    assert validator.gate_counts(30, 38, 16) == []
+    assert validator.gate_counts(30, 39, 16)
+    assert validator.gate_counts(30, 37, 16)
 
 
 def test_g3_phase3_count_is_always_strict() -> None:
     """阶段三**没有放宽模式**：少一条、多一条都必须红（B21 收口判据）。
 
-    这条是"删端点让门禁变绿"的机械钉子：即便阶段二仍在放宽，
-    `phase3_count != 16` 也必须让 G3 失败。
+    这条是"删端点让门禁变绿"的机械钉子：`phase3_count != 16` 必须让 G3 失败。
     """
-    assert validator.gate_counts(30, 38, 15, allow_missing=True)
-    assert validator.gate_counts(30, 38, 17, allow_missing=True)
-    assert validator.gate_counts(30, 38, 16, allow_missing=True) == []
+    assert validator.gate_counts(30, 38, 15)
+    assert validator.gate_counts(30, 38, 17)
+    assert validator.gate_counts(30, 38, 16) == []
 
 
 # ===========================================================================
@@ -353,7 +355,6 @@ def test_phase4_present_matches_current_batch() -> None:
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         snapshot=_load_snapshot(),
-        allow_missing_phase2=False,
         skip_diff=False,
         strict_phase4=False,
     )
@@ -423,7 +424,6 @@ def test_w1_present_matches_current_batch() -> None:
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         snapshot=_load_snapshot(),
-        allow_missing_phase2=False,
         skip_diff=False,
         strict_phase4=False,
     )
@@ -447,7 +447,6 @@ def test_strict_flag_only_changes_verdict_when_phase4_missing() -> None:
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         snapshot=_load_snapshot(),
-        allow_missing_phase2=False,
         skip_diff=False,
         strict_phase4=False,
     )

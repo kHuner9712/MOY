@@ -12,12 +12,7 @@ import { cn } from '@/lib/utils';
  * 说明：`waiting_confirm` 属于**任务级**状态（该步此时仍是 pending），
  * 不在此枚举内；任务级的「等待确认」由页面顶部确认条表达（B24）。
  */
-export type TimelineStatus = 
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'skipped';
+export type TimelineStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
 /** 步骤失败信息（业务语言，禁止出现错误码） */
 export interface TimelineStepFailure {
@@ -150,9 +145,7 @@ export function Timeline({
 
   if (steps.length === 0) {
     return (
-      <p className={cn('py-8 text-center text-sm text-muted-foreground', className)}>
-        {emptyHint}
-      </p>
+      <p className={cn('py-8 text-center text-sm text-muted-foreground', className)}>{emptyHint}</p>
     );
   }
 

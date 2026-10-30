@@ -69,14 +69,15 @@ export function SubmitBar({
   if (!status) return null;
 
   const hint = hintOf(status, queuePosition);
-  const running = status === 'queued' || status === 'pending' || status === 'running' || status === 'waiting_confirm';
+  const running =
+    status === 'queued' ||
+    status === 'pending' ||
+    status === 'running' ||
+    status === 'waiting_confirm';
   const safeProgress = Math.min(Math.max(Number.isFinite(progress) ? progress : 0, 0), 100);
 
   return (
-    <section
-      aria-label="执行状态"
-      className="space-y-2 rounded-lg border bg-muted/20 px-4 py-3"
-    >
+    <section aria-label="执行状态" className="space-y-2 rounded-lg border bg-muted/20 px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium">{hint}</p>
         {running && onCancel ? (
@@ -85,9 +86,7 @@ export function SubmitBar({
           </Button>
         ) : null}
       </div>
-      {status !== 'queued' ? (
-        <Progress value={safeProgress} size="sm" label="执行进度" />
-      ) : null}
+      {status !== 'queued' ? <Progress value={safeProgress} size="sm" label="执行进度" /> : null}
       {taskId ? (
         <p className="text-xs text-muted-foreground">
           任务号：<span className="font-mono">{orPlaceholder(taskId)}</span>

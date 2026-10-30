@@ -106,9 +106,7 @@ export function InstalledTable({
         ) : (
           items.map((plugin) => {
             const enabled = plugin.status === 'enabled';
-            const lastUsed = plugin.last_used_at
-              ? formatDateTime(plugin.last_used_at)
-              : '尚未使用';
+            const lastUsed = plugin.last_used_at ? formatDateTime(plugin.last_used_at) : '尚未使用';
             return (
               <TableRow key={plugin.plugin_id}>
                 <TableCell className="max-w-[12rem]">
@@ -123,15 +121,14 @@ export function InstalledTable({
                 <TableCell>
                   <Badge variant="outline">{orPlaceholder(plugin.category)}</Badge>
                 </TableCell>
-                <TableCell className="whitespace-nowrap font-mono text-sm">{plugin.version}</TableCell>
+                <TableCell className="whitespace-nowrap font-mono text-sm">
+                  {plugin.version}
+                </TableCell>
                 <TableCell className="whitespace-nowrap font-mono text-sm text-muted-foreground">
                   {plugin.has_update ? plugin.latest_version : '已是最新'}
                 </TableCell>
                 <TableCell>
-                  <StatusBadge
-                    status={plugin.status}
-                    label={enabled ? '已启用' : '已停用'}
-                  />
+                  <StatusBadge status={plugin.status} label={enabled ? '已启用' : '已停用'} />
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                   {lastUsed}
@@ -141,10 +138,7 @@ export function InstalledTable({
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex flex-wrap items-center justify-end gap-1">
-                    <Tooltip
-                      content="该插件已停用，请联系管理员启用后再使用"
-                      disabled={enabled}
-                    >
+                    <Tooltip content="该插件已停用，请联系管理员启用后再使用" disabled={enabled}>
                       <Button
                         type="button"
                         size="sm"

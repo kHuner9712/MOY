@@ -22,7 +22,13 @@ import {
 import { QUERY_KEYS, useApiQuery } from '@/hooks/use-api';
 import { opsApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
-import { formatCents, formatDate, formatDateTime, formatPercent, orPlaceholder } from '@/lib/format';
+import {
+  formatCents,
+  formatDate,
+  formatDateTime,
+  formatPercent,
+  orPlaceholder,
+} from '@/lib/format';
 
 /**
  * 运营-企业详情（OPS2）。
@@ -36,9 +42,13 @@ export default function OpsTenantDetailPage(): React.JSX.Element {
   const params = useParams<{ tenantId: string }>();
   const tenantId = params.tenantId;
 
-  const detailQuery = useApiQuery(QUERY_KEYS.opsTenant(tenantId), () => opsApi.getTenant(tenantId), {
-    enabled: Boolean(tenantId),
-  });
+  const detailQuery = useApiQuery(
+    QUERY_KEYS.opsTenant(tenantId),
+    () => opsApi.getTenant(tenantId),
+    {
+      enabled: Boolean(tenantId),
+    },
+  );
 
   if (detailQuery.isLoading) {
     return <LoadingState label="正在加载企业详情…" />;
@@ -95,7 +105,9 @@ export default function OpsTenantDetailPage(): React.JSX.Element {
             <dl className="grid gap-3 sm:grid-cols-2">
               <div>
                 <dt className="text-xs text-muted-foreground">当前套餐</dt>
-                <dd className="text-sm font-medium">{orPlaceholder(subscription.plan_name, subscription.plan_code)}</dd>
+                <dd className="text-sm font-medium">
+                  {orPlaceholder(subscription.plan_name, subscription.plan_code)}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">席位</dt>
@@ -105,11 +117,15 @@ export default function OpsTenantDetailPage(): React.JSX.Element {
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">当前账期结束</dt>
-                <dd className="text-sm font-medium">{formatDate(subscription.current_period_end)}</dd>
+                <dd className="text-sm font-medium">
+                  {formatDate(subscription.current_period_end)}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">自动续费</dt>
-                <dd className="text-sm font-medium">{subscription.auto_renew ? '已开启' : '已关闭'}</dd>
+                <dd className="text-sm font-medium">
+                  {subscription.auto_renew ? '已开启' : '已关闭'}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">创建时间</dt>

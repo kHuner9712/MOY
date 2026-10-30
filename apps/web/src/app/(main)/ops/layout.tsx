@@ -33,16 +33,11 @@ const FORBIDDEN_MESSAGE = '当前账号没有该操作的权限';
  * @param props - 布局属性
  * @returns 运营后台布局元素
  */
-export default function OpsLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}): React.JSX.Element {
+export default function OpsLayout({ children }: { children: React.ReactNode }): React.JSX.Element {
   const pathname = usePathname();
   const accessQuery = useApiQuery(QUERY_KEYS.opsAccess(), () => opsApi.getSettings(), { retry: 0 });
 
-  const forbidden =
-    accessQuery.error instanceof BusinessError && accessQuery.error.code === 20003;
+  const forbidden = accessQuery.error instanceof BusinessError && accessQuery.error.code === 20003;
 
   if (accessQuery.isLoading) {
     return (
@@ -57,10 +52,7 @@ export default function OpsLayout({
       <div className="mx-auto max-w-6xl space-y-2">
         <h2 className="text-xl font-semibold">运营后台</h2>
         {forbidden ? (
-          <ErrorState
-            message={FORBIDDEN_MESSAGE}
-            onRetry={() => void accessQuery.refetch()}
-          />
+          <ErrorState message={FORBIDDEN_MESSAGE} onRetry={() => void accessQuery.refetch()} />
         ) : (
           <ErrorState
             message={toBusinessMessage(accessQuery.error)}

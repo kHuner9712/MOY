@@ -66,7 +66,9 @@ export default function KnowledgePage(): React.JSX.Element {
   const [nameError, setNameError] = React.useState<string>('');
 
   const params = { page: 1, page_size: 100, keyword: keyword.trim() };
-  const basesQuery = useApiQuery(QUERY_KEYS.knowledgeBases(params), () => knowledgeApi.listBases(params));
+  const basesQuery = useApiQuery(QUERY_KEYS.knowledgeBases(params), () =>
+    knowledgeApi.listBases(params),
+  );
 
   const createMutation = useApiMutation(
     (variables: {
@@ -210,10 +212,7 @@ export default function KnowledgePage(): React.JSX.Element {
         </div>
       )}
 
-      <Dialog
-        open={createOpen}
-        onOpenChange={createMutation.isPending ? undefined : setCreateOpen}
-      >
+      <Dialog open={createOpen} onOpenChange={createMutation.isPending ? undefined : setCreateOpen}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>新建知识库</DialogTitle>
@@ -233,7 +232,11 @@ export default function KnowledgePage(): React.JSX.Element {
                 autoFocus
               />
             </Field>
-            <Field label="描述" htmlFor="new-base-description" hint="用于在列表里说明这个库放什么资料">
+            <Field
+              label="描述"
+              htmlFor="new-base-description"
+              hint="用于在列表里说明这个库放什么资料"
+            >
               <Textarea
                 id="new-base-description"
                 value={description}

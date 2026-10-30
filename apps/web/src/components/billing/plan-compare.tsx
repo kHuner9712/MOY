@@ -77,15 +77,19 @@ export function PlanCompare({
               {plan.features.map((feature) => (
                 <li key={feature.feature_key} className="flex items-start gap-2">
                   {feature.included ? (
-                    <Check aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                    <Check
+                      aria-hidden="true"
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600"
+                    />
                   ) : (
-                    <Minus aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <Minus
+                      aria-hidden="true"
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                    />
                   )}
                   <span className={feature.included ? '' : 'text-muted-foreground'}>
                     {feature.display_name}
-                    {feature.included && feature.limit !== null
-                      ? `（上限 ${feature.limit}）`
-                      : ''}
+                    {feature.included && feature.limit !== null ? `（上限 ${feature.limit}）` : ''}
                   </span>
                 </li>
               ))}

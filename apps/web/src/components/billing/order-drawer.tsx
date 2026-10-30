@@ -186,7 +186,9 @@ export function OrderDrawer({
                 <dl className="space-y-2 rounded-md border p-3 text-sm">
                   <div className="flex justify-between gap-3">
                     <dt className="text-muted-foreground">套餐</dt>
-                    <dd className="font-medium">{orPlaceholder(plan.display_name, plan.plan_code)}</dd>
+                    <dd className="font-medium">
+                      {orPlaceholder(plan.display_name, plan.plan_code)}
+                    </dd>
                   </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-muted-foreground">单价</dt>
@@ -196,7 +198,11 @@ export function OrderDrawer({
                   </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-muted-foreground">每位成员每月额度</dt>
-                    <dd>{plan.quota_units_per_seat_month > 0 ? `${plan.quota_units_per_seat_month} ${plan.quota_unit_label}` : '—'}</dd>
+                    <dd>
+                      {plan.quota_units_per_seat_month > 0
+                        ? `${plan.quota_units_per_seat_month} ${plan.quota_unit_label}`
+                        : '—'}
+                    </dd>
                   </div>
                 </dl>
 
@@ -235,13 +241,12 @@ export function OrderDrawer({
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {safeSeats} 个席位 × {formatCents(plan.price_per_seat_month_cents, plan.currency)}
+                    {safeSeats} 个席位 ×{' '}
+                    {formatCents(plan.price_per_seat_month_cents, plan.currency)}
                   </p>
                 </div>
 
-                {submitError ? (
-                  <ErrorState message={submitError} onRetry={submit} />
-                ) : null}
+                {submitError ? <ErrorState message={submitError} onRetry={submit} /> : null}
               </>
             )}
           </DrawerBody>
@@ -277,9 +282,7 @@ export function OrderDrawer({
             <li>套餐：{orPlaceholder(plan.display_name, plan.plan_code)}</li>
             <li>席位：{safeSeats} 个</li>
             <li>金额：{formatCents(amountCents, plan.currency)}</li>
-            <li>
-              支付方式：{paymentMethod === 'online' ? '在线支付' : '对公转账'}
-            </li>
+            <li>支付方式：{paymentMethod === 'online' ? '在线支付' : '对公转账'}</li>
           </ul>
         ) : null}
       </ConfirmDialog>

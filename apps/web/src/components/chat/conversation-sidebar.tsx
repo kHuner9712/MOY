@@ -1,6 +1,6 @@
 'use client';
 
-import type React from "react";
+import type React from 'react';
 
 import { MessageSquarePlus } from 'lucide-react';
 import { useCallback } from 'react';
@@ -32,9 +32,7 @@ export default function ConversationSidebar(): React.JSX.Element {
 
       <div className="mt-2 flex-1 space-y-1 overflow-y-auto">
         {conversations.length === 0 ? (
-          <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-            暂无历史对话
-          </p>
+          <p className="px-2 py-4 text-center text-xs text-muted-foreground">暂无历史对话</p>
         ) : (
           conversations.map((item) => (
             <div

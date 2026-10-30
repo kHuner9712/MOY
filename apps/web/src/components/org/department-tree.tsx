@@ -135,7 +135,9 @@ function DepartmentTreeNode({
             hasChildren ? 'hover:bg-background' : 'invisible',
           )}
         >
-          <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-90')} />
+          <ChevronRight
+            className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-90')}
+          />
         </button>
 
         <FolderTree aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

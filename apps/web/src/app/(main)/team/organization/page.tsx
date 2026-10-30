@@ -109,8 +109,7 @@ export default function OrganizationPage(): React.JSX.Element {
         setSelectedId(data.department_id);
         setFormMode(null);
       },
-      onError: (error) =>
-        toast.error(toBusinessMessage(error, 'department.level_exceeded')),
+      onError: (error) => toast.error(toBusinessMessage(error, 'department.level_exceeded')),
     },
   );
 
@@ -146,8 +145,7 @@ export default function OrganizationPage(): React.JSX.Element {
         toast.success('部门已删除');
         setSelectedId('');
       },
-      onError: (error) =>
-        toast.error(toBusinessMessage(error, 'department.delete_non_empty')),
+      onError: (error) => toast.error(toBusinessMessage(error, 'department.delete_non_empty')),
     },
   );
 
@@ -421,10 +419,7 @@ export default function OrganizationPage(): React.JSX.Element {
               <Button type="button" variant="outline" onClick={() => setFormMode(null)}>
                 取消
               </Button>
-              <Button
-                type="submit"
-                disabled={createMutation.isPending || renameMutation.isPending}
-              >
+              <Button type="submit" disabled={createMutation.isPending || renameMutation.isPending}>
                 {createMutation.isPending || renameMutation.isPending ? '保存中…' : '保存'}
               </Button>
             </DialogFooter>

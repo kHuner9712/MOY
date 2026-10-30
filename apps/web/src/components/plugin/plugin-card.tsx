@@ -100,7 +100,9 @@ export function PluginCard({
             size="sm"
             label={`${plugin.name} 评分`}
           />
-          <span className="text-xs text-muted-foreground">v{orPlaceholder(plugin.latest_version)}</span>
+          <span className="text-xs text-muted-foreground">
+            v{orPlaceholder(plugin.latest_version)}
+          </span>
           {plugin.installed_status !== 'none' ? (
             <StatusBadge status={plugin.installed_status} />
           ) : null}

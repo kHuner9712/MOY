@@ -11,7 +11,10 @@ import {
 import { cn } from '@/lib/utils';
 
 /** 加载骨架屏（总方案 3.5：所有等待有进度） */
-export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): React.JSX.Element {
+export function Skeleton({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>): React.JSX.Element {
   return <div className={cn('skeleton', className)} {...props} />;
 }
 
@@ -41,9 +44,7 @@ function StateBlock({
     >
       {icon}
       <div className={cn('font-medium', tone === 'danger' ? 'text-destructive' : '')}>{title}</div>
-      {description ? (
-        <p className="max-w-md text-sm text-muted-foreground">{description}</p>
-      ) : null}
+      {description ? <p className="max-w-md text-sm text-muted-foreground">{description}</p> : null}
       {action}
     </div>
   );
@@ -160,7 +161,8 @@ export function ErrorState({
   }, [message, reset]);
 
   const totalAttempts = failureCount ?? attempts;
-  const showAggregate = failureCount !== undefined ? failureCount >= RETRY_AGGREGATE_THRESHOLD : exhausted;
+  const showAggregate =
+    failureCount !== undefined ? failureCount >= RETRY_AGGREGATE_THRESHOLD : exhausted;
 
   return (
     <StateBlock

@@ -69,9 +69,7 @@ export function BaseSettingsDialog({
   const [name, setName] = React.useState<string>(base.name);
   const [description, setDescription] = React.useState<string>(base.description);
   const [visibility, setVisibility] = React.useState<Visibility>(base.visibility);
-  const [chunkPolicy, setChunkPolicy] = React.useState<ChunkPolicy>(
-    base.chunk_policy ?? 'default',
-  );
+  const [chunkPolicy, setChunkPolicy] = React.useState<ChunkPolicy>(base.chunk_policy ?? 'default');
   const [nameError, setNameError] = React.useState<string>('');
   /** 是否已用最新数据回填过（打开期间后台刷新不得覆盖用户正在编辑的内容） */
   const initializedRef = React.useRef<boolean>(false);

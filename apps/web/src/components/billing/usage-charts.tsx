@@ -53,7 +53,9 @@ export function UsageCharts({
           <div className="flex h-[7.5rem] items-end gap-1" role="img" aria-label="按日用量柱状图">
             {dailyTrend.map((item) => {
               const height =
-                maxDaily > 0 ? Math.max(4, Math.round((item.units / maxDaily) * BAR_MAX_HEIGHT)) : 4;
+                maxDaily > 0
+                  ? Math.max(4, Math.round((item.units / maxDaily) * BAR_MAX_HEIGHT))
+                  : 4;
               return (
                 <div
                   key={item.date}
@@ -64,9 +66,9 @@ export function UsageCharts({
                     className="w-full rounded-t bg-primary/70 transition-colors group-hover:bg-primary"
                     style={{ height: `${height}px` }}
                   />
-                    <span className="mt-1 w-full truncate text-center text-[10px] text-muted-foreground">
-                      {item.date.slice(5)}
-                    </span>
+                  <span className="mt-1 w-full truncate text-center text-[10px] text-muted-foreground">
+                    {item.date.slice(5)}
+                  </span>
                 </div>
               );
             })}

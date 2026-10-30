@@ -68,7 +68,11 @@ export interface ArtifactCardProps {
  * @param props - 组件属性
  * @returns 产物卡片元素
  */
-export function ArtifactCard({ taskId, artifact, onUpdated }: ArtifactCardProps): React.JSX.Element {
+export function ArtifactCard({
+  taskId,
+  artifact,
+  onUpdated,
+}: ArtifactCardProps): React.JSX.Element {
   const editable = isEditableArtifactType(artifact.type);
   const [version, setVersion] = React.useState<number>(1);
   const [downloadUrl, setDownloadUrl] = React.useState<string>(artifact.download_url ?? '');

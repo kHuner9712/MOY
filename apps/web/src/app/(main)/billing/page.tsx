@@ -12,13 +12,26 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/feedback';
 import { QuotaProgress } from '@/components/ui/progress';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
 import { Tooltip } from '@/components/ui/tooltip';
 import { QUERY_KEYS, useApiMutation, useApiQuery } from '@/hooks/use-api';
 import { billingApi } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
-import { formatCents, formatDate, formatDateTime, formatPercent, orPlaceholder } from '@/lib/format';
+import {
+  formatCents,
+  formatDate,
+  formatDateTime,
+  formatPercent,
+  orPlaceholder,
+} from '@/lib/format';
 import type { PlanItem, SubscriptionDetail } from '@/lib/types';
 
 /** 额度告警阈值（与运营配置默认值一致，>= 该比例显示顶部提示） */
@@ -49,18 +62,23 @@ function currentPeriod(): string {
 export default function BillingPage(): React.JSX.Element {
   const period = currentPeriod();
   const [orderPlan, setOrderPlan] = React.useState<PlanItem | null>(null);
-  const [orderType, setOrderType] = React.useState<'new' | 'renew' | 'upgrade' | 'seats'>('upgrade');
+  const [orderType, setOrderType] = React.useState<'new' | 'renew' | 'upgrade' | 'seats'>(
+    'upgrade',
+  );
   const [orderOpen, setOrderOpen] = React.useState<boolean>(false);
   const [downgradeTarget, setDowngradeTarget] = React.useState<PlanItem | null>(null);
   const [notice, setNotice] = React.useState<string>('');
 
   const plansQuery = useApiQuery(QUERY_KEYS.plans(), () => billingApi.listPlans());
-  const subscriptionQuery = useApiQuery(QUERY_KEYS.subscription(), () => billingApi.getSubscription());
+  const subscriptionQuery = useApiQuery(QUERY_KEYS.subscription(), () =>
+    billingApi.getSubscription(),
+  );
   const usageQuery = useApiQuery(QUERY_KEYS.billingUsage(period), () =>
     billingApi.getUsage({ period }),
   );
-  const ordersQuery = useApiQuery(QUERY_KEYS.billingOrders({ page: 1, page_size: RECENT_ORDER_SIZE }), () =>
-    billingApi.listOrders({ page: 1, page_size: RECENT_ORDER_SIZE }),
+  const ordersQuery = useApiQuery(
+    QUERY_KEYS.billingOrders({ page: 1, page_size: RECENT_ORDER_SIZE }),
+    () => billingApi.listOrders({ page: 1, page_size: RECENT_ORDER_SIZE }),
   );
   const invoicesQuery = useApiQuery(QUERY_KEYS.invoices(), () => billingApi.listInvoices());
 
@@ -76,7 +94,11 @@ export default function BillingPage(): React.JSX.Element {
         action: 'downgrade',
       }),
     {
-      invalidateKeys: [QUERY_KEYS.subscription(), QUERY_KEYS.billingOrders(), QUERY_KEYS.billingUsage(period)],
+      invalidateKeys: [
+        QUERY_KEYS.subscription(),
+        QUERY_KEYS.billingOrders(),
+        QUERY_KEYS.billingUsage(period),
+      ],
       onSuccess: (data) => {
         // 15005 是「提示码」而非错误码：展示提示条，不弹错误
         setNotice(
@@ -91,8 +113,8 @@ export default function BillingPage(): React.JSX.Element {
   /** 选择套餐：比当前便宜走降级确认（提示周期末生效），其余走下单升级 */
   const handleChoosePlan = (plan: PlanItem): void => {
     const currentPrice =
-      plans.find((item) => item.plan_code === subscription?.plan_code)?.price_per_seat_month_cents ??
-      0;
+      plans.find((item) => item.plan_code === subscription?.plan_code)
+        ?.price_per_seat_month_cents ?? 0;
     const isDowngrade =
       subscription !== undefined &&
       subscription.plan_code !== 'free' &&
@@ -110,7 +132,9 @@ export default function BillingPage(): React.JSX.Element {
 
   /** 顶部警告条：额度接近用完 */
   const quotaWarning =
-    usage !== undefined && Number.isFinite(usage.usage_percent) && usage.usage_percent >= QUOTA_WARN_PERCENT;
+    usage !== undefined &&
+    Number.isFinite(usage.usage_percent) &&
+    usage.usage_percent >= QUOTA_WARN_PERCENT;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -132,7 +156,8 @@ export default function BillingPage(): React.JSX.Element {
         <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <Wallet aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
-            本月额度已用 {formatPercent(usage.usage_percent)}，接近上限时会切换为常规模式；升级套餐可恢复完整能力。
+            本月额度已用 {formatPercent(usage.usage_percent)}
+            ，接近上限时会切换为常规模式；升级套餐可恢复完整能力。
           </p>
         </div>
       ) : null}
@@ -142,7 +167,12 @@ export default function BillingPage(): React.JSX.Element {
           <CardHeader>
             <div className="flex items-center justify-between gap-2">
               <CardTitle>当前套餐</CardTitle>
-              {subscription ? <StatusBadge status="active" label={orPlaceholder(subscription.plan_name, subscription.plan_code)} /> : null}
+              {subscription ? (
+                <StatusBadge
+                  status="active"
+                  label={orPlaceholder(subscription.plan_name, subscription.plan_code)}
+                />
+              ) : null}
             </div>
             <CardDescription>席位与账期以企业实际订阅为准</CardDescription>
           </CardHeader>
@@ -271,9 +301,7 @@ export default function BillingPage(): React.JSX.Element {
         <CardHeader>
           <div className="flex items-center justify-between gap-2">
             <CardTitle>最近订单</CardTitle>
-            <span className="text-xs text-muted-foreground">
-              仅展示最近 {RECENT_ORDER_SIZE} 笔
-            </span>
+            <span className="text-xs text-muted-foreground">仅展示最近 {RECENT_ORDER_SIZE} 笔</span>
           </div>
           <CardDescription>下单后可在此查看支付状态</CardDescription>
         </CardHeader>
@@ -422,7 +450,11 @@ export default function BillingPage(): React.JSX.Element {
  * @param props - 组件属性
  * @returns 摘要素材
  */
-function SubscriptionSummary({ subscription }: { subscription: SubscriptionDetail }): React.JSX.Element {
+function SubscriptionSummary({
+  subscription,
+}: {
+  subscription: SubscriptionDetail;
+}): React.JSX.Element {
   return (
     <div className="space-y-3">
       <dl className="grid gap-3 sm:grid-cols-2">

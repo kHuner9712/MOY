@@ -1485,7 +1485,11 @@ export interface TaskConfirmInfo {
 export type ArtifactType = 'draft' | 'doc' | 'table' | 'link' | 'file' | 'text';
 
 /** 可编辑并重新导出的产物类型（WF2） */
-export const EDITABLE_ARTIFACT_TYPES: readonly ArtifactType[] = Object.freeze(['draft', 'doc', 'table']);
+export const EDITABLE_ARTIFACT_TYPES: readonly ArtifactType[] = Object.freeze([
+  'draft',
+  'doc',
+  'table',
+]);
 
 /** 重新导出格式（WF2 可选参数） */
 export type ArtifactRenderFormat = 'docx' | 'md' | 'csv';

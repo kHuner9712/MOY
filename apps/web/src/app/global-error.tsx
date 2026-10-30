@@ -72,7 +72,12 @@ export default function GlobalError({
             <button
               type="button"
               onClick={reset}
-              style={{ ...buttonBase, background: '#2563eb', borderColor: '#2563eb', color: '#ffffff' }}
+              style={{
+                ...buttonBase,
+                background: '#2563eb',
+                borderColor: '#2563eb',
+                color: '#ffffff',
+              }}
             >
               重试
             </button>

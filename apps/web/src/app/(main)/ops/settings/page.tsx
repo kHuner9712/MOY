@@ -140,9 +140,7 @@ export default function OpsSettingsPage(): React.JSX.Element {
                 min="0"
                 max="100"
                 value={form.quotaWarnThreshold}
-                onChange={(event) =>
-                  setForm({ ...form, quotaWarnThreshold: event.target.value })
-                }
+                onChange={(event) => setForm({ ...form, quotaWarnThreshold: event.target.value })}
               />
             </Field>
 
@@ -191,7 +189,8 @@ export default function OpsSettingsPage(): React.JSX.Element {
                 {saveMutation.isPending ? '保存中…' : '保存配置'}
               </Button>
               <span className="text-xs text-muted-foreground">
-                最近修改：{orPlaceholder(settings.updated_by)} · {formatDateTime(settings.updated_at)}
+                最近修改：{orPlaceholder(settings.updated_by)} ·{' '}
+                {formatDateTime(settings.updated_at)}
               </span>
             </div>
           </form>

@@ -48,9 +48,7 @@ export function Tabs({
   ariaLabel = '视图切换',
   className,
 }: TabsProps): React.JSX.Element {
-  const [innerValue, setInnerValue] = React.useState<string>(
-    defaultValue ?? items[0]?.value ?? '',
-  );
+  const [innerValue, setInnerValue] = React.useState<string>(defaultValue ?? items[0]?.value ?? '');
   const current: string = value !== undefined ? value : innerValue;
 
   /** 选中某个标签 */
@@ -64,26 +62,23 @@ export function Tabs({
   );
 
   /** 键盘导航：左右箭头 / Home / End */
-  const handleKeyDown = React.useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>): void => {
-      const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
-      if (!keys.includes(event.key)) return;
-      const nodes = Array.from(
-        event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not([disabled])'),
-      );
-      if (nodes.length === 0) return;
-      const activeIndex = nodes.findIndex((node) => node === document.activeElement);
-      const safeIndex = activeIndex < 0 ? 0 : activeIndex;
-      let nextIndex = safeIndex;
-      if (event.key === 'ArrowRight') nextIndex = (safeIndex + 1) % nodes.length;
-      else if (event.key === 'ArrowLeft') nextIndex = (safeIndex - 1 + nodes.length) % nodes.length;
-      else if (event.key === 'Home') nextIndex = 0;
-      else nextIndex = nodes.length - 1;
-      event.preventDefault();
-      nodes[nextIndex]?.focus();
-    },
-    [],
-  );
+  const handleKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
+    if (!keys.includes(event.key)) return;
+    const nodes = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not([disabled])'),
+    );
+    if (nodes.length === 0) return;
+    const activeIndex = nodes.findIndex((node) => node === document.activeElement);
+    const safeIndex = activeIndex < 0 ? 0 : activeIndex;
+    let nextIndex = safeIndex;
+    if (event.key === 'ArrowRight') nextIndex = (safeIndex + 1) % nodes.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (safeIndex - 1 + nodes.length) % nodes.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else nextIndex = nodes.length - 1;
+    event.preventDefault();
+    nodes[nextIndex]?.focus();
+  }, []);
 
   return (
     <div

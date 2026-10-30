@@ -108,7 +108,10 @@ export function FilePicker({
       {value.length > 0 ? (
         <ul className="space-y-1">
           {value.map((documentId) => (
-            <li key={documentId} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <li
+              key={documentId}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+            >
               <FileText aria-hidden="true" className="h-3 w-3" />
               {orPlaceholder(nameMap[documentId], '已选择的文件')}
             </li>

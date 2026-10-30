@@ -96,9 +96,6 @@ export function CompactSelect({
   ...props
 }: CompactSelectProps): React.JSX.Element {
   return (
-    <Select
-      className={cn(size === 'sm' ? 'h-9 text-xs' : 'h-10 text-sm', className)}
-      {...props}
-    />
+    <Select className={cn(size === 'sm' ? 'h-9 text-xs' : 'h-10 text-sm', className)} {...props} />
   );
 }

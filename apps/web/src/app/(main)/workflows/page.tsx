@@ -273,7 +273,6 @@ export default function WorkflowsPage(): React.JSX.Element {
         onPageChange={setPage}
         disabled={tasksQuery.isLoading}
       />
-
     </div>
   );
 }

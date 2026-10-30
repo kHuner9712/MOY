@@ -122,7 +122,6 @@ import type {
 
 import { emitUnauthorized } from './session-events';
 
-
 /** 统一响应包装 */
 export interface ApiResponse<T> {
   code: number;
@@ -300,7 +299,11 @@ function buildHeaders(options: {
 }
 
 /** 带超时的 fetch */
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -401,11 +404,7 @@ function throwIfGatewayStatusRejected(response: Response): void {
 }
 
 /** 执行一次适配层请求 */
-async function request<T>(
-  method: string,
-  path: string,
-  options: RequestOptions = {},
-): Promise<T> {
+async function request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
   const url = `${ADAPTER_BASE_URL}${API_PREFIX}${path}${buildQuery(options.query)}`;
   const headers = buildHeaders({
     method,
@@ -543,7 +542,9 @@ export const modelApi = {
  */
 export const memoryApi = {
   /** MM1 列表（类别筛选 + 分页；同包返回全局开关状态） */
-  list(params: { category?: MemoryCategory | ''; page?: number; page_size?: number } = {}): Promise<MemoryPage> {
+  list(
+    params: { category?: MemoryCategory | ''; page?: number; page_size?: number } = {},
+  ): Promise<MemoryPage> {
     return request<MemoryPage>('GET', '/model/memories', {
       query: {
         category: params.category || undefined,
@@ -555,9 +556,13 @@ export const memoryApi = {
 
   /** MM2 删除单条（不可撤销） */
   remove(memoryId: string): Promise<MemoryDeleteResult> {
-    return request<MemoryDeleteResult>('DELETE', `/model/memories/${encodeURIComponent(memoryId)}`, {
-      idempotent: true,
-    });
+    return request<MemoryDeleteResult>(
+      'DELETE',
+      `/model/memories/${encodeURIComponent(memoryId)}`,
+      {
+        idempotent: true,
+      },
+    );
   },
 
   /** MM3 按类别删除（不传类别 = 清空全部） */
@@ -601,7 +606,9 @@ function openStream(
       });
 
       if (!response.ok || !response.body) {
-        const onError = handlers.onError as ((d: { code: number; message: string }) => void) | undefined;
+        const onError = handlers.onError as
+          | ((d: { code: number; message: string }) => void)
+          | undefined;
         onError?.({ code: 30001, message: '服务暂时不可用，请稍后再试' });
         return;
       }
@@ -629,7 +636,9 @@ function openStream(
       if (controller.signal.aborted) {
         return;
       }
-      const onError = handlers.onError as ((d: { code: number; message: string }) => void) | undefined;
+      const onError = handlers.onError as
+        | ((d: { code: number; message: string }) => void)
+        | undefined;
       onError?.({
         code: error instanceof AdapterUnavailableError ? 30002 : 30001,
         message: error instanceof Error ? error.message : '服务暂时不可用，请稍后再试',
@@ -641,7 +650,10 @@ function openStream(
 }
 
 /** 解析并分发单个 SSE 帧 */
-function dispatchFrame(rawFrame: string, handlers: Record<string, ((data: never) => void) | undefined>): void {
+function dispatchFrame(
+  rawFrame: string,
+  handlers: Record<string, ((data: never) => void) | undefined>,
+): void {
   let eventName = 'message';
   const dataLines: string[] = [];
 
@@ -698,9 +710,9 @@ export const knowledgeApi = {
   },
 
   /** R2 知识库列表 */
-  listBases(params: { page?: number; page_size?: number; keyword?: string } = {}): Promise<
-    PageResult<KnowledgeBaseItem>
-  > {
+  listBases(
+    params: { page?: number; page_size?: number; keyword?: string } = {},
+  ): Promise<PageResult<KnowledgeBaseItem>> {
     return request('GET', '/knowledge/bases', { query: params });
   },
 
@@ -722,7 +734,10 @@ export const knowledgeApi = {
   },
 
   /** R4 索引进度查询 */
-  documentStatus(baseId: string, docId: string): Promise<{
+  documentStatus(
+    baseId: string,
+    docId: string,
+  ): Promise<{
     document_id: string;
     index_status: 'processing' | 'completed' | 'failed';
     progress: number;
@@ -733,7 +748,10 @@ export const knowledgeApi = {
   },
 
   /** R5 重建索引 */
-  reindexDocument(baseId: string, docId: string): Promise<{
+  reindexDocument(
+    baseId: string,
+    docId: string,
+  ): Promise<{
     document_id: string;
     index_status: string;
     progress: number;
@@ -747,7 +765,12 @@ export const knowledgeApi = {
   },
 
   /** R7 独立检索 */
-  search(body: { base_id: string; query: string; top_k?: number; score_threshold?: number }): Promise<{
+  search(body: {
+    base_id: string;
+    query: string;
+    top_k?: number;
+    score_threshold?: number;
+  }): Promise<{
     segments: Array<{
       document_id: string;
       document_name: string;
@@ -781,16 +804,18 @@ export const agentApi = {
     options?: { max_steps?: number; timeout_seconds?: number };
     /** 插件任务必填；有值时 `inputs` 按插件声明校验 */
     plugin_id?: string;
-  }): Promise<{
-    task_id: string;
-    status: TaskStatus;
-    created_at: string;
-    estimated_seconds: number;
-    /** 重试产生的新任务会带上来源任务 id；首次为 null */
-    retry_of?: string | null;
-    /** 总步数（插件任务为声明步骤数） */
-    steps_total?: number;
-  } & TaskQueueInfo> {
+  }): Promise<
+    {
+      task_id: string;
+      status: TaskStatus;
+      created_at: string;
+      estimated_seconds: number;
+      /** 重试产生的新任务会带上来源任务 id；首次为 null */
+      retry_of?: string | null;
+      /** 总步数（插件任务为声明步骤数） */
+      steps_total?: number;
+    } & TaskQueueInfo
+  > {
     return request('POST', '/agent/tasks', { body });
   },
 
@@ -886,9 +911,9 @@ export const toolApi = {
   },
 
   /** T3 已连接工具列表 */
-  listConnections(params: { page?: number; page_size?: number; tool_type?: string } = {}): Promise<
-    PageResult<ToolConnection>
-  > {
+  listConnections(
+    params: { page?: number; page_size?: number; tool_type?: string } = {},
+  ): Promise<PageResult<ToolConnection>> {
     return request('GET', '/tools/connections', { query: params });
   },
 
@@ -898,7 +923,11 @@ export const toolApi = {
   },
 
   /** T5 执行工具操作 */
-  execute(body: { tool_type: string; operation: string; params: Record<string, unknown> }): Promise<{
+  execute(body: {
+    tool_type: string;
+    operation: string;
+    params: Record<string, unknown>;
+  }): Promise<{
     execution_id: string;
     tool_type: string;
     operation: string;
@@ -951,7 +980,10 @@ export interface ProfileData {
 /** 用户权限服务接口 */
 export const identityApi = {
   /** U1 令牌与权限点校验 */
-  verify(body: { permission: string; resource?: { type: string; id: string } }): Promise<VerifyResult> {
+  verify(body: {
+    permission: string;
+    resource?: { type: string; id: string };
+  }): Promise<VerifyResult> {
     return request('POST', '/identity/verify', { body });
   },
 
@@ -972,7 +1004,13 @@ export const identityApi = {
   inviteMember(
     orgId: string,
     body: { email: string; role?: string; message?: string },
-  ): Promise<{ invitation_id: string; org_id: string; email: string; role: string; status: string }> {
+  ): Promise<{
+    invitation_id: string;
+    org_id: string;
+    email: string;
+    role: string;
+    status: string;
+  }> {
     return request('POST', `/identity/organizations/${orgId}/invitations`, { body });
   },
 
@@ -1106,10 +1144,7 @@ export const identityExtApi = {
   },
 
   /** ID2 新建部门（超 5 层返回 14006） */
-  createDepartment(
-    orgId: string,
-    body: CreateDepartmentRequest,
-  ): Promise<CreateDepartmentResult> {
+  createDepartment(orgId: string, body: CreateDepartmentRequest): Promise<CreateDepartmentResult> {
     return request('POST', `/identity/organizations/${orgId}/departments`, { body });
   },
 
@@ -1333,9 +1368,9 @@ interface BackendCapabilityPolicyRequestItem {
  * @param body - 前端口径的请求体
  * @returns 后端口径的请求体（逐项只带 `capability_key` + `enabled`）
  */
-function adaptCapabilityPolicyRequest(
-  body: CapabilityPolicyRequest,
-): { policies: BackendCapabilityPolicyRequestItem[] } {
+function adaptCapabilityPolicyRequest(body: CapabilityPolicyRequest): {
+  policies: BackendCapabilityPolicyRequestItem[];
+} {
   return {
     policies: (body.policies ?? []).map((item) => ({
       capability_key: item.capability_key,
@@ -1427,10 +1462,7 @@ export const pluginsApi = {
   },
 
   /** PL10 保存插件配置（键必须 ⊆ `settings_schema`） */
-  setSettings(
-    pluginId: string,
-    settings: Record<string, unknown>,
-  ): Promise<PluginSettingsResult> {
+  setSettings(pluginId: string, settings: Record<string, unknown>): Promise<PluginSettingsResult> {
     return request('PUT', `/plugins/${pluginId}/settings`, { body: { settings } });
   },
 
@@ -1448,14 +1480,20 @@ export const pluginsApi = {
   },
 
   /** PL13 企业能力总开关（仅 org.* 三项；个人能力恒开；响应回全量 6 项） */
-  setCapabilityPolicy(body: CapabilityPolicyRequest): Promise<{ policies: CapabilityPolicyItem[] }> {
+  setCapabilityPolicy(
+    body: CapabilityPolicyRequest,
+  ): Promise<{ policies: CapabilityPolicyItem[] }> {
     // 双向映射（裁决 §7-1）：请求 `org_switch_enabled → enabled`、响应 `enabled →
     // org_switch_enabled`，都在本方法这一处收敛。后端字段名不改——改它要动 6 个消费方
     // 加数据迁移，收益不抵成本；但请求侧**必须**换名，后端请求模型 `extra="forbid"`，
     // 发前端的字段名会直接被拒（保存恒失败）。
-    return request<{ policies: BackendCapabilityPolicyItem[] }>('PUT', '/plugins/capability-policy', {
-      body: adaptCapabilityPolicyRequest(body),
-    }).then((data) => ({
+    return request<{ policies: BackendCapabilityPolicyItem[] }>(
+      'PUT',
+      '/plugins/capability-policy',
+      {
+        body: adaptCapabilityPolicyRequest(body),
+      },
+    ).then((data) => ({
       ...data,
       policies: (data.policies ?? []).map(adaptCapabilityPolicy),
     }));

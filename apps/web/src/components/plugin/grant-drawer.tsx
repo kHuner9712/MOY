@@ -124,7 +124,8 @@ export function GrantDrawer({
           <ul className="space-y-3">
             {capabilities.map((capability) => {
               const label = capabilityLabel(capability.capability_key, capability.display_name);
-              const orgScoped = capability.category === 'org' || isOrgCapability(capability.capability_key);
+              const orgScoped =
+                capability.category === 'org' || isOrgCapability(capability.capability_key);
               const orgBlocked = orgScoped && !capability.org_switch_enabled;
               const lockedByRequired = mode === 'edit' && capability.required;
               const disabled = orgBlocked || lockedByRequired || submitting;
@@ -150,7 +151,9 @@ export function GrantDrawer({
                           aria-label={`授权：${label}`}
                           checked={checked || lockedByRequired}
                           disabled={disabled}
-                          onChange={() => toggle(capability.capability_key, capability.org_switch_enabled)}
+                          onChange={() =>
+                            toggle(capability.capability_key, capability.org_switch_enabled)
+                          }
                         />
                       </span>
                     </Tooltip>
@@ -233,15 +236,16 @@ export function GrantDrawer({
         </DrawerBody>
 
         <DrawerFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             取消
           </Button>
           <Button type="button" onClick={submit} disabled={!canSubmit}>
-            {submitting
-              ? '处理中…'
-              : mode === 'install'
-                ? '同意并添加'
-                : '保存授权'}
+            {submitting ? '处理中…' : mode === 'install' ? '同意并添加' : '保存授权'}
           </Button>
         </DrawerFooter>
       </DrawerContent>

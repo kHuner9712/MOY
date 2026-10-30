@@ -112,9 +112,7 @@ describe('api-client · 信封与业务错误', () => {
     const calls = countUnauthorized(events);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        envelope(null, { code: 20002, message: '登录状态已失效，请重新登录' }),
-      ),
+      vi.fn(async () => envelope(null, { code: 20002, message: '登录状态已失效，请重新登录' })),
     );
 
     const error = await api.pluginsApi.installed().catch((caught: unknown) => caught);
@@ -127,7 +125,10 @@ describe('api-client · 信封与业务错误', () => {
   it('#3 HTTP 401 + 空体（网关层）不退化成 AdapterUnavailableError', async () => {
     const { api, events } = await load();
     const calls = countUnauthorized(events);
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 401 })),
+    );
 
     const error = await api.identityApi.profile().catch((caught: unknown) => caught);
 
@@ -144,10 +145,13 @@ describe('api-client · 信封与业务错误', () => {
     const calls = countUnauthorized(events);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ code: 15006, message: '', data: null }), {
-        status: 402,
-        headers: { 'Content-Type': 'application/json' },
-      })),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ code: 15006, message: '', data: null }), {
+            status: 402,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
     );
 
     const error = await api.identityApi.profile().catch((caught: unknown) => caught);
@@ -165,11 +169,14 @@ describe('api-client · 传输层降级', () => {
     const { api, events } = await load();
     const { toBusinessMessage } = await import('./business-errors');
     const calls = countUnauthorized(events);
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 413 })));
-
-    const error = await api.knowledgeApi.uploadDocument('kb_1', new File(['x'], 'a.txt')).catch(
-      (caught: unknown) => caught,
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 413 })),
     );
+
+    const error = await api.knowledgeApi
+      .uploadDocument('kb_1', new File(['x'], 'a.txt'))
+      .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(api.BusinessError);
     expect((error as InstanceType<ApiClientModule['BusinessError']>).code).toBe(20008);
@@ -182,7 +189,10 @@ describe('api-client · 传输层降级', () => {
     const { api, events } = await load();
     const { toBusinessMessage } = await import('./business-errors');
     const calls = countUnauthorized(events);
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 429 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 429 })),
+    );
 
     const error = await api.pluginsApi.installed().catch((caught: unknown) => caught);
 

@@ -17,11 +17,7 @@ export interface TableProps extends React.TableHTMLAttributes<HTMLTableElement> 
  * @param props - 组件属性
  * @returns 表格元素
  */
-export function Table({
-  className,
-  containerClassName,
-  ...props
-}: TableProps): React.JSX.Element {
+export function Table({ className, containerClassName, ...props }: TableProps): React.JSX.Element {
   return (
     <div className={cn('relative w-full overflow-x-auto', containerClassName)}>
       <table
@@ -87,10 +83,7 @@ export function TableRow({
   ...props
 }: React.HTMLAttributes<HTMLTableRowElement>): React.JSX.Element {
   return (
-    <tr
-      className={cn('border-b transition-colors hover:bg-muted/40', className)}
-      {...props}
-    />
+    <tr className={cn('border-b transition-colors hover:bg-muted/40', className)} {...props} />
   );
 }
 
@@ -166,8 +159,7 @@ export function TableSortHead({
   ...props
 }: TableSortHeadProps): React.JSX.Element {
   const Icon = direction === 'asc' ? ArrowUp : direction === 'desc' ? ArrowDown : ChevronsUpDown;
-  const ariaSort =
-    direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none';
+  const ariaSort = direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none';
   return (
     <TableHead className={className} aria-sort={ariaSort} {...props}>
       <button
@@ -177,10 +169,7 @@ export function TableSortHead({
       >
         {children}
         <Icon
-          className={cn(
-            'h-3.5 w-3.5',
-            direction ? 'text-primary' : 'text-muted-foreground/60',
-          )}
+          className={cn('h-3.5 w-3.5', direction ? 'text-primary' : 'text-muted-foreground/60')}
         />
       </button>
     </TableHead>

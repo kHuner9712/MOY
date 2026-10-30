@@ -92,10 +92,7 @@ export function CitationDrawer({
             引用详情
           </DrawerTitle>
           <DrawerDescription>
-            {orPlaceholder(
-              detail?.document_name ?? citation?.document_name,
-              '来源文档',
-            )}
+            {orPlaceholder(detail?.document_name ?? citation?.document_name, '来源文档')}
             {detail?.base_name ? ` · ${detail.base_name}` : ''}
           </DrawerDescription>
         </DrawerHeader>

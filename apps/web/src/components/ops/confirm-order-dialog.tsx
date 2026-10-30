@@ -72,7 +72,11 @@ export function ConfirmOrderDialog({
         remark: variables.remark,
       }),
     {
-      invalidateKeys: [QUERY_KEYS.opsOrders(), QUERY_KEYS.opsMetrics('7d'), QUERY_KEYS.opsMetrics('30d')],
+      invalidateKeys: [
+        QUERY_KEYS.opsOrders(),
+        QUERY_KEYS.opsMetrics('7d'),
+        QUERY_KEYS.opsMetrics('30d'),
+      ],
       onSuccess: (data) => {
         toast.success('核销完成，该企业套餐已开通');
         setConfirmStep(false);

@@ -6,9 +6,8 @@
 - **G1 核心基线**：`core_actual` 与 `baseline-core-30.json` **精确集合相等**
   （新增/删除/改路径都红）。
 - **G2 新域基线**：已实现的新域端点必须全部登记在 `baseline-phase2-38.json` /
-  `baseline-phase3-16.json`；未实现部分由 `--allow-missing-phase2` 放宽
-  （**阶段三自 B21 起无放宽参数**）。
-- **G3 计数**：`len(core) == 30`；未放宽时 `len(phase2) == 38`；
+  `baseline-phase3-16.json`；登记的端点必须已实现（**恒严格，无任何放宽参数**）。
+- **G3 计数**：`len(core) == 30`；`len(phase2) == 38`；
   **`len(phase3) == 16` 恒严格**；阶段四 `declared == 10`。
 - **G4 加性 diff**：与 `openapi.snapshot.json` 比对：允许新增属性/新增枚举值；
   禁止删属性、改类型、`required` 变长、enum 收窄、新增必填请求字段、删除既有响应码。
@@ -27,18 +26,18 @@
 （`declared` 必须精确 10，多一条少一条都红；未登记的端点仍然立刻红），
 **实现侧可见**（`present` 与 `missing` 每次打印），收口时切 `--strict`。
 
-**阶段三为什么没有 `--allow-missing-phase3`（B21 收口决定）**：
+**为什么没有任何放宽参数（B21 / 2026-10-29 收口决定）**：
 B19 起 phase3 已 16/16 全部落地，"已登记但未实现"这个中间态不再存在。
 留一个放宽开关，等于给"删掉端点让 CI 变绿"留了一条合法通道——**门禁的放宽参数
-一旦常态化，红与绿就不再说明任何事**。所以本脚本只保留阶段二（历史批次）的放宽，
-阶段三一律严格；确需临时放宽请在 PR 里显式删除端点并登记缺陷，而不是加参数。
+一旦常态化，红与绿就不再说明任何事**。阶段二的历史放宽参数 `--allow-missing-phase2`
+已于 2026-10-29 审计清理中从 CLI 与门禁逻辑整体移除（38/38 早已交付，放宽通道已死）。
+确需临时放宽请在 PR 里显式删除端点并登记缺陷，而不是加参数。
 
 用法：
 
 ```bash
 python deploy/validate_openapi.py                        # 严格模式（阶段四/W1 实现侧不判红）
 python deploy/validate_openapi.py --strict               # 阶段四/W1 missing>0 亦判红（W2 起 CI 用）
-python deploy/validate_openapi.py --allow-missing-phase2 # 仅阶段二历史批次可用
 python deploy/validate_openapi.py --update-snapshot      # 端点变更后更新快照（PR 需贴 diff）
 python deploy/validate_openapi.py --self-test            # 负样本自检（命中 = 退出码 1）
 ```
@@ -274,20 +273,15 @@ def gate_core_baseline(
 def gate_phase2_baseline(
     actual: set[tuple[str, str]],
     declared: set[tuple[str, str]],
-    *,
-    allow_missing: bool,
-    hint: str = "（可用 --allow-missing-phase2）",
 ) -> list[GateFailure]:
-    """G2：新域端点必须全部登记在对应基线文件里。
+    """G2：新域端点必须全部登记在对应基线文件里，且登记的端点必须已实现（恒严格）。
 
-    阶段三调用时请传 `allow_missing=False`，并换掉 `hint`——阶段三**没有**
-    放宽参数，提示里出现"可用 --allow-missing-phaseX"会把人引向一条不存在的路。
+    阶段二/阶段三均已收口，**没有任何放宽参数**——「已登记但未实现」也判红。
+    缺失时的处置只有两条路：把端点补回来，或从基线撤销登记并登记缺陷。
 
     Args:
         actual: 当前实现的新域端点（`全部端点 ∩ 已登记集合`）。
         declared: 基线登记的端点。
-        allow_missing: 是否允许基线中存在尚未实现的端点。
-        hint: 缺失时附在文案后的处置提示。
 
     Returns:
         list[GateFailure]: 失败明细。
@@ -298,11 +292,18 @@ def gate_phase2_baseline(
     if extra:
         failures.append(
             GateFailure(
-                "G2", f"新域端点未登记（禁止先写端点后补基线）: {_format_operations(extra)}"
+                "G2",
+                f"新域端点未登记（禁止先写端点后补基线）: {_format_operations(extra)}",
             )
         )
-    if missing and not allow_missing:
-        failures.append(GateFailure("G2", f"新域端点未实现: {_format_operations(missing)}{hint}"))
+    if missing:
+        failures.append(
+            GateFailure(
+                "G2",
+                f"新域端点未实现: {_format_operations(missing)}"
+                "（要么把端点补回来，要么从基线撤销登记并登记缺陷）",
+            )
+        )
     return failures
 
 
@@ -414,14 +415,15 @@ def gate_counts(
     phase4_present: int = 0,
     w1_present: int = 0,
     *,
-    allow_missing: bool,
     phase4_declared: int = PHASE4_BASELINE_COUNT,
     w1_declared: int = W1_BASELINE_COUNT,
 ) -> list[GateFailure]:
     """G3：端点数门禁（五套基线：core=30 / phase2=38 / phase3=16 / phase4=10 / w1=2）。
 
-    阶段三**恒严格**：`phase3_count` 必须精确等于 16。B21 收口后不再提供
-    放宽参数——"已登记但未实现"的中间态已经不存在，留着开关只会让门禁变哑。
+    新域端点（阶段二/阶段三）**恒严格**：`phase2_count` 必须精确等于 38、
+    `phase3_count` 必须精确等于 16。B21 收口阶段三、2026-10-29 审计清理收口阶段二后，
+    本函数不再提供任何放宽参数——"已登记但未实现"的中间态已经不存在，
+    留着开关只会让门禁变哑。
 
     阶段四只校验**登记数**（`phase4_declared == 10`）与「已实现数不超过登记数」，
     已实现数本身由 G6 按 `--strict` 决定是否判红（见 `gate_phase4_baseline`）。
@@ -435,7 +437,6 @@ def gate_counts(
         phase3_count: 阶段三插件域端点实际数量。
         phase4_present: 阶段四已实现端点数（不参与判红，只做上限校验）。
         w1_present: W1 已实现端点数（不参与判红，只做上限校验）。
-        allow_missing: 是否允许阶段二端点未实现（仅阶段二历史批次可用）。
         phase4_declared: 阶段四基线登记数。
         w1_declared: W1 基线登记数。
 
@@ -447,18 +448,11 @@ def gate_counts(
         failures.append(
             GateFailure("G3", f"核心端点数量必须为 {CORE_BASELINE_COUNT}，实际 {core_count}")
         )
-    if not allow_missing and phase2_count != PHASE2_BASELINE_COUNT:
+    if phase2_count != PHASE2_BASELINE_COUNT:
         failures.append(
             GateFailure(
                 "G3",
                 f"新域端点数量必须为 {PHASE2_BASELINE_COUNT}，实际 {phase2_count}",
-            )
-        )
-    if allow_missing and phase2_count > PHASE2_BASELINE_COUNT:
-        failures.append(
-            GateFailure(
-                "G3",
-                f"新域端点数量超出冻结上限 {PHASE2_BASELINE_COUNT}，实际 {phase2_count}",
             )
         )
     if phase4_present > phase4_declared:
@@ -930,7 +924,6 @@ def collect_failures(
     phase4_baseline: set[tuple[str, str]] | None = None,
     w1_baseline: set[tuple[str, str]] | None = None,
     snapshot: dict[str, Any] | None = None,
-    allow_missing_phase2: bool = False,
     skip_diff: bool = False,
     strict_phase4: bool = False,
 ) -> tuple[list[GateFailure], dict[str, Any]]:
@@ -948,7 +941,6 @@ def collect_failures(
         phase4_baseline: 阶段四会话/记忆/租户数据基线端点（None 视为空集）。
         w1_baseline: W1 增量基线端点（None 视为空集，且不参与 G7 判定）。
         snapshot: 冻结快照（None 表示跳过 G4）。
-        allow_missing_phase2: 是否允许阶段二端点未实现（仅历史批次可用）。
         skip_diff: 是否跳过 G4（仅 hotfix 分支允许）。
         strict_phase4: 阶段四/W1「已登记未实现」是否判红（W2 起 CI 口径）。
 
@@ -968,17 +960,8 @@ def collect_failures(
 
     failures: list[GateFailure] = []
     failures.extend(gate_core_baseline(core_actual, core_baseline))
-    failures.extend(
-        gate_phase2_baseline(phase2_actual, phase2_baseline, allow_missing=allow_missing_phase2)
-    )
-    failures.extend(
-        gate_phase2_baseline(
-            phase3_actual,
-            declared_phase3,
-            allow_missing=False,
-            hint="（阶段三无放宽参数：要么把端点补回来，要么从基线撤销登记并登记缺陷）",
-        )
-    )
+    failures.extend(gate_phase2_baseline(phase2_actual, phase2_baseline))
+    failures.extend(gate_phase2_baseline(phase3_actual, declared_phase3))
     if phase4_baseline is not None:
         # 显式传 None = 调用方声明"本次不参与阶段四判定"（合成 schema 的单元用例）；
         # CLI 与仓库级用例一律传真实基线，登记数纪律由它们守住。
@@ -993,7 +976,6 @@ def collect_failures(
             len(phase3_actual),
             len(phase4_actual),
             len(w1_actual),
-            allow_missing=allow_missing_phase2,
             phase4_declared=len(declared_phase4) if phase4_baseline is not None else 0,
             w1_declared=len(declared_w1) if w1_baseline is not None else 0,
         )
@@ -1028,11 +1010,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="validate_openapi.py",
         description="对外接口基线门禁（G1-G5，失败退出码非 0）",
-    )
-    parser.add_argument(
-        "--allow-missing-phase2",
-        action="store_true",
-        help="允许 baseline-phase2-38.json 中尚未实现的端点（仅阶段二历史批次可用）",
     )
     parser.add_argument(
         "--update-snapshot",
@@ -1146,7 +1123,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         phase4_baseline=phase4_baseline,
         w1_baseline=w1_baseline,
         snapshot=snapshot,
-        allow_missing_phase2=args.allow_missing_phase2,
         skip_diff=args.skip_diff,
         strict_phase4=args.strict,
     )

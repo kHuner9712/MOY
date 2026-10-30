@@ -28,7 +28,11 @@ export interface HelpPanelProps {
  * @param props - 组件属性
  * @returns 帮助栏元素
  */
-export function HelpPanel({ plugin, recentTasks, loading = false }: HelpPanelProps): React.JSX.Element {
+export function HelpPanel({
+  plugin,
+  recentTasks,
+  loading = false,
+}: HelpPanelProps): React.JSX.Element {
   return (
     <aside className="hidden w-80 shrink-0 space-y-3 xl:block">
       <Card>

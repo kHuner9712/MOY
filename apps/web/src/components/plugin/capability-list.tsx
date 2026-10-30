@@ -80,7 +80,9 @@ export function CapabilityList({
                 </div>
               </dl>
             ) : (
-              <p className="mt-1 text-xs text-muted-foreground">{item.reason || '插件未说明用途'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {item.reason || '插件未说明用途'}
+              </p>
             )}
           </li>
         );

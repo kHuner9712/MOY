@@ -1,6 +1,15 @@
 'use client';
 
-import { ArrowLeft, ExternalLink, Play, Power, ShieldCheck, Trash2, Upload, Wrench } from 'lucide-react';
+import {
+  ArrowLeft,
+  ExternalLink,
+  Play,
+  Power,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  Wrench,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import * as React from 'react';
@@ -139,20 +148,21 @@ export default function PluginDetailPage(): React.JSX.Element {
       invalidateKeys: invalidatePlugins,
       onSuccess: (data) => {
         const suffix =
-          data.running_task_count > 0
-            ? `（${data.running_task_count} 个在跑任务会继续完成）`
-            : '';
+          data.running_task_count > 0 ? `（${data.running_task_count} 个在跑任务会继续完成）` : '';
         toast.success(data.status === 'enabled' ? `已启用${suffix}` : `已停用${suffix}`);
       },
       onError: (error) => toast.error(toBusinessMessage(error)),
     },
   );
 
-  const upgradeMutation = useApiMutation((version: string) => pluginsApi.upgrade(pluginId, version), {
-    invalidateKeys: invalidatePlugins,
-    onSuccess: () => toast.success('已更新到该版本'),
-    onError: (error) => toast.error(toBusinessMessage(error)),
-  });
+  const upgradeMutation = useApiMutation(
+    (version: string) => pluginsApi.upgrade(pluginId, version),
+    {
+      invalidateKeys: invalidatePlugins,
+      onSuccess: () => toast.success('已更新到该版本'),
+      onError: (error) => toast.error(toBusinessMessage(error)),
+    },
+  );
 
   const rollbackMutation = useApiMutation(() => pluginsApi.rollback(pluginId), {
     invalidateKeys: invalidatePlugins,
@@ -208,7 +218,8 @@ export default function PluginDetailPage(): React.JSX.Element {
 
   if (detailQuery.error) {
     const notFound =
-      detailQuery.error instanceof BusinessError && detailQuery.error.code === PLUGIN_NOT_FOUND_CODE;
+      detailQuery.error instanceof BusinessError &&
+      detailQuery.error.code === PLUGIN_NOT_FOUND_CODE;
     return (
       <div className="mx-auto max-w-5xl space-y-3">
         <Button asChild variant="ghost" size="sm">
@@ -510,7 +521,10 @@ export default function PluginDetailPage(): React.JSX.Element {
                     onChange={(event) =>
                       setSettingsDraft((prev) => ({ ...prev, [spec.key]: event.target.value }))
                     }
-                    options={(spec.options ?? []).map((option) => ({ value: option, label: option }))}
+                    options={(spec.options ?? []).map((option) => ({
+                      value: option,
+                      label: option,
+                    }))}
                   />
                 ) : (
                   <Input

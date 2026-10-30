@@ -58,11 +58,7 @@ export function resolvePageState(
  * @param siblingCount - 当前页左右各展示的页码数量
  * @returns 页码与省略号占位序列
  */
-function buildPageTokens(
-  current: number,
-  totalPages: number,
-  siblingCount: number,
-): PageToken[] {
+function buildPageTokens(current: number, totalPages: number, siblingCount: number): PageToken[] {
   const totalSlots = siblingCount * 2 + 5;
   if (totalPages <= totalSlots) {
     return Array.from({ length: totalPages }, (_, index) => index + 1);

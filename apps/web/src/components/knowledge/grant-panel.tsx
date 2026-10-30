@@ -90,7 +90,11 @@ export function GrantPanel({ baseId, canManage }: GrantPanelProps): React.JSX.El
   );
 
   const createGrant = useApiMutation(
-    (variables: { subjectType: GrantSubjectType; subjectIds: string[]; permission: GrantPermission }) =>
+    (variables: {
+      subjectType: GrantSubjectType;
+      subjectIds: string[];
+      permission: GrantPermission;
+    }) =>
       knowledgeExtApi.createGrants(baseId, {
         subject_type: variables.subjectType,
         subject_ids: variables.subjectIds,
@@ -107,11 +111,14 @@ export function GrantPanel({ baseId, canManage }: GrantPanelProps): React.JSX.El
     },
   );
 
-  const revokeGrant = useApiMutation((grantId: string) => knowledgeExtApi.revokeGrant(baseId, grantId), {
-    invalidateKeys: [QUERY_KEYS.knowledgeGrants(baseId, page), QUERY_KEYS.knowledgeBase(baseId)],
-    onSuccess: () => toast.success('该授权已撤销'),
-    onError: (error) => toast.error(toBusinessMessage(error)),
-  });
+  const revokeGrant = useApiMutation(
+    (grantId: string) => knowledgeExtApi.revokeGrant(baseId, grantId),
+    {
+      invalidateKeys: [QUERY_KEYS.knowledgeGrants(baseId, page), QUERY_KEYS.knowledgeBase(baseId)],
+      onSuccess: () => toast.success('该授权已撤销'),
+      onError: (error) => toast.error(toBusinessMessage(error)),
+    },
+  );
 
   /** 解析并提交批量授权 */
   const handleSubmit = (): void => {

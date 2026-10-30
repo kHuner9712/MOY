@@ -23,7 +23,13 @@ import { usePathname } from 'next/navigation';
 import * as React from 'react';
 
 import { NAV_ITEMS, resolveNavItem } from '@/components/layout/sidebar';
-import { Drawer, DrawerBody, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import {
+  Drawer,
+  DrawerBody,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer';
 import { cn } from '@/lib/utils';
 
 /**

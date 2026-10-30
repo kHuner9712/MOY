@@ -91,22 +91,19 @@ export default function MemoriesPage(): React.JSX.Element {
     },
   });
 
-  const removeMany = useApiMutation(
-    (target: MemoryCategory | '') => memoryApi.removeMany(target),
-    {
-      invalidateKeys: [MEMORY_KEY_PREFIX],
-      onSuccess: (data) => {
-        setCategoryDeleteOpen(false);
-        setDeleteAllOpen(false);
-        setDeleteAllKeyword('');
-        setJustCleared(data.category === '');
-        toast.success(`已删除 ${data.deleted_count} 条信息`);
-      },
-      onError: (error) => {
-        toast.error(toBusinessMessage(error));
-      },
+  const removeMany = useApiMutation((target: MemoryCategory | '') => memoryApi.removeMany(target), {
+    invalidateKeys: [MEMORY_KEY_PREFIX],
+    onSuccess: (data) => {
+      setCategoryDeleteOpen(false);
+      setDeleteAllOpen(false);
+      setDeleteAllKeyword('');
+      setJustCleared(data.category === '');
+      toast.success(`已删除 ${data.deleted_count} 条信息`);
     },
-  );
+    onError: (error) => {
+      toast.error(toBusinessMessage(error));
+    },
+  });
 
   const saveSettings = useApiMutation(
     (body: { enabled?: boolean; category_switches?: Record<string, boolean> }) =>
@@ -114,7 +111,9 @@ export default function MemoriesPage(): React.JSX.Element {
     {
       invalidateKeys: [MEMORY_KEY_PREFIX],
       onSuccess: (data) => {
-        toast.success(data.enabled ? '已开启，我会重新从对话里了解你' : '已关闭，我不会再从对话里记东西');
+        toast.success(
+          data.enabled ? '已开启，我会重新从对话里了解你' : '已关闭，我不会再从对话里记东西',
+        );
       },
       onError: (error) => {
         toast.error(toBusinessMessage(error));
@@ -213,7 +212,9 @@ export default function MemoriesPage(): React.JSX.Element {
                 onClick={() => setCategoryDeleteOpen(true)}
                 disabled={deleting || total === 0}
               >
-                {category ? `删除「${MEMORY_CATEGORY_LABELS[category]}」的全部` : '删除某一类的全部'}
+                {category
+                  ? `删除「${MEMORY_CATEGORY_LABELS[category]}」的全部`
+                  : '删除某一类的全部'}
               </Button>
               <Button
                 type="button"
@@ -265,11 +266,7 @@ export default function MemoriesPage(): React.JSX.Element {
               <ul className="space-y-3">
                 {items.map((item) => (
                   <li key={item.memory_id}>
-                    <MemoryCard
-                      item={item}
-                      onDelete={setPendingDelete}
-                      deleting={deleting}
-                    />
+                    <MemoryCard item={item} onDelete={setPendingDelete} deleting={deleting} />
                   </li>
                 ))}
               </ul>
@@ -352,9 +349,7 @@ export default function MemoriesPage(): React.JSX.Element {
         }}
       >
         <label className="block space-y-2 text-sm">
-          <span>
-            请输入「{MEMORY_DELETE_ALL_CONFIRM.keyword}」以确认
-          </span>
+          <span>请输入「{MEMORY_DELETE_ALL_CONFIRM.keyword}」以确认</span>
           <Input
             value={deleteAllKeyword}
             onChange={(event) => setDeleteAllKeyword(event.target.value)}

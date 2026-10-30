@@ -154,7 +154,9 @@ export function TaskMetricCards(): React.JSX.Element {
           {buildMetricCards(stats).map((card) => (
             <Card key={card.title}>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">{card.title}</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  {card.title}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-semibold tabular-nums">{card.value}</p>

@@ -151,10 +151,7 @@ export default function TaskDetailPage(): React.JSX.Element {
             }
           />
         ) : (
-          <ErrorState
-            message={toBusinessMessage(error)}
-            onRetry={() => void taskQuery.refetch()}
-          />
+          <ErrorState message={toBusinessMessage(error)} onRetry={() => void taskQuery.refetch()} />
         )}
       </div>
     );

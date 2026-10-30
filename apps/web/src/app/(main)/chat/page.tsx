@@ -45,9 +45,13 @@ function currentPeriod(): string {
  */
 export default function ChatPage(): React.JSX.Element {
   const period = currentPeriod();
-  const usageQuery = useApiQuery(QUERY_KEYS.billingUsage(period), () => billingApi.getUsage({ period }), {
-    retry: 0,
-  });
+  const usageQuery = useApiQuery(
+    QUERY_KEYS.billingUsage(period),
+    () => billingApi.getUsage({ period }),
+    {
+      retry: 0,
+    },
+  );
 
   const usage = usageQuery.data;
   const showQuotaWarning =
@@ -69,7 +73,8 @@ export default function ChatPage(): React.JSX.Element {
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
           <p>
             本月额度已用 {formatPercent(usage.usage_percent)}（剩余{' '}
-            {usage.quota_units_remaining.toLocaleString('zh-CN')} {quotaUnit}），接近上限时会切换为常规模式。
+            {usage.quota_units_remaining.toLocaleString('zh-CN')} {quotaUnit}
+            ），接近上限时会切换为常规模式。
           </p>
           <Button asChild size="sm" variant="outline">
             <Link href="/billing">
