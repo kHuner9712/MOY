@@ -382,7 +382,18 @@ function walk(dir, acc = []) {
     const p = join(dir, name);
     const st = statSync(p);
     if (st.isDirectory()) walk(p, acc);
-    else if (/\.(ts|tsx)$/.test(name) && !name.endsWith('.d.ts')) acc.push(p);
+    // 跳过 `*.test.ts(x)` / `*.spec.ts(x)`：测试里的字符串是断言夹具与协议字段名
+    // （如 `'access_token'`、`'openid profile'`），**不会成为用户可见文案**。
+    // 本脚本的判据是「用户能否看到禁词」，测试文件不渲染任何界面，纳入扫描只会
+    // 逼着测试写成 `'tok' + 'en'` 这类拼接去绕过——那是把门禁变成噪音。
+    // （2026-10-30 补测第一批新增 93 个用例后实测暴露，此前测试恰好没有裸禁词字面量。）
+    else if (
+      /\.(ts|tsx)$/.test(name) &&
+      !name.endsWith('.d.ts') &&
+      !/\.(test|spec)\.(ts|tsx)$/.test(name)
+    ) {
+      acc.push(p);
+    }
   }
   return acc;
 }

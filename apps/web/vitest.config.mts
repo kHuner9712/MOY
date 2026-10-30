@@ -54,11 +54,30 @@ export default defineConfig({
       // （旧口径 44.08% → 新口径约 5.98%，比值与「分母 2882/23240 行」完全吻合，
       //  证实旧值确实是"假高"而非代码变差。阶段四补 /about 等页面后
       //  % Lines 5.98 → 5.97，**降的不是覆盖率，是分母变大了**。）
-      // 当前阈值取实测值向下留约 1pp 余量，作为**整改起点**：
-      // 纪律 = 只升不降；每次补测试都把这个数往上抬，直到进入有意义的区间。
+      // 阈值 = 实测基线向下留余量的**整改起点**，纪律 = 只升不降：
+      // 每次补测试都把这个数往上抬，直到进入有意义的区间。
+      //
+      // P0（审计 2026-10-30 H2）：原地板 lines 5 / functions 2 贴着实测
+      // （5.96 / 3.30）几乎不设防，按棘轮抬到四指标全覆盖：
+      //   statements 5.5 / branches 5.5 / functions 3 / lines 5.5
+      // （实测 5.82 / 5.73 / 3.30 / 5.96，各留 ~0.3pp 余量）。
+      //
+      // 40% 一步到位不可行（现状 5.8%，直接设 40% 门禁必红）——40% 是
+      // 补测战役（P1）的目标值，优先补测清单（审计报告 H2）：
+      // team/page.tsx（698 行）、plugins/[pluginId]/page.tsx（661 行）、
+      // billing/page.tsx（458 行）、workbench/[pluginId]/page.tsx（421 行）、
+      // oidc.ts（500 行）、session-store.ts（304 行）。
+      //
+      // P1 补测第一批（2026-10-30）：format.ts / oidc.ts / session-store.ts
+      // 三个纯逻辑模块补测后全量分母实测（**注意列名，四列不可混用**）：
+      //   % Stmts **13.44** | % Branch 12.88 | % Funcs **6.60** | % Lines **13.43**
+      // 棘轮继续只升不降，各留 ~0.5pp 余量：
+      //   statements 12.9 / branches 12.3 / functions 6.1 / lines 12.9
       thresholds: {
-        lines: 5,
-        functions: 2,
+        statements: 12.9,
+        branches: 12.3,
+        functions: 6.1,
+        lines: 12.9,
       },
     },
   },
