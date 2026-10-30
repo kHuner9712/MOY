@@ -222,6 +222,8 @@ CI 门禁（`.github/workflows/dependency-scan.yml` + `ci-adapter.yml`）
 平台内部依赖清单与协议合规审计结果由 CI 扫描报告归档
 （`.github/workflows/dependency-scan.yml` 构件 `license-scan-report`）。
 
-所有代码级依赖限定于 **MIT / Apache-2.0 / BSD-3-Clause / ISC** 白名单；
+代码级依赖以 **MIT / Apache-2.0 / BSD-2/3-Clause / ISC** 白名单为主，传递链含
+MPL-2.0（certifi，灰名单：文件级弱互惠，随交付保留许可证文本）/ PSF-2.0 / MIT-0 等
+宽松协议，**无 GPL/AGPL/SSPL**（2026-10-30 审计 M4 实测口径）；
 基础设施镜像的灰名单仅 squid（GPL-2.0），以独立进程方式运行，
 详见 `deploy/.env.example` 与架构文档 2.1 / 10.2 D-06。

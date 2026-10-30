@@ -29,26 +29,26 @@
 
 ---
 
-## W-2 · python-jose（存在上游不修的 CVE）
+## W-2 · python-jose（存在上游不修的 CVE）——✅ 已消除
 
 | 项 | 内容 |
 |---|---|
-| **现状** | `python-jose 3.5.0`；`docs/architecture-v1.0.md:1419` 记录 **PYSEC-2026-4298 且上游无修复版本** |
-| **当前防线** | `core/security.py:158` 的 `jwt.decode(..., algorithms=[...])` 显式算法白名单——**这是唯一防线**，属代码级约定，不是依赖级保障 |
-| **触发条件（硬判据）** | **任何需要触碰 `core/security.py` 鉴权链路的需求（含 V1.1 的任何鉴权改动）触发前，必须先完成 pyjwt 迁移评估**。理由：否则该债务会随"不敢动 security.py"自我加固，越拖越难动 |
-| **影响面** | 全部鉴权路径（令牌解析、租户解析、产物下载令牌） |
-| **到期判据** | 与「下一次鉴权相关需求」绑定，不是日期 |
+| **状态** | ✅ **已闭环**（2026-10-30）：JWT 库整体迁移 **PyJWT 2.15.1**（MIT，活跃维护），`uv.lock` 重生成后 python-jose / ecdsa / rsa / pyasn1 / six 全部退出依赖树；`pyproject.toml` 改为 `pyjwt>=2.8,<3.0` |
+| **原现状** | `python-jose 3.5.0`；`docs/architecture-v1.0.md` 记录 **PYSEC-2026-4298 且上游无修复版本** |
+| **迁移要点** | `core/security.py` 显式 `algorithms=[conf.jwt_algorithm]` 白名单**保持不变**；另发现并修复 PyJWT 语义差异——`verify_signature=False`（stub 模式）时 PyJWT 默认连 `exp` 一并放行，已显式 `verify_exp: True` 保住「过期令牌必拒」红线 |
+| **验证** | 后端全量回归 2211 passed / 0 failed，覆盖率 85.87%；安全用例 99 过；`pip-audit` 中该 CVE 随包移除 |
+| **到期判据** | 无（已闭环） |
 
 ---
 
-## W-3 · ecdsa（Minerva 侧信道）
+## W-3 · ecdsa（Minerva 侧信道）——✅ 已消除
 
 | 项 | 内容 |
 |---|---|
-| **现状** | `ecdsa 0.19.2`（python-jose 的传递依赖）；Minerva 侧信道问题上游明确不修 |
-| **风险评估** | 本项目**仅用验签**，不生成签名、不处理私钥 → 侧信道不可利用，风险可接受 |
-| **触发条件** | 一旦出现"用 ecdsa 做签名/持有私钥"的需求，立即升级为**高优先级** |
-| **到期判据** | 无（随 W-2 的 pyjwt 迁移一并消除——pyjwt 不依赖 ecdsa） |
+| **状态** | ✅ **已闭环**（2026-10-30）：ecdsa 作为 python-jose 的传递依赖，随 W-2 迁移一并移除（PyJWT 不依赖 ecdsa） |
+| **原风险评估** | 本项目仅用验签、不生成签名、不持有私钥 → 侧信道不可利用 |
+| **验证** | `uv.lock` 中已无 `ecdsa` 条目；`pip-audit` 不再报 CVE-2024-23342 |
+| **到期判据** | 无（已闭环） |
 
 ---
 
@@ -94,3 +94,6 @@
 |---|---|
 | 2026-10-29 | 建档，录入 W-1 ~ W-6（来源：第二轮审计 R2-ARC-17 附带发现 + R2-ARC-15 + R2-QA-16） |
 | 2026-10-29 | 全仓审计校正：W-2 行号两处（`architecture-v1.0.md:1421→1419`、`core/security.py:157→158`）；W-5 标记「已逾期，未闭环」并补新处置口径；W-6 标记「已闭环」（`validate_batch_clock.py` 已挂门禁），`ci-adapter.yml:88→93` |
+| 2026-10-30 | **W-2 / W-3 闭环**：JWT 库迁 PyJWT 2.15.1，python-jose + ecdsa 链退出依赖树（详见两表「状态」行） |
+| 2026-10-30 | 前端补丁级升级：`next 16.4.2→16.4.3`、`@tanstack/react-query 5.104.5→5.105.0`、`autoprefixer 10.6.1→10.6.2`、`eslint 10.13.0→10.14.0`（均在 caret 范围内）。`eslint-config-next` 停留 16.4.2：npm 锁条目未随 ^16.4.3 重解析（仅开发期 lint 预设，不影响运行时），下次锁重建时自然上移 |
+| 2026-10-30 | SBOM 时效复核：`sbom.yml` 已有**每周一 03:00 UTC 定时重算**（cron `0 3 * * 1`），审计初稿「无自动重生成」表述已过期 |

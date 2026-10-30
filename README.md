@@ -20,17 +20,18 @@
 >
 > | 口径 | 前置条件 | 实测结果 |
 > | --- | --- | --- |
-> | **全量（含 PG）** | 设 `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + `--run-pg` + 设 `OA_BATCH` | **2343 passed / 0 skipped / 0 failed**（收集 2343），合并覆盖 **91.94%** |
-> | **本机（无 PG）** | 不设上述变量，`OA_BATCH=B21` | **2133 passed / 210 skipped / 0 failed**（收集 2343），合并覆盖 **85.55%** |
+> | **全量（含 PG）** | 设 `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + `--run-pg` + 设 `OA_BATCH` | **2343 passed / 0 skipped / 0 failed**（收集 2343），合并覆盖 **91.94%**（`cedd3e9` 树，待 CI 复跑校准） |
+> | **本机（无 PG）** | 不设上述变量，`OA_BATCH=B21` | **2211 passed / 212 skipped / 0 failed**（收集 2423），合并覆盖 **85.87%**（2026-10-30 实测） |
 >
 > 未设 `OA_BATCH` 时 `tests/expected_xfail.py::current_batch()` **故意抛错**（缺失即红，
-> 不给静默默认）。无库口径下 210 条 PG 用例按设计 skip，不计入断言有效性。
+> 不给静默默认）。无库口径下 212 条 PG 用例按设计 skip，不计入断言有效性。
 >
-> **以上两组数字的口径（引用时必须连口径一起引）**：均为 **`cedd3e9`** 树实测。
+> **以上两组数字的口径（引用时必须连口径一起引）**：含 PG 行为 **`cedd3e9`** 树、
+> 本机无 PG 行为 **2026-10-30 整改后**树的实测。
 > 含 PG = `pytest tests -q --run-pg --cov=app --cov-report=term-missing`
 > （`OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + 真库）；
 > 无 PG = 同一命令去掉 `--run-pg` 与 DSN。
-> 实测分项：含 PG 行 93.72% / 分支 83.34%；无 PG 行 87.36% / 分支 76.78%。
+> 实测分项（含 PG）：行 93.72% / 分支 83.34%。
 > **这两组数会随批次推进而变化**——引用时请连同 SHA 与命令一起引，
 > 不要把它当常量（PRD §7.5 同款要求）。
 
@@ -251,4 +252,7 @@ OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing
 ## 七、许可证与开源声明
 
 平台为企业级商业交付物，内部依赖清单与协议合规审计结果见 `docs/api/README.md` 与 CI 扫描报告。
-所有引入依赖均限定于 MIT / Apache-2.0 / BSD-3-Clause / ISC 白名单协议。
+依赖协议实测口径（2026-10-30 审计 M4/M10）：白名单 MIT / Apache-2.0 / BSD-2/3-Clause / ISC 为主，
+传递链含 MPL-2.0（certifi，灰名单：随交付保留许可证文本）/ PSF-2.0 / MIT-0 等宽松协议；
+**无 GPL/AGPL/SSPL**；LGPL 成分（sharp 平台二进制）已从生产镜像排除（`--omit=optional`，
+R2-ARC-03），分发桌面端/自托管安装包前须复核 LGPL 义务（详见 `docs/architecture-v1.0.md` §8.1/8.2）。

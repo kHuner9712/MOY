@@ -139,7 +139,7 @@ curl http://127.0.0.1:8000/readyz
 
 ```python
 import time
-from jose import jwt
+import jwt
 
 now = int(time.time())
 print(jwt.encode(
@@ -171,6 +171,22 @@ ruff check . && ruff format --check .   # Lint + 格式
 mypy app                                # 类型检查
 OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing   # OA_BATCH 必设，缺失即红
 ```
+
+### 6.1 运行口径（三套，数字**不可跨口径比较**）
+
+| 口径 | 前置条件 | 命令 | 期望 | 用途 |
+| --- | --- | --- | --- | --- |
+| **无 PG（本机默认）** | 只设 `OA_BATCH` | 上方命令（不带 `--run-pg`） | 0 failed；PG 用例按设计 skip（当前 212 条） | 快速回归 |
+| **有 PG（CI 口径）** | `--run-pg` + `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 | 上方命令追加 `--run-pg` | **skipped 必须为 0**；`--cov-fail-under=85` 卡合并；另卡 `db/repositories/*/postgres.py ≥ 50%` | **唯一权威口径** |
+| **前端** | 仓库根 `npm ci` 后 | `npm run test --workspace apps/web -- --coverage` | 四指标达 `vitest.config.mts` 阈值（只升不降棘轮） | 前端回归 |
+
+- **`OA_BATCH` 缺失即红**：`tests/expected_xfail.py::current_batch()` 故意不设默认值，
+  `deploy/validate_batch_clock.py` 同样以退出码 2 拒绝判定——不给"静默默认"。
+- **批次号是同步项**：当前在 CI env、根 README（2 处）、本文件、`qa/phase4-verify.sh`（3 处）
+  共 5 个同步点出现。升批时逐处改，`python deploy/validate_batch_clock.py --check-docs`
+  会列出所有漏改位置（C3），并校验 `OA_BATCH` 不落后于台账 `due_batch`（C2）。
+- **数字以 CI 产物为准**：本文件与根 README 中的通过数/覆盖率随批次变化，
+  引用时须连同口径与 SHA 一起引，不要当常量。
 
 覆盖率门禁：**≥ 85%**（CI 硬地板 `--cov-fail-under=85`，与 `ci-adapter.yml` 门禁 5 一致；
 历史 80% 为阶段一口径已废止）。

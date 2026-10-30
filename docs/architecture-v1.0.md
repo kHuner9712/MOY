@@ -1395,8 +1395,8 @@ graph LR
 | redis | ==8.1.0 | MIT | 幂等键/限流/缓存（Python 客户端，通过 RESP 协议对接 Valkey） |
 | sqlalchemy | ^2.0 | MIT | 业务库 ORM（审计等轻量场景） |
 | asyncpg | ==0.32.0 | Apache-2.0 | PostgreSQL 异步驱动 |
-| python-jose[cryptography] | ^3.3 | MIT | JWT 解析（**须显式限定 algorithms**，见 8.1.1） |
-| cryptography | ==50.0.2 | Apache-2.0 / BSD-3-Clause 双许可 | AES-GCM 加密封装（`app/core/crypto.py` 直接引用；亦为 python-jose 传递依赖，按「传递依赖必须显式声明」口径独立登记） |
+| pyjwt | >=2.8,<3.0 | MIT | JWT 解析（**须显式限定 algorithms**，见 8.1.1；2026-10-30 由 python-jose 迁入，审计 H1/M7） |
+| cryptography | ==50.0.2 | Apache-2.0 / BSD-3-Clause 双许可 | AES-GCM 加密封装（`app/core/crypto.py` 直接引用，按「直接 import 必须显式声明」口径独立登记） |
 | structlog | ==26.1.0 | MIT + Apache-2.0 双许可 | 结构化日志 |
 | python-multipart | ==0.0.32 | Apache-2.0 | multipart 文件上传 |
 | pyyaml | ==6.0.3 | MIT | 注册表/路由表 YAML 解析 |
@@ -1405,12 +1405,22 @@ graph LR
 | pytest / pytest-asyncio / pytest-cov | ^8.0 / ^0.23 / ^4.1 | MIT | 测试框架 |
 | ruff / mypy | ^0.5 / ^1.10 | MIT | Lint 与类型检查 |
 
-> 全量 MIT/Apache-2.0/BSD-3-Clause，无 GPL/AGPL/SSPL，满足总方案 5.3 白名单。
+> 许可证实测口径（2026-10-30 审计 M4 复核）：直接依赖为 MIT / Apache-2.0 / BSD-3-Clause；
+> 传递链另含 **MPL-2.0**（certifi，经 httpx——**灰名单**，文件级弱互惠，随交付保留许可证文本）、
+> PSF-2.0（typing_extensions / greenlet）、MIT-0（cffi）、BSD-2-Clause 等宽松协议。
+> **无 GPL/AGPL/SSPL** ✅，满足总方案 5.3 白名单与灰名单政策。旧表述
+> 「全部为 MIT/Apache-2.0/BSD-3-Clause」经 pip-licenses 全量实测证伪，已修正。
 >
 ### 8.1.1 依赖漏洞基线与处置结论（Sprint 0 BLK-04 实跑）
 
 **扫描方式**：独立 venv 安装 `pip-audit`，对 `pyproject.toml` 的 `[project].dependencies`
 （14 条运行时依赖）逐条审计 —— 独立于项目环境，确保结果不被本地已安装包影响。
+
+> **2026-10-30 审计收口（H1/M7）**：`python-jose` 与 `ecdsa` 两行的「接受风险」处置
+> 已升级为**消除**——JWT 库整体迁移 PyJWT 2.15.1（MIT，活跃维护），python-jose / ecdsa /
+> rsa / pyasn1 / six 随 uv.lock 重生成一并移除，两项无修复版 CVE 从依赖树消失。
+> 迁移实测发现 PyJWT 语义差异一处（`verify_signature=False` 时默认放行 `exp`），
+> 已在 `app/core/security.py` 显式置回校验，回归 2211 过 / 0 败。
 
 **初扫结果：3 个包 17 个已知漏洞**（`starlette 0.46.2` 14 项、`python-jose 3.5.0` 1 项、`ecdsa 0.19.2` 2 项）。
 
@@ -1458,7 +1468,14 @@ graph LR
 | autoprefixer | ^10.4.19 | MIT | CSS 浏览器前缀补全（构建期） |
 | tailwindcss-animate | ^1.0.7 | MIT | Tailwind 动画插件（构建期） |
 
-> 全量 MIT/Apache-2.0/ISC，无传染性协议。
+> 全量 MIT/Apache-2.0/ISC（构建与运行时直接依赖）；无 GPL/AGPL/SSPL。
+>
+> **LGPL 成分处置（2026-10-30 审计 M10 复核）**：`next` 的 optionalDependency `sharp`
+> 会拉入标注 `LGPL-3.0-or-later` 的平台二进制（`@img/sharp-*`）。生产镜像构建
+> （apps/web/Dockerfile）以 `--omit=optional` 排除（R2-ARC-03，全仓 `next/image` 零使用，
+> 不需要 sharp）；Windows 开发机 node_modules 里的残留**不随交付分发**。灰名单政策
+> 「LGPL 仅独立进程」因此在交付形态上成立；若将来分发桌面端/自托管安装包，须按
+> LGPL 履行动态链接/开源义务，或继续保持 sharp 排除。
 >
 > **构建期依赖说明**：`postcss` / `autoprefixer` / `tailwindcss-animate` 三项**仅在构建阶段参与 CSS 编译与前缀补全，不进入运行时产物**（不随 `next build` 输出到客户端 bundle，也不随容器镜像进入运行时依赖），故与运行时依赖分列标注。三者均为 MIT 协议，无 GPL/AGPL/SSPL 风险。
 > **对象存储说明（基础设施，非代码依赖）**：采用 **SeaweedFS 4.48**（`chrislusf/seaweedfs:4.48`，Apache-2.0 白名单协议），以**独立容器**方式运行。**替代 MinIO 的原因**：MinIO 主线自 2021 年转 AGPL-3.0，且官方已停止分发容器镜像、Docker Hub 仓库整体下架（QA BLK-03 实测：任何 tag 均 404），「锁定 AGPL 前版本线」的技术前提已不成立。选型证据（三重：registry 可用性 200 / 拉取量 3386 万 / 上游 LICENSE 首行 Apache-2.0）见 ADR-0002 §2.2。版本号以 `deploy/images.lock` 为唯一事实来源，由 `deploy/validate_images.py` 交叉校验（R2-ARC-04）。
