@@ -95,13 +95,17 @@ export default defineConfig({
       // P1 补测第八批（2026-10-31 H1 续）：sidebar resolveNavItem 路由解析 +
       // session-gate/citation-drawer 常量 13 项后实测：
       //   % Stmts **20.08** | % Branch 16.67 | % Funcs **14.42** | % Lines **20.21**
+      //
+      // P1 补测第九批（2026-10-31 H1 续）：api-client pluginsApi 剩余方法 +
+      // session-store 存储降级/形状校验/旧键迁移/过期判定 + format 边界 24 项后实测：
+      //   % Stmts **20.21** | % Branch 16.70 | % Funcs **14.83** | % Lines **20.36**
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 19.7 / branches 16.3 / functions 14.1 / lines 19.9
+      //   statements 19.9 / branches 16.4 / functions 14.5 / lines 20.0
       thresholds: {
-        statements: 19.7,
-        branches: 16.3,
-        functions: 14.1,
-        lines: 19.9,
+        statements: 19.9,
+        branches: 16.4,
+        functions: 14.5,
+        lines: 20.0,
       },
     },
   },
