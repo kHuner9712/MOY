@@ -91,13 +91,17 @@ export default defineConfig({
       // P1 补测第六批（2026-10-31 H1 续）：date-range-picker 纯函数 + progress
       // 纯函数 23 项后实测：
       //   % Stmts **18.94** | % Branch 16.24 | % Funcs **14.34** | % Lines **19.02**
+      //
+      // P1 补测第八批（2026-10-31 H1 续）：sidebar resolveNavItem 路由解析 +
+      // session-gate/citation-drawer 常量 13 项后实测：
+      //   % Stmts **20.08** | % Branch 16.67 | % Funcs **14.42** | % Lines **20.21**
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 18.6 / branches 15.9 / functions 14.0 / lines 18.7
+      //   statements 19.7 / branches 16.3 / functions 14.1 / lines 19.9
       thresholds: {
-        statements: 18.6,
-        branches: 15.9,
-        functions: 14.0,
-        lines: 18.7,
+        statements: 19.7,
+        branches: 16.3,
+        functions: 14.1,
+        lines: 19.9,
       },
     },
   },
