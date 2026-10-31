@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 
@@ -40,7 +41,7 @@ from app.db.repositories.org import (
     normalize_department_id,
 )
 from app.db.repositories.role import RoleStore, get_role_store
-from app.schemas.common import build_page
+from app.schemas.common import PageResult, build_page
 from app.schemas.identity import ListMembersQuery, MemberItem, OrgRole
 from app.schemas.identity_ext import (
     BatchMemberAction,
@@ -81,6 +82,21 @@ def _now_iso() -> str:
         str: 形如 `2026-11-02T09:00:00Z`。
     """
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+@dataclass(slots=True)
+class _MemberCandidates:
+    """列表候选集合与展示上下文（`list_members` / `list_members_page` 共用）。
+
+    Attributes:
+        entries: 已通过「角色 / 在册状态 / 关键字」过滤的候选（按用户 ID 升序）。
+        department_names: 部门 ID → 展示名。
+        department_filter: 部门过滤（空串表示不过滤）。
+    """
+
+    entries: list[tuple[str, str, OrgRole]]
+    department_names: dict[str, str]
+    department_filter: str
 
 
 class MemberService:
@@ -127,13 +143,11 @@ class MemberService:
     async def list_members(
         self, *, tenant_id: str, org_id: str, query: ListMembersQuery
     ) -> list[MemberItem]:
-        """查询组织成员（业务库为权威源，展示名以用户 ID 兜底）。
+        """查询组织成员（完整列表，分页由调用方切分）。
 
         查询组织：角色全量读**一次**（此前 `_collect_user_ids` 与 `_role_keys`
         会把 `list_roles` + `member_ids_of_role` 各跑两遍），成员部门关联按
         候选集合**批量**读取（`links_of_users`，消除逐成员 N+1）。
-        关联数据是「部门过滤 / 展示部门名 / 加入时间」的唯一来源，故仍需按
-        过滤后的候选集合整体拉取；分页切分由调用方完成。
 
         Args:
             tenant_id: 租户 ID。
@@ -142,6 +156,57 @@ class MemberService:
 
         Returns:
             list[MemberItem]: 过滤后的完整成员列表（分页由调用方切分）。
+        """
+        candidates = await self._prepare_candidates(tenant_id, org_id, query)
+        items = await self._assemble_items(tenant_id, candidates, candidates.entries)
+        items.sort(key=lambda item: item.user_id)
+        return items
+
+    async def list_members_page(
+        self, *, tenant_id: str, org_id: str, query: ListMembersQuery
+    ) -> PageResult[MemberItem]:
+        """查询组织成员（分页结果，部门关联只取当前页）。
+
+        分页下推口径（审计 2026-10-31 P0-3 续）：
+        - **无部门过滤**：先按「角色 / 状态 / 关键字」在内存中裁剪候选，再按
+          `offset/page_size` 切片，**只对当前页用户批量读取部门关联**——
+          翻第 N 页不再拉取全部成员的关联；
+        - **有部门过滤**：部门归属必须读取关联才能判定，因此仍需按候选集合
+          整体批量读取一次（单条批量查询，无 N+1），过滤后再切页。
+
+        Args:
+            tenant_id: 租户 ID。
+            org_id: 组织 ID。
+            query: 分页与过滤参数（角色/关键字/部门/状态）。
+
+        Returns:
+            PageResult[MemberItem]: 分页结果（`total` 为过滤后的总数）。
+        """
+        candidates = await self._prepare_candidates(tenant_id, org_id, query)
+        if candidates.department_filter:
+            filtered = await self._assemble_items(tenant_id, candidates, candidates.entries)
+            total = len(filtered)
+            page_items = filtered[query.offset : query.offset + query.page_size]
+        else:
+            total = len(candidates.entries)
+            page_entries = candidates.entries[query.offset : query.offset + query.page_size]
+            page_items = await self._assemble_items(tenant_id, candidates, page_entries)
+        return build_page(
+            items=page_items, total=total, page=query.page, page_size=query.page_size
+        )
+
+    async def _prepare_candidates(
+        self, tenant_id: str, org_id: str, query: ListMembersQuery
+    ) -> _MemberCandidates:
+        """收集成员并完成「无需部门关联」的过滤。
+
+        Args:
+            tenant_id: 租户 ID。
+            org_id: 组织 ID。
+            query: 分页与过滤参数。
+
+        Returns:
+            _MemberCandidates: 候选集合与展示上下文（按用户 ID 升序）。
         """
         await self._roles.ensure_builtin_roles(tenant_id, org_id)
         role_records = await self._roles.list_roles(tenant_id, org_id)
@@ -162,8 +227,7 @@ class MemberService:
         )
         needle = query.keyword.strip().lower()
 
-        # 先在「无需部门关联」的维度上过滤，缩小批量关联查询的候选集合
-        candidates: list[tuple[str, str, OrgRole]] = []
+        entries: list[tuple[str, str, OrgRole]] = []
         for user_id in user_ids:
             role_key = role_keys.get(user_id, "")
             status = MemberStatus.ACTIVE.value if role_key else MemberStatus.INVITED.value
@@ -174,16 +238,37 @@ class MemberService:
                 continue
             if needle and needle not in user_id.lower():
                 continue
-            candidates.append((user_id, status, role_enum))
+            entries.append((user_id, status, role_enum))
+        return _MemberCandidates(
+            entries=entries,
+            department_names=department_names,
+            department_filter=department_filter,
+        )
 
+    async def _assemble_items(
+        self,
+        tenant_id: str,
+        candidates: _MemberCandidates,
+        entries: list[tuple[str, str, OrgRole]],
+    ) -> list[MemberItem]:
+        """按给定候选批量读取部门关联并构造成员条目（部门过滤在此生效）。
+
+        Args:
+            tenant_id: 租户 ID。
+            candidates: 候选集合与展示上下文。
+            entries: 需要构造条目的候选（已按用户 ID 升序）。
+
+        Returns:
+            list[MemberItem]: 成员条目（部门过滤后、保持输入顺序）。
+        """
         links_by_user = await self._org.links_of_users(
-            tenant_id, [candidate[0] for candidate in candidates]
+            tenant_id, [entry[0] for entry in entries]
         )
         items: list[MemberItem] = []
-        for user_id, status, role_enum in candidates:
+        for user_id, status, role_enum in entries:
             links = links_by_user.get(user_id, [])
             department_ids = [link.department_id for link in links]
-            if department_filter and department_filter not in department_ids:
+            if candidates.department_filter and candidates.department_filter not in department_ids:
                 continue
             items.append(
                 MemberItem(
@@ -193,11 +278,12 @@ class MemberService:
                     role=role_enum,
                     joined_at=links[0].joined_at if links else "",
                     department_ids=department_ids,
-                    department_names=[department_names.get(item, item) for item in department_ids],
+                    department_names=[
+                        candidates.department_names.get(item, item) for item in department_ids
+                    ],
                     status=status,
                 )
             )
-        items.sort(key=lambda item: item.user_id)
         return items
 
     async def _collect_user_ids(self, tenant_id: str, org_id: str) -> list[str]:
@@ -587,29 +673,9 @@ _RANK_OF: Final[dict[str, int]] = {
 }
 
 
-def paginate(items: list[MemberItem], query: ListMembersQuery) -> object:
-    """按查询参数切分成员列表（U3 分页）。
-
-    Args:
-        items: 完整成员列表。
-        query: 分页参数。
-
-    Returns:
-        object: `PageResult[MemberItem]`。
-    """
-    start = query.offset
-    return build_page(
-        items=items[start : start + query.page_size],
-        total=len(items),
-        page=query.page,
-        page_size=query.page_size,
-    )
-
-
 __all__: list[str] = [
     "MESSAGE_MODIFICATION_FORBIDDEN",
     "MESSAGE_OWNER_PROTECTED",
     "TEAM_MEMBER_PERMISSION",
     "MemberService",
-    "paginate",
 ]

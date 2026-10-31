@@ -122,7 +122,7 @@
 | 项 | 执行内容 | 验证结果 |
 |---|---|---|
 | P0-2（H3） | `docker-compose.saas.yml` 的 milvus 19530、对象存储 8333/23646 全部绑 `127.0.0.1`，与基础版 ARC-01 口径对齐；无鉴权 admin 口不再向外部网卡暴露 | `validate_deploy.py` exit 0 |
-| P0-3（H2） | ① `OrgStore` 协议新增 `links_of_users(tenant_id, user_ids)`，内存/PG 双实现（PG 单条 `IN (...)` 分批查询，每批 200 人）；② `MemberService.list_members` 角色只遍历一次（原 `_collect_user_ids` + `_role_keys` 各跑一遍）、关联按候选集合单批读取，删除重复的 `_role_keys` | 定向 68 项用例通过；`validate_repository_parity.py` 0 判定 0 stale；`validate_import_directions.py` 基线内 23 / 外 0；ruff+mypy 全绿 |
+| P0-3（H2） | ① `OrgStore` 协议新增 `links_of_users(tenant_id, user_ids)`，内存/PG 双实现（PG 单条 `IN (...)` 分批查询，每批 200 人）；② `MemberService.list_members` 角色只遍历一次（原 `_collect_user_ids` + `_role_keys` 各跑一遍）、关联按候选集合单批读取，删除重复的 `_role_keys`；③ **分页下推**（续做）：新增 `list_members_page`，无部门过滤时按 `offset/page_size` 切片后**只对当前页用户**批量读取关联，部门过滤场景整体批量一次再切页；API 层改走该入口，删除内存切页的 `paginate` | 定向 68+3 项用例通过（含「只查当前页 2 个用户」断言）；104 项端点/权限/租户安全用例通过；`validate_repository_parity.py` 0 判定 0 stale；`validate_import_directions.py` 基线内 23 / 外 0；ruff+mypy 全绿 |
 | P1-5（M1） | `RedisRateLimitStore` 由 `INCR`+每次 `EXPIRE` 改为 `SET NX EX`+`INCR`+`TTL`：TTL 只在窗口首次命中写入，锚点不再随流量后移；`retry_after` 取真实 TTL；新增「锚点不漂移」回归用例 | `test_ratelimit.py` 11 项通过 |
 | P1-6（M2） | ① `_queue_rank` 由「拉全队列逐条比对」改为单条 `COUNT(*)`（行值比较 `(started_at, task_id)`）；② PG `next_queued` 改 `LIMIT 1`（不再全量取回）；③ `create_steps` **保持一步一事务**（§3.3 硬约定 1，改动会违反长任务短事务约束，故不批量单事务化） | 受影响 66 项用例通过；ruff+mypy 全绿 |
 | P1-7（M5/M6） | `ci-web.yml` 注释更新为当前阈值；`ci-adapter.yml`「207 skipped」→「212 skipped」；README「mypy 204 文件」→205；`pyproject.toml` 新增 `[tool.coverage.report] fail_under = 85`，本地与 CI 同门槛 | 文档实测对照 |

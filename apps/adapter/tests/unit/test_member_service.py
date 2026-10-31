@@ -168,6 +168,78 @@ async def test_list_members_filters_by_role_department_status_keyword() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_members_page_slices_without_department_filter() -> None:
+    """U3 分页：无部门过滤时 total 为过滤后总数，页内按用户 ID 升序切片。"""
+    fixture = _Fixture()
+    await fixture.seed()
+
+    first = await fixture.service.list_members_page(
+        tenant_id=TENANT, org_id=ORG, query=ListMembersQuery(page=1, page_size=2)
+    )
+    assert [item.user_id for item in first.items] == ["usr_admin", "usr_member"]
+    assert first.meta.total == 3
+    assert first.meta.total_pages == 2
+
+    second = await fixture.service.list_members_page(
+        tenant_id=TENANT, org_id=ORG, query=ListMembersQuery(page=2, page_size=2)
+    )
+    assert [item.user_id for item in second.items] == ["usr_owner"]
+    assert second.meta.total == 3
+
+    empty = await fixture.service.list_members_page(
+        tenant_id=TENANT, org_id=ORG, query=ListMembersQuery(page=3, page_size=2)
+    )
+    assert empty.items == []
+    assert empty.meta.total == 3
+
+
+@pytest.mark.asyncio
+async def test_list_members_page_loads_links_only_for_current_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """分页下推：无部门过滤时只对当前页用户批量读取部门关联（审计 P0-3）。"""
+    fixture = _Fixture()
+    await fixture.seed()
+    seen: list[list[str]] = []
+    original = fixture.org.links_of_users
+
+    async def _record(tenant_id: str, user_ids: list[str]) -> dict[str, list[MemberLink]]:
+        seen.append(list(user_ids))
+        return await original(tenant_id, user_ids)
+
+    monkeypatch.setattr(fixture.org, "links_of_users", _record)
+
+    page = await fixture.service.list_members_page(
+        tenant_id=TENANT, org_id=ORG, query=ListMembersQuery(page=1, page_size=2)
+    )
+    assert len(page.items) == 2
+    assert seen == [["usr_admin", "usr_member"]], "只应查询当前页的 2 个用户，而非全部 3 个"
+
+
+@pytest.mark.asyncio
+async def test_list_members_page_with_department_filter_counts_filtered_total() -> None:
+    """部门过滤：需按候选整体读取关联判定归属，total 为过滤后条数。"""
+    fixture = _Fixture()
+    await fixture.seed()
+
+    in_dept = await fixture.service.list_members_page(
+        tenant_id=TENANT,
+        org_id=ORG,
+        query=ListMembersQuery(page=1, page_size=10, department_id="dept_rd"),
+    )
+    assert in_dept.meta.total == 3
+    assert len(in_dept.items) == 3
+
+    out_dept = await fixture.service.list_members_page(
+        tenant_id=TENANT,
+        org_id=ORG,
+        query=ListMembersQuery(page=1, page_size=10, department_id="dept_ops"),
+    )
+    assert out_dept.meta.total == 0
+    assert out_dept.items == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.p0
 async def test_update_member_role_and_departments() -> None:
     """ID8：改角色 + 覆盖部门 + 指定主部门，并写审计。"""

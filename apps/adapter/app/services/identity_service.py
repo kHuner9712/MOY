@@ -22,7 +22,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
 from app.core.security import AuthContext, require_permission
-from app.schemas.common import build_page
+from app.schemas.common import PageResult, build_page
 from app.schemas.identity import (
     AuditLogItem,
     AuditLogQueryRequest,
@@ -222,12 +222,17 @@ class IdentityService:
     # ------------------------------------------------------------------
     # U3 组织成员列表
     # ------------------------------------------------------------------
-    async def list_members(self, org_id: str, query: ListMembersQuery, auth: AuthContext) -> Any:
+    async def list_members(
+        self, org_id: str, query: ListMembersQuery, auth: AuthContext
+    ) -> PageResult[MemberItem]:
         """查询组织成员列表。
 
         **D-13 第 2 条**：组织来源改为业务库（`department_member` ∪ `member_role`），
         不再读身份底座 group —— 否则「部门调整后 U3 看不到变化」，
         且判权会退化为读 KC group。展示名以用户 ID 兜底（身份底座不提供批量姓名接口）。
+
+        分页下推：无部门过滤时只对当前页批量读取部门关联（见
+        `MemberService.list_members_page`）。
 
         Args:
             org_id: 组织 ID。
@@ -235,24 +240,26 @@ class IdentityService:
             auth: 鉴权上下文。
 
         Returns:
-            Any: `PageResult[MemberItem]` 分页结果。
+            PageResult[MemberItem]: 分页结果。
 
         Raises:
             ApiError: 组织不存在（14002）。
         """
         if not org_id:
             raise ApiError(ErrorCode.ORGANIZATION_NOT_FOUND, internal_detail="empty org_id")
-        from app.business.member_service import MemberService, paginate
+        from app.business.member_service import MemberService
 
         service = MemberService(self._settings)
-        members = await service.list_members(tenant_id=auth.tenant_id, org_id=org_id, query=query)
+        page = await service.list_members_page(
+            tenant_id=auth.tenant_id, org_id=org_id, query=query
+        )
         logger.info(
             "identity_members_listed",
             org_id=org_id,
-            total=len(members),
+            total=page.meta.total,
             tenant_id=auth.tenant_id,
         )
-        return paginate(members, query)
+        return page
 
     @staticmethod
     def _transform_member(payload: dict[str, Any]) -> MemberItem:
