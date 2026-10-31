@@ -152,7 +152,9 @@ services:
     volumes:
       - saas-milvus-data:/var/lib/milvus
     ports:
-      - "${OA_MILVUS_PORT:-19530}:19530"
+      # ARC-01（审计 2026-10-31 H3）：与 docker-compose.yml 口径对齐——基础设施组件
+      # 端口绑回环，仅本机调试可达（milvus 无鉴权，不得向外部网卡暴露）
+      - "127.0.0.1:${OA_MILVUS_PORT:-19530}:19530"
     depends_on: [milvus-etcd, milvus-object-store]
     networks: [officeai]
     logging: *default-logging
@@ -170,8 +172,10 @@ services:
     volumes:
       - saas-object-store-data:/data
     ports:
-      - "${OA_OBJECT_STORE_API_PORT:-8333}:8333"
-      - "${OA_OBJECT_STORE_ADMIN_PORT:-23646}:23646"
+      # ARC-01（审计 2026-10-31 H3）：绑回环，仅本机调试可达（S3 网关凭 AK/SK 鉴权，
+      # 但 admin 口 23646 无鉴权——此前 SaaS 版漏改直接绑 0.0.0.0）
+      - "127.0.0.1:${OA_OBJECT_STORE_API_PORT:-8333}:8333"
+      - "127.0.0.1:${OA_OBJECT_STORE_ADMIN_PORT:-23646}:23646"
     networks: [officeai]
     logging: *default-logging
     healthcheck:
