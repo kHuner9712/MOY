@@ -21,6 +21,7 @@ R4 输出 `stage` / `estimated_remaining_seconds` / `file_size` / `uploaded_at`�
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import tempfile
 
@@ -184,9 +185,11 @@ async def upload_document(
                     internal_detail=(f"file_size>{file_size} limit={limit}"),
                 )
             payload_digest.update(chunk)
-            tmp.write(chunk)
+            # 磁盘 IO 下沉到线程池：同步 write 跑在事件循环里会阻塞其他请求
+            # （审计 2026-10-31 L6）
+            await asyncio.to_thread(tmp.write, chunk)
         tmp.seek(0)
-        payload = tmp.read()
+        payload = await asyncio.to_thread(tmp.read)
 
     service = get_rag_service()
 

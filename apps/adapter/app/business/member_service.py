@@ -129,6 +129,12 @@ class MemberService:
     ) -> list[MemberItem]:
         """查询组织成员（业务库为权威源，展示名以用户 ID 兜底）。
 
+        查询组织：角色全量读**一次**（此前 `_collect_user_ids` 与 `_role_keys`
+        会把 `list_roles` + `member_ids_of_role` 各跑两遍），成员部门关联按
+        候选集合**批量**读取（`links_of_users`，消除逐成员 N+1）。
+        关联数据是「部门过滤 / 展示部门名 / 加入时间」的唯一来源，故仍需按
+        过滤后的候选集合整体拉取；分页切分由调用方完成。
+
         Args:
             tenant_id: 租户 ID。
             org_id: 组织 ID。
@@ -138,8 +144,15 @@ class MemberService:
             list[MemberItem]: 过滤后的完整成员列表（分页由调用方切分）。
         """
         await self._roles.ensure_builtin_roles(tenant_id, org_id)
-        user_ids = await self._collect_user_ids(tenant_id, org_id)
-        role_keys = await self._role_keys(tenant_id, org_id)
+        role_records = await self._roles.list_roles(tenant_id, org_id)
+        role_keys: dict[str, str] = {}
+        users = set(await self._org.user_ids(tenant_id, org_id))
+        for record in role_records:
+            member_ids = await self._roles.member_ids_of_role(tenant_id, record.role_id)
+            users.update(member_ids)
+            for user_id in member_ids:
+                role_keys.setdefault(user_id, record.role_key)
+        user_ids = sorted(users)
         department_names = {
             record.department_id: record.name
             for record in await self._org.list_departments(tenant_id, org_id)
@@ -149,12 +162,9 @@ class MemberService:
         )
         needle = query.keyword.strip().lower()
 
-        items: list[MemberItem] = []
+        # 先在「无需部门关联」的维度上过滤，缩小批量关联查询的候选集合
+        candidates: list[tuple[str, str, OrgRole]] = []
         for user_id in user_ids:
-            links = await self._org.links_of_user(tenant_id, user_id)
-            department_ids = [link.department_id for link in links]
-            if department_filter and department_filter not in department_ids:
-                continue
             role_key = role_keys.get(user_id, "")
             status = MemberStatus.ACTIVE.value if role_key else MemberStatus.INVITED.value
             if query.status and query.status != status:
@@ -163,6 +173,17 @@ class MemberService:
             if query.role is not None and role_enum != query.role:
                 continue
             if needle and needle not in user_id.lower():
+                continue
+            candidates.append((user_id, status, role_enum))
+
+        links_by_user = await self._org.links_of_users(
+            tenant_id, [candidate[0] for candidate in candidates]
+        )
+        items: list[MemberItem] = []
+        for user_id, status, role_enum in candidates:
+            links = links_by_user.get(user_id, [])
+            department_ids = [link.department_id for link in links]
+            if department_filter and department_filter not in department_ids:
                 continue
             items.append(
                 MemberItem(
@@ -193,22 +214,6 @@ class MemberService:
         for record in await self._roles.list_roles(tenant_id, org_id):
             users.update(await self._roles.member_ids_of_role(tenant_id, record.role_id))
         return sorted(users)
-
-    async def _role_keys(self, tenant_id: str, org_id: str) -> dict[str, str]:
-        """构造 `user_id → role_key` 映射。
-
-        Args:
-            tenant_id: 租户 ID。
-            org_id: 组织 ID。
-
-        Returns:
-            dict[str, str]: 角色映射。
-        """
-        mapping: dict[str, str] = {}
-        for record in await self._roles.list_roles(tenant_id, org_id):
-            for user_id in await self._roles.member_ids_of_role(tenant_id, record.role_id):
-                mapping.setdefault(user_id, record.role_key)
-        return mapping
 
     # ------------------------------------------------------------------
     # ID8 修改成员

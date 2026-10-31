@@ -219,7 +219,11 @@ class SegmentService:
         if not schedule:
             return await self._write_all(tenant_id, payload)
         task = asyncio.create_task(self._write_all(tenant_id, payload))
+        # 强引用任务：`create_task` 的返回值只被事件循环弱引用，不保存引用时
+        # 任务可能在执行途中被 GC 回收（审计 2026-10-31 L6）。
+        _BACKGROUND_TASKS.add(task)
         # 任务异常必须在任务内被吞掉（回填是增强能力），此处只挂一个兜底回调
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
         task.add_done_callback(_log_backfill_failure)
         return len(payload)
 
@@ -521,6 +525,10 @@ def _log_backfill_failure(task: asyncio.Task[int]) -> None:
     error = task.exception()
     if error is not None:
         logger.warning("segment_backfill_task_failed", reason=type(error).__name__)
+
+
+#: 在途回填任务的强引用集合（任务完成后由 done 回调移除）
+_BACKGROUND_TASKS: set[asyncio.Task[int]] = set()
 
 
 _service: SegmentService | None = None

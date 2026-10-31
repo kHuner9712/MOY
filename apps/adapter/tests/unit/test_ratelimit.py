@@ -29,6 +29,24 @@ class _FakePipeline:
         self._client = client
         self._queued: list[tuple[str, str]] = []
 
+    def set(
+        self, key: str, value: int, *, nx: bool = False, ex: int | None = None
+    ) -> _FakePipeline:
+        """排队 SET（支持 NX + EX）。
+
+        Args:
+            key: 键名。
+            value: 初始值。
+            nx: 仅当键不存在时写入。
+            ex: 过期秒数。
+
+        Returns:
+            _FakePipeline: 自身。
+        """
+        self._queued.append(("set", key))
+        self._client.pending_set = (value, nx, ex)
+        return self
+
     def incr(self, key: str) -> _FakePipeline:
         """排队 INCR。
 
@@ -41,34 +59,42 @@ class _FakePipeline:
         self._queued.append(("incr", key))
         return self
 
-    def expire(self, key: str, seconds: int) -> _FakePipeline:
-        """排队 EXPIRE。
+    def ttl(self, key: str) -> _FakePipeline:
+        """排队 TTL。
 
         Args:
             key: 键名。
-            seconds: 过期秒数。
 
         Returns:
             _FakePipeline: 自身。
         """
-        self._queued.append(("expire", key))
+        self._queued.append(("ttl", key))
         return self
 
-    async def execute(self) -> list[int]:
+    async def execute(self) -> list[Any]:
         """执行排队命令。
 
         Returns:
-            list[int]: 每条命令的执行结果。
+            list[Any]: 每条命令的执行结果。
         """
-        results: list[int] = []
+        results: list[Any] = []
         for command, key in self._queued:
-            if command == "incr":
+            if command == "set":
+                value, nx, ex = self._client.pending_set
+                if nx and key in self._client.store:
+                    results.append(None)
+                    continue
+                self._client.store[key] = str(value)
+                if ex is not None:
+                    self._client.ttls[key] = ex
+                results.append(True)
+            elif command == "incr":
                 current = int(self._client.store.get(key, "0"))
                 current += 1
                 self._client.store[key] = str(current)
                 results.append(current)
             else:
-                results.append(1)
+                results.append(self._client.ttls.get(key, -1))
         self._queued.clear()
         return results
 
@@ -79,6 +105,8 @@ class _FakeRedis:
     def __init__(self) -> None:
         """初始化内存字典。"""
         self.store: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
+        self.pending_set: tuple[int, bool, int | None] = (0, False, None)
 
     def pipeline(self) -> _FakePipeline:
         """创建 pipeline。
@@ -170,6 +198,24 @@ async def test_redis_store_counts() -> None:
     assert remaining == 0
     allowed, _, _ = await store.hit("k", 2, 60)
     assert allowed is False
+
+
+async def test_redis_window_anchor_does_not_drift() -> None:
+    """Redis 窗口锚点固定在首次命中：后续命中不得刷新 TTL（审计 2026-10-31 M1）。
+
+    修复前每次命中都 EXPIRE，持续流量下窗口不断后移、计数永不归零，
+    最终全员 429——与内存实现的「窗口到期归零」语义分叉。
+    """
+    client = _FakeRedis()
+    store = RedisRateLimitStore(client)  # type: ignore[arg-type]
+    allowed, _, retry_after = await store.hit("k", 2, 60)
+    assert allowed is True
+    assert retry_after == 60
+    key = "oa:ratelimit:k"
+    first_ttl = client.ttls[key]
+    await store.hit("k", 2, 60)
+    await store.hit("k", 2, 60)
+    assert client.ttls[key] == first_ttl
 
 
 def test_limiter_uses_injected_store() -> None:

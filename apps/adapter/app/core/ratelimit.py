@@ -127,7 +127,7 @@ class InMemoryRateLimitStore:
 
 
 class RedisRateLimitStore:
-    """Redis 固定窗口限流存储（T02 启用，基于 `INCR` + `EXPIRE`）。
+    """Redis 固定窗口限流存储（T02 启用，基于 `SET NX EX` + `INCR`）。
 
     Attributes:
         _client: redis.asyncio 客户端。
@@ -157,12 +157,18 @@ class RedisRateLimitStore:
         """
         redis_key = f"{self._prefix}:{key}"
         pipeline = self._client.pipeline()
+        # 窗口锚点必须固定在**首次命中**：`SET NX EX` 只在键不存在时写 TTL，
+        # 后续命中只 INCR 不刷新 TTL。若每次命中都 EXPIRE，持续流量会把窗口
+        # 不断往后推、计数永不归零（限流越收越紧直至全员 429，审计 2026-10-31 M1）。
+        pipeline.set(redis_key, 0, nx=True, ex=window_seconds)
         pipeline.incr(redis_key)
-        pipeline.expire(redis_key, window_seconds)
+        pipeline.ttl(redis_key)
         results = await pipeline.execute()
-        count = int(results[0]) if results else 1
+        count = int(results[1]) if len(results) > 1 else 1
+        ttl = int(results[2]) if len(results) > 2 else window_seconds
         allowed = count <= limit
-        return allowed, max(limit - count, 0), window_seconds
+        retry_after = ttl if ttl and ttl > 0 else window_seconds
+        return allowed, max(limit - count, 0), retry_after
 
 
 def build_ratelimit_store(conf: Settings) -> RateLimitStore:

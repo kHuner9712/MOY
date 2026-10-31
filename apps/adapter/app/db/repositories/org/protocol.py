@@ -79,6 +79,16 @@ class OrgStore(Protocol):
         """读取某成员的全部部门关联。"""
         ...
 
+    async def links_of_users(
+        self, tenant_id: str, user_ids: list[str]
+    ) -> dict[str, list[MemberLink]]:
+        """批量读取多个成员的部门关联（成员列表页用，消除逐成员查询的 N+1）。
+
+        Returns:
+            以 `user_id` 为键的关联列表；无关联的成员不出现在结果中。
+        """
+        ...
+
     async def links_of_department(self, tenant_id: str, department_id: str) -> list[MemberLink]:
         """读取某部门的全部成员关联。"""
         ...

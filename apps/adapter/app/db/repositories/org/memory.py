@@ -275,6 +275,28 @@ class InMemoryOrgStore:
         items.sort(key=lambda item: (not item.is_primary, item.department_id))
         return items
 
+    async def links_of_users(
+        self, tenant_id: str, user_ids: list[str]
+    ) -> dict[str, list[MemberLink]]:
+        """批量读取多个成员的部门关联。
+
+        Args:
+            tenant_id: 租户 ID。
+            user_ids: 用户 ID 列表。
+
+        Returns:
+            dict[str, list[MemberLink]]: 以用户 ID 为键的关联列表（主部门在前）。
+        """
+        wanted = set(user_ids)
+        async with self._lock:
+            grouped: dict[str, list[MemberLink]] = {}
+            for (tid, _, uid), link in self._links.items():
+                if tid == tenant_id and uid in wanted:
+                    grouped.setdefault(uid, []).append(link)
+        for items in grouped.values():
+            items.sort(key=lambda item: (not item.is_primary, item.department_id))
+        return grouped
+
     async def links_of_department(self, tenant_id: str, department_id: str) -> list[MemberLink]:
         """读取某部门的全部成员关联。
 

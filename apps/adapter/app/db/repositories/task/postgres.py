@@ -415,10 +415,25 @@ class PostgresTaskStore:
             plugin_id: 插件标识。
 
         Returns:
-            TaskRecord | None: 任务行。
+            TaskRecord | None: 任务行（`queue_position` 恒为 1）。
         """
-        queued = await self.list_queued(tenant_id, plugin_id)
-        return queued[0] if queued else None
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _TaskRepository(uow)
+            row = await repo.fetch_one(
+                f"""
+                SELECT * FROM {TASK_TABLE}
+                 WHERE tenant_id = :tenant_id AND plugin_id = :plugin_id
+                   AND status = '{STATUS_QUEUED}'
+                 ORDER BY started_at, task_id
+                 LIMIT 1
+                """,
+                repo.params(plugin_id=plugin_id),
+            )
+        if row is None:
+            return None
+        record = _to_task(row)
+        record.queue_position = 1
+        return record
 
     async def list_queued(self, tenant_id: str, plugin_id: str) -> list[TaskRecord]:
         """列出排队任务（位次**派生**，不读存储列）。
@@ -454,20 +469,34 @@ class PostgresTaskStore:
     async def _queue_rank(self, tenant_id: str, plugin_id: str, row: Mapping[str, Any]) -> int:
         """取某个排队任务在队列里的位次（1 起）。
 
+        用一条 `COUNT(*)` 计算「排序键严格在目标之前的排队任务数」，不再拉取
+        整条队列（审计 2026-10-31 M2：新建任务/查详情都触发全量队列读取）。
+        排序键与 `list_queued` 一致：`(started_at, task_id)`。
+
         Args:
             tenant_id: 企业 ID。
             plugin_id: 插件标识。
-            row: 刚插入的任务行（至少含 `task_id`）。
+            row: 刚插入的任务行（至少含 `task_id` 与 `started_at`）。
 
         Returns:
-            int: 位次；该任务已不在队列里时回落到队列长度（至少 1）。
+            int: 位次；`started_at` 缺失时无法比较，回落到 1（写入侧恒有 `now()`）。
         """
         target = str(row["task_id"])
-        queued = await self.list_queued(tenant_id, plugin_id)
-        for index, record in enumerate(queued, start=1):
-            if record.task_id == target:
-                return index
-        return max(1, len(queued))
+        started_at = as_datetime(row.get("started_at"))
+        if started_at is None:  # pragma: no cover - 写库侧 COALESCE(:started_at, now())
+            return 1
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _TaskRepository(uow)
+            before = await repo.fetch_scalar(
+                f"""
+                SELECT count(*) FROM {TASK_TABLE}
+                 WHERE tenant_id = :tenant_id AND plugin_id = :plugin_id
+                   AND status = '{STATUS_QUEUED}'
+                   AND (started_at, task_id) < (CAST(:started_at AS timestamptz), :task_id)
+                """,
+                repo.params(plugin_id=plugin_id, started_at=started_at, task_id=target),
+            )
+        return max(1, int(before or 0) + 1)
 
     async def create_steps(self, records: Iterable[StepRecord]) -> list[StepRecord]:
         """批量插入步骤骨架。
