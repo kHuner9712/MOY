@@ -79,13 +79,17 @@ export default defineConfig({
       // P1 补测第三批（2026-10-31 H1）：api-client 令牌/请求头/查询参数/网关拦截/
       // 超时/各 API 组代表方法 + session-events 广播 27 项补测后实测：
       //   % Stmts **16.21** | % Branch 14.90 | % Funcs **9.31** | % Lines **16.32**
+      //
+      // P1 补测第四批（2026-10-31 H1 续）：QUERY_KEYS 键工厂 29 项 + api-client
+      // toolApi/knowledgeExtApi/identityExtApi/opsApi/pluginsApi 补充 18 项后实测：
+      //   % Stmts **17.56** | % Branch 15.36 | % Funcs **12.53** | % Lines **17.77**
       // 棘轮继续只升不降，各留 ~0.4pp 余量：
-      //   statements 15.8 / branches 14.5 / functions 8.9 / lines 15.8
+      //   statements 17.1 / branches 14.9 / functions 12.1 / lines 17.3
       thresholds: {
-        statements: 15.8,
-        branches: 14.5,
-        functions: 8.9,
-        lines: 15.8,
+        statements: 17.1,
+        branches: 14.9,
+        functions: 12.1,
+        lines: 17.3,
       },
     },
   },
