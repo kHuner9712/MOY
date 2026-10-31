@@ -26,6 +26,9 @@ const ACTIVE_STATUS: readonly string[] = ['queued', 'pending', 'running', 'waiti
 /** 事件不可用时的兜底轮询间隔 */
 const POLL_INTERVAL_MS = 5000;
 
+/** SSE 事件批量刷新的节流窗口（毫秒）——后端一次性重放全部步骤时合并请求 */
+const REFETCH_THROTTLE_MS = 300;
+
 /** 「任务不存在」错误码（12001） */
 const TASK_NOT_FOUND_CODE = 12001;
 
@@ -67,21 +70,30 @@ export default function TaskDetailPage(): React.JSX.Element {
   }, [task?.status]);
 
   // A6 事件增量：收到任何步骤/任务事件就失效 A3+A4，由查询层合并最新数据
+  // 审计 L6：SSE 事件密集（后端一次性重放全部步骤）时合并 refetch，避免请求突发
+  const refetchTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  const throttledRefetch = React.useCallback(() => {
+    if (refetchTimer.current !== undefined) return;
+    refetchTimer.current = setTimeout(() => {
+      refetchTimer.current = undefined;
+      void taskQuery.refetch();
+      void stepsQuery.refetch();
+    }, REFETCH_THROTTLE_MS);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      if (refetchTimer.current !== undefined) clearTimeout(refetchTimer.current);
+    };
+  }, []);
+
   React.useEffect(() => {
     if (!taskId) return undefined;
     const stop = agentApi.streamTaskEvents(taskId, {
-      onStepStarted: () => {
-        void taskQuery.refetch();
-        void stepsQuery.refetch();
-      },
-      onStepFinished: () => {
-        void taskQuery.refetch();
-        void stepsQuery.refetch();
-      },
-      onTaskCompleted: () => {
-        void taskQuery.refetch();
-        void stepsQuery.refetch();
-      },
+      onStepStarted: throttledRefetch,
+      onStepFinished: throttledRefetch,
+      onTaskCompleted: throttledRefetch,
       // 事件通道异常不弹错：兜底轮询会继续把状态拉回来
       onError: () => undefined,
     });
