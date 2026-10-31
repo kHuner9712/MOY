@@ -87,13 +87,17 @@ export default defineConfig({
       // P1 补测第五批（2026-10-31 H1 续）：knowledgeApi/agentApi/memoryApi/
       // billingApi/identityApi/statsApi/capabilitiesApi 剩余方法 18 项后实测：
       //   % Stmts **17.94** | % Branch 15.59 | % Funcs **13.68** | % Lines **18.18**
+      //
+      // P1 补测第六批（2026-10-31 H1 续）：date-range-picker 纯函数 + progress
+      // 纯函数 23 项后实测：
+      //   % Stmts **18.94** | % Branch 16.24 | % Funcs **14.34** | % Lines **19.02**
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 17.6 / branches 15.2 / functions 13.3 / lines 17.8
+      //   statements 18.6 / branches 15.9 / functions 14.0 / lines 18.7
       thresholds: {
-        statements: 17.6,
-        branches: 15.2,
-        functions: 13.3,
-        lines: 17.8,
+        statements: 18.6,
+        branches: 15.9,
+        functions: 14.0,
+        lines: 18.7,
       },
     },
   },
