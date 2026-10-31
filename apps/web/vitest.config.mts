@@ -8,8 +8,8 @@ import { defineConfig } from 'vitest/config';
  *
  * 只跑 `src/**\/*.test.ts(x)`；E2E 由 Playwright 负责。
  * 测试对象以纯函数为主（登录回跳、会话广播、表单合并/校验），
- * 因此不依赖 React 渲染器——monorepo 根目录另有一份 React 18，
- * 把渲染器拉进来会出现两套 React 混用。
+ * 不依赖 React 渲染器（React 已由根 overrides 收敛 19.3.1 单实例，
+ * 此前"根目录另有一份 React 18"的双实例约束已不存在；保留纯函数口径是为测试轻量稳定）。
  */
 const webRoot = fileURLToPath(new URL('.', import.meta.url));
 
@@ -71,13 +71,17 @@ export default defineConfig({
       // P1 补测第一批（2026-10-30）：format.ts / oidc.ts / session-store.ts
       // 三个纯逻辑模块补测后全量分母实测（**注意列名，四列不可混用**）：
       //   % Stmts **13.44** | % Branch 12.88 | % Funcs **6.60** | % Lines **13.43**
-      // 棘轮继续只升不降，各留 ~0.5pp 余量：
-      //   statements 12.9 / branches 12.3 / functions 6.1 / lines 12.9
+      //
+      // P1 补测第二批（2026-10-31，审计 M5 结转）：business-errors / error-guard /
+      // capability-labels / memory-labels / utils / query-client 六个模块补测后实测：
+      //   % Stmts **15.67** | % Branch 14.46 | % Funcs **8.25** | % Lines **15.73**
+      // 棘轮继续只升不降，各留 ~0.4pp 余量：
+      //   statements 15.2 / branches 14.0 / functions 7.8 / lines 15.2
       thresholds: {
-        statements: 12.9,
-        branches: 12.3,
-        functions: 6.1,
-        lines: 12.9,
+        statements: 15.2,
+        branches: 14.0,
+        functions: 7.8,
+        lines: 15.2,
       },
     },
   },
