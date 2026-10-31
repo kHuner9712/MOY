@@ -649,6 +649,26 @@ function openStream(
   return () => controller.abort();
 }
 
+/**
+ * SSE 事件名 → 回调键。
+ *
+ * 后端事件名是裸业务名（`delta` / `step_started` / `task_completed`），
+ * 而回调对象的键是驼峰（`onDelta` / `onStepStarted` / `onTaskCompleted`）。
+ * 分发必须做这一层映射，否则 `handlers['delta']` 永远取不到 `onDelta`——
+ * 流式对话与任务事件推送的**全部回调都会静默失联**（第十批补测发现的缺陷）。
+ *
+ * @param eventName - SSE 帧的事件名（snake_case，如 `step_started`）
+ * @returns 回调键（如 `onStepStarted`）
+ */
+function handlerKeyFor(eventName: string): string {
+  const pascal = eventName
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join('');
+  return `on${pascal}`;
+}
+
 /** 解析并分发单个 SSE 帧 */
 function dispatchFrame(
   rawFrame: string,
@@ -676,7 +696,7 @@ function dispatchFrame(
     return;
   }
 
-  const handler = handlers[eventName];
+  const handler = handlers[handlerKeyFor(eventName)];
   handler?.(payload as never);
 }
 

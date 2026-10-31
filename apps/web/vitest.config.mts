@@ -99,13 +99,18 @@ export default defineConfig({
       // P1 补测第九批（2026-10-31 H1 续）：api-client pluginsApi 剩余方法 +
       // session-store 存储降级/形状校验/旧键迁移/过期判定 + format 边界 24 项后实测：
       //   % Stmts **20.21** | % Branch 16.70 | % Funcs **14.83** | % Lines **20.36**
+      //
+      // P1 补测第十批（2026-10-31 H1 续）：SSE 流分帧解析与降级 + upload 上传路径 +
+      // 十个 API 组剩余方法 55 项后实测（api-client.ts 62.9% → **97.6%**）：
+      //   % Stmts **22.60** | % Branch 17.42 | % Funcs **18.76** | % Lines **22.89**
+      // 本批同时修复补测发现的 SSE 事件分发失配缺陷（handlerKeyFor 映射）。
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 19.9 / branches 16.4 / functions 14.5 / lines 20.0
+      //   statements 22.3 / branches 17.1 / functions 18.4 / lines 22.5
       thresholds: {
-        statements: 19.9,
-        branches: 16.4,
-        functions: 14.5,
-        lines: 20.0,
+        statements: 22.3,
+        branches: 17.1,
+        functions: 18.4,
+        lines: 22.5,
       },
     },
   },
