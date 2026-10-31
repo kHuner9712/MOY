@@ -243,6 +243,9 @@ omit = [
 precision = 2
 show_missing = true
 skip_empty = true
+# 与 CI 门禁同源（ci-adapter.yml）：本地跑 `pytest --cov=app` 也按同一门槛判定，
+# 避免"CI 85% / 本地无门槛"的口径差（审计 2026-10-31 M6）。
+fail_under = 85
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
