@@ -12,8 +12,8 @@ npm run test --workspace apps/web -- --coverage  # 带覆盖率门禁
 
 覆盖率门禁阈值以 `vitest.config.mts` 的 `coverage.thresholds`（statements / branches / functions / lines）为准：
 2026-10-29 起覆盖率分母改算全量源码（旧 44 口径只统计 12.4% 源码，是假高值，已废止）；
-现行阈值 **statements 15.2 / branches 14.0 / functions 7.8 / lines 15.2**
-（2026-10-31 补测第二批后抬升，实测 % Stmts 15.67 / Branch 14.46 / % Funcs 8.25 / % Lines 15.73；
+现行阈值 **statements 15.8 / branches 14.5 / functions 8.9 / lines 15.8**
+（2026-10-31 补测第三批后抬升，实测 % Stmts 16.21 / Branch 14.90 / % Funcs 9.31 / % Lines 16.32；
 历史地板 lines 5 / functions 2 与 2026-10-30 的 12.9 / 12.3 / 6.1 / 12.9 均已废止）。
 **只升不降**（QA-04 纪律：补测试只许抬高这个数；降低阈值等同拆门禁）。
 

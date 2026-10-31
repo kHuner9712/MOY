@@ -75,13 +75,17 @@ export default defineConfig({
       // P1 补测第二批（2026-10-31，审计 M5 结转）：business-errors / error-guard /
       // capability-labels / memory-labels / utils / query-client 六个模块补测后实测：
       //   % Stmts **15.67** | % Branch 14.46 | % Funcs **8.25** | % Lines **15.73**
+      //
+      // P1 补测第三批（2026-10-31 H1）：api-client 令牌/请求头/查询参数/网关拦截/
+      // 超时/各 API 组代表方法 + session-events 广播 27 项补测后实测：
+      //   % Stmts **16.21** | % Branch 14.90 | % Funcs **9.31** | % Lines **16.32**
       // 棘轮继续只升不降，各留 ~0.4pp 余量：
-      //   statements 15.2 / branches 14.0 / functions 7.8 / lines 15.2
+      //   statements 15.8 / branches 14.5 / functions 8.9 / lines 15.8
       thresholds: {
-        statements: 15.2,
-        branches: 14.0,
-        functions: 7.8,
-        lines: 15.2,
+        statements: 15.8,
+        branches: 14.5,
+        functions: 8.9,
+        lines: 15.8,
       },
     },
   },
