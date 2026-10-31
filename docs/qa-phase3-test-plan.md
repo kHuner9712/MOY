@@ -2,7 +2,7 @@
 
 > 文档性质：内部交付文档（供交付总监、架构师、研发、QA 消费）
 > 上游输入：`docs/prd-phase3-increment.md` v1.0（25 条 P0 / 第 5 章 AC-02 / 附录 A 端点与错误码 / 附录 C 未验证项）、
-> `docs/qa-phase2-test-plan.md`（体例与门禁口径）、`docs/qa-phase2-w3-r2-report.md`（W3 闭环基线 1119 passed / 89.99% / 89.10%）
+> `docs/qa-phase2-test-plan.md`（体例与门禁口径）、`docs/archive/qa-phase2-w3-r2-report.md`（W3 闭环基线 1119 passed / 89.99% / 89.10%）
 > 下游消费：`docs/architecture-phase3.md`（端点编号、错误码分配、插件目录约定）、B16~B22 批次研发
 > 作者：严过关（QA 工程师）· 日期：2026-10-23 · 版本：**v1.0-rc1（ADJ-1~10 已由主理人裁定；G-26~G-30 定稿，G-31 移出本阶段）** · 状态：待架构落稿后补路径与错误码数值
 
@@ -228,7 +228,7 @@ G-26 声明 → G-27 UI 资产 → G-28 能力白名单 → 后端单测
 | 1 | 每个批次（B16~B22）落地时，把该批涉及的 P0 映射到**具体测试函数**并加 `@pytest.mark.p0`；只加在**已实现端点**的真实断言上 |
 | 2 | **禁止空标记**：不得用 `p0` + `pass` / `assert True` / `xfail` / 无条件 `skip` 凑数（视为伪造门禁，P0 级流程缺陷） |
 | 3 | 批次准出前 QA 实跑 `pytest -q -m p0 --run-pg`，要求 `failed=0 且 skipped=0`，并在批次报告贴出 p0 用例数 |
-| 4 | 缺陷钉住统一用 `xfail(strict=True)`；修复后**自动 XPASS → hard error**，强制摘标记（W3 已验证该机制有效，见 `qa-phase2-w3-r2-report.md` §1） |
+| 4 | 缺陷钉住统一用 `xfail(strict=True)`；修复后**自动 XPASS → hard error**，强制摘标记（W3 已验证该机制有效，见 `docs/archive/qa-phase2-w3-r2-report.md` §1） |
 | 5 | 阶段门之前 p0 总数 ≥60（本方案目标 **117**），且 25 条 P0 **每条 ≥2 条用例**（§4.9 核对） |
 
 ---

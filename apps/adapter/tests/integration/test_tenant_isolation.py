@@ -48,7 +48,7 @@ from tests.integration.pg_fixture import (
 pytest_plugins = ["tests.integration.pg_fixture"]
 
 # P0 红线用例（G-24，测试方案 §7.1）：SEC-02/03 / P0 判据① —— 跨租户可见任何一行数据
-# 映射与实跑见 docs/qa-phase2-w2-r2-report.md §3.1
+# 映射与实跑见 docs/archive/qa-phase2-w2-r2-report.md §3.1
 pytestmark = [pytest.mark.integration, pytest.mark.pg, pytest.mark.p0]
 
 #: `apps/adapter/app` 源码根目录（SEC-05 静态扫描范围）

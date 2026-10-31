@@ -8,7 +8,7 @@
 | 验收人 | 齐活林（交付总监） |
 | 代码基线 | `main` @ **`d363909`**（收口期补交付 B26 端到端 + 错误码收口 + 产物内容持久化后定版；共 **231 提交 / 155 文件 / +50,430 −3,000**，其中 −3,000 主要为 12002/12005 注销与重构） |
 | 验收依据 | `docs/plan-v1.0.md` 第三阶段排期；`docs/prd-phase3-increment.md` v1.2（25 条 P0 / 10 条勘误）；`docs/architecture-phase3.md` v3.2.2（16 端点 / 9 表 / 13 错误码 / B16-B29）；`docs/qa-phase3-test-plan.md`、`docs/qa-phase3-batch-acceptance-checklist.md` |
-| 独立验证 | `docs/qa-phase3-b18-report.md`、`docs/qa-phase3-b20-report.md`（QA 侧批次报告）；`docs/prd-phase3-traceability.md`（判据真源）、`docs/qa-phase3-test-plan.md`、`docs/qa-phase3-batch-acceptance-checklist.md` |
+| 独立验证 | `docs/archive/qa-phase3-b18-report.md`、`docs/archive/qa-phase3-b20-report.md`（QA 侧批次报告）；`docs/prd-phase3-traceability.md`（判据真源）、`docs/qa-phase3-test-plan.md`、`docs/qa-phase3-batch-acceptance-checklist.md` |
 | **验收结论** | **✅ 通过（PASS）**：6 个批次（B16-B21 + B19c/B21c）全部完成，**16/16 端点就绪**，**0 个未关闭 P0**（3 条 P1/P2 已登记、`due_batch=B30`） |
 
 ---
@@ -216,7 +216,7 @@
 ---
 
 *验收人：齐活林（交付总监） · 2026-10-23*
-*证据附件：`docs/qa-phase3-b18-report.md`、`b20-report.md`、`b21-report.md`、`docs/prd-phase3-traceability.md`（判据真源，290 行 / 25 TC / 117 断言 / 12 门禁）、`docs/phase3-backend-handoff.md`*
+*证据附件：`docs/archive/qa-phase3-b18-report.md`、`b20-report.md`、`b21-report.md`、`docs/prd-phase3-traceability.md`（判据真源，290 行 / 25 TC / 117 断言 / 12 门禁）、`docs/phase3-backend-handoff.md`*
 
 ---
 
@@ -231,7 +231,7 @@
 | --- | --- | --- | --- |
 | 1 | 「后端 B16-B21 + **前端 B22-B27 全部交付**」 | B22/B23/B24/B25/B27 交付；**B26（端到端装配、演示数据与 e2e）整批缺失**——无 `tests/e2e/`、无 `scripts/demo_phase3.sh`、无 `docs/phase3-demo-script.md` | **漏项判定**：把"前端批次看起来都做完了"当成了"每一批都做完了"，没有逐批对照架构文档的文件清单 |
 | 2 | 「P0-P3-05 插件开发文档」列入 ✅ | 文档**当时不存在**，收口期才补（`2eca02c`，736 行 8 节 + 2 附录） | 同上：25 条 P0 里唯一一条"文档即交付物"的需求被漏掉 |
-| 3 | 「独立验证：`docs/qa-phase3-b21-report.md`、`docs/qa-phase3-traceability.md`」 | **两份文档都不存在**（实际是 `qa-phase3-b20-report.md` 与 `prd-phase3-traceability.md`） | **引用失真**：引用了"应该有"的文件名，没验证它是否真的存在 |
+| 3 | 「独立验证：`docs/qa-phase3-b21-report.md`、`docs/qa-phase3-traceability.md`」 | **两份文档都不存在**（实际是 `docs/archive/qa-phase3-b20-report.md` 与 `prd-phase3-traceability.md`） | **引用失真**：引用了"应该有"的文件名，没验证它是否真的存在 |
 
 ### 10.2 这三处为什么能一起通过签署
 

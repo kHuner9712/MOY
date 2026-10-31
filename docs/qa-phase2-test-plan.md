@@ -6,7 +6,7 @@
 | QA 工程师 | 严过关（Yan） |
 | 适用阶段 | 第二阶段（第 9-16 周），批次 B01-B15 / 里程碑 T01-T05 |
 | 上游输入 | `docs/prd-phase2-increment.md`（24 条 P0 / 114 条可执行断言）、`docs/architecture-phase2.md`（38 新端点 + 14 新错误码 + 15 批次）、`docs/phase2-progress-audit.md`（基线完成度 22%） |
-| 门禁基准 | `docs/qa-report-sprint0.md` v1.0 + `docs/qa-report-sprint0-addendum-v1.1.md` + `docs/qa-blockers-closure.md` v1.0（沿用同一套口径与命令） |
+| 门禁基准 | `docs/archive/qa-report-sprint0.md` v1.0 + `docs/archive/qa-report-sprint0-addendum-v1.1.md` + `docs/qa-blockers-closure.md` v1.0（沿用同一套口径与命令） |
 | 代码基线 | `develop` @ `321d4f1`，`apps/adapter/tests/` 421 用例 / 覆盖率 90.95%（阶段一验收值） |
 | 本次范围 | **仅方案与用例设计**，不写实现代码、不修改源码、不改动既有用例断言 |
 | 状态 | **已按裁决定稿**（裁决落实记录见第 11 章） |

@@ -3,7 +3,7 @@
 - **状态**：✅ **已签字生效**（2026-10-21 创始人授权主理人批准，`docs/decisions/0004`；Docker daemon 实测 `docker pull` 通过，签字前置条件满足）
 - **日期**：2026-10-21
 - **决策者**：高见远（架构师）；齐活林（交付总监）代创始人拍板；法务/合规意见已以上述规避约束形式闭环
-- **相关文档**：`docs/architecture-v1.0.md` 第 2.1 节、第 8.2 节、第 10.2 节 D-06；`docs/qa-report-sprint0.md` E-3 节、R-06；`docs/qa-blockers-closure-appendix-a.md` P1-1/P1-2/P2-4
+- **相关文档**：`docs/architecture-v1.0.md` 第 2.1 节、第 8.2 节、第 10.2 节 D-06；`docs/archive/qa-report-sprint0.md` E-3 节、R-06；`docs/qa-blockers-closure-appendix-a.md` P1-1/P1-2/P2-4
 - **决策编号**：T01（项目基础设施）
 - **关联决策**：ADR-0001（适配层唯一原则）—— 本决策是其「合规优先」子约束在基础设施层的落地
 

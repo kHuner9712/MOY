@@ -41,7 +41,7 @@
 
 ### 1.3 与既有审计的关系
 
-本报告独立复核了 `docs/audit-repo-2026-10-22.md`（OA-AUDIT-001）与 `docs/repo-gap-assessment-2026-10-22.md`（OA-REVIEW-002）的全部结论，确认以下问题**已修复**：
+本报告独立复核了 `docs/archive/audit-repo-2026-10-22.md`（OA-AUDIT-001）与 `docs/repo-gap-assessment-2026-10-22.md`（OA-REVIEW-002）的全部结论，确认以下问题**已修复**：
 
 | 原问题 | 修复证据 | 当前状态 |
 | --- | --- | --- |

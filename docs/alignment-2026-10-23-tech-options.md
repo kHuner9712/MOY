@@ -5,7 +5,7 @@
 | 报告编号 | OA-ALIGN-TECH-001 |
 | 日期 | 2026-10-23 |
 | 作者 | 高见远（架构师） |
-| 输入 | `docs/moy-project-charter-v1.0.md`、`docs/audit-2026-10-23-arch-code-review.md`（AR-001~023）、`docs/audit-2026-10-23-moy-charter-consolidated.md`、`docs/decisions/0005-charter-first-alignment.md`（ADR-0005） |
+| 输入 | `docs/moy-project-charter-v1.0.md`、`docs/archive/audit-2026-10-23-arch-code-review.md`（AR-001~023）、`docs/archive/audit-2026-10-23-moy-charter-consolidated.md`、`docs/decisions/0005-charter-first-alignment.md`（ADR-0005） |
 | 范围 | **仅技术侧**：T1~T6 六项技术决策的可行性、成本、推荐方案 |
 | 约束 | 本轮只评估与设计；**本人未修改任何代码**，仅新增本文件 |
 | 基线 | `apps/adapter` 实测 **1802 passed / 177 skipped（需 `--run-pg`）/ 0 failed**，见 §1.3 |

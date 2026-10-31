@@ -28,7 +28,7 @@ from app.db.repositories.usage import (
 from tests.conftest import make_token
 
 # P0 红线用例（G-24，测试方案 §7.1）：P2-BL-03 / P0 判据④ —— M4 与 BL5 同源、成员求和
-# 映射与实跑见 docs/qa-phase2-w2-r2-report.md §3.1
+# 映射与实跑见 docs/archive/qa-phase2-w2-r2-report.md §3.1
 pytestmark = [pytest.mark.integration, pytest.mark.p0]
 
 #: 生效租户 ID。私有化模式下令牌/请求头里的租户会被收敛为 `default`（单租户），

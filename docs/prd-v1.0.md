@@ -151,7 +151,7 @@ V1.0 的具体能力承诺为：
 - 「终端可见性」列标注该需求对终端用户是否直接可见，标注「不可见」者同时收录于附录 A 清单。
 - **「成熟度」列口径**（总纲第十一章，ADR-0005 D-14）：**L1** 代码存在 ｜ **L2** 功能可运行（含自动化测试，外部依赖可为桩）｜ **L3** 集成已验证（有真实外部联调证据）｜ **L4** 生产可用（明确负载/故障/运维验证）｜ **L5** 商业已验证（真实客户持续付费）。
   - 判定规则：无证据最高 L1；有桩/mock 的能力最高 L1；有测试但外部依赖为桩最高 L2；有真实联调证据方可 L3。**「P0 交付」指范围承诺，不等于已达成 L3。**
-  - 本列数据来源：`audit-2026-10-23-moy-charter-consolidated.md` §四、`audit-2026-10-23-arch-code-review.md`、`docs/phase4-delivery-manifest.md`（2026-10-23 复核）。
+  - 本列数据来源：`docs/archive/audit-2026-10-23-moy-charter-consolidated.md` §四、`docs/archive/audit-2026-10-23-arch-code-review.md`、`docs/phase4-delivery-manifest.md`（2026-10-23 复核）。
 
 ### 5.1 P0 需求清单（V1.0 必须交付）
 

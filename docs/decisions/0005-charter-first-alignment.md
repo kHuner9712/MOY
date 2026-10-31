@@ -5,7 +5,7 @@
 | 记录版本 | v1.0 |
 | 拍板日期 | 2026-10-23 |
 | 拍板人 | 桐鸣科技创始人（授权主理人齐活林代拍） |
-| 依据 | 《Moy（麦子）项目总纲》V1.0（`docs/moy-project-charter-v1.0.md`，L0 北极星）；`docs/alignment-2026-10-23-charter-vs-prd.md`（20 条差异 + 43 项台账）；`docs/audit-2026-10-23-moy-charter-consolidated.md`；`docs/alignment-2026-10-23-tech-options.md`（技术评估） |
+| 依据 | 《Moy（麦子）项目总纲》V1.0（`docs/moy-project-charter-v1.0.md`，L0 北极星）；`docs/alignment-2026-10-23-charter-vs-prd.md`（20 条差异 + 43 项台账）；`docs/archive/audit-2026-10-23-moy-charter-consolidated.md`；`docs/alignment-2026-10-23-tech-options.md`（技术评估） |
 | 关联文档 | `docs/decisions/0004-phase1-open-decisions-ratification.md`（D-01~D-08 已决）、`docs/prd-v1.0.md`、`docs/plan-v1.0.md`、`docs/architecture-v1.0.md` |
 | 决策范围 | 总纲 vs PRD/总方案 的 20 条不一致；6 项技术实施路径；W0 开发清单 |
 

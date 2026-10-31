@@ -7,6 +7,11 @@
 
 ## 迁移清单（0005–0012，按执行顺序）
 
+> 更早的 `0002`–`0004` 已冻结，用途见各 SQL 文件头注释：
+> `0002_callback_idempotency_selfcheck`（回调幂等自检，原 `0002_billing_callback_unique` 改名，见 §4）、
+> `0003_phase3_plugin_tables`（插件域 9 表）、`0004_phase3_task_versions`（任务版本表）。
+> 全量迁移线为 0002–0012 共 11 个（0001 为 RESERVED 基线别名）。
+
 | 迁移脚本 | 用途（摘自各 SQL 文件头注释） |
 | --- | --- |
 | `0005_phase3_artifact_content.sql` | `plugin_artifact.content` BYTEA 列：文件类产物（docx/xlsx/zip）字节落库，导出的是真 docx 而非文本预览 |

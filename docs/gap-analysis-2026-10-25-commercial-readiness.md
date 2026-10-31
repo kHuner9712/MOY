@@ -4,7 +4,7 @@
 |---|---|
 | 报告日期 | 2026-10-25 |
 | 代码基线 | `main @ 2bfe6a8`（git 实测确认） |
-| 评估方法 | 证据基线法：三线全仓审计（`audit-2026-10-25-team-full-repo-audit.md`）+ 项目完整性清单（`project-completeness-2026-10-25.md`，2026-10-29 审计清理已删除）+ 阶段四整改计划（`improvement-plan-2026-10-25-R1`）+ QA 批次报告 + 交付清单（119 行）+ **今日仓库实测**（git/脚本/目录核验） |
+| 评估方法 | 证据基线法：三线全仓审计（`docs/archive/audit-2026-10-25-team-full-repo-audit.md`）+ 项目完整性清单（`project-completeness-2026-10-25.md`，2026-10-29 审计清理已删除）+ 阶段四整改计划（`improvement-plan-2026-10-25-R1`）+ QA 批次报告 + 交付清单（119 行）+ **今日仓库实测**（git/脚本/目录核验） |
 | 对标基准 | 开源商业级 AI 平台实践（Dify 1.18 / n8n 2.44 / DeerFlow v2.1，见 `research-2026-10-25-ai-workbench-benchmark.md`） |
 | 评级口径 | A=达到商业产品标准；B=基本达标有余量缺口；C=有明确缺口需收敛；D=关键证据缺失 |
 
@@ -283,7 +283,7 @@
 
 ## 附录：证据索引
 
-- `docs/audit-2026-10-25-team-full-repo-audit.md`（P0×1/P1×13/P2×22/P3×20+，覆盖率口径核查）
+- `docs/archive/audit-2026-10-25-team-full-repo-audit.md`（P0×1/P1×13/P2×22/P3×20+，覆盖率口径核查）
 - `docs/project-completeness-2026-10-25.md`（B-01~B-11 外部阻塞九要素、阶段状态、测试口径；2026-10-29 审计清理已删除，结论以本报告引用为准）
 - `docs/improvement-plan-2026-10-25.md`（Gate 4 整改 23 条，Batch 1-4 划分）
 - `docs/phase4-delivery-manifest.md`（119 行：已建 91/待建 28）

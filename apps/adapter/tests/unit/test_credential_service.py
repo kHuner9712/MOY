@@ -39,7 +39,7 @@ from app.schemas.rag import ChunkPolicy, SearchRequest
 from app.services.rag_service import RagService
 
 # P0 红线用例（G-24，测试方案 §7.1）：P2-KB-05 / P0 判据② —— 已绑定凭证回落全局
-# 映射与实跑见 docs/qa-phase2-w2-r2-report.md §3.1
+# 映射与实跑见 docs/archive/qa-phase2-w2-r2-report.md §3.1
 pytestmark = [pytest.mark.unit, pytest.mark.p0]
 
 _TENANT = "tnt_cred_tenant"

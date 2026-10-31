@@ -234,4 +234,4 @@
 - 架构报告（高见远）：包级依赖 AST 分析、红线 grep 实证、96 端点核对、文档一致性抽查
 - 工程质量报告（寇豆码）：ruff/mypy/tsc 实跑全绿确认；六层租户隔离/验签/脱敏实证；重复代码量化；安全七面扫描；索引与查询覆盖核对
 - 测试体系报告（严过关）：2258 collected / 2055 passed / 203 skipped / 0 failed 实测；coverage json 逐模块；门禁脚本全跑（唯一红：registry-validation 内联片段）；CI 配置逐 job 审阅
-- 关联历史审计：`docs/audit-2026-10-23-arch-code-review.md`、`docs/audit-2026-10-24-full-repo-audit.md`（2026-10-29 审计清理已删除，续报见 `docs/audit-2026-10-24-full-repo-audit-r2.md`）——本报告 P1-4（business→api）与其结论互证，属两轮建议未落地欠账
+- 关联历史审计：`docs/archive/audit-2026-10-23-arch-code-review.md`、`docs/audit-2026-10-24-full-repo-audit.md`（2026-10-29 审计清理已删除，续报见 `docs/archive/audit-2026-10-24-full-repo-audit-r2.md`）——本报告 P1-4（business→api）与其结论互证，属两轮建议未落地欠账

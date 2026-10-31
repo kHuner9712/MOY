@@ -7,7 +7,7 @@
 | 编制日期 | 2026-10-23 |
 | 权威基准 | 《Moy（麦子）项目总纲》V1.0（`docs/moy-project-charter-v1.0.md`）—— 北极星，唯一基准 |
 | 对照对象 | `docs/prd-v1.0.md`、`docs/plan-v1.0.md`、`docs/architecture-v1.0.md`、`prd-phase2/3/4-increment.md` |
-| 输入材料 | `audit-2026-10-23-moy-charter-consolidated.md`（约 50 项）、`audit-2026-10-23-pm-charter-gap.md`（PM-001~033）、`audit-2026-10-23-arch-code-review.md`（AR-001~023） |
+| 输入材料 | `docs/archive/audit-2026-10-23-moy-charter-consolidated.md`（约 50 项）、`docs/archive/audit-2026-10-23-pm-charter-gap.md`（PM-001~033）、`docs/archive/audit-2026-10-23-arch-code-review.md`（AR-001~023） |
 | 文档性质 | 仅分析 + 决策建议。**未修改任何业务代码，未改动 PRD/plan 原文**（第 4 章给可直接落地的替换文本，待主理人拍板后执行） |
 | 结论 | 去重后台账 **46 项 open**（高 8 / 中 23 / 低 15）+ 14 项已关闭（含 AR-017，待 CI 复跑）；总纲 vs PRD/总方案不一致 **20 条**（高 8 / 中 10 / 低 2）；其中 **16 条需实质修订文档表述**、**4 条维持设计仅需加限定注**。核心矛盾只有一条：**PRD/总方案把「产品是什么」写成了「总纲里从未有过的企业办公平台」，并把自己声明为权威**。 |
 

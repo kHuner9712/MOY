@@ -52,7 +52,7 @@ apps/adapter/
 │   ├── registry/                # profile_routes.yaml / tool_registry.yaml（数据驱动）
 │   ├── workers/                 # 后台任务（tasks/）
 │   └── tools/                   # 工具连接器（新增工具只加这里）
-├── tests/{unit,integration,e2e,qa,security}/  # 单元/契约/端到端/QA/安全测试
+├── tests/{unit,integration,e2e,security}/  # 单元/契约/端到端/安全测试
 ├── Dockerfile
 └── pyproject.toml
 ```

@@ -1,7 +1,7 @@
 # 麦子（MOY）V1.0 · 53 条问题修复方案
 
 - **编制日期**：2026-10-29
-- **依据**：`docs/audit-2026-10-28-r2-consolidated.md`（53 条：严重 6 / 一般 22 / 轻微 25）
+- **依据**：`docs/archive/audit-2026-10-28-r2-consolidated.md`（53 条：严重 6 / 一般 22 / 轻微 25）
 - **分级口径**：**严重** = 上线/交付阻断或合规红线，必须本周内闭环；**一般** = 显著缺陷或静默失效型风险，本 Sprint 内排期；**轻微** = 可读性、口径、治理债，按域批量清理
 - **实施状态**：本方案编制后立即实施，逐条结果见文末 §五「实施结果」
 
@@ -102,7 +102,7 @@
 | G-19 | **R2-ENG-11** adapter `:8000` 绑 0.0.0.0 + `/metrics` 免鉴权 | `error_handler.py:46-59` | `/metrics` 加内网来源限制或独立端口；容器只绑内网 | `main.py`/`error_handler.py`、compose | 宿主机直连 `:8000/metrics` 被拒或需内网 |
 | G-20 | **R2-ARC-04** 基线文档版本漂移 | `architecture-v1.0.md` 写 Valkey 7.2/SeaweedFS 3.80，实现是 9.2/4.48 | 同步四处版本号；建议抽单一真源表 + 由 `validate_images.py` 反向校验 | `docs/architecture-v1.0.md` | grep 旧版本号零命中 |
 | G-21 | **R2-ARC-07** 门禁不查同层环 | 分层门禁只查跨层；实测 3 组同层文件级环靠函数内 import 掩盖 | 门禁加 SCC 检测（Tarjan），既有 3 组登记基线只许减不许增 | `deploy/validate_import_directions.py` | 人为新增一处同层环 → 门禁红 |
-| G-22 | **R2-QA-04** 执行记录归因事实错误 | 把「2349→2366」写成"环境条件性收集"，实际是新增 2 文件 17 条 | 更正执行记录 §五 F-2 的表述，并在文档里要求「用例数变动必须给 nodeid diff」 | `docs/audit-remediation-execution-log-2026-10-28.md` | 文档表述与实测对账一致 |
+| G-22 | **R2-QA-04** 执行记录归因事实错误 | 把「2349→2366」写成"环境条件性收集"，实际是新增 2 文件 17 条 | 更正执行记录 §五 F-2 的表述，并在文档里要求「用例数变动必须给 nodeid diff」 | `docs/archive/audit-remediation-execution-log-2026-10-28.md` | 文档表述与实测对账一致 |
 
 ---
 
@@ -216,7 +216,7 @@
 | **L-7 R2-ARC-16** | ✅ 完成 | `images.lock` 的 plugin-daemon 条目补 `note`：说明 `-local` 是上游官方变体、非本地自建、升级须保持后缀。**验证**：`validate_images.py` exit 0 |
 | **L-10 R2-ENG-13** | ✅ 完成 | `docker-compose.lite.yml:123` / `docker-compose.saas.yml:75` 的 `allkeys-lru` → `volatile-lru`（与全量栈对齐），并注明代价。**验证**：三套 `docker compose config` 全 exit 0 |
 | **L-22 R2-QA-11** | ✅ 完成 | 删除盘上 `coverage.xml`(825KB) / `junit.xml`(300KB) / `.coverage`(1.5MB) 实体（均未被 git 跟踪）；`.gitignore` 规则原有覆盖 |
-| **R2-QA-04** | ✅ 完成 | 更正 `docs/audit-remediation-execution-log-2026-10-28.md` §五 F-2 的错误归因：由「环境条件性收集」改为「15:20 后新增 2 文件 17 条」，附 nodeid 对账证据与「不接受不可证伪措辞」的教训 |
+| **R2-QA-04** | ✅ 完成 | 更正 `docs/archive/audit-remediation-execution-log-2026-10-28.md` §五 F-2 的错误归因：由「环境条件性收集」改为「15:20 后新增 2 文件 17 条」，附 nodeid 对账证据与「不接受不可证伪措辞」的教训 |
 
 ### 5.4 未实施项与原因（诚实登记）
 

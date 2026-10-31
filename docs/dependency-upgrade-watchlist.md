@@ -1,7 +1,7 @@
 # 依赖升级观察清单（Dependency Upgrade Watchlist）
 
 - **建立日期**：2026-10-29
-- **来源**：`docs/audit-2026-10-28-r2-consolidated.md` R2-ARC-17 的附带发现
+- **来源**：`docs/archive/audit-2026-10-28-r2-consolidated.md` R2-ARC-17 的附带发现
 - **为什么需要**：仓库只有**漏洞扫描**（`dependency-scan.yml`，回答"现在有没有已知 CVE"），
   没有**升级巡检**（回答"什么时候必须升、升到什么、不升的代价是什么"）。
   `deploy/images.lock` 引用的「架构文档 9.6 月度巡检」条款实际不存在，仓库也没有

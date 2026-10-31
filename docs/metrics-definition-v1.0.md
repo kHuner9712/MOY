@@ -7,7 +7,7 @@
 | 编制人 | 许清楚（Xu）· 产品经理 |
 | 日期 | 2026-10-23 |
 | 依据 | 《Moy（麦子）项目总纲》§十四（8 项核心指标）、§8.3（以执行质量建立信任）、第十一章（状态分级）；ADR-0005 D-14/D-15/D-27 |
-| 上游 | `docs/alignment-2026-10-23-charter-vs-prd.md` AL-07；`docs/audit-2026-10-23-moy-charter-consolidated.md` PM-029 |
+| 上游 | `docs/alignment-2026-10-23-charter-vs-prd.md` AL-07；`docs/archive/audit-2026-10-23-moy-charter-consolidated.md` PM-029 |
 | 下游 | `prd-v1.0.md` §6.6（AC-17~AC-20）；W1 指标埋点与看板；运营看板 `/ops/metrics` |
 | 状态 | **指标定义已定，阈值未定**（目标值由创始人拍板后回填本文 §5） |
 

@@ -9,7 +9,7 @@
 | 对照基准 | **《Moy（麦子）项目总纲》V1.0**（`docs/moy-project-charter-v1.0.md`，2026-10-23） |
 | 代码基线 | 工作区 HEAD 附近（`51446c2` 一带；与 2026-10-22 审计基线 `fc3df7b` 之后又有阶段四多项提交） |
 | 审计类型 | **产品维度一致性审计**（仅分析，未修改任何业务代码） |
-| 输出文件 | `docs/audit-2026-10-23-pm-charter-gap.md`（本文件） |
+| 输出文件 | `docs/archive/audit-2026-10-23-pm-charter-gap.md`（本文件） |
 
 ---
 
@@ -37,7 +37,7 @@
 ### 1.2 方法
 
 - **权威基准**：仅以 `moy-project-charter-v1.0.md` 为「应然」标准。
-- **辅助材料**：`prd-v1.0.md`、`plan-v1.0.md`、`architecture-v1.0.md`、各阶段 PRD/验收、`audit-repo-2026-10-22.md`、`repo-gap-assessment-2026-10-22.md`、`tech-path-review-2026-10-23.md`（注意：这些文档可能与总纲不一致，不一致本身就是发现）。
+- **辅助材料**：`prd-v1.0.md`、`plan-v1.0.md`、`architecture-v1.0.md`、各阶段 PRD/验收、`docs/archive/audit-repo-2026-10-22.md`、`repo-gap-assessment-2026-10-22.md`、`tech-path-review-2026-10-23.md`（注意：这些文档可能与总纲不一致，不一致本身就是发现）。
 - **代码取证**：直接读取 `apps/adapter/app`、`apps/web/src`、`deploy/`、`apps/adapter/app/plugins/manifests/`、`apps/adapter/app/tools/`、`apps/adapter/app/registry/` 等；引用具体文件路径作为证据。
 - **不采信自述绿灯**：文档中的「已实现 / 可商用 / 100%」等表述一律以代码与配置交叉验证；未验证的一律按低一级成熟度标注。
 
