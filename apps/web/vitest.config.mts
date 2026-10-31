@@ -83,13 +83,17 @@ export default defineConfig({
       // P1 补测第四批（2026-10-31 H1 续）：QUERY_KEYS 键工厂 29 项 + api-client
       // toolApi/knowledgeExtApi/identityExtApi/opsApi/pluginsApi 补充 18 项后实测：
       //   % Stmts **17.56** | % Branch 15.36 | % Funcs **12.53** | % Lines **17.77**
-      // 棘轮继续只升不降，各留 ~0.4pp 余量：
-      //   statements 17.1 / branches 14.9 / functions 12.1 / lines 17.3
+      //
+      // P1 补测第五批（2026-10-31 H1 续）：knowledgeApi/agentApi/memoryApi/
+      // billingApi/identityApi/statsApi/capabilitiesApi 剩余方法 18 项后实测：
+      //   % Stmts **17.94** | % Branch 15.59 | % Funcs **13.68** | % Lines **18.18**
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 17.6 / branches 15.2 / functions 13.3 / lines 17.8
       thresholds: {
-        statements: 17.1,
-        branches: 14.9,
-        functions: 12.1,
-        lines: 17.3,
+        statements: 17.6,
+        branches: 15.2,
+        functions: 13.3,
+        lines: 17.8,
       },
     },
   },
