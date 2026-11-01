@@ -199,11 +199,19 @@ export default defineConfig({
       // 模式（见 ops-pages.test.tsx 的 waitForSettingsForm）。
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 60.3 / branches 58.8 / functions 58.0 / lines 61.4
+      //
+      // P1 补测第二十五批（2026-11-01 H1 续）：插件详情页编排（三态与 16002
+      // 下架专门文案 / 四个主按钮态与套餐拦截 / 授权抽屉 install-edit 分流 /
+      // 卸载二次确认保留口径 / 配置草稿初始化与保存 / 评价校验与分页 /
+      // action=install 自动开抽屉）18 项后实测（该页行覆盖 90%）：
+      //   % Stmts **63.72** | % Branch 62.59 | % Funcs 61.84 | % Lines 64.88
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 63.4 / branches 62.3 / functions 61.5 / lines 64.6
       thresholds: {
-        statements: 60.3,
-        branches: 58.8,
-        functions: 58.0,
-        lines: 61.4,
+        statements: 63.4,
+        branches: 62.3,
+        functions: 61.5,
+        lines: 64.6,
       },
     },
   },
