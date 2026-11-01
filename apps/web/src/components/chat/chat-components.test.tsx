@@ -9,18 +9,37 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Citation, SegmentDetail } from '@/lib/types';
+import type { CapabilityCard, Citation, GenerateRequest, SegmentDetail } from '@/lib/types';
 import { act, renderComponent } from '@/test/render-hook';
 import { useConversationStore } from '@/hooks/use-conversation-store';
 import { CitationDrawer, STALE_HINT } from './citation-drawer';
+import ChatWindow from './chat-window';
 import ConversationSidebar from './conversation-sidebar';
+import { GoalLauncher } from './goal-launcher';
+
+const mocks = vi.hoisted(() => ({
+  segmentDetail: vi.fn(),
+  recommend: vi.fn(),
+  stream: vi.fn(),
+  reportStreamFailure: vi.fn(),
+  push: vi.fn(),
+}));
 
 vi.mock('@/lib/api-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-client')>()),
-  knowledgeExtApi: { segmentDetail: vi.fn() },
+  knowledgeExtApi: { segmentDetail: mocks.segmentDetail },
+  capabilitiesApi: { recommend: mocks.recommend },
+  modelApi: { stream: mocks.stream },
 }));
 
-import { knowledgeExtApi } from '@/lib/api-client';
+vi.mock('@/lib/error-guard', () => ({ reportStreamFailure: mocks.reportStreamFailure }));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/chat',
+  useRouter: () => ({ push: mocks.push }),
+}));
+
+import { capabilitiesApi, knowledgeExtApi } from '@/lib/api-client';
 
 function renderWithClient(element: ReactNode): ReturnType<typeof renderComponent> {
   const client = new QueryClient({
@@ -195,6 +214,288 @@ describe('CitationDrawer', () => {
         expect(document.body.textContent).toContain('重试');
       });
     });
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GoalLauncher
+// ---------------------------------------------------------------------------
+
+const CAP_CARD: CapabilityCard = {
+  id: 'plg_weekly',
+  kind: 'plugin',
+  name: '周报助手',
+  summary: '自动整理周报',
+  category: 'efficiency',
+  score: 0.9,
+  matched_terms: ['周报', '本周'],
+  matched_fields: ['name', 'summary'],
+  inputs: [
+    { key: 'period', label: '汇报周期', type: 'text', required: true },
+    { key: 'focus', label: '本周重点', type: 'textarea', required: false },
+  ],
+};
+
+describe('GoalLauncher', () => {
+  it('空目标给引导与示例，不发起请求', async () => {
+    const { container, unmount } = renderWithClient(<GoalLauncher />);
+    expect(container.textContent).toContain('说说你想完成的事');
+    expect(container.textContent).toContain('整理本周周报');
+
+    await act(async () => {});
+    expect(capabilitiesApi.recommend).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('输入防抖 300ms 后发起推荐', async () => {
+    vi.useFakeTimers();
+    vi.mocked(capabilitiesApi.recommend).mockResolvedValue({
+      goal: '整理周报',
+      matched: true,
+      fallback: false,
+      fallback_hint: '',
+      items: [CAP_CARD],
+    } as never);
+    const { container, unmount } = renderWithClient(<GoalLauncher />);
+
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="输入你想完成的事"]');
+    act(() => {
+      if (input) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(input, '整理周报');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    expect(capabilitiesApi.recommend).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(capabilitiesApi.recommend).toHaveBeenCalledWith('整理周报', 3);
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('点击示例立即推荐（不等防抖）', async () => {
+    vi.mocked(capabilitiesApi.recommend).mockResolvedValue({
+      goal: '整理本周周报',
+      matched: true,
+      fallback: false,
+      fallback_hint: '',
+      items: [],
+    } as never);
+    const { container, unmount } = renderWithClient(<GoalLauncher />);
+
+    act(() => {
+      const example = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('整理本周周报'),
+      );
+      example?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(capabilitiesApi.recommend).toHaveBeenCalledWith('整理本周周报', 3);
+      });
+    });
+    unmount();
+  });
+
+  it('推荐卡展示命中理由与所需输入', async () => {
+    vi.mocked(capabilitiesApi.recommend).mockResolvedValue({
+      goal: '整理周报',
+      matched: true,
+      fallback: false,
+      fallback_hint: '',
+      items: [CAP_CARD],
+    } as never);
+    const { container, unmount } = renderWithClient(<GoalLauncher />);
+
+    act(() => {
+      const example = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('整理本周周报'),
+      );
+      example?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain('匹配到：周报、本周（来自名称、简介）');
+      });
+    });
+    expect(container.textContent).toContain('需要准备：汇报周期（必填）、本周重点（选填）');
+    unmount();
+  });
+
+  it('插件卡「开始」跳工作台并携带目标', async () => {
+    vi.mocked(capabilitiesApi.recommend).mockResolvedValue({
+      goal: '整理周报',
+      matched: true,
+      fallback: false,
+      fallback_hint: '',
+      items: [CAP_CARD],
+    } as never);
+    const { container, unmount } = renderWithClient(<GoalLauncher />);
+
+    act(() => {
+      const example = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('整理本周周报'),
+      );
+      example?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain('周报助手');
+      });
+    });
+
+    act(() => {
+      const start = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('开始'),
+      );
+      start?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(mocks.push).toHaveBeenCalledWith(
+      '/workbench/plg_weekly?goal=%E6%95%B4%E7%90%86%E6%9C%AC%E5%91%A8%E5%91%A8%E6%8A%A5',
+    );
+    unmount();
+  });
+
+  it('工具卡标注演示且不给发起按钮（诚实动作）', async () => {
+    vi.mocked(capabilitiesApi.recommend).mockResolvedValue({
+      goal: '整理周报',
+      matched: true,
+      fallback: false,
+      fallback_hint: '',
+      items: [{ ...CAP_CARD, id: 'tool_1', kind: 'tool', name: '邮件工具', inputs: [] }],
+    } as never);
+    const { container, unmount } = renderWithClient(<GoalLauncher />);
+
+    act(() => {
+      const example = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('整理本周周报'),
+      );
+      example?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain('演示');
+      });
+    });
+    expect(container.textContent).toContain('去插件市场了解');
+    expect(container.textContent).not.toContain('开始');
+    unmount();
+  });
+
+  it('无命中走目录兜底并给引导（不得空列表）', async () => {
+    vi.mocked(capabilitiesApi.recommend).mockResolvedValue({
+      goal: '不存在的目标',
+      matched: false,
+      fallback: true,
+      fallback_hint: '可以换个说法',
+      items: [],
+    } as never);
+    const { container, unmount } = renderWithClient(<GoalLauncher />);
+
+    act(() => {
+      const example = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('整理本周周报'),
+      );
+      example?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain('没有找到完全匹配的能力');
+      });
+    });
+    expect(container.textContent).toContain('去插件市场浏览');
+    unmount();
+  });
+
+  it('推荐失败给业务文案与重试', async () => {
+    vi.mocked(capabilitiesApi.recommend).mockRejectedValue(new Error('推荐服务不可用'));
+    const { container, unmount } = renderWithClient(<GoalLauncher />);
+
+    act(() => {
+      const example = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('整理本周周报'),
+      );
+      example?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain('重试');
+      });
+    });
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ChatWindow
+// ---------------------------------------------------------------------------
+
+describe('ChatWindow', () => {
+  beforeEach(() => {
+    useConversationStore.setState({
+      conversationId: 'conv_1',
+      conversations: [],
+      messages: [],
+      profile: 'general',
+    });
+    mocks.stream.mockReset();
+    mocks.stream.mockImplementation(() => vi.fn());
+  });
+
+  it('空输入不发送', () => {
+    const { container, unmount } = renderWithClient(<ChatWindow />);
+    act(() => {
+      const send = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('发送'),
+      );
+      send?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(mocks.stream).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('发送后追加用户消息与助手占位并发起流式', async () => {
+    const { container, unmount } = renderWithClient(<ChatWindow />);
+    const textarea = container.querySelector('textarea');
+    act(() => {
+      if (textarea) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+        setter?.call(textarea, '帮我写周报');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    await act(async () => {
+      const send = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('发送'),
+      );
+      send?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const messages = useConversationStore.getState().messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[0]?.content).toBe('帮我写周报');
+    expect(messages[1]?.role).toBe('assistant');
+    expect(mocks.stream).toHaveBeenCalledWith(
+      expect.objectContaining({ conversation_id: 'conv_1' }),
+      expect.any(Object),
+    );
+    unmount();
+  });
+
+  it('渲染历史消息与档位业务名（不暴露内部信息）', () => {
+    useConversationStore.setState({
+      conversationId: 'conv_1',
+      conversations: [],
+      messages: [{ id: 'm1', role: 'assistant', content: '这是回答' }],
+      profile: 'general',
+    });
+    const { container, unmount } = renderWithClient(<ChatWindow />);
+    expect(container.textContent).toContain('这是回答');
+    expect(container.textContent).toContain('通用助手');
     unmount();
   });
 });

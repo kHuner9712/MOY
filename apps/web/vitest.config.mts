@@ -154,13 +154,18 @@ export default defineConfig({
       // P1 补测第十九批（2026-11-01 H1 续）：GrantDrawer 安装/编辑双模式与必需
       // 能力约束 / RolePermissionDialog 权限矩阵只读态与只保存变化角色 17 项后实测：
       //   % Stmts **47.57** | % Branch 44.66 | % Funcs **44.93** | % Lines **48.49**
+      //
+      // P1 补测第二十批（2026-11-01 H1 续）：MobileNav 派生/溢出/ops 排除 /
+      // GoalLauncher 防抖/命中理由/诚实动作 / ChatWindow 发送流 18 项后实测：
+      //   % Stmts **50.32** | % Branch 46.92 | % Funcs **47.95** | % Lines **51.32**
+      // **覆盖率突破 50%**（mobile-nav 100%）。
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 47.2 / branches 44.3 / functions 44.6 / lines 48.1
+      //   statements 50.0 / branches 46.6 / functions 47.6 / lines 51.0
       thresholds: {
-        statements: 47.2,
-        branches: 44.3,
-        functions: 44.6,
-        lines: 48.1,
+        statements: 50.0,
+        branches: 46.6,
+        functions: 47.6,
+        lines: 51.0,
       },
     },
   },
