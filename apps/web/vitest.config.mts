@@ -277,11 +277,18 @@ export default defineConfig({
       //   % Stmts **84.66** | % Branch 79.02 | % Funcs 78.92 | % Lines 85.77
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 84.3 / branches 78.7 / functions 78.6 / lines 85.4
+      //
+      // P1 补测第三十四批（2026-11-01 H1 续）：零散基建收尾（useSession 兼容壳
+      // 映射合同 / createQueryClient 默认策略与 QueryProvider 两条挂载路径 /
+      // 全局提示容器装配口径）10 项后实测（三件均 100%）：
+      //   % Stmts **84.82** | % Branch 79.02 | % Funcs 79.16 | % Lines 85.94
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 84.5 / branches 78.7 / functions 78.8 / lines 85.6
       thresholds: {
-        statements: 84.3,
+        statements: 84.5,
         branches: 78.7,
-        functions: 78.6,
-        lines: 85.4,
+        functions: 78.8,
+        lines: 85.6,
       },
     },
   },
