@@ -234,11 +234,22 @@ export default defineConfig({
       //   % Stmts **74.38** | % Branch 70.45 | % Funcs 70.34 | % Lines 75.82
       // **四指标全部站上 70%**。棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 74.0 / branches 70.1 / functions 70.0 / lines 75.5
+      //
+      // P1 补测第二十九批（2026-11-01 H1 续）：岗位工作台宿主（buildSections
+      // 声明驱动直测 / 16003 未添加专门空态 / 必填拦截与 goal 深链下发 /
+      // 排队文案三档 / waiting_confirm 三条动作 / 进行中才轮询进终态停并刷
+      // 最近执行 / 步骤与产物区块）14 项后实测（workbench 页行覆盖 90.7%）：
+      //   % Stmts **78.47** | % Branch 74.28 | % Funcs 73.77 | % Lines 79.57
+      // 本批再沉淀一条假定时器口径：`advanceTimersByTimeAsync` 必须切短窗
+      // 逐拍推进——一个长 act 窗口里查询落定的提交压到窗口退出才落盘，
+      // 数据滞后会让「进终态停轮询」这类状态机断言看起来失灵（非产品缺陷）。
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 78.1 / branches 73.9 / functions 73.4 / lines 79.2
       thresholds: {
-        statements: 74.0,
-        branches: 70.1,
-        functions: 70.0,
-        lines: 75.5,
+        statements: 78.1,
+        branches: 73.9,
+        functions: 73.4,
+        lines: 79.2,
       },
     },
   },
