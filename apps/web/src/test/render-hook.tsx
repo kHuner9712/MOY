@@ -70,3 +70,40 @@ export function renderHook<T>(
     },
   };
 }
+
+/** `renderComponent` 返回值 */
+export interface RenderComponentResult {
+  /** 挂载点（在其范围内查询 DOM） */
+  container: HTMLElement;
+  /** 卸载组件（触发 effect 清理） */
+  unmount: () => void;
+}
+
+/**
+ * 挂载一个组件树并返回可查询的 DOM 容器。
+ *
+ * 用于纯展示组件（props → DOM）与轻交互组件的渲染测试；
+ * 复杂页面仍由 Playwright E2E 兜底。
+ *
+ * @param element - 待渲染的组件元素
+ * @returns DOM 容器与卸载函数
+ */
+export function renderComponent(element: ReactNode): RenderComponentResult {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root: Root = createRoot(container);
+
+  act(() => {
+    root.render(element);
+  });
+
+  return {
+    container,
+    unmount: () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    },
+  };
+}

@@ -116,13 +116,20 @@ export default defineConfig({
       // use-model-catalog/use-chat-stream/use-api 五个 Hook 状态机 44 项后实测：
       //   % Stmts **27.93** | % Branch 19.73 | % Funcs **25.08** | % Lines **28.23**
       // （use-api / use-upload / render-hook 均 100%）
+      //
+      // P1 补测第十三批（2026-11-01 H1 续）：工作流组件群渲染测试 31 项
+      // （RunStatusBadge/TaskHeader/ChecklistPanel/StepTimeline/TaskMetricCards/
+      // FailureActions）后实测：
+      //   % Stmts **31.64** | % Branch 23.64 | % Funcs **29.41** | % Lines **32.05**
+      // 本批同时修复补测发现的 Timeline 展开缺陷（非失败步骤点「详情」永远展不开，
+      // 摘要与产物下载入口不可见）。
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 27.6 / branches 19.4 / functions 24.7 / lines 27.9
+      //   statements 31.3 / branches 23.3 / functions 29.1 / lines 31.7
       thresholds: {
-        statements: 27.6,
-        branches: 19.4,
-        functions: 24.7,
-        lines: 27.9,
+        statements: 31.3,
+        branches: 23.3,
+        functions: 29.1,
+        lines: 31.7,
       },
     },
   },

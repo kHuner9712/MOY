@@ -126,21 +126,22 @@ export function Timeline({
   emptyHint = '还没有可展示的步骤',
   className,
 }: TimelineProps): React.JSX.Element {
-  const [collapsed, setCollapsed] = React.useState<ReadonlySet<string>>(new Set());
+  // 手动切换的显式状态：点过就以用户的选择为准，没点过才走默认策略。
+  // 旧实现用 `collapsed: Set` + 「失败步骤默认展开」推导展开态，导致**非失败
+  // 步骤点「详情」永远展不开**（展开判定恒为 false）——已完成步骤的摘要与
+  // 产物下载入口在页面上不可见（第十三批补测发现的缺陷）。
+  const [manual, setManual] = React.useState<ReadonlyMap<string, boolean>>(new Map());
 
   const isExpanded = (step: TimelineStep): boolean => {
-    if (collapsed.has(step.id)) return false;
-    if (step.failure) return defaultExpandFailed;
-    return false;
+    const override = manual.get(step.id);
+    if (override !== undefined) {
+      return override;
+    }
+    return step.failure ? defaultExpandFailed : false;
   };
 
-  const toggle = (id: string): void => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const toggle = (id: string, expanded: boolean): void => {
+    setManual((prev) => new Map(prev).set(id, !expanded));
   };
 
   if (steps.length === 0) {
@@ -192,7 +193,7 @@ export function Timeline({
                   <button
                     type="button"
                     aria-expanded={expanded}
-                    onClick={() => toggle(step.id)}
+                    onClick={() => toggle(step.id, expanded)}
                     className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   >
                     {expanded ? '收起' : '详情'}
