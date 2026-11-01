@@ -26,6 +26,10 @@ describe('resolveNextPath', () => {
     expect(resolveNextPath('%2F%2Fevil.example')).toBe(DEFAULT_LANDING_PATH);
   });
 
+  it('拒绝混入协议段的路径', () => {
+    expect(resolveNextPath('/docs://x')).toBe(DEFAULT_LANDING_PATH);
+  });
+
   it('拒绝反斜杠与绝对地址变体', () => {
     expect(resolveNextPath('/\\evil.example')).toBe(DEFAULT_LANDING_PATH);
     expect(resolveNextPath('https://evil.example')).toBe(DEFAULT_LANDING_PATH);

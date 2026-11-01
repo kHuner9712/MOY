@@ -151,6 +151,51 @@ describe('QUERY_KEYS · 查询键工厂', () => {
 });
 
 // ---------------------------------------------------------------------------
+// QUERY_KEYS 剩余键工厂（第十一批补齐）
+// ---------------------------------------------------------------------------
+
+describe('QUERY_KEYS · 剩余键工厂', () => {
+  it('identity 域：permissions / auditActions', () => {
+    expect(QUERY_KEYS.permissions()).toEqual(['identity', 'permissions']);
+    expect(QUERY_KEYS.auditActions()).toEqual(['identity', 'audit-actions']);
+  });
+
+  it('tools 域：toolExecutions 键含筛选', () => {
+    expect(QUERY_KEYS.toolExecutions({ tool_type: 'wecom' })).toEqual([
+      'tools',
+      'executions',
+      { tool_type: 'wecom' },
+    ]);
+    expect(QUERY_KEYS.toolExecutions()).toEqual(['tools', 'executions', {}]);
+  });
+
+  it('billing 域：billingOrders / invoices / myUsage', () => {
+    expect(QUERY_KEYS.billingOrders({ status: 'paid' })).toEqual([
+      'billing',
+      'orders',
+      { status: 'paid' },
+    ]);
+    expect(QUERY_KEYS.invoices()).toEqual(['billing', 'invoices', '']);
+    expect(QUERY_KEYS.invoices('2026-10')).toEqual(['billing', 'invoices', '2026-10']);
+    expect(QUERY_KEYS.myUsage('2026-10')).toEqual(['billing', 'my-usage', '2026-10']);
+  });
+
+  it('ops 域：access / tenants / tenant / orders / metrics / settings', () => {
+    expect(QUERY_KEYS.opsAccess()).toEqual(['ops', 'access']);
+    expect(QUERY_KEYS.opsTenants({ page: 1 })).toEqual(['ops', 'tenants', { page: 1 }]);
+    expect(QUERY_KEYS.opsTenant('t1')).toEqual(['ops', 'tenants', 't1']);
+    expect(QUERY_KEYS.opsOrders({ status: 'paid' })).toEqual(['ops', 'orders', { status: 'paid' }]);
+    expect(QUERY_KEYS.opsMetrics('7d')).toEqual(['ops', 'metrics', '7d']);
+    expect(QUERY_KEYS.opsSettings()).toEqual(['ops', 'settings']);
+  });
+
+  it('plugins 域：pluginCapabilities / pluginReviews', () => {
+    expect(QUERY_KEYS.pluginCapabilities('plg_1')).toEqual(['plugins', 'plg_1', 'capabilities']);
+    expect(QUERY_KEYS.pluginReviews('plg_1', 2)).toEqual(['plugins', 'plg_1', 'reviews', 2]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // use-retryable-request 常量
 // ---------------------------------------------------------------------------
 

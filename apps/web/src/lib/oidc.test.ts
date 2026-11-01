@@ -56,6 +56,11 @@ describe('base64UrlEncode', () => {
     expect(base64UrlEncode(new Uint8Array([251, 255, 191]))).toBe('-_-_');
     expect(base64UrlEncode(new Uint8Array([255, 255, 255]))).toBe('____');
   });
+
+  it('环境缺失 btoa 时抛业务语言异常', () => {
+    vi.stubGlobal('btoa', undefined);
+    expect(() => base64UrlEncode(new Uint8Array([102]))).toThrow(UNSUPPORTED_ENVIRONMENT_MESSAGE);
+  });
 });
 
 describe('randomBase64Url / createState', () => {

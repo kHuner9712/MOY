@@ -104,13 +104,18 @@ export default defineConfig({
       // 十个 API 组剩余方法 55 项后实测（api-client.ts 62.9% → **97.6%**）：
       //   % Stmts **22.60** | % Branch 17.42 | % Funcs **18.76** | % Lines **22.89**
       // 本批同时修复补测发现的 SSE 事件分发失配缺陷（handlerKeyFor 映射）。
+      //
+      // P1 补测第十一批（2026-11-01 H1 续）：use-conversation-store zustand 动作/
+      // ID 合同/persist 口径 15 项 + QUERY_KEYS 剩余键工厂 14 个 + isIdempotentDuplicate/
+      // redirect 协议段/oidc btoa 缺失尾分支后实测（use-api.ts 46.3% → 72.2%）：
+      //   % Stmts **23.76** | % Branch 18.08 | % Funcs **21.23** | % Lines **24.05**
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 22.3 / branches 17.1 / functions 18.4 / lines 22.5
+      //   statements 23.4 / branches 17.7 / functions 20.9 / lines 23.7
       thresholds: {
-        statements: 22.3,
-        branches: 17.1,
-        functions: 18.4,
-        lines: 22.5,
+        statements: 23.4,
+        branches: 17.7,
+        functions: 20.9,
+        lines: 23.7,
       },
     },
   },

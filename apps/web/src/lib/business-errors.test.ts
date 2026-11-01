@@ -13,6 +13,7 @@ import {
   BUSINESS_ERROR_SEGMENTS,
   CONTEXT_ERROR_MESSAGES,
   findMissingErrorCodes,
+  isIdempotentDuplicate,
   isNotFound,
   messageOf,
   shouldReauthenticate,
@@ -79,6 +80,13 @@ describe('错误分类', () => {
       expect(isNotFound(new BusinessError(code, ''))).toBe(true);
     }
     expect(isNotFound(new BusinessError(20003, ''))).toBe(false);
+  });
+
+  it('幂等重复（20007）命中静默处理', () => {
+    expect(isIdempotentDuplicate(new BusinessError(20007, ''))).toBe(true);
+    expect(isIdempotentDuplicate(new BusinessError(20001, ''))).toBe(false);
+    expect(isIdempotentDuplicate(new Error('x'))).toBe(false);
+    expect(isIdempotentDuplicate(null)).toBe(false);
   });
 });
 
