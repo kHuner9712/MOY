@@ -284,11 +284,19 @@ export default defineConfig({
       //   % Stmts **84.82** | % Branch 79.02 | % Funcs 79.16 | % Lines 85.94
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 84.5 / branches 78.7 / functions 78.8 / lines 85.6
+      //
+      // P1 补测第三十五批（2026-11-01 H1 续）：插件市场页三标签（市场三态/
+      // 空态双口径与清空筛选/筛选参数拼装/卡片三条出口/免费版不降级只拦安装 +
+      // 已添加懒加载/启停在跑任务口径/升级/卸载保留口径 + 办公工具懒加载与
+      // 双空态）10 项后实测（该页 0% → 83%）：
+      //   % Stmts **86.54** | % Branch 80.72 | % Funcs 81.12 | % Lines 87.68
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 86.2 / branches 80.4 / functions 80.8 / lines 87.3
       thresholds: {
-        statements: 84.5,
-        branches: 78.7,
-        functions: 78.8,
-        lines: 85.6,
+        statements: 86.2,
+        branches: 80.4,
+        functions: 80.8,
+        lines: 87.3,
       },
     },
   },
