@@ -161,11 +161,20 @@ export default defineConfig({
       // **覆盖率突破 50%**（mobile-nav 100%）。
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 50.0 / branches 46.6 / functions 47.6 / lines 51.0
+      //
+      // P1 补测第二十一批（2026-11-01 H1 续）：page 组件层（关于页版本/开源
+      // 许可证清单/合规入口双分支 + 个人中心页会话兜底与用量三态 + 对话主页
+      // 额度提醒阈值 + 我的记忆页六套空态/删除二次确认/删除全部关键字合同/
+      // 删空回退页码）27 项后实测（about 页 100%、profile 页语句/行 100%、
+      // chat 页分支/行 100%、memories 页 87.6%）：
+      //   % Stmts **53.74** | % Branch 50.68 | % Funcs 51.38 | % Lines 54.73
+      // **四指标全部站上 50%**。棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 53.4 / branches 50.3 / functions 51.0 / lines 54.4
       thresholds: {
-        statements: 50.0,
-        branches: 46.6,
-        functions: 47.6,
-        lines: 51.0,
+        statements: 53.4,
+        branches: 50.3,
+        functions: 51.0,
+        lines: 54.4,
       },
     },
   },
