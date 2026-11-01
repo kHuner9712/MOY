@@ -207,11 +207,19 @@ export default defineConfig({
       //   % Stmts **63.72** | % Branch 62.59 | % Funcs 61.84 | % Lines 64.88
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 63.4 / branches 62.3 / functions 61.5 / lines 64.6
+      //
+      // P1 补测第二十六批（2026-11-01 H1 续）：认证域登录闭环（登录页生产/
+      // 开发双构建分支与「先存后跳」PKCE 流程 + 回跳流程校验失败不碰存储/
+      // 落库失败明确失败/异常收敛统一文案 + 根落地页重定向）18 项后实测
+      // （login 页 92.7%、callback-flow 95.5%）：
+      //   % Stmts **66.30** | % Branch 64.13 | % Funcs 62.99 | % Lines 67.59
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 66.0 / branches 63.8 / functions 62.6 / lines 67.3
       thresholds: {
-        statements: 63.4,
-        branches: 62.3,
-        functions: 61.5,
-        lines: 64.6,
+        statements: 66.0,
+        branches: 63.8,
+        functions: 62.6,
+        lines: 67.3,
       },
     },
   },
