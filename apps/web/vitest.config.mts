@@ -123,13 +123,19 @@ export default defineConfig({
       //   % Stmts **31.64** | % Branch 23.64 | % Funcs **29.41** | % Lines **32.05**
       // 本批同时修复补测发现的 Timeline 展开缺陷（非失败步骤点「详情」永远展不开，
       // 摘要与产物下载入口不可见）。
+      //
+      // P1 补测第十四批（2026-11-01 H1 续）：插件域（PluginCard 四态主按钮 /
+      // CapabilityList G-16 能力 key 不进 DOM / ReviewList 三态）+ 记忆域
+      // （MemoryCard 三口径 / MemoryEmpty 六态 / MemorySwitches 开关语义）
+      // 组件渲染测试 35 项后实测：
+      //   % Stmts **33.47** | % Branch 27.11 | % Funcs **31.20** | % Lines **34.01**
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 31.3 / branches 23.3 / functions 29.1 / lines 31.7
+      //   statements 33.1 / branches 26.8 / functions 30.9 / lines 33.7
       thresholds: {
-        statements: 31.3,
-        branches: 23.3,
-        functions: 29.1,
-        lines: 31.7,
+        statements: 33.1,
+        branches: 26.8,
+        functions: 30.9,
+        lines: 33.7,
       },
     },
   },
