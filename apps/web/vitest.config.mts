@@ -226,11 +226,19 @@ export default defineConfig({
       // vi.waitFor 的睡眠区间又在 act 外刷警告，此写法两者皆免。
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 69.8 / branches 67.5 / functions 66.4 / lines 71.2
+      //
+      // P1 补测第二十八批（2026-11-01 H1 续）：两个详情页（知识库详情三态/
+      // 权限锁定/上传本地校验/删除双确认 + 任务详情 12001-20003 特殊错误/
+      // waiting_confirm 三条动作/SSE 节流合并刷新/进行中才开兜底轮询）
+      // 18 项后实测（知识库详情 84%、任务详情 87% 行覆盖）：
+      //   % Stmts **74.38** | % Branch 70.45 | % Funcs 70.34 | % Lines 75.82
+      // **四指标全部站上 70%**。棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 74.0 / branches 70.1 / functions 70.0 / lines 75.5
       thresholds: {
-        statements: 69.8,
-        branches: 67.5,
-        functions: 66.4,
-        lines: 71.2,
+        statements: 74.0,
+        branches: 70.1,
+        functions: 70.0,
+        lines: 75.5,
       },
     },
   },
