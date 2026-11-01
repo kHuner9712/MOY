@@ -215,11 +215,22 @@ export default defineConfig({
       //   % Stmts **66.30** | % Branch 64.13 | % Funcs 62.99 | % Lines 67.59
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 66.0 / branches 63.8 / functions 62.6 / lines 67.3
+      //
+      // P1 补测第二十七批（2026-11-01 H1 续）：团队管理页四标签（成员角色
+      // 即时保存/移出二次确认知识库转交口径/邀请校验与失败文案 + 组织架构
+      // 入口 + 插件能力开关合成六项与只提交企业能力 + 操作记录懒加载/
+      // 目录筛选/双空态）20 项后实测（team 页行覆盖 94.5%）：
+      //   % Stmts **70.18** | % Branch 67.89 | % Funcs 66.74 | % Lines 71.58
+      // **% Lines 突破 70%**。本批把 act 等待模式收敛为「act 窗口内睡眠 +
+      // 窗口外断言」的逐拍循环（waitForText）：长 act 内轮询看不见提交、
+      // vi.waitFor 的睡眠区间又在 act 外刷警告，此写法两者皆免。
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 69.8 / branches 67.5 / functions 66.4 / lines 71.2
       thresholds: {
-        statements: 66.0,
-        branches: 63.8,
-        functions: 62.6,
-        lines: 67.3,
+        statements: 69.8,
+        branches: 67.5,
+        functions: 66.4,
+        lines: 71.2,
       },
     },
   },
