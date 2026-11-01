@@ -5,12 +5,39 @@
  * 与「前端只做展示换算不硬编码额度」、UsageCharts 无数据空态与图表标注。
  */
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PlanItem, UsageBreakdownItem, UsageDailyTrendItem } from '@/lib/types';
 import { act, renderComponent } from '@/test/render-hook';
+import { OrderDrawer } from './order-drawer';
 import { PlanCompare } from './plan-compare';
 import { UsageCharts } from './usage-charts';
+
+const mocks = vi.hoisted(() => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+  createOrder: vi.fn(),
+}));
+
+vi.mock('@/lib/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api-client')>()),
+  billingApi: { createOrder: mocks.createOrder },
+}));
+
+vi.mock('@/components/ui/toast', () => ({ toast: mocks.toast }));
+
+import { billingApi } from '@/lib/api-client';
+
+function renderWithClient(element: ReactNode): ReturnType<typeof renderComponent> {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return renderComponent(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
+}
 
 function clickButton(container: HTMLElement, label: string): void {
   const button = Array.from(container.querySelectorAll('button')).find((item) =>
@@ -48,6 +75,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // 抽屉/对话框走 portal 挂在 body 上，unmount 不回收，必须显式清理
+  document.body.innerHTML = '';
 });
 
 // ---------------------------------------------------------------------------
@@ -202,6 +231,154 @@ describe('UsageCharts', () => {
       <UsageCharts breakdown={BREAKDOWN} dailyTrend={TREND} quotaUnitLabel="次" />,
     );
     expect(container.textContent).toContain('单位 次');
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OrderDrawer
+// ---------------------------------------------------------------------------
+
+describe('OrderDrawer', () => {
+  it('未选择套餐时给空态', () => {
+    const { unmount } = renderWithClient(<OrderDrawer open onOpenChange={vi.fn()} plan={null} />);
+    expect(document.body.textContent).toContain('还没有选择套餐');
+    unmount();
+  });
+
+  it('表单步展示套餐、单价与应付金额（席位联动）', () => {
+    const { unmount } = renderWithClient(
+      <OrderDrawer open onOpenChange={vi.fn()} plan={PRO_PLAN} defaultSeats={3} />,
+    );
+    expect(document.body.textContent).toContain('专业版');
+    expect(document.body.textContent).toContain('¥99.00');
+    // 3 席 × 99 元 = 297 元
+    expect(document.body.textContent).toContain('¥297.00');
+    unmount();
+  });
+
+  it('确认下单先进二次确认', async () => {
+    const { unmount } = renderWithClient(
+      <OrderDrawer open onOpenChange={vi.fn()} plan={PRO_PLAN} defaultSeats={3} />,
+    );
+    await act(async () => {
+      clickButton(document.body, '确认下单');
+    });
+    expect(mocks.createOrder).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('确认后按席位与支付方式下单', async () => {
+    vi.mocked(billingApi.createOrder).mockResolvedValue({
+      order_id: 'ord_9',
+      amount_cents: 29700,
+      currency: 'CNY',
+      status: 'pending',
+      payment_method: 'online',
+      pay_url: 'https://pay.example/ord_9',
+      bank_info: null,
+      expires_at: '2026-11-02T00:00:00Z',
+    });
+    const { unmount } = renderWithClient(
+      <OrderDrawer open onOpenChange={vi.fn()} plan={PRO_PLAN} defaultSeats={3} />,
+    );
+    await act(async () => {
+      clickButton(document.body, '确认下单');
+    });
+
+    // Drawer 与确认框两个 [role=dialog] 并存，「提交订单」全局唯一
+    await act(async () => {
+      clickButton(document.body, '提交订单');
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(billingApi.createOrder).toHaveBeenCalledWith(
+          expect.objectContaining({ plan_code: 'pro', seats: 3 }),
+        );
+      });
+    });
+    unmount();
+  });
+
+  it('下单成功展示支付指引（在线支付给入口）', async () => {
+    vi.mocked(billingApi.createOrder).mockResolvedValue({
+      order_id: 'ord_9',
+      amount_cents: 29700,
+      currency: 'CNY',
+      status: 'pending',
+      payment_method: 'online',
+      pay_url: 'https://pay.example/ord_9',
+      bank_info: null,
+      expires_at: '2026-11-02T00:00:00Z',
+    });
+    const { unmount } = renderWithClient(
+      <OrderDrawer open onOpenChange={vi.fn()} plan={PRO_PLAN} defaultSeats={3} />,
+    );
+    await act(async () => {
+      clickButton(document.body, '确认下单');
+    });
+    // Drawer 与确认框两个 [role=dialog] 并存，「提交订单」全局唯一
+    await act(async () => {
+      clickButton(document.body, '提交订单');
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('订单已创建');
+      });
+    });
+    expect(document.body.textContent).toContain('ord_9');
+    expect(document.body.textContent).toContain('去支付');
+    unmount();
+  });
+
+  it('对公转账展示收款信息', async () => {
+    vi.mocked(billingApi.createOrder).mockResolvedValue({
+      order_id: 'ord_9',
+      amount_cents: 29700,
+      currency: 'CNY',
+      status: 'pending',
+      payment_method: 'offline_transfer',
+      pay_url: '',
+      bank_info: { 开户行: '示例银行', 账号: '6222****' },
+      expires_at: '2026-11-02T00:00:00Z',
+    });
+    const { unmount } = renderWithClient(
+      <OrderDrawer open onOpenChange={vi.fn()} plan={PRO_PLAN} defaultSeats={3} />,
+    );
+    await act(async () => {
+      clickButton(document.body, '确认下单');
+    });
+    // Drawer 与确认框两个 [role=dialog] 并存，「提交订单」全局唯一
+    await act(async () => {
+      clickButton(document.body, '提交订单');
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('对公转账信息');
+      });
+    });
+    expect(document.body.textContent).toContain('示例银行');
+    unmount();
+  });
+
+  it('下单失败展示业务文案与重试', async () => {
+    vi.mocked(billingApi.createOrder).mockRejectedValue(new Error('已有待支付订单'));
+    const { unmount } = renderWithClient(
+      <OrderDrawer open onOpenChange={vi.fn()} plan={PRO_PLAN} defaultSeats={3} />,
+    );
+    await act(async () => {
+      clickButton(document.body, '确认下单');
+    });
+    // Drawer 与确认框两个 [role=dialog] 并存，「提交订单」全局唯一
+    await act(async () => {
+      clickButton(document.body, '提交订单');
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('重试');
+      });
+    });
+    expect(mocks.toast.error).toHaveBeenCalled();
     unmount();
   });
 });

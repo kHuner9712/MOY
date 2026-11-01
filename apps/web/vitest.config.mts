@@ -145,13 +145,18 @@ export default defineConfig({
       // InstalledTable 双空态与工作台入口 / GrantPanel 批量授权 50 项拦截与撤销
       // 二次确认 22 项后实测：
       //   % Stmts **41.95** | % Branch 38.08 | % Funcs **40.11** | % Lines **42.72**
+      //
+      // P1 补测第十八批（2026-11-01 H1 续）：ConfirmOrderDialog 两步核销 /
+      // OrderDrawer 三步下单 / BaseSettingsDialog 名称拦截与回填 22 项后实测：
+      //   % Stmts **44.72** | % Branch 40.63 | % Funcs **42.07** | % Lines **45.67**
+      // 四指标全部站上 40%。
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 41.6 / branches 37.7 / functions 39.8 / lines 42.4
+      //   statements 44.4 / branches 40.3 / functions 41.7 / lines 45.3
       thresholds: {
-        statements: 41.6,
-        branches: 37.7,
-        functions: 39.8,
-        lines: 42.4,
+        statements: 44.4,
+        branches: 40.3,
+        functions: 41.7,
+        lines: 45.3,
       },
     },
   },

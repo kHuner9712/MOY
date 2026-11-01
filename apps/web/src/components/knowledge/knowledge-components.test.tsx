@@ -9,8 +9,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { GrantItem, KnowledgeDocumentItem, SearchSegment } from '@/lib/types';
+import type {
+  GrantItem,
+  KnowledgeBaseDetail,
+  KnowledgeDocumentItem,
+  SearchSegment,
+} from '@/lib/types';
 import { act, renderComponent } from '@/test/render-hook';
+import { BaseSettingsDialog } from './base-settings-dialog';
 import DocumentSearch from './document-search';
 import { DocumentTable, type DocumentFilters } from './document-table';
 import { GrantPanel } from './grant-panel';
@@ -26,6 +32,7 @@ vi.mock('@/lib/api-client', async (importOriginal) => ({
     listGrants: vi.fn(),
     createGrants: vi.fn(),
     revokeGrant: vi.fn(),
+    updateBase: vi.fn(),
   },
 }));
 
@@ -440,12 +447,16 @@ function renderWithClient(element: ReactNode): ReturnType<typeof renderComponent
   return renderComponent(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
 }
 
-/** 在受控 Textarea 里输入文本 */
-function typeInto(container: HTMLElement, selector: string, value: string): void {
-  const field = container.querySelector<HTMLTextAreaElement>(selector);
+/** 在受控输入框（input / textarea）里输入文本 */
+function typeInto(container: ParentNode, selector: string, value: string): void {
+  const field = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
   act(() => {
     if (field) {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      const proto =
+        field instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
       setter?.call(field, value);
       field.dispatchEvent(new Event('input', { bubbles: true }));
     }
@@ -593,6 +604,128 @@ describe('GrantPanel', () => {
         expect(knowledgeExtApi.revokeGrant).toHaveBeenCalledWith('kb_1', 'g1');
       });
     });
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BaseSettingsDialog
+// ---------------------------------------------------------------------------
+
+const BASE: KnowledgeBaseDetail = {
+  base_id: 'kb_1',
+  name: '人事制度库',
+  description: '员工手册与假期制度',
+  visibility: 'organization',
+  document_count: 3,
+  created_at: '2026-10-01T00:00:00Z',
+  chunk_policy: 'default',
+  my_role: 'editor',
+};
+
+describe('BaseSettingsDialog', () => {
+  it('打开时回填当前设置', () => {
+    const { unmount } = renderWithClient(
+      <BaseSettingsDialog open onOpenChange={vi.fn()} base={BASE} canEdit />,
+    );
+    const name = document.body.querySelector<HTMLInputElement>('#base-name');
+    expect(name?.value).toBe('人事制度库');
+    expect(document.body.textContent).toContain('知识库设置');
+    unmount();
+  });
+
+  it('名称为空时前端先拦一次', async () => {
+    const { unmount } = renderWithClient(
+      <BaseSettingsDialog open onOpenChange={vi.fn()} base={BASE} canEdit />,
+    );
+    typeInto(document.body, '#base-name', '');
+    await act(async () => {
+      const form = document.body.querySelector('form');
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(document.body.textContent).toContain('请填写知识库名称');
+    expect(knowledgeExtApi.updateBase).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('保存时按修改后的值提交', async () => {
+    vi.mocked(knowledgeExtApi.updateBase).mockResolvedValue({
+      base_id: 'kb_1',
+      name: '新名字',
+      updated: true,
+    } as never);
+    const { unmount } = renderWithClient(
+      <BaseSettingsDialog open onOpenChange={vi.fn()} base={BASE} canEdit />,
+    );
+    typeInto(document.body, '#base-name', '新名字');
+    await act(async () => {
+      const form = document.body.querySelector('form');
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(knowledgeExtApi.updateBase).toHaveBeenCalledWith(
+          'kb_1',
+          expect.objectContaining({ name: '新名字' }),
+        );
+      });
+    });
+    expect(mocks.toast.success).toHaveBeenCalledWith('知识库设置已保存');
+    unmount();
+  });
+
+  it('保存失败以业务文案提示', async () => {
+    vi.mocked(knowledgeExtApi.updateBase).mockRejectedValue(new Error('名称已存在'));
+    const { unmount } = renderWithClient(
+      <BaseSettingsDialog open onOpenChange={vi.fn()} base={BASE} canEdit />,
+    );
+    await act(async () => {
+      const form = document.body.querySelector('form');
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(mocks.toast.error).toHaveBeenCalled();
+      });
+    });
+    unmount();
+  });
+
+  it('无修改权限时表单置灰', () => {
+    const { unmount } = renderWithClient(
+      <BaseSettingsDialog open onOpenChange={vi.fn()} base={BASE} canEdit={false} />,
+    );
+    const name = document.body.querySelector<HTMLInputElement>('#base-name');
+    expect(name?.disabled).toBe(true);
+    unmount();
+  });
+
+  it('重新打开时用最新数据回填（关闭后初始化标记重置）', () => {
+    const first = renderWithClient(
+      <BaseSettingsDialog open onOpenChange={vi.fn()} base={BASE} canEdit />,
+    );
+    typeInto(document.body, '#base-name', '改到一半');
+    first.unmount();
+
+    const again = renderWithClient(
+      <BaseSettingsDialog
+        open
+        onOpenChange={vi.fn()}
+        base={{ ...BASE, name: '后台新名称' }}
+        canEdit
+      />,
+    );
+    const name = document.body.querySelector<HTMLInputElement>('#base-name');
+    expect(name?.value).toBe('后台新名称');
+    again.unmount();
+  });
+
+  it('可见范围与切分精细度为业务语言选项（不暴露处理参数）', () => {
+    const { unmount } = renderWithClient(
+      <BaseSettingsDialog open onOpenChange={vi.fn()} base={BASE} canEdit />,
+    );
+    expect(document.body.textContent).toContain('企业可见');
+    expect(document.body.textContent).toContain('标准');
     unmount();
   });
 });
