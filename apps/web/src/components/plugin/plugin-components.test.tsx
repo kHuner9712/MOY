@@ -12,6 +12,7 @@ import type { PluginCapabilityItem, PluginMarketItem, PluginReviewItem } from '@
 import { act, renderComponent } from '@/test/render-hook';
 import { CapabilityList } from './capability-list';
 import { PluginCard } from './plugin-card';
+import { ReviewForm } from './review-form';
 import { ReviewList } from './review-list';
 
 function clickButton(container: HTMLElement, label: string): void {
@@ -308,6 +309,103 @@ describe('ReviewList', () => {
       <ReviewList items={[{ ...REVIEW, author_name: '', content: '' }]} total={1} />,
     );
     expect(container.textContent).toContain('某位同事');
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ReviewForm
+// ---------------------------------------------------------------------------
+
+interface FormOverrides {
+  rating?: number;
+  content?: string;
+  anonymous?: boolean;
+  submitting?: boolean;
+  canReview?: boolean;
+}
+
+function renderForm(overrides: FormOverrides = {}): {
+  container: HTMLElement;
+  unmount: () => void;
+  onSubmit: ReturnType<typeof vi.fn>;
+  onAnonymousChange: ReturnType<typeof vi.fn>;
+} {
+  const onSubmit = vi.fn();
+  const onAnonymousChange = vi.fn();
+  const rendered = renderComponent(
+    <ReviewForm
+      rating={overrides.rating ?? 0}
+      onRatingChange={vi.fn()}
+      content={overrides.content ?? ''}
+      onContentChange={vi.fn()}
+      anonymous={overrides.anonymous ?? false}
+      onAnonymousChange={onAnonymousChange}
+      onSubmit={onSubmit}
+      submitting={overrides.submitting ?? false}
+      canReview={overrides.canReview ?? true}
+    />,
+  );
+  return { ...rendered, onSubmit, onAnonymousChange };
+}
+
+describe('ReviewForm', () => {
+  it('未选星级时禁止提交（前端只拦这一条）', () => {
+    const { container, onSubmit, unmount } = renderForm({ rating: 0 });
+    const submit = Array.from(container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('提交'),
+    );
+    expect(submit?.disabled).toBe(true);
+
+    act(() => {
+      submit?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('已选星级可提交', () => {
+    const { container, onSubmit, unmount } = renderForm({ rating: 4, content: '好用' });
+    const form = container.querySelector('form');
+    act(() => {
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(onSubmit).toHaveBeenCalled();
+    unmount();
+  });
+
+  it('内容长度上限 200 字', () => {
+    const { container, unmount } = renderForm({ rating: 5 });
+    const textarea = container.querySelector('textarea');
+    expect(textarea?.getAttribute('maxlength')).toBe('200');
+    unmount();
+  });
+
+  it('匿名开关受控回调', () => {
+    const { container, onAnonymousChange, unmount } = renderForm({ rating: 5 });
+    const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    act(() => {
+      checkbox?.click();
+    });
+    expect(onAnonymousChange).toHaveBeenCalledWith(true);
+    unmount();
+  });
+
+  it('提交中禁用全部输入（防连点）', () => {
+    const { container, unmount } = renderForm({ rating: 5, submitting: true });
+    const textarea = container.querySelector('textarea');
+    expect(textarea?.disabled).toBe(true);
+    const submit = Array.from(container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('提交'),
+    );
+    expect(submit?.disabled).toBe(true);
+    unmount();
+  });
+
+  it('不可评价时整体置灰', () => {
+    const { container, unmount } = renderForm({ rating: 5, canReview: false });
+    const textarea = container.querySelector('textarea');
+    expect(textarea?.disabled).toBe(true);
     unmount();
   });
 });

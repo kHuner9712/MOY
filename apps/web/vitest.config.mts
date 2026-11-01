@@ -134,13 +134,19 @@ export default defineConfig({
       // 双空态/删除二次确认 + DocumentSearch 防抖四态）+ 组织架构组件
       // （DepartmentTree 选中/层级上限/拖拽移动）渲染测试 29 项后实测：
       //   % Stmts **38.40** | % Branch 31.76 | % Funcs **35.78** | % Lines **39.03**
+      //
+      // P1 补测第十六批（2026-11-01 H1 续）：计费域（PlanCompare 当前套餐/下架/
+      // 权限与展示换算 + UsageCharts 空态/图表标注）+ 对话域（ConversationSidebar
+      // 切换 + CitationDrawer 三种引用降级）+ ReviewForm 校验 23 项后实测：
+      //   % Stmts **39.98** | % Branch 35.52 | % Funcs **37.99** | % Lines **40.65**
+      // **H1 补测战役 40% 目标达成**（% Lines 40.65 ≥ 40）。
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 38.1 / branches 31.4 / functions 35.4 / lines 38.7
+      //   statements 39.6 / branches 35.2 / functions 37.6 / lines 40.3
       thresholds: {
-        statements: 38.1,
-        branches: 31.4,
-        functions: 35.4,
-        lines: 38.7,
+        statements: 39.6,
+        branches: 35.2,
+        functions: 37.6,
+        lines: 40.3,
       },
     },
   },
