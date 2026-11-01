@@ -7,9 +7,10 @@ import { defineConfig } from 'vitest/config';
  * Vitest 配置（单元测试）。
  *
  * 只跑 `src/**\/*.test.ts(x)`；E2E 由 Playwright 负责。
- * 测试对象以纯函数为主（登录回跳、会话广播、表单合并/校验），
- * 不依赖 React 渲染器（React 已由根 overrides 收敛 19.3.1 单实例，
- * 此前"根目录另有一份 React 18"的双实例约束已不存在；保留纯函数口径是为测试轻量稳定）。
+ * 测试对象以纯函数为主（登录回跳、会话广播、表单合并/校验）；
+ * 2026-11-01（补测第十二批）起对 Hook 状态机补测引入 React 官方渲染方式
+ * （`react-dom/client` + `act`，见 `src/test/render-hook.tsx`）——只渲染
+ * 返回 null 的探针组件，不渲染业务 UI，业务组件仍由 Playwright E2E 兜底。
  */
 const webRoot = fileURLToPath(new URL('.', import.meta.url));
 
@@ -109,13 +110,19 @@ export default defineConfig({
       // ID 合同/persist 口径 15 项 + QUERY_KEYS 剩余键工厂 14 个 + isIdempotentDuplicate/
       // redirect 协议段/oidc btoa 缺失尾分支后实测（use-api.ts 46.3% → 72.2%）：
       //   % Stmts **23.76** | % Branch 18.08 | % Funcs **21.23** | % Lines **24.05**
+      //
+      // P1 补测第十二批（2026-11-01 H1 续）：引入 React 渲染测试（renderHook
+      // 基建 + react-dom/client + act），use-upload/use-retryable-request/
+      // use-model-catalog/use-chat-stream/use-api 五个 Hook 状态机 44 项后实测：
+      //   % Stmts **27.93** | % Branch 19.73 | % Funcs **25.08** | % Lines **28.23**
+      // （use-api / use-upload / render-hook 均 100%）
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 23.4 / branches 17.7 / functions 20.9 / lines 23.7
+      //   statements 27.6 / branches 19.4 / functions 24.7 / lines 27.9
       thresholds: {
-        statements: 23.4,
-        branches: 17.7,
-        functions: 20.9,
-        lines: 23.7,
+        statements: 27.6,
+        branches: 19.4,
+        functions: 24.7,
+        lines: 27.9,
       },
     },
   },
