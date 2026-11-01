@@ -268,11 +268,20 @@ export default defineConfig({
       //   % Stmts **84.23** | % Branch 78.50 | % Funcs 78.75 | % Lines 85.40
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 83.9 / branches 78.1 / functions 78.4 / lines 85.1
+      //
+      // P1 补测第三十三批（2026-11-01 H1 续）：useDeclarationForm hook 状态机
+      //（初始值分型/setValue 清旧错/validate 全量/reset/buildInputs 组装口径/
+      // 目标预填不覆盖已填与只合一次/声明异步到达补默认值）+ validateField
+      // 剩余分支（max_length、multi_select 无效选项与非数组兜底、file 判空）
+      // 12 项后实测：
+      //   % Stmts **84.66** | % Branch 79.02 | % Funcs 78.92 | % Lines 85.77
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 84.3 / branches 78.7 / functions 78.6 / lines 85.4
       thresholds: {
-        statements: 83.9,
-        branches: 78.1,
-        functions: 78.4,
-        lines: 85.1,
+        statements: 84.3,
+        branches: 78.7,
+        functions: 78.6,
+        lines: 85.4,
       },
     },
   },

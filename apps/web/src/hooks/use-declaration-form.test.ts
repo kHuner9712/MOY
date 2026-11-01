@@ -1,11 +1,18 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { useEffect, useState } from 'react';
 import { describe, expect, it } from 'vitest';
 
 import type { PluginInputFormat, PluginInputSpec } from '@/lib/types';
+import { act, renderHook } from '@/test/render-hook';
 
-import { collectFieldErrors, mergeMissingDefaults, validateField } from './use-declaration-form';
+import {
+  collectFieldErrors,
+  mergeMissingDefaults,
+  useDeclarationForm,
+  validateField,
+} from './use-declaration-form';
 
 /** 工作台真实声明的一个最小子集（与 plg_dev_workbench 同形） */
 const SPECS: PluginInputSpec[] = [
@@ -237,5 +244,221 @@ describe('表单关闭原生校验（W-06 机械锁）', () => {
     expect(validateAt).toBeGreaterThan(-1);
     expect(buildAt).toBeGreaterThan(-1);
     expect(validateAt).toBeLessThan(buildAt);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 补测第三十三批（审计 2026-10-31 H1 续）：hook 状态机与剩余校验分支
+// ---------------------------------------------------------------------------
+
+/** 探针：用自带 state 模拟「声明异步到达 / 目标预填到达」两条时序 */
+let setProbeInputs: (inputs: PluginInputSpec[]) => void = () => {};
+let setProbeInitial: (initial: string | undefined) => void = () => {};
+
+function useFormProbe(): ReturnType<typeof useDeclarationForm> {
+  const [inputs, setInputs] = useState<PluginInputSpec[]>([]);
+  const [initial, setInitial] = useState<string | undefined>(undefined);
+  // 发布控制柄放 effect 里：渲染期不得改组件外变量（react-hooks/globals）；
+  // setter 引用稳定，挂载时发布一次即可
+  useEffect(() => {
+    setProbeInputs = setInputs;
+    setProbeInitial = setInitial;
+  }, []);
+  return useDeclarationForm(inputs, initial);
+}
+
+const FORM_SPECS: PluginInputSpec[] = [
+  { key: 'goal', label: '目标', type: 'text', required: true, max_length: 20 },
+  { key: 'tags', label: '标签', type: 'multi_select', required: true, options: ['a', 'b'] },
+  { key: 'docs', label: '资料', type: 'file', required: true },
+  { key: 'mode', label: '模式', type: 'select', required: true, options: ['简', '详'] },
+  { key: 'bare', label: '裸下拉', type: 'select', required: false },
+];
+
+describe('useDeclarationForm 状态机', () => {
+  it('初始值按声明分型，hasFileInput 只认文件类', () => {
+    const { result, unmount } = renderHook(() => useFormProbe());
+    act(() => setProbeInputs(FORM_SPECS));
+
+    expect(result.current.values.tags).toEqual([]);
+    expect(result.current.values.docs).toEqual([]);
+    expect(result.current.values.mode).toBe('简');
+    // 无候选下拉给空串（界面降级成文本框）
+    expect(result.current.values.bare).toBe('');
+    expect(result.current.hasFileInput).toBe(true);
+    unmount();
+  });
+
+  it('setValue 写值并顺手清掉该字段旧错误', () => {
+    const { result, unmount } = renderHook(() => useFormProbe());
+    act(() => setProbeInputs(FORM_SPECS));
+
+    act(() => {
+      result.current.validate();
+    });
+    expect(result.current.errors.goal).toBeTruthy();
+
+    act(() => {
+      result.current.setValue('goal', '写完了');
+    });
+    expect(result.current.values.goal).toBe('写完了');
+    expect(result.current.errors.goal).toBeUndefined();
+    unmount();
+  });
+
+  it('validate 全量校验写错误表；改对后放行', () => {
+    const { result, unmount } = renderHook(() => useFormProbe());
+    act(() => setProbeInputs(FORM_SPECS));
+
+    let passed = true;
+    act(() => {
+      passed = result.current.validate();
+    });
+    expect(passed).toBe(false);
+    // 必填为空的字段都进错误表
+    expect(Object.keys(result.current.errors).sort()).toEqual(['docs', 'goal', 'tags']);
+
+    act(() => {
+      result.current.setValue('goal', '整理周报');
+      result.current.setValue('tags', ['a']);
+      result.current.setValue('docs', ['doc_1']);
+    });
+    act(() => {
+      passed = result.current.validate();
+    });
+    expect(passed).toBe(true);
+    expect(result.current.errors).toEqual({});
+    unmount();
+  });
+
+  it('reset 回到初始值并清空错误', () => {
+    const { result, unmount } = renderHook(() => useFormProbe());
+    act(() => setProbeInputs(FORM_SPECS));
+    act(() => {
+      result.current.validate();
+      result.current.setValue('goal', '临时内容');
+    });
+
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.values.goal).toBe('');
+    expect(result.current.values.mode).toBe('简');
+    expect(result.current.errors).toEqual({});
+    unmount();
+  });
+
+  it('buildInputs 组装口径：trim、数组原样、非字符串给空', () => {
+    const { result, unmount } = renderHook(() => useFormProbe());
+    act(() => setProbeInputs(FORM_SPECS));
+    act(() => {
+      result.current.setValue('goal', '  整理周报  ');
+      result.current.setValue('tags', ['a', 'b']);
+      result.current.setValue('docs', ['doc_1']);
+    });
+
+    let payload: Record<string, unknown> = {};
+    act(() => {
+      payload = result.current.buildInputs();
+    });
+    expect(payload).toEqual({
+      goal: '整理周报',
+      tags: ['a', 'b'],
+      docs: ['doc_1'],
+      mode: '简',
+      bare: '',
+    });
+    unmount();
+  });
+
+  it('目标预填补进首个文本输入，且不覆盖用户已填', () => {
+    const { result, unmount } = renderHook(() => useFormProbe());
+    act(() => setProbeInputs(FORM_SPECS));
+    act(() => setProbeInitial('整理本周周报'));
+    expect(result.current.values.goal).toBe('整理本周周报');
+
+    // 用户改过之后，同一目标不再合入
+    act(() => {
+      result.current.setValue('goal', '我自己的目标');
+      result.current.setValue('goal', '');
+    });
+    act(() => setProbeInitial('整理本周周报'));
+    expect(result.current.values.goal).toBe('');
+    unmount();
+  });
+
+  it('目标先到声明后到也能合入；清空后换目标再合一次', () => {
+    const { result, unmount } = renderHook(() => useFormProbe());
+    act(() => setProbeInitial('第一个目标'));
+    act(() => setProbeInputs(FORM_SPECS));
+    expect(result.current.values.goal).toBe('第一个目标');
+
+    // 用户清空后新的目标到达 → 合入新目标（每个目标只合一次）
+    act(() => {
+      result.current.setValue('goal', '');
+    });
+    act(() => setProbeInitial('第二个目标'));
+    expect(result.current.values.goal).toBe('第二个目标');
+    unmount();
+  });
+
+  it('声明异步到达补齐默认值（hook 路径）', () => {
+    const { result, unmount } = renderHook(() => useFormProbe());
+    expect(result.current.values).toEqual({});
+
+    act(() => setProbeInputs(FORM_SPECS));
+    expect(result.current.values.mode).toBe('简');
+    expect(result.current.values.goal).toBe('');
+    unmount();
+  });
+});
+
+describe('validateField 剩余分支', () => {
+  const text = (over: Partial<PluginInputSpec> = {}): PluginInputSpec => ({
+    key: 'title',
+    label: '需求标题',
+    type: 'text',
+    required: false,
+    max_length: 5,
+    ...over,
+  });
+
+  it('文本超长按声明上限提示', () => {
+    expect(validateField(text(), '六个字的标题')).toBe('需求标题最多 5 个字');
+    expect(validateField(text(), '五字内')).toBe('');
+  });
+
+  it('多选含无效选项提示，非数组值按空处理', () => {
+    const spec: PluginInputSpec = {
+      key: 'tags',
+      label: '标签',
+      type: 'multi_select',
+      required: true,
+      options: ['a', 'b'],
+    };
+    expect(validateField(spec, ['a', 'c'])).toBe('标签包含无效选项');
+    // 非数组在候选检查里按空处理：不报「候选无效」（报错会指向不存在的选项）
+    expect(validateField(spec, 'a' as never)).toBe('');
+  });
+
+  it('文件类必填按数组判空，有值即通过', () => {
+    const spec: PluginInputSpec = { key: 'docs', label: '资料', type: 'file', required: true };
+    expect(validateField(spec, [])).toBe('请填写资料');
+    expect(validateField(spec, ['doc_1'])).toBe('');
+  });
+
+  it('collectFieldErrors 一次写全所有错误', () => {
+    const errors = collectFieldErrors(FORM_SPECS, {
+      goal: '',
+      tags: ['zz'],
+      docs: [],
+      mode: '简',
+      bare: '',
+    });
+    expect(errors.goal).toBe('请填写目标');
+    expect(errors.tags).toBe('标签包含无效选项');
+    expect(errors.docs).toBe('请填写资料');
+    // 通过的字段不进错误表
+    expect(errors.mode).toBeUndefined();
   });
 });
