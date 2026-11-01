@@ -11,12 +11,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   InstalledPluginItem,
   PluginCapabilityItem,
+  PluginDetail,
   PluginMarketItem,
   PluginReviewItem,
   PluginVersionBrief,
 } from '@/lib/types';
 import { act, renderComponent } from '@/test/render-hook';
 import { CapabilityList } from './capability-list';
+import { GrantDrawer } from './grant-drawer';
 import { InstalledTable } from './installed-table';
 import { PluginCard } from './plugin-card';
 import { ReviewForm } from './review-form';
@@ -55,6 +57,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // Drawer/Dialog 走 portal 挂在 body 上，unmount 不回收，必须显式清理
+  document.body.innerHTML = '';
 });
 
 // ---------------------------------------------------------------------------
@@ -739,6 +743,199 @@ describe('InstalledTable', () => {
     );
     expect(container.textContent).toContain('尚未使用');
     expect(container.textContent).toContain('—');
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GrantDrawer
+// ---------------------------------------------------------------------------
+
+const REQUIRED_CAP: PluginCapabilityItem = {
+  capability_key: 'personal.tool.use',
+  display_name: '使用工具',
+  reason: '需要执行工具操作',
+  denial_effect: '核心步骤无法完成',
+  category: 'personal',
+  required: true,
+  org_switch_enabled: true,
+};
+
+const OPTIONAL_ORG_CAP: PluginCapabilityItem = {
+  capability_key: 'org.repo.write',
+  display_name: '写入代码仓库',
+  reason: '提交生成的代码',
+  denial_effect: '代码无法自动提交',
+  category: 'org',
+  required: false,
+  org_switch_enabled: true,
+};
+
+/** GrantDrawer 只消费 capabilities / settings_schema / name，其余字段从简 */
+const PLUGIN = {
+  plugin_id: 'plg_1',
+  name: '周报助手',
+  capabilities: [REQUIRED_CAP, OPTIONAL_ORG_CAP],
+  settings_schema: [
+    { key: 'report_style', label: '周报风格', type: 'select', options: ['简洁', '详细'] },
+    { key: 'team_name', label: '团队名称', type: 'text' },
+  ],
+} as unknown as PluginDetail;
+
+function renderGrant(
+  mode: 'install' | 'edit',
+  overrides: { submitting?: boolean; granted?: string[] } = {},
+): {
+  container: HTMLElement;
+  unmount: () => void;
+  onSubmit: ReturnType<typeof vi.fn>;
+} {
+  const onSubmit = vi.fn();
+  const rendered = renderComponent(
+    <GrantDrawer
+      open
+      onOpenChange={vi.fn()}
+      plugin={PLUGIN}
+      granted={overrides.granted ?? []}
+      mode={mode}
+      submitting={overrides.submitting ?? false}
+      onSubmit={onSubmit}
+    />,
+  );
+  return { ...rendered, onSubmit };
+}
+
+describe('GrantDrawer', () => {
+  it('安装模式标题带插件名，主按钮为「同意并添加」', () => {
+    const { container, unmount } = renderGrant('install');
+    expect(document.body.textContent).toContain('添加「周报助手」');
+    expect(document.body.textContent).toContain('同意并添加');
+    unmount();
+  });
+
+  it('编辑模式主按钮为「保存授权」', () => {
+    const { unmount } = renderGrant('edit');
+    expect(document.body.textContent).toContain('调整授权');
+    expect(document.body.textContent).toContain('保存授权');
+    unmount();
+  });
+
+  it('逐项展示必需/可选与不同意的后果', () => {
+    const { unmount } = renderGrant('install');
+    // Drawer 内容在 portal 里，断言走 body
+    expect(document.body.textContent).toContain('必需');
+    expect(document.body.textContent).toContain('可选');
+    expect(document.body.textContent).toContain('核心步骤无法完成');
+    expect(document.body.textContent).toContain('代码无法自动提交');
+    unmount();
+  });
+
+  it('安装模式取消必需能力后提交置灰并列出缺哪些', () => {
+    const { unmount } = renderGrant('install');
+    // 默认必需能力勾选，直接可提交
+    const submit = Array.from(document.body.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('同意并添加'),
+    );
+    expect(submit?.disabled).toBe(false);
+
+    // 取消必需能力
+    const checkbox = document.body.querySelector<HTMLInputElement>(
+      'input[aria-label="授权：使用工具"]',
+    );
+    act(() => {
+      checkbox?.click();
+    });
+    expect(submit?.disabled).toBe(true);
+    expect(document.body.textContent).toContain('还需要勾选这些必需权限才能继续');
+    expect(document.body.textContent).toContain('使用工具');
+    unmount();
+  });
+
+  it('编辑模式必需能力不可撤回（复选框置灰）', () => {
+    const { unmount } = renderGrant('edit');
+    const checkbox = document.body.querySelector<HTMLInputElement>(
+      'input[aria-label="授权：使用工具"]',
+    );
+    expect(checkbox?.disabled).toBe(true);
+    // 强制处于勾选态
+    expect(checkbox?.checked).toBe(true);
+    unmount();
+  });
+
+  it('企业未开启的能力无法授权', () => {
+    const blocked = {
+      ...PLUGIN,
+      capabilities: [{ ...OPTIONAL_ORG_CAP, org_switch_enabled: false }],
+    } as unknown as PluginDetail;
+    const { unmount } = renderComponent(
+      <GrantDrawer
+        open
+        onOpenChange={vi.fn()}
+        plugin={blocked}
+        granted={[]}
+        mode="install"
+        onSubmit={vi.fn()}
+      />,
+    );
+    const checkbox = document.body.querySelector<HTMLInputElement>(
+      'input[aria-label="授权：写入代码仓库"]',
+    );
+    expect(checkbox?.disabled).toBe(true);
+    expect(document.body.textContent).toContain('企业未开启');
+    unmount();
+  });
+
+  it('配置项按声明渲染（select 与 text 各一个）', () => {
+    const install = renderGrant('install');
+    expect(document.body.querySelector('#setting-report_style')).not.toBeNull();
+    expect(document.body.querySelector('#setting-team_name')).not.toBeNull();
+    install.unmount();
+    document.body.innerHTML = '';
+
+    // 编辑模式不渲染初始配置
+    const edit = renderGrant('edit');
+    expect(document.body.querySelector('#setting-report_style')).toBeNull();
+    edit.unmount();
+  });
+
+  it('提交时安装模式带配置，编辑模式只带授权', () => {
+    const install = renderGrant('install');
+    act(() => {
+      const submit = Array.from(document.body.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('同意并添加'),
+      );
+      submit?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(install.onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        grants: expect.any(Object),
+        settings: expect.any(Object),
+      }),
+    );
+    install.unmount();
+    document.body.innerHTML = '';
+
+    const edit = renderGrant('edit', { granted: ['personal.tool.use'] });
+    act(() => {
+      const submit = Array.from(document.body.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('保存授权'),
+      );
+      submit?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(edit.onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ grants: expect.any(Object) }),
+    );
+    const payload = edit.onSubmit.mock.calls[0]?.[0] as { settings?: unknown };
+    expect(payload.settings).toBeUndefined();
+    edit.unmount();
+  });
+
+  it('提交中禁用操作（防连点）', () => {
+    const { unmount } = renderGrant('install', { submitting: true });
+    const submit = Array.from(document.body.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('处理中'),
+    );
+    expect(submit?.disabled).toBe(true);
     unmount();
   });
 });

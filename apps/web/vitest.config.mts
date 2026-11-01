@@ -150,13 +150,17 @@ export default defineConfig({
       // OrderDrawer 三步下单 / BaseSettingsDialog 名称拦截与回填 22 项后实测：
       //   % Stmts **44.72** | % Branch 40.63 | % Funcs **42.07** | % Lines **45.67**
       // 四指标全部站上 40%。
+      //
+      // P1 补测第十九批（2026-11-01 H1 续）：GrantDrawer 安装/编辑双模式与必需
+      // 能力约束 / RolePermissionDialog 权限矩阵只读态与只保存变化角色 17 项后实测：
+      //   % Stmts **47.57** | % Branch 44.66 | % Funcs **44.93** | % Lines **48.49**
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 44.4 / branches 40.3 / functions 41.7 / lines 45.3
+      //   statements 47.2 / branches 44.3 / functions 44.6 / lines 48.1
       thresholds: {
-        statements: 44.4,
-        branches: 40.3,
-        functions: 41.7,
-        lines: 45.3,
+        statements: 47.2,
+        branches: 44.3,
+        functions: 44.6,
+        lines: 48.1,
       },
     },
   },
