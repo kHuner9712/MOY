@@ -5,19 +5,33 @@
  * 排序与筛选回调/权限置灰，DocumentSearch 防抖检索与四态展示。
  */
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { KnowledgeDocumentItem, SearchSegment } from '@/lib/types';
+import type { GrantItem, KnowledgeDocumentItem, SearchSegment } from '@/lib/types';
 import { act, renderComponent } from '@/test/render-hook';
 import DocumentSearch from './document-search';
 import { DocumentTable, type DocumentFilters } from './document-table';
+import { GrantPanel } from './grant-panel';
+
+const mocks = vi.hoisted(() => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 vi.mock('@/lib/api-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-client')>()),
   knowledgeApi: { search: vi.fn() },
+  knowledgeExtApi: {
+    listGrants: vi.fn(),
+    createGrants: vi.fn(),
+    revokeGrant: vi.fn(),
+  },
 }));
 
-import { knowledgeApi } from '@/lib/api-client';
+vi.mock('@/components/ui/toast', () => ({ toast: mocks.toast }));
+
+import { knowledgeApi, knowledgeExtApi } from '@/lib/api-client';
 
 const DOC: KnowledgeDocumentItem = {
   document_id: 'doc_1',
@@ -399,5 +413,186 @@ describe('DocumentSearch', () => {
     expect(knowledgeApi.search).not.toHaveBeenCalled();
     unmount();
     vi.useRealTimers();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GrantPanel
+// ---------------------------------------------------------------------------
+
+const GRANT: GrantItem = {
+  grant_id: 'g1',
+  subject_type: 'user',
+  subject_id: 'usr_1',
+  subject_name: '张三',
+  permission: 'viewer',
+  granted_by_name: '李四',
+  granted_at: '2026-11-01T10:00:00Z',
+};
+
+function renderWithClient(element: ReactNode): ReturnType<typeof renderComponent> {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return renderComponent(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
+}
+
+/** 在受控 Textarea 里输入文本 */
+function typeInto(container: HTMLElement, selector: string, value: string): void {
+  const field = container.querySelector<HTMLTextAreaElement>(selector);
+  act(() => {
+    if (field) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(field, value);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+}
+
+describe('GrantPanel', () => {
+  it('渲染授权清单（对象类型 / 对象 / 级别 / 授权人）', async () => {
+    vi.mocked(knowledgeExtApi.listGrants).mockResolvedValue({
+      items: [GRANT],
+      meta: { page: 1, page_size: 20, total: 1, total_pages: 1 },
+    });
+    const { container, unmount } = renderWithClient(<GrantPanel baseId="kb_1" canManage />);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain('张三');
+      });
+    });
+    expect(container.textContent).toContain('成员');
+    expect(container.textContent).toContain('可提问');
+    expect(container.textContent).toContain('李四');
+    unmount();
+  });
+
+  it('空清单给空态说明', async () => {
+    vi.mocked(knowledgeExtApi.listGrants).mockResolvedValue({
+      items: [],
+      meta: { page: 1, page_size: 20, total: 0, total_pages: 0 },
+    });
+    const { container, unmount } = renderWithClient(<GrantPanel baseId="kb_1" canManage />);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain('还没有单独授权的成员');
+      });
+    });
+    unmount();
+  });
+
+  it('无管理权限时添加授权置灰', () => {
+    vi.mocked(knowledgeExtApi.listGrants).mockResolvedValue({
+      items: [],
+      meta: { page: 1, page_size: 20, total: 0, total_pages: 0 },
+    });
+    const { container, unmount } = renderWithClient(<GrantPanel baseId="kb_1" canManage={false} />);
+    const button = Array.from(container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('添加授权'),
+    );
+    expect(button?.disabled).toBe(true);
+    unmount();
+  });
+
+  it('空输入提交提示填写对象', async () => {
+    vi.mocked(knowledgeExtApi.listGrants).mockResolvedValue({
+      items: [],
+      meta: { page: 1, page_size: 20, total: 0, total_pages: 0 },
+    });
+    const { container, unmount } = renderWithClient(<GrantPanel baseId="kb_1" canManage />);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain('添加授权');
+      });
+    });
+    clickButton(container, '添加授权');
+    expect(mocks.toast.error).toHaveBeenCalledWith('请填写要授权的成员、部门或角色');
+    expect(knowledgeExtApi.createGrants).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('超过 50 项在提交前拦截', async () => {
+    vi.mocked(knowledgeExtApi.listGrants).mockResolvedValue({
+      items: [],
+      meta: { page: 1, page_size: 20, total: 0, total_pages: 0 },
+    });
+    const { container, unmount } = renderWithClient(<GrantPanel baseId="kb_1" canManage />);
+
+    const many = Array.from({ length: 51 }, (_, index) => `usr_${index}`).join(',');
+    typeInto(container, '#grant-subject-ids', many);
+    clickButton(container, '添加授权');
+
+    expect(mocks.toast.error).toHaveBeenCalledWith('一次最多授权 50 项，请分批操作');
+    expect(knowledgeExtApi.createGrants).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('正常提交批量授权并提示成功', async () => {
+    vi.mocked(knowledgeExtApi.listGrants).mockResolvedValue({
+      items: [],
+      meta: { page: 1, page_size: 20, total: 0, total_pages: 0 },
+    });
+    vi.mocked(knowledgeExtApi.createGrants).mockResolvedValue({
+      created_count: 2,
+      skipped_count: 0,
+    });
+    const { container, unmount } = renderWithClient(<GrantPanel baseId="kb_1" canManage />);
+
+    typeInto(container, '#grant-subject-ids', 'usr_1, usr_2');
+    await act(async () => {
+      clickButton(container, '添加授权');
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(knowledgeExtApi.createGrants).toHaveBeenCalledWith('kb_1', {
+          subject_type: 'user',
+          subject_ids: ['usr_1', 'usr_2'],
+          permission: 'viewer',
+        });
+      });
+    });
+    expect(mocks.toast.success).toHaveBeenCalledWith('已添加 2 项授权');
+    unmount();
+  });
+
+  it('撤销走二次确认后才调用', async () => {
+    vi.mocked(knowledgeExtApi.listGrants).mockResolvedValue({
+      items: [GRANT],
+      meta: { page: 1, page_size: 20, total: 1, total_pages: 1 },
+    });
+    vi.mocked(knowledgeExtApi.revokeGrant).mockResolvedValue({ grant_id: 'g1', deleted: true });
+    const { container, unmount } = renderWithClient(<GrantPanel baseId="kb_1" canManage />);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain('张三');
+      });
+    });
+
+    // 行内撤销 → 弹确认框
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="撤销授权 张三"]');
+    act(() => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(document.body.textContent).toContain('撤销这条授权？');
+    expect(knowledgeExtApi.revokeGrant).not.toHaveBeenCalled();
+
+    // 确认撤销
+    const dialog = document.body.querySelector('[role="dialog"]');
+    await act(async () => {
+      clickButton(dialog ?? document.body, '撤销');
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(knowledgeExtApi.revokeGrant).toHaveBeenCalledWith('kb_1', 'g1');
+      });
+    });
+    unmount();
   });
 });

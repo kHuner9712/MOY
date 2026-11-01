@@ -8,12 +8,20 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PluginCapabilityItem, PluginMarketItem, PluginReviewItem } from '@/lib/types';
+import type {
+  InstalledPluginItem,
+  PluginCapabilityItem,
+  PluginMarketItem,
+  PluginReviewItem,
+  PluginVersionBrief,
+} from '@/lib/types';
 import { act, renderComponent } from '@/test/render-hook';
 import { CapabilityList } from './capability-list';
+import { InstalledTable } from './installed-table';
 import { PluginCard } from './plugin-card';
 import { ReviewForm } from './review-form';
 import { ReviewList } from './review-list';
+import { VersionHistory } from './version-history';
 
 function clickButton(container: HTMLElement, label: string): void {
   const button = Array.from(container.querySelectorAll('button')).find((item) =>
@@ -406,6 +414,331 @@ describe('ReviewForm', () => {
     const { container, unmount } = renderForm({ rating: 5, canReview: false });
     const textarea = container.querySelector('textarea');
     expect(textarea?.disabled).toBe(true);
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VersionHistory
+// ---------------------------------------------------------------------------
+
+const VERSIONS: PluginVersionBrief[] = [
+  { version: '2.0.0', published_at: '2026-11-01T00:00:00Z', changelog: '新增批量导出' },
+  { version: '1.0.0', published_at: '2026-09-01T00:00:00Z', changelog: '首个版本' },
+];
+
+describe('VersionHistory', () => {
+  it('无版本信息时给空态', () => {
+    const { container, unmount } = renderComponent(
+      <VersionHistory
+        versions={[]}
+        installedVersion="1.0.0"
+        hasUpdate={false}
+        onUpgrade={vi.fn()}
+        onRollback={vi.fn()}
+      />,
+    );
+    expect(container.textContent).toContain('还没有版本信息');
+    unmount();
+  });
+
+  it('渲染版本表与状态标注（正在使用 / 最新版本）', () => {
+    const { container, unmount } = renderComponent(
+      <VersionHistory
+        versions={VERSIONS}
+        installedVersion="1.0.0"
+        hasUpdate
+        onUpgrade={vi.fn()}
+        onRollback={vi.fn()}
+      />,
+    );
+    expect(container.textContent).toContain('2.0.0');
+    expect(container.textContent).toContain('正在使用');
+    expect(container.textContent).toContain('最新版本');
+    expect(container.textContent).toContain('当前版本：1.0.0');
+    unmount();
+  });
+
+  it('有更新时可升级到最新版本', () => {
+    const onUpgrade = vi.fn();
+    const { container, unmount } = renderComponent(
+      <VersionHistory
+        versions={VERSIONS}
+        installedVersion="1.0.0"
+        hasUpdate
+        onUpgrade={onUpgrade}
+        onRollback={vi.fn()}
+      />,
+    );
+    clickButton(container, '升级到该版本');
+    expect(onUpgrade).toHaveBeenCalledWith('2.0.0');
+    unmount();
+  });
+
+  it('无更新时不给升级入口', () => {
+    const { container, unmount } = renderComponent(
+      <VersionHistory
+        versions={VERSIONS}
+        installedVersion="2.0.0"
+        hasUpdate={false}
+        onUpgrade={vi.fn()}
+        onRollback={vi.fn()}
+      />,
+    );
+    expect(container.textContent).not.toContain('升级到该版本');
+    unmount();
+  });
+
+  it('回退走二次确认后才执行', async () => {
+    const onRollback = vi.fn();
+    const { container, unmount } = renderComponent(
+      <VersionHistory
+        versions={VERSIONS}
+        installedVersion="2.0.0"
+        hasUpdate={false}
+        onUpgrade={vi.fn()}
+        onRollback={onRollback}
+      />,
+    );
+    clickButton(container, '回退到上一版本');
+    expect(document.body.textContent).toContain('回退到上一版本？');
+    expect(onRollback).not.toHaveBeenCalled();
+
+    await act(async () => {
+      clickButton(document.body, '确认回退');
+    });
+    expect(onRollback).toHaveBeenCalled();
+    unmount();
+  });
+
+  it('只有一个版本时回退置灰（无上一版本）', () => {
+    const { container, unmount } = renderComponent(
+      <VersionHistory
+        versions={[VERSIONS[0]!]}
+        installedVersion="2.0.0"
+        hasUpdate={false}
+        onUpgrade={vi.fn()}
+        onRollback={vi.fn()}
+      />,
+    );
+    const button = Array.from(container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('回退到上一版本'),
+    );
+    expect(button?.disabled).toBe(true);
+    unmount();
+  });
+
+  it('升级中禁用操作（防并发）', () => {
+    const { container, unmount } = renderComponent(
+      <VersionHistory
+        versions={VERSIONS}
+        installedVersion="1.0.0"
+        hasUpdate
+        onUpgrade={vi.fn()}
+        onRollback={vi.fn()}
+        upgrading
+      />,
+    );
+    const button = Array.from(container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('升级到该版本'),
+    );
+    expect(button?.disabled).toBe(true);
+    unmount();
+  });
+
+  it('无管理权限时升级与回退置灰', () => {
+    const { container, unmount } = renderComponent(
+      <VersionHistory
+        versions={VERSIONS}
+        installedVersion="1.0.0"
+        hasUpdate
+        onUpgrade={vi.fn()}
+        onRollback={vi.fn()}
+        canManage={false}
+      />,
+    );
+    const buttons = Array.from(container.querySelectorAll('button'));
+    for (const label of ['升级到该版本', '回退到上一版本']) {
+      const button = buttons.find((item) => item.textContent?.includes(label));
+      expect(button?.disabled).toBe(true);
+    }
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// InstalledTable
+// ---------------------------------------------------------------------------
+
+const INSTALLED: InstalledPluginItem = {
+  plugin_id: 'plg_1',
+  name: '周报助手',
+  category: 'efficiency',
+  version: '1.0.0',
+  latest_version: '2.0.0',
+  has_update: true,
+  status: 'enabled',
+  last_used_at: '2026-11-01T10:00:00Z',
+  running_task_count: 2,
+};
+
+describe('InstalledTable', () => {
+  it('双空态文案：还没添加 vs 筛选无结果', () => {
+    const plain = renderComponent(
+      <InstalledTable
+        items={[]}
+        onOpenDetail={vi.fn()}
+        onOpenWorkbench={vi.fn()}
+        onUpgrade={vi.fn()}
+        onToggleState={vi.fn()}
+        onUninstall={vi.fn()}
+      />,
+    );
+    expect(plain.container.textContent).toContain('还没有添加插件');
+    plain.unmount();
+
+    const filtered = renderComponent(
+      <InstalledTable
+        items={[]}
+        filtered
+        onOpenDetail={vi.fn()}
+        onOpenWorkbench={vi.fn()}
+        onUpgrade={vi.fn()}
+        onToggleState={vi.fn()}
+        onUninstall={vi.fn()}
+      />,
+    );
+    expect(filtered.container.textContent).toContain('没有符合条件的插件');
+    filtered.unmount();
+  });
+
+  it('渲染名称 / 版本 / 最新版本号（有更新时）', () => {
+    const { container, unmount } = renderComponent(
+      <InstalledTable
+        items={[INSTALLED]}
+        onOpenDetail={vi.fn()}
+        onOpenWorkbench={vi.fn()}
+        onUpgrade={vi.fn()}
+        onToggleState={vi.fn()}
+        onUninstall={vi.fn()}
+      />,
+    );
+    expect(container.textContent).toContain('周报助手');
+    expect(container.textContent).toContain('1.0.0');
+    expect(container.textContent).toContain('2.0.0');
+    unmount();
+  });
+
+  it('无更新时最新版本列显示「已是最新」', () => {
+    const { container, unmount } = renderComponent(
+      <InstalledTable
+        items={[{ ...INSTALLED, has_update: false }]}
+        onOpenDetail={vi.fn()}
+        onOpenWorkbench={vi.fn()}
+        onUpgrade={vi.fn()}
+        onToggleState={vi.fn()}
+        onUninstall={vi.fn()}
+      />,
+    );
+    expect(container.textContent).toContain('已是最新');
+    unmount();
+  });
+
+  it('已启用可进工作台，已停用入口置灰', () => {
+    const onOpenWorkbench = vi.fn();
+    const { container, unmount } = renderComponent(
+      <InstalledTable
+        items={[INSTALLED]}
+        onOpenDetail={vi.fn()}
+        onOpenWorkbench={onOpenWorkbench}
+        onUpgrade={vi.fn()}
+        onToggleState={vi.fn()}
+        onUninstall={vi.fn()}
+      />,
+    );
+    clickButton(container, '工作台');
+    expect(onOpenWorkbench).toHaveBeenCalledWith('plg_1');
+    unmount();
+
+    const stopped = renderComponent(
+      <InstalledTable
+        items={[{ ...INSTALLED, status: 'disabled' }]}
+        onOpenDetail={vi.fn()}
+        onOpenWorkbench={vi.fn()}
+        onUpgrade={vi.fn()}
+        onToggleState={vi.fn()}
+        onUninstall={vi.fn()}
+      />,
+    );
+    const button = Array.from(stopped.container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('工作台'),
+    );
+    expect(button?.disabled).toBe(true);
+    stopped.unmount();
+  });
+
+  it('更新 / 启停 / 卸载 / 详情各有回调', () => {
+    const onUpgrade = vi.fn();
+    const onToggleState = vi.fn();
+    const onUninstall = vi.fn();
+    const onOpenDetail = vi.fn();
+    const { container, unmount } = renderComponent(
+      <InstalledTable
+        items={[INSTALLED]}
+        onOpenDetail={onOpenDetail}
+        onOpenWorkbench={vi.fn()}
+        onUpgrade={onUpgrade}
+        onToggleState={onToggleState}
+        onUninstall={onUninstall}
+      />,
+    );
+    clickButton(container, '去更新');
+    expect(onUpgrade).toHaveBeenCalledWith(INSTALLED);
+
+    clickButton(container, '停用');
+    expect(onToggleState).toHaveBeenCalledWith(INSTALLED);
+
+    clickButton(container, '卸载');
+    expect(onUninstall).toHaveBeenCalledWith(INSTALLED);
+
+    clickButton(container, '周报助手');
+    expect(onOpenDetail).toHaveBeenCalledWith('plg_1');
+    unmount();
+  });
+
+  it('无管理权限时更新 / 启停 / 卸载置灰', () => {
+    const { container, unmount } = renderComponent(
+      <InstalledTable
+        items={[INSTALLED]}
+        canManage={false}
+        onOpenDetail={vi.fn()}
+        onOpenWorkbench={vi.fn()}
+        onUpgrade={vi.fn()}
+        onToggleState={vi.fn()}
+        onUninstall={vi.fn()}
+      />,
+    );
+    const buttons = Array.from(container.querySelectorAll('button'));
+    for (const label of ['去更新', '停用', '卸载']) {
+      const button = buttons.find((item) => item.textContent?.includes(label));
+      expect(button?.disabled).toBe(true);
+    }
+    unmount();
+  });
+
+  it('未使用占位「尚未使用」，无在跑任务占位「—」', () => {
+    const { container, unmount } = renderComponent(
+      <InstalledTable
+        items={[{ ...INSTALLED, last_used_at: null, running_task_count: 0 }]}
+        onOpenDetail={vi.fn()}
+        onOpenWorkbench={vi.fn()}
+        onUpgrade={vi.fn()}
+        onToggleState={vi.fn()}
+        onUninstall={vi.fn()}
+      />,
+    );
+    expect(container.textContent).toContain('尚未使用');
+    expect(container.textContent).toContain('—');
     unmount();
   });
 });

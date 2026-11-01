@@ -140,13 +140,18 @@ export default defineConfig({
       // 切换 + CitationDrawer 三种引用降级）+ ReviewForm 校验 23 项后实测：
       //   % Stmts **39.98** | % Branch 35.52 | % Funcs **37.99** | % Lines **40.65**
       // **H1 补测战役 40% 目标达成**（% Lines 40.65 ≥ 40）。
+      //
+      // P1 补测第十七批（2026-11-01 H1 续）：VersionHistory 升降级与回退二次确认 /
+      // InstalledTable 双空态与工作台入口 / GrantPanel 批量授权 50 项拦截与撤销
+      // 二次确认 22 项后实测：
+      //   % Stmts **41.95** | % Branch 38.08 | % Funcs **40.11** | % Lines **42.72**
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 39.6 / branches 35.2 / functions 37.6 / lines 40.3
+      //   statements 41.6 / branches 37.7 / functions 39.8 / lines 42.4
       thresholds: {
-        statements: 39.6,
-        branches: 35.2,
-        functions: 37.6,
-        lines: 40.3,
+        statements: 41.6,
+        branches: 37.7,
+        functions: 39.8,
+        lines: 42.4,
       },
     },
   },
