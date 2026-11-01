@@ -253,11 +253,18 @@ export default defineConfig({
       //   % Stmts **81.02** | % Branch 76.21 | % Funcs 76.38 | % Lines 82.14
       // **% Stmts 突破 80%**。棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 80.7 / branches 75.8 / functions 76.0 / lines 81.8
+      //
+      // P1 补测第三十一批（2026-11-01 H1 续）：运营-企业详情页（三态与返回
+      // 入口/最小可见口径/套餐名回落/用量摘要/近期订单双形态）6 项后实测
+      // （该页四指标 100%，**page 层 25 个页面全部覆盖**）：
+      //   % Stmts **81.37** | % Branch 76.66 | % Funcs 76.71 | % Lines 82.51
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 81.0 / branches 76.3 / functions 76.4 / lines 82.2
       thresholds: {
-        statements: 80.7,
-        branches: 75.8,
-        functions: 76.0,
-        lines: 81.8,
+        statements: 81.0,
+        branches: 76.3,
+        functions: 76.4,
+        lines: 82.2,
       },
     },
   },
