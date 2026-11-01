@@ -209,6 +209,8 @@ def test_require_permission_denies_unknown_role() -> None:
     assert exc_info.value.code == ErrorCode.FORBIDDEN
 
 
-def test_require_permission_ignores_empty_permission() -> None:
-    """空权限点直接放行。"""
-    require_permission(AuthContext(user_id="u", tenant_id="t", roles=["member"]), "")
+def test_require_permission_rejects_empty_permission() -> None:
+    """空权限点是编码错误，必须抛（不再是静默放行，P1-11）。"""
+    with pytest.raises(ApiError) as exc_info:
+        require_permission(AuthContext(user_id="u", tenant_id="t", roles=["member"]), "")
+    assert exc_info.value.code == ErrorCode.CONFIG_ERROR

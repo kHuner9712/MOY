@@ -191,9 +191,7 @@ class MemberService:
             total = len(candidates.entries)
             page_entries = candidates.entries[query.offset : query.offset + query.page_size]
             page_items = await self._assemble_items(tenant_id, candidates, page_entries)
-        return build_page(
-            items=page_items, total=total, page=query.page, page_size=query.page_size
-        )
+        return build_page(items=page_items, total=total, page=query.page, page_size=query.page_size)
 
     async def _prepare_candidates(
         self, tenant_id: str, org_id: str, query: ListMembersQuery
@@ -261,9 +259,7 @@ class MemberService:
         Returns:
             list[MemberItem]: 成员条目（部门过滤后、保持输入顺序）。
         """
-        links_by_user = await self._org.links_of_users(
-            tenant_id, [entry[0] for entry in entries]
-        )
+        links_by_user = await self._org.links_of_users(tenant_id, [entry[0] for entry in entries])
         items: list[MemberItem] = []
         for user_id, status, role_enum in entries:
             links = links_by_user.get(user_id, [])

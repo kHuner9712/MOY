@@ -59,6 +59,11 @@ rule_id 形如 `R-<源层缩写>-<目标层缩写>`（如 `R-DB-BIZ` = `db → b
 
 格式：`<rule_id> <file> <imported_module> <mode> -- <审计编号> due_batch=<Bn> <理由>`
 
+**默认即 `deploy/import_direction_baseline.txt`**（与 `--cycle-baseline` 对称）：
+裸跑与带参跑必须给出同一个结论。此前 `--baseline` 缺省为 `None`，裸跑时基线恒为空
+→ 已登记的 23 条全被报成「未登记」并 exit 1 → 红灯常亮后没人再看结论，
+豁免记录形同虚设（基线路径按脚本所在目录解析，与 cwd 无关）。
+
 - 基线内的违规 → `[WARN]`，不阻断（这是「已登记、有消除计划」的口径）；
 - 基线外的违规 → `[FAIL]`，exit 1；
 - 基线条目在本轮扫描里已消失 → `[FAIL] stale`，exit 1（**防腐烂**：
@@ -1150,7 +1155,12 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description="校验 app/ 分层依赖方向（G-37）")
     parser.add_argument("--app-root", type=Path, default=DEFAULT_APP_ROOT)
-    parser.add_argument("--baseline", type=Path, default=None, help="基线豁免文件")
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=DEFAULT_BASELINE,
+        help="基线豁免文件（默认 deploy/import_direction_baseline.txt）",
+    )
     parser.add_argument(
         "--cycle-baseline",
         type=Path,

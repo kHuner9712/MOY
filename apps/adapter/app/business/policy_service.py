@@ -588,15 +588,27 @@ class PolicyService:
     async def has_point(self, auth: AuthContext, permission: str) -> bool:
         """判断是否拥有某个权限点（**fail-closed**：无角色即无权限）。
 
+        空/纯空白权限点是**编码错误**（调用方漏传），不是"无需权限"：
+        此前这里返回 True，等于把"漏传权限点"变成一处永久放行的旁路，
+        与 `require_permission("")` 抛 30004 的口径也不一致（同一语义两个答案）。
+        布尔接口返回 False（fail-closed），让调用方的判定自然落到"没权限"，
+        比抛异常更贴合它的调用形态。
+
         Args:
             auth: 鉴权上下文。
             permission: 权限点，形如 `team:member:update`。
 
         Returns:
-            bool: 拥有返回 True。
+            bool: 拥有返回 True；权限点为空/纯空白时返回 False。
         """
-        if not permission:
-            return True
+        if not permission.strip():
+            logger.warning(
+                "permission_point_empty",
+                user_id=auth.user_id,
+                tenant_id=auth.tenant_id,
+                hint="has_point 收到空权限点：属编码错误，按 fail-closed 返回 False",
+            )
+            return False
         snapshot = await self.snapshot(auth)
         return permission in snapshot.permission_points
 

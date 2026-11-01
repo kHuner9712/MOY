@@ -36,15 +36,106 @@ def test_production_oidc_requires_secret() -> None:
 
 
 def test_production_oidc_with_secret_passes() -> None:
-    """生产 + OIDC + 非空密钥 = 合法启动配置。"""
+    """生产 + OIDC + 非空密钥 = 合法启动配置。
+
+    P1-10 起密钥长度也参与判定（`MIN_JWT_SECRET_LENGTH=32`），故夹具密钥补齐到
+    32 字符以上——**修夹具，不是削弱校验**（原值 `...-32-chars-long` 只有 31 字符，
+    名字里的 "32" 本身就不成立）。
+    """
     validate_auth_startup(
-        Settings(env="production", auth_mode="oidc", jwt_secret="production-secret-32-chars-long")
+        Settings(
+            env="production", auth_mode="oidc", jwt_secret="production-secret-32-chars-long-v2"
+        )
     )
 
 
 def test_development_stub_is_allowed() -> None:
     """本地开发允许桩模式（离线联调与演示需要）。"""
     validate_auth_startup(Settings(env="development", auth_mode="stub", jwt_secret=""))
+
+
+# ===========================================================================
+# P1-09：`OA_PAY_CHANNEL=fake` 的生产守卫
+#
+# fake 通道**不验支付回调签名**，等于谁都能伪造"支付成功"把订单置为已付。
+# 它与 `auth_mode=stub` 属同一类测试开关，必须享受同一套生产守卫。
+# ===========================================================================
+
+
+def test_production_fake_pay_channel_is_rejected() -> None:
+    """生产 + `pay_channel=fake` → 30004（回调不验签等于允许伪造支付）。"""
+    with pytest.raises(ApiError) as excinfo:
+        validate_auth_startup(
+            Settings(
+                env="production",
+                auth_mode="oidc",
+                jwt_secret="production-secret-32-chars-long!",
+                pay_channel="fake",
+            )
+        )
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+    assert "OA_PAY_CHANNEL" in excinfo.value.internal_detail
+
+
+def test_staging_fake_pay_channel_is_rejected() -> None:
+    """预发同口径拦截（预发演练用的是真数据）。"""
+    with pytest.raises(ApiError) as excinfo:
+        validate_auth_startup(
+            Settings(
+                env="staging",
+                auth_mode="oidc",
+                jwt_secret="production-secret-32-chars-long!",
+                pay_channel="fake",
+            )
+        )
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+
+
+# ===========================================================================
+# P1-10：`OA_JWT_SECRET` 的占位值与最短长度
+#
+# 只判"非空"挡不住「手抄 .env.example」：模板值 `CHANGE_ME_*` 是仓库公开常量，
+# 用它当签名密钥 = 任何人都能自造任意租户/角色的令牌。
+#
+# 模板侧（N3）已把占位值写到 32 字符以上（`CHANGE_ME_generate_with_openssl_rand_hex_32`），
+# 好让照文档走的人看到"命中占位值特征"（准确、可操作），而不是"长度不足"。
+# 这里**同时**覆盖老的 `CHANGE_ME_STRONG_PASSWORD`：那份值仍散落在运维自己的
+# .env / k8s Secret 里，识别它同样是本判据的职责。
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "CHANGE_ME_generate_with_openssl_rand_hex_32",
+        "CHANGE_ME_STRONG_PASSWORD",
+        "changeme",
+        "my-super-secret-password-for-prod",
+        "short-key",
+    ],
+    ids=["current-template", "legacy-template", "changeme", "contains-password", "too-short"],
+)
+def test_production_placeholder_or_short_secret_is_rejected(secret: str) -> None:
+    """占位值 / 过短密钥 → 30004（公开常量当密钥等于不设防）。
+
+    Args:
+        secret: 待校验的密钥取值（占位值特征或长度不足）。
+    """
+    with pytest.raises(ApiError) as excinfo:
+        validate_auth_startup(Settings(env="production", auth_mode="oidc", jwt_secret=secret))
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+    assert "OA_JWT_SECRET" in excinfo.value.internal_detail
+
+
+def test_production_strong_secret_still_passes() -> None:
+    """32 字符以上的随机密钥照常放行（新判据不能误伤合法配置）。"""
+    validate_auth_startup(
+        Settings(
+            env="production",
+            auth_mode="oidc",
+            jwt_secret="9f2c7b1e4d8a6f0c3b5e7d9a1c2f4b6e",
+        )
+    )
 
 
 # ===========================================================================
@@ -69,7 +160,7 @@ def test_downgrade_switch_off_is_rejected_without_explicit_allow(env_name: str) 
             Settings(
                 env=env_name,  # type: ignore[arg-type]
                 auth_mode="oidc",
-                jwt_secret="downgrade-secret-32-chars-long",
+                jwt_secret="downgrade-secret-32-chars-long-v2",
                 tenant_membership_check="off",
             )
         )
@@ -92,7 +183,7 @@ def test_downgrade_switch_off_passes_with_explicit_allow(
         Settings(
             env="production",
             auth_mode="oidc",
-            jwt_secret="downgrade-secret-32-chars-long",
+            jwt_secret="downgrade-secret-32-chars-long-v2",
             tenant_membership_check="off",
             allow_security_downgrade=True,
         )
@@ -107,7 +198,7 @@ def test_auto_mode_passes_in_production() -> None:
         Settings(
             env="production",
             auth_mode="oidc",
-            jwt_secret="downgrade-secret-32-chars-long",
+            jwt_secret="downgrade-secret-32-chars-long-v2",
         )
     )
 

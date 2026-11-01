@@ -112,9 +112,7 @@ class TestDepartmentCrud:
         fetched = await store.get_department(TENANT_ID, "dept_c")
         assert fetched is None
 
-    async def test_list_departments_excludes_deleted(
-        self, store: PostgresOrgStore
-    ) -> None:
+    async def test_list_departments_excludes_deleted(self, store: PostgresOrgStore) -> None:
         await store.create_department(_dept(TENANT_ID, "dept_live"))
         await store.create_department(_dept(TENANT_ID, "dept_dead"))
         await store.soft_delete_department(TENANT_ID, "dept_dead")
@@ -135,9 +133,7 @@ class TestMemberLinks:
         assert removed is True
         assert await store.links_of_user(TENANT_ID, "usr_1") == []
 
-    async def test_links_of_user_sorted_primary_first(
-        self, store: PostgresOrgStore
-    ) -> None:
+    async def test_links_of_user_sorted_primary_first(self, store: PostgresOrgStore) -> None:
         await store.create_department(_dept(TENANT_ID, "dept_x"))
         await store.create_department(_dept(TENANT_ID, "dept_y"))
         await store.link_member(_link(TENANT_ID, "dept_x", "usr_s", primary=False))

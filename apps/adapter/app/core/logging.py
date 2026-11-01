@@ -6,8 +6,10 @@
 - `trace_id` 全链路透传：接入层生成 → 响应头回传 → 转发下游时写入 `X-Trace-Id`；
 - **严禁记录**：用户令牌、工具授权凭据、文档正文全文。
 
-脱敏策略：`redact()` 对令牌、密码、密钥、凭据类键做统一掩码，
-调用方应在写入日志前显式使用，避免敏感信息落盘。
+脱敏策略：`redact()` 对令牌、密码、密钥、凭据类键做统一掩码，并由
+`_redact_event_dict` 作为 **processor 挂进链路**（位于上下文注入之前）——
+因此掩码是**默认生效**的，不依赖调用方自觉（P2-02：此前 `redact()` 零引用，
+"自动掩码"实际不存在）。
 """
 
 from __future__ import annotations
@@ -47,6 +49,26 @@ _UNKNOWN: Final[str] = "-"
 
 _MASK: Final[str] = "***"
 
+#: 已派生/已截断字段的后缀白名单：这类键的**值本身**不是原值（后缀、摘要、布尔），
+#: 掩码它们只会毁掉排障信息，且不会泄露任何原文。
+#:
+#: 为什么必须存在：`credential_ref_suffix`（`ref_suffix()` 刻意只保留后 6 位，
+#: 架构文档 11.4 要求日志里留这个后缀以便定位）含有 `credential` 子串，
+#: 若只用 `_SENSITIVE_KEYS` 的包含匹配，它会被整段掩成 `***`——
+#: 既没多一分安全（本来就不是原文），又让"绑错了哪个凭据"彻底查不出来。
+#:
+#: **只收「尾部截断 + 摘要」两类**：`_prefix` / `_tail` 被明确排除——
+#: 密钥的**前半段同样是密钥**（`api_key_prefix` / `client_secret_tail` 落盘
+#: 等于部分泄露），"名字像派生"不能成为豁免原文的理由（F7 收窄）。
+_DERIVED_KEY_SUFFIXES: Final[tuple[str, ...]] = (
+    "_suffix",
+    "_hash",
+    "_digest",
+    "_masked",
+    "_present",
+    "_length",
+)
+
 # 日志上下文字段名（与架构文档 9.3 完全一致）
 TRACE_ID_KEY: Final[str] = "trace_id"
 TENANT_ID_KEY: Final[str] = "tenant_id"
@@ -58,6 +80,9 @@ _configured: bool = False
 def is_sensitive(key: str) -> bool:
     """判断键名是否属于敏感字段。
 
+    判定顺序：**先认「已派生」后缀**（`_suffix` / `_hash` / `_present` 等，
+    其值不是原文，掩码只会丢排障信息），再走包含匹配。
+
     Args:
         key: 待判断的字段名。
 
@@ -65,6 +90,8 @@ def is_sensitive(key: str) -> bool:
         bool: 命中敏感字段返回 True。
     """
     lowered = key.lower()
+    if lowered.endswith(_DERIVED_KEY_SUFFIXES):
+        return False
     return any(marker in lowered for marker in _SENSITIVE_KEYS)
 
 
@@ -85,6 +112,33 @@ def redact(value: Any, *, key: str | None = None) -> Any:
     if isinstance(value, list):
         return [redact(item) for item in value]
     return value
+
+
+def _redact_event_dict(
+    _logger: Any, _method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """processor 形态的脱敏：对 `event_dict` 的敏感键做掩码（架构文档 9.3）。
+
+    为什么必须是 processor 而不是"请调用方记得调 `redact()`"：`app/core/logging.py`
+    此前只**提供** `redact()` 却零处调用，于是"敏感字段自动掩码"实际不存在——
+    一旦有人写 `logger.info("callback", client_secret=...)`，密钥就原样落盘。
+    挂进 processors 链后是**默认生效**，不依赖任何调用方自觉。
+
+    浅层 mask 即可：`event_dict` 的顶层键就是一次日志调用的全部字段
+    （嵌套值仍由 `redact()` 递归处理 dict / list，避免 `{"payload": {"password": ...}}`
+    这类嵌套结构漏网）。原地修改 `event_dict`，保持 structlog processor 的常规语义。
+
+    Args:
+        _logger: structlog 传入的 logger（未使用）。
+        _method_name: 日志方法名（未使用）。
+        event_dict: 本条日志的字段字典。
+
+    Returns:
+        dict[str, Any]: 脱敏后的字段字典。
+    """
+    for key in list(event_dict):
+        event_dict[key] = redact(event_dict[key], key=str(key))
+    return event_dict
 
 
 def _inject_context(_logger: Any, _method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
@@ -118,6 +172,9 @@ def configure_logging(settings: Settings | None = None) -> None:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
+        # P2-02：脱敏必须**先于**上下文注入——注入会补 trace_id/tenant_id 等字段，
+        # 放在注入之后会让"补齐的字段"绕开掩码规则（日后若有同名敏感键即漏）。
+        _redact_event_dict,
         _inject_context,
         structlog.processors.UnicodeDecoder(),
     ]

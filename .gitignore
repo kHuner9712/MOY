@@ -146,6 +146,13 @@ apps/web/test-results/
 apps/adapter/junit_*.xml
 apps/adapter/coverage_*.xml
 
+# 审计产物（2026-11-02 第三轮全仓审计）：覆盖率快照按 `coverage-<口径>.json`
+# 命名（coverage-audit.json / coverage-pg.json），与上面的 coverage.json 不匹配，
+# 且前端用了 coverage-qa2/ 这类目录别名。数字已落进审计报告，产物本身不入库，
+# 否则每跑一次审计就脏一次工作区。
+apps/adapter/coverage-*.json
+apps/web/coverage-*/
+
 # 审计清理（2026-10-29）：工具截图目录（C5）与 CI 许可证清单产物（C6）不入库
 .screenshots/
 apps/web/node-licenses.json

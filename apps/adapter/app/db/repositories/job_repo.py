@@ -278,6 +278,20 @@ class InMemoryJobStore:
         self._items: dict[tuple[str, str], JobRecord] = {}
         self._now = now or (lambda: datetime.now(UTC))
 
+    def _stamp(self) -> str:
+        """按**注入时钟**生成 ISO 8601 时间戳（`Z` 结尾）。
+
+        内存实现里 `updated_at` 与 `run_after` / `locked_until` 必须同源：
+        两者一旦分用「注入时钟」与「墙钟」，在注入时钟早于墙钟时
+        `claim()` 会恒返 0（`run_after` 永远"未到点"），用例表现为永久红；
+        同时 `updated_at` 与租约时间会相差一个固定时区偏移且随时间放大。
+        故本类内**一律**用 `_stamp()`，模块级 `now_iso()` 只服务别处的墙钟口径。
+
+        Returns:
+            str: 形如 `2026-11-01T09:00:00Z` 的时间戳。
+        """
+        return self._now().astimezone(UTC).isoformat().replace("+00:00", "Z")
+
     async def enqueue(self, record: JobRecord) -> JobRecord | None:
         """入队（去重键冲突时返回 None）。
 
@@ -300,7 +314,7 @@ class InMemoryJobStore:
                 dedupe_key=record.dedupe_key,
             )
             return None
-        stamp = now_iso()
+        stamp = self._stamp()
         stored = JobRecord(
             tenant_id=record.tenant_id,
             job_id=record.job_id or new_job_id(),
@@ -352,7 +366,7 @@ class InMemoryJobStore:
             item.locked_until = (
                 (current + timedelta(seconds=lease_seconds)).isoformat().replace("+00:00", "Z")
             )
-            item.updated_at = now_iso()
+            item.updated_at = self._stamp()
             claimed.append(item)
         return claimed
 
@@ -365,7 +379,7 @@ class InMemoryJobStore:
         stored = self._items.get((job.tenant_id, job.job_id))
         if stored is None:
             return
-        stamp = now_iso()
+        stamp = self._stamp()
         stored.status = "succeeded"
         stored.locked_by = ""
         stored.locked_until = ""
@@ -388,7 +402,7 @@ class InMemoryJobStore:
         if stored is None:
             return "failed"
         current = (now or self._now()).astimezone(UTC)
-        stamp = now_iso()
+        stamp = self._stamp()
         stored.last_error = sanitize_error(error)
         stored.locked_by = ""
         stored.locked_until = ""

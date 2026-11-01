@@ -53,9 +53,27 @@ class TestRequirePermissionDirect:
             require_permission(auth, "knowledge:base:delete", method="DELETE")
         assert exc.value.code == ErrorCode.FORBIDDEN
 
-    def test_empty_permission_passes(self) -> None:
+    def test_empty_permission_raises(self) -> None:
+        """空权限点是**编码错误**，必须炸，不得静默放行（P1-11）。"""
+        from app.core.errors import ApiError, ErrorCode
+
         auth = AuthContext(user_id=USER_A, tenant_id=TENANT_A, roles=[])
-        require_permission(auth, "", method="GET")  # 空权限点不拦截
+        with pytest.raises(ApiError) as exc:
+            require_permission(auth, "", method="GET")
+        assert exc.value.code == ErrorCode.CONFIG_ERROR
+
+    def test_whitespace_permission_raises_config_error(self) -> None:
+        """纯空白权限点与空串同类（N2）：归因必须是 30004，不是 20003。
+
+        `" "` 若落到 FORBIDDEN 会把"我们漏传了权限点"报成"用户没权限"，
+        排障方向直接被带偏。
+        """
+        from app.core.errors import ApiError, ErrorCode
+
+        auth = AuthContext(user_id=USER_A, tenant_id=TENANT_A, roles=[])
+        with pytest.raises(ApiError) as exc:
+            require_permission(auth, "  \t ", method="GET")
+        assert exc.value.code == ErrorCode.CONFIG_ERROR
 
     def test_wrong_permission_denied(self) -> None:
         from app.core.errors import ApiError, ErrorCode
@@ -78,9 +96,7 @@ class TestEndpointPermissionMatrix:
         WRITE_PERMISSIONS,
         ids=[f"{m}_{p.split('/')[-2] if '/' in p else p}" for m, p, _ in WRITE_PERMISSIONS],
     )
-    def test_correct_permission_passes(
-        self, method: str, path: str, permission: str
-    ) -> None:
+    def test_correct_permission_passes(self, method: str, path: str, permission: str) -> None:
         auth = AuthContext(
             user_id=USER_A,
             tenant_id=TENANT_A,
@@ -93,9 +109,7 @@ class TestEndpointPermissionMatrix:
         WRITE_PERMISSIONS,
         ids=[f"{m}_{p.split('/')[-2] if '/' in p else p}" for m, p, _ in WRITE_PERMISSIONS],
     )
-    def test_read_only_role_denied_on_write(
-        self, method: str, path: str, permission: str
-    ) -> None:
+    def test_read_only_role_denied_on_write(self, method: str, path: str, permission: str) -> None:
         from app.core.errors import ApiError, ErrorCode
 
         auth = AuthContext(
@@ -119,9 +133,7 @@ class TestPermissionAuditTrail:
             token, tenant=TENANT_A, key="audit-test-0001-0000-0000-000000000000"
         )
         # 只读角色尝试删除 → 403
-        response = oidc_client.delete(
-            "/api/v1/knowledge/bases/kb_perm_audit", headers=headers
-        )
+        response = oidc_client.delete("/api/v1/knowledge/bases/kb_perm_audit", headers=headers)
         assert response.status_code == 403
         body = response.json()
         assert body["code"] == 20003
@@ -133,9 +145,7 @@ class TestPermissionAuditTrail:
         headers = write_headers(
             token, tenant=TENANT_A, key="audit-test-0002-0000-0000-000000000000"
         )
-        response = oidc_client.delete(
-            "/api/v1/knowledge/bases/kb_perm_leak", headers=headers
-        )
+        response = oidc_client.delete("/api/v1/knowledge/bases/kb_perm_leak", headers=headers)
         assert response.status_code == 403
         # 响应体不含 token 明文
         assert token not in response.text

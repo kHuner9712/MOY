@@ -250,9 +250,7 @@ class IdentityService:
         from app.business.member_service import MemberService
 
         service = MemberService(self._settings)
-        page = await service.list_members_page(
-            tenant_id=auth.tenant_id, org_id=org_id, query=query
-        )
+        page = await service.list_members_page(tenant_id=auth.tenant_id, org_id=org_id, query=query)
         logger.info(
             "identity_members_listed",
             org_id=org_id,

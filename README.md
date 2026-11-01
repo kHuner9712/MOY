@@ -152,11 +152,21 @@ npm run build && npm run start
 cd deploy
 
 cp .env.example .env
+# OA_JWT_SECRET 必须换成强随机密钥（≥32 字符）：
+#   保留模板里的 CHANGE_ME_* 会**启动失败 30004**（占位值是仓库公开常量，
+#   拿它当签名密钥等于任何人都能自造令牌）。这一步漏了会卡在起容器阶段。
+JWT_SECRET="$(openssl rand -hex 32)"
+sed -i.bak "s|^OA_JWT_SECRET=.*|OA_JWT_SECRET=${JWT_SECRET}|" .env && rm -f .env.bak
+unset JWT_SECRET
 # 按需修改 OA_DEPLOY_MODE=saas|private 与各服务连接串
 
 docker compose -f docker-compose.yml up -d        # 私有化
 docker compose -f docker-compose.saas.yml up -d   # SaaS 本地联调
 ```
+
+> 更省事的一条路径是 `bash deploy/install.sh --online`（或 `--offline`）：
+> 它会自动生成全部口令/密钥（含 `OA_JWT_SECRET`）并做前置检查——**生产部署优先走它**，
+> 上面的手抄模板路径适合本地联调。
 
 ## 四、开发规范速查（强制）
 

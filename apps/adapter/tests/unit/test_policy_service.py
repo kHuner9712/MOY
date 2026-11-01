@@ -418,12 +418,17 @@ class TestSnapshot:
 class TestPermissionPoints:
     """`has_point` / `require_point`（唯一判权出口）。"""
 
-    async def test_empty_permission_always_passes(self) -> None:
-        """空权限点表示"无需权限"（不少只读端点用它当默认值）。"""
+    async def test_empty_permission_fails_closed(self) -> None:
+        """空权限点是**编码错误**，`has_point("")` 返回 False（fail-closed）。
+
+        此前这里返回 True 并注释成「空权限点表示无需权限（不少只读端点用它当默认值）」，
+        但那句与事实不符：全仓 0 处端点传空权限点。留着会被下一个人当规范照抄，
+        等于把"漏传权限点"合法化成永久放行旁路（N1）。
+        """
         service = PolicyService(
             _settings(), bases=InMemoryKnowledgeBaseStore(), grants=InMemoryGrantStore()
         )
-        assert await service.has_point(_auth(roles=[]), "") is True
+        assert await service.has_point(_auth(roles=[]), "") is False
 
     async def test_has_point_follows_matrix(self) -> None:
         """会员有 tool:execute，没有 team:role:manage。"""

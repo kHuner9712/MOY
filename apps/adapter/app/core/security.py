@@ -266,6 +266,8 @@ def require_permission(auth: AuthContext, permission: str, *, method: str = "") 
 
     判定顺序：
 
+    0. **空权限点 → 直接抛 `CONFIG_ERROR`（30004）**：这是编码错误，不是"该端点
+       不校验"的合理形态（此前是静默 `return`，等于把漏传权限点变成永久裸奔）；
     1. 通配角色 `*`（平台运维令牌）放行；
     2. 令牌角色本身就是权限点时放行（阶段一"权限点即角色"形态）；
     3. 按内置角色矩阵展开后判定；
@@ -282,10 +284,32 @@ def require_permission(auth: AuthContext, permission: str, *, method: str = "") 
             因此同一个权限点的写操作不会被顺带放开。
 
     Raises:
-        ApiError: 权限不足（20003）。
+        ApiError: 权限点为空（30004，编码错误）或权限不足（20003）。
     """
-    if not permission:
-        return
+    if not permission.strip():
+        # 空权限点是**编码错误**，不是用户错误：调用方忘了传权限点，
+        # 不能退化成"该端点不校验"。静默放行会让一个漏传的端点永久裸奔，
+        # 且测试期看不出来（请求照常 200）。这里必须 fail-loud，
+        # 并在日志里指出是我们的 bug——用 CONFIG_ERROR（500）而非 FORBIDDEN（403），
+        # 避免把责任错记到用户身上。
+        #
+        # N2：判空用 `strip()`（`" "` / `"\t"` 与空串同属"漏传"，归因必须一致，
+        # 否则空白串会落到下面的 20003"权限不足"——把编码错误报成用户没权限）。
+        # **只用于判空**：后续权限比对仍用原值，`strip()` 后的值不参与任何比较。
+        logger.error(
+            "permission_point_empty",
+            method=method.upper(),
+            user_id=auth.user_id,
+            tenant_id=auth.tenant_id,
+            hint="调用方未提供权限点：属编码错误，需修正 require_permission 调用",
+        )
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=(
+                f"权限点为空（method={method.upper()}）：require_permission 必须传入非空权限点，"
+                "空值是编码错误而非用户无权限。"
+            ),
+        )
     roles = {str(role).strip() for role in auth.roles if str(role).strip()}
     if "*" in roles:
         return
@@ -861,6 +885,49 @@ async def require_ops_access(
 #: 只要环境不在其中，`auth_mode=stub` 一律视为配置错误——这是 S1 的收口点。
 _INSECURE_AUTH_ENVS: Final[frozenset[str]] = frozenset({"development", "test"})
 
+#: `OA_JWT_SECRET` 的最小长度（P1-10）。
+#:
+#: HS256 的密钥短于 SHA-256 分组长度（32 字节）时，爆破成本随长度骤降，
+#: 而"短密钥"往往就是模板占位值或手敲的 `secret123`——长度是最便宜的一道筛。
+MIN_JWT_SECRET_LENGTH: Final[int] = 32
+
+#: 模板占位值特征（大小写不敏感，任一命中即判红）。
+#:
+#: `deploy/.env.example` 里是 `CHANGE_ME_generate_with_openssl_rand_hex_32`：
+#: 手抄模板不改就是"**仓库公开常量成了 JWT 签名密钥**"——任何人可据此自造任意
+#: 租户/角色的令牌（P1-10）。因此占位值必须与"空密钥"同等对待。
+#: 模板里的占位值长度刻意 ≥`MIN_JWT_SECRET_LENGTH`，让报错落在"命中占位值"
+#: （准确、可操作）而不是"长度不足"（会把人引去凑长度，实际该做的是换密钥）。
+JWT_SECRET_PLACEHOLDER_MARKERS: Final[tuple[str, ...]] = (
+    "change_me",
+    "changeme",
+    "password",
+)
+
+
+def _jwt_secret_placeholder_reason(secret: str) -> str:
+    """判定 `jwt_secret` 是否仍是占位值/过短，并给出具体原因。
+
+    只描述**原因**，绝不回显密钥本身（日志与错误文案里出现密钥等于二次泄露）。
+
+    Args:
+        secret: `OA_JWT_SECRET` 的取值。
+
+    Returns:
+        str: 不可用的原因；可用时返回空串（空密钥由调用方的独立判据处理，
+            避免两处文案重复）。
+    """
+    text = secret.strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    for marker in JWT_SECRET_PLACEHOLDER_MARKERS:
+        if marker in lowered:
+            return f"命中模板占位值特征 {marker!r}"
+    if len(text) < MIN_JWT_SECRET_LENGTH:
+        return f"长度 {len(text)} < 最低要求 {MIN_JWT_SECRET_LENGTH}"
+    return ""
+
 
 def validate_auth_startup(settings: Settings | None = None) -> None:
     """启动期鉴权防呆（OA-REVIEW-002 / S1）。
@@ -871,12 +938,18 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
 
     判据：
     1. `env in {staging, production}` 且 `auth_mode == "stub"` → 30004 启动失败；
-    2. 同一环境下 `jwt_secret` 为空 → 30004（OIDC 校验与产物下载令牌都依赖它，
+    2. 同一环境下 `pay_channel == "fake"` → 30004（P1-09：fake 通道**不验回调签名**，
+       与 `auth_mode=stub` 是同一类"测试开关"，必须有同样的生产守卫）；
+    3. 同一环境下 `jwt_secret` 为空 → 30004（OIDC 校验与产物下载令牌都依赖它，
        空密钥会让签名退化为可预测常量）；
-    3. 同一环境下 `tenant_membership_check == "off"` 且未显式放行
+    4. 同一环境下 `jwt_secret` 仍是模板占位值或过短 → 30004（P1-10：
+       `deploy/.env.example` 的 `CHANGE_ME_generate_with_openssl_rand_hex_32`
+       是仓库公开常量，手抄不改等于把签发权交给所有能读仓库的人；
+       长度下限见 `MIN_JWT_SECRET_LENGTH`）；
+    5. 同一环境下 `tenant_membership_check == "off"` 且未显式放行
        `allow_security_downgrade` → 30004（QA-V04）。
 
-    第 3 条的理由：`off` 会跳过跨租户成员校验，等于允许「持 A 租户令牌 +
+    第 5 条的理由：`off` 会跳过跨租户成员校验，等于允许「持 A 租户令牌 +
     `X-Tenant-Id: B`」跨租户读写。它必须保留（线上卡死时要能止血），但**不能
     「配一行就生效」**——否则它从止血手段变成漏洞：谁都能在 .env 里加一行关掉隔离，
     系统只打一条 WARNING 就放行。所以生产/预发要它生效必须**两处同时显式声明**
@@ -889,8 +962,8 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
         settings: 可选配置实例（注入优先）。
 
     Raises:
-        ApiError: 生产/预发环境使用桩鉴权、缺少签名密钥，或未经放行就关闭
-            跨租户成员校验（30004）。
+        ApiError: 生产/预发环境使用桩鉴权、启用 fake 支付通道、缺少/占位/过短的
+            签名密钥，或未经放行就关闭跨租户成员校验（30004）。
     """
     conf = settings or get_settings()
     if conf.env in _INSECURE_AUTH_ENVS:
@@ -906,6 +979,19 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
                 "如确需以桩模式做本地演示，请显式设置 OA_ENV=development。"
             ),
         )
+    if conf.pay_channel == "fake":
+        # P1-09：`pay_channel=fake` 会**关掉支付回调验签**（回调不验签 = 谁都能
+        # 伪造"支付成功"把订单置为已付）。它与 `auth_mode=stub` 是同一类测试开关，
+        # 却此前没有生产守卫——同一类开关两套待遇，等于给"配一行就关验签"留门。
+        logger.error("pay_channel_fake_in_production", env=conf.env)
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=(
+                f"当前环境为 {conf.env}，但 OA_PAY_CHANNEL=fake（支付回调不验签、不产生真实扣款）。"
+                "生产/预发环境必须设置 OA_PAY_CHANNEL=wechat_pay 并配置商户号与 APIv3 密钥；"
+                "如确需以 fake 通道做本地联调，请显式设置 OA_ENV=development。"
+            ),
+        )
     if not conf.jwt_secret.strip():
         logger.error("jwt_secret_missing_in_production", env=conf.env)
         raise ApiError(
@@ -913,6 +999,26 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
             internal_detail=(
                 f"当前环境为 {conf.env}，OA_JWT_SECRET 为空：令牌校验与产物下载签名都无法进行。"
                 "请在 .env 中配置强随机密钥（不少于 32 字符）后重启。"
+            ),
+        )
+    secret_reason = _jwt_secret_placeholder_reason(conf.jwt_secret)
+    if secret_reason:
+        # P1-10：只判"非空"挡不住"手抄模板"——`deploy/.env.example` 的
+        # `CHANGE_ME_generate_with_openssl_rand_hex_32` 是一个**仓库公开常量**，
+        # 用它当签名密钥等于把签发权交给所有能读仓库的人。故占位值特征与最短
+        # 长度也必须拦。
+        logger.error(
+            "jwt_secret_placeholder_in_production",
+            env=conf.env,
+            reason=secret_reason,
+        )
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=(
+                f"当前环境为 {conf.env}，OA_JWT_SECRET 不可用（{secret_reason}）："
+                "模板里的 CHANGE_ME_* 是仓库公开常量，拿它当签名密钥等于让任何人都能自造令牌。"
+                f"请用 `openssl rand -hex 32` 生成不少于 {MIN_JWT_SECRET_LENGTH} 字符的"
+                "随机密钥写入 OA_JWT_SECRET 后重启（`bash deploy/install.sh` 会自动生成）。"
             ),
         )
     if conf.tenant_membership_check == "off":

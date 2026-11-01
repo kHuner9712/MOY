@@ -5,6 +5,8 @@
 
 1. **清单一致性**：``pyproject.toml`` 的运行时依赖必须与架构文档第 8.1 节
    清单一致（包名 + 版本约束双校验），防止文档与实现漂移；
+   反向同样校验：白名单里的包必须仍能在 pyproject 中解析到（防「删依赖不删
+   白名单」的 stale 漂移）；
 2. **最低安全版本**：对已知存在高危漏洞且**命中本项目攻击面**的包，
    校验其版本下限（starlette 大文件 DoS 命中 R3 上传接口）；
 3. **加固约束检查**：对无上游修复版本的漏洞，校验代码侧是否已落实
@@ -62,7 +64,7 @@ DOCUMENTED_PACKAGES = {
     "redis",
     "sqlalchemy",
     "asyncpg",
-    "python-jose",
+    "pyjwt",
     "cryptography",
     "structlog",
     "python-multipart",
@@ -229,6 +231,50 @@ def split_package(spec: str) -> tuple[str, str]:
     name = re.split(r"[<>=!~\[]", spec, maxsplit=1)[0].strip()
     constraint = spec[len(name) :].strip()
     return name.lower().replace("_", "-"), constraint
+
+
+def load_declared_packages() -> set[str]:
+    """读取 pyproject 中**实际声明**的全部包名（运行时依赖 + 可选依赖组）。
+
+    反向校验必须看"这个包还在不在 pyproject 里"，所以额外并入
+    `[project.optional-dependencies]` 的各组（`pytest` / `ruff` / `mypy`
+    只登记在 `dev` 组，只看运行时依赖会把它们误判成 stale）。
+
+    Returns:
+        set[str]: 归一化包名集合（小写、`_` → `-`，与 `split_package` 同口径）。
+    """
+    with PYPROJECT.open("rb") as fp:
+        data = tomllib.load(fp)
+    project = data.get("project", {})
+    specs: list[str] = [str(item) for item in project.get("dependencies", [])]
+    optional = project.get("optional-dependencies", {})
+    if isinstance(optional, dict):
+        for group in optional.values():
+            specs.extend(str(item) for item in group)
+    return {split_package(spec)[0] for spec in specs}
+
+
+def check_whitelist_not_stale(declared: set[str] | None = None) -> list[str]:
+    """反向校验：`DOCUMENTED_PACKAGES` 的每一项必须仍能在 pyproject 中解析到。
+
+    **为什么要有这条**：正向校验（`check_documented`）只回答"pyproject 里的包
+    有没有登记"，删掉依赖却不删白名单时它**恒绿**——白名单会随时间烂成一堆
+    历史包名，而没人发现。2026-10-30 的 PyJWT 迁移就是这样：依赖换了，
+    白名单还留着 `python-jose`，门禁红在"新包没登记"而不是"旧包已不存在"，
+    排查方向被引向错误的一侧。故两个方向都要检查。
+
+    Args:
+        declared: 已声明的包名集合（自检注入用；None 时读 pyproject）。
+
+    Returns:
+        list[str]: 失败项描述。
+    """
+    names = declared if declared is not None else load_declared_packages()
+    return [
+        f"{pkg}：白名单中的依赖已不在 pyproject 中（stale）"
+        for pkg in sorted(DOCUMENTED_PACKAGES)
+        if pkg not in names
+    ]
 
 
 def check_documented(deps: list[str], doc_text: str | None = None) -> list[str]:
@@ -813,6 +859,7 @@ def main() -> int:
 
     failures: list[str] = []
     failures += check_documented(deps)
+    failures += check_whitelist_not_stale()
     failures += check_min_safe_versions(deps)
     failures += check_hardening_rules()
     try:
