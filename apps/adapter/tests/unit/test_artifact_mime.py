@@ -21,6 +21,7 @@ from app.api.v1.artifact_files import _is_expired
 from app.db.repositories.artifact_repo import (
     DEFAULT_CONTENT_TYPE,
     EXTENSION_CONTENT_TYPES,
+    is_safe_declared_content_type,
     resolve_content_type,
 )
 
@@ -74,6 +75,57 @@ def test_empty_declared_type_falls_back_to_default() -> None:
 def test_name_without_dot_does_not_crash() -> None:
     """无扩展名的名称不能触发索引错误（`rsplit` 边界）。"""
     assert resolve_content_type("无扩展名", "file", "") == DEFAULT_CONTENT_TYPE
+
+
+# ---------------------------------------------------------------------------
+# 1.1 声明值白名单（2026-11-02 审计 S-02）
+#
+# 原实现是「declared 非 octet-stream 就原样采用」，等于把 MIME 决定权交给插件。
+# 插件由租户管理员安装、内容不必可信：声明 text/html 且产物字节是 HTML/JS 时，
+# 用户点下载就会在**平台同源**下执行脚本 —— 配合令牌存 localStorage 构成窃取链。
+# 所以服务端必须收口：只采信"浏览器不会当脚本执行"的类型。
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "declared",
+    [
+        "text/html",
+        "text/html; charset=utf-8",
+        "application/xhtml+xml",
+        "image/svg+xml",  # SVG 可内嵌 <script>，必须一并排除
+        "text/javascript",
+        "application/javascript",
+        "TEXT/HTML",  # 大小写不敏感：不能靠改大小写绕过
+    ],
+)
+def test_executable_declared_types_are_downgraded(declared: str) -> None:
+    """可执行/可渲染类型一律降级为兜底，不给浏览器渲染上下文。"""
+    assert resolve_content_type("无扩展名产物", "file", declared) == DEFAULT_CONTENT_TYPE
+
+
+@pytest.mark.parametrize(
+    ("declared", "expected"),
+    [
+        ("application/pdf", "application/pdf"),
+        ("image/png", "image/png"),
+        ("text/csv; charset=utf-8", "text/csv; charset=utf-8"),
+        (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+    ],
+)
+def test_safe_declared_types_are_kept(declared: str, expected: str) -> None:
+    """白名单内的类型仍沿用声明（含带 charset 参数的写法）。"""
+    assert resolve_content_type("无扩展名产物", "file", declared) == expected
+
+
+def test_safe_declared_content_type_helper() -> None:
+    """白名单判定按基础类型比对：带参数、大小写混写都要能过，空值必须为 False。"""
+    assert is_safe_declared_content_type("text/csv; charset=utf-8") is True
+    assert is_safe_declared_content_type("IMAGE/PNG") is True
+    assert is_safe_declared_content_type("text/html") is False
+    assert is_safe_declared_content_type("") is False
+    assert is_safe_declared_content_type("   ") is False
 
 
 # ===========================================================================

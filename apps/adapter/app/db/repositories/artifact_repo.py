@@ -65,16 +65,67 @@ EXTENSION_CONTENT_TYPES: Final[dict[str, str]] = {
 #: 兜底 MIME（无法判定扩展名时）
 DEFAULT_CONTENT_TYPE: Final[str] = "text/plain; charset=utf-8"
 
+#: 允许采信调用方**声明**的 MIME 白名单（仅在扩展名与产物类型都判不出时生效）。
+#:
+#: 为什么需要白名单（2026-11-02 审计 S-02）：原实现是「`declared` 非
+#: `application/octet-stream` 就原样采用」，等于把 MIME 决定权交给插件声明。
+#: 插件（租户管理员安装，非完全可信）若声明 `text/html` 并把产物内容写成 HTML/JS，
+#: 用户点下载就能在**平台同源**下执行脚本——配合令牌存 localStorage 构成完整的
+#: 令牌窃取链。下载链路的 MIME 必须由服务端收口，不能透传声明值。
+#:
+#: 白名单只收「浏览器不会当脚本执行」的类型。**刻意排除**：
+#: `text/html`、`application/xhtml+xml`、`image/svg+xml`（SVG 可内嵌 `<script>`）、
+#: `text/javascript`、`application/javascript`——这些一律降级为
+#: `DEFAULT_CONTENT_TYPE`，配合下载端点下发的 `nosniff` 与 `sandbox` 兜住。
+SAFE_DECLARED_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "application/json",
+        "application/pdf",
+        "application/zip",
+        "image/bmp",
+        "image/gif",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "text/csv",
+        "text/markdown",
+        "text/plain",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+)
+
+
+def is_safe_declared_content_type(declared: str) -> bool:
+    """判断调用方声明的 MIME 是否可被服务端采信。
+
+    按**基础类型**（分号前的部分）比对，因此 `text/csv; charset=utf-8`
+    这类带参数的写法同样通过；大小写不敏感。
+
+    Args:
+        declared: 调用方声明的 MIME（可为空）。
+
+    Returns:
+        bool: 在白名单内返回 True。
+    """
+    base = declared.split(";", 1)[0].strip().lower()
+    return bool(base) and base in SAFE_DECLARED_CONTENT_TYPES
+
 
 def resolve_content_type(name: str, artifact_type: str, declared: str) -> str:
     """归一化产物的 MIME（P3-B22-04）。
 
-    优先级：**扩展名 > 产物类型 > 调用方声明 > 兜底**。
+    优先级：**扩展名 > 产物类型 > 调用方声明（白名单）> 兜底**。
 
     为什么扩展名优先：调用方（任务服务）在"用户编辑后重新渲染"路径上会把
     上个版本的 `content_type` 带过来，而本次渲染可能换了格式（md → docx）。
     以最终文件名后缀为准，才能保证「库里的 MIME 与真实字节的格式一致」——
     这正是当初下载 docx 拿到 `text/plain` 的根因。
+
+    为什么声明值要过白名单：见 `SAFE_DECLARED_CONTENT_TYPES` 的说明——
+    MIME 由服务端收口，不能把 `text/html` / `image/svg+xml` 这类可执行类型
+    透传给浏览器。
 
     Args:
         name: 产物名称（含扩展名）。
@@ -91,7 +142,7 @@ def resolve_content_type(name: str, artifact_type: str, declared: str) -> str:
         # 表格统一以 CSV 落盘（`inline_text` 就是 CSV 文本）
         return EXTENSION_CONTENT_TYPES["csv"]
     text = (declared or "").strip()
-    if text and text != "application/octet-stream":
+    if is_safe_declared_content_type(text):
         return text
     return DEFAULT_CONTENT_TYPE
 

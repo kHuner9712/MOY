@@ -88,6 +88,13 @@ async def download_artifact(
             "Content-Disposition": _content_disposition(filename),
             "X-Artifact-Version": str(claims.version),
             "Cache-Control": "private, no-store",
+            # 适配层**自己**下发 nosniff 与 sandbox，不依赖网关继承：
+            # nginx 的 `add_header` 一旦在某层出现，就不再继承上层同名头
+            # （`lite.conf` 第 38-39 行的注释正是在讲这个坑）。`/files/` 是
+            # 新增的 location，运维按惯例往里加安全头反而会把 server 级的
+            # `nosniff` 顶掉——所以这里必须自带一份，不赌外面配对了。
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
         },
     )
 
@@ -126,16 +133,26 @@ def _content_disposition(filename: str) -> str:
     （发布排期表 / 筛选评分表 / 录用通知），等于"所有产物都下不了"。
     ASCII 兜底名保证老客户端也能落地一个文件，`filename*` 保证现代客户端拿到中文名。
 
+    **为什么是 `attachment` 而不是 `inline`**（2026-11-02 审计 S-02）：产物是
+    「下载」不是「预览」。`inline` 会让浏览器按声明的 MIME 就地渲染——一旦
+    某条产物的 MIME 是 `text/html`，脚本就在**平台同源**下执行，可以读走
+    localStorage 里的访问令牌。改为 `attachment` 后浏览器只落地文件不渲染，
+    这是这条链路上最便宜、也最不可绕过的一道闸（比 MIME 白名单更靠前）。
+
+    **为什么要清换行符**：`filename` 来自插件声明，不是完全可信输入。
+    `\r` / `\n` 会截断响应头（header injection），必须替换掉。
+
     Args:
         filename: 产物名称（可含中文）。
 
     Returns:
-        str: 形如 `inline; filename="artifact.csv"; filename*=UTF-8''%E4%B8%AD.csv`。
+        str: 形如 `attachment; filename="artifact.csv"; filename*=UTF-8''%E4%B8%AD.csv`。
     """
     from urllib.parse import quote
 
-    fallback = filename.encode("ascii", "replace").decode("ascii").replace('"', "_")
-    return f"inline; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"
+    sanitized = filename.replace("\r", " ").replace("\n", " ")
+    fallback = sanitized.encode("ascii", "replace").decode("ascii").replace('"', "_")
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(sanitized)}"
 
 
 __all__: list[str] = ["router"]
