@@ -260,11 +260,19 @@ export default defineConfig({
       //   % Stmts **81.37** | % Branch 76.66 | % Funcs 76.71 | % Lines 82.51
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 81.0 / branches 76.3 / functions 76.4 / lines 82.2
+      //
+      // P1 补测第三十二批（2026-11-01 H1 续）：布局层（会话门五态机/两条失效
+      // 入口收敛/error 态不清会话/跳登录只跳一次/logout 清缓存 + 主界面布局
+      // 断网条与错误兜底 + 运营布局 20003 不渲染菜单 + 登录布局）18 项后实测
+      // （session-gate 行覆盖 100%、components/layout 31% → 90%）：
+      //   % Stmts **84.23** | % Branch 78.50 | % Funcs 78.75 | % Lines 85.40
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 83.9 / branches 78.1 / functions 78.4 / lines 85.1
       thresholds: {
-        statements: 81.0,
-        branches: 76.3,
-        functions: 76.4,
-        lines: 82.2,
+        statements: 83.9,
+        branches: 78.1,
+        functions: 78.4,
+        lines: 85.1,
       },
     },
   },
