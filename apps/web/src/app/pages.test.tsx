@@ -498,6 +498,20 @@ describe('对话主页', () => {
     expect(second.container.textContent).not.toContain('本月额度已用');
     second.unmount();
   });
+
+  it('用量空体（null）不崩页也不误报提醒（补测回归）', async () => {
+    mocks.getUsage.mockResolvedValue(null as never);
+    const { container, unmount } = renderWithClient(<ChatPage />);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(mocks.getUsage).toHaveBeenCalledTimes(1);
+      });
+    });
+    await act(async () => {});
+    expect(container.textContent).not.toContain('本月额度已用');
+    unmount();
+  });
 });
 
 // ---------------------------------------------------------------------------

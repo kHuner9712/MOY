@@ -131,8 +131,11 @@ export default function BillingPage(): React.JSX.Element {
   };
 
   /** 顶部警告条：额度接近用完 */
+  // 必须判 null：用量接口无记录时返回空体（null），只判 `!== undefined`
+  // 会在取 `usage_percent` 时崩掉整页，「还没有用量记录」空态就永远走不到
   const quotaWarning =
     usage !== undefined &&
+    usage !== null &&
     Number.isFinite(usage.usage_percent) &&
     usage.usage_percent >= QUOTA_WARN_PERCENT;
 

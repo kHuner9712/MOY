@@ -178,11 +178,21 @@ export default defineConfig({
       //   % Stmts **56.10** | % Branch 52.91 | % Funcs 53.67 | % Lines 57.21
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 55.8 / branches 52.6 / functions 53.3 / lines 56.9
+      //
+      // P1 补测第二十三批（2026-11-01 H1 续）：套餐与账单页编排（额度 80% 阈值
+      // 提醒 / 订阅摘要与待生效切换 / 「选套餐」三分流——免费新开、付费升级、
+      // 更便宜降级二次确认 / 订单与账单三态）16 项 + chat 页空体回归 1 项后实测
+      // （billing 页 90% 行覆盖）。本批同时修复补测发现的用量空体崩页缺陷
+      //（billing/chat 页 quotaWarning 只判 `!== undefined`，null 空体取
+      // `usage_percent` 直接白屏，「还没有用量记录」空态永远走不到）：
+      //   % Stmts **57.42** | % Branch 55.66 | % Funcs 55.14 | % Lines 58.51
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 57.1 / branches 55.3 / functions 54.8 / lines 58.2
       thresholds: {
-        statements: 55.8,
-        branches: 52.6,
-        functions: 53.3,
-        lines: 56.9,
+        statements: 57.1,
+        branches: 55.3,
+        functions: 54.8,
+        lines: 58.2,
       },
     },
   },

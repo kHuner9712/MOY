@@ -54,8 +54,11 @@ export default function ChatPage(): React.JSX.Element {
   );
 
   const usage = usageQuery.data;
+  // 必须判 null：用量接口无记录时返回空体（null），只判 `!== undefined`
+  // 会在取 `usage_percent` 时崩掉整页
   const showQuotaWarning =
     usage !== undefined &&
+    usage !== null &&
     Number.isFinite(usage.usage_percent) &&
     usage.usage_percent >= QUOTA_WARN_PERCENT;
   const quotaUnit = usage?.quota_unit || '字';
