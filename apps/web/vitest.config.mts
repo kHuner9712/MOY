@@ -292,11 +292,18 @@ export default defineConfig({
       //   % Stmts **86.54** | % Branch 80.72 | % Funcs 81.12 | % Lines 87.68
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 86.2 / branches 80.4 / functions 80.8 / lines 87.3
+      //
+      // P1 补测第三十六批（2026-11-01 H1 续）：壳层收尾（根级兜底页只给业务
+      // 语言与两条出路/错误细节只进控制台/内联样式自洽 + 回跳页服务端壳
+      // 元信息不外传完整地址）6 项后实测（global-error 100%）：
+      //   % Stmts **86.75** | % Branch 80.72 | % Funcs 81.45 | % Lines 87.91
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 86.4 / branches 80.4 / functions 81.1 / lines 87.6
       thresholds: {
-        statements: 86.2,
+        statements: 86.4,
         branches: 80.4,
-        functions: 80.8,
-        lines: 87.3,
+        functions: 81.1,
+        lines: 87.6,
       },
     },
   },
