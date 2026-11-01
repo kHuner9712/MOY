@@ -245,11 +245,19 @@ export default defineConfig({
       // 数据滞后会让「进终态停轮询」这类状态机断言看起来失灵（非产品缺陷）。
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 78.1 / branches 73.9 / functions 73.4 / lines 79.2
+      //
+      // P1 补测第三十批（2026-11-01 H1 续）：组织架构页（三态/默认选中与点选
+      // 切换/新建重命名表单校验与参数口径/拖拽移动上下文文案兜底/删除二次
+      // 确认成员与下级数/层级上限拦截/非管理者只读/角色与权限入口）11 项后
+      // 实测（组织架构页行覆盖 92.7%）：
+      //   % Stmts **81.02** | % Branch 76.21 | % Funcs 76.38 | % Lines 82.14
+      // **% Stmts 突破 80%**。棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 80.7 / branches 75.8 / functions 76.0 / lines 81.8
       thresholds: {
-        statements: 78.1,
-        branches: 73.9,
-        functions: 73.4,
-        lines: 79.2,
+        statements: 80.7,
+        branches: 75.8,
+        functions: 76.0,
+        lines: 81.8,
       },
     },
   },
