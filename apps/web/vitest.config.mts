@@ -170,11 +170,19 @@ export default defineConfig({
       //   % Stmts **53.74** | % Branch 50.68 | % Funcs 51.38 | % Lines 54.73
       // **四指标全部站上 50%**。棘轮继续只升不降，各留 ~0.3pp 余量：
       //   statements 53.4 / branches 50.3 / functions 51.0 / lines 54.4
+      //
+      // P1 补测第二十二批（2026-11-01 H1 续）：列表型 page（工作流列表页
+      // 表格三态/四维筛选参数拼装/插件名映射 + 知识库列表页卡片四类徽标/
+      // 新建弹窗名称校验与 snake_case 参数口径）15 项后实测
+      // （workflows 页 100%、knowledge 页 95.7%）：
+      //   % Stmts **56.10** | % Branch 52.91 | % Funcs 53.67 | % Lines 57.21
+      // 棘轮继续只升不降，各留 ~0.3pp 余量：
+      //   statements 55.8 / branches 52.6 / functions 53.3 / lines 56.9
       thresholds: {
-        statements: 53.4,
-        branches: 50.3,
-        functions: 51.0,
-        lines: 54.4,
+        statements: 55.8,
+        branches: 52.6,
+        functions: 53.3,
+        lines: 56.9,
       },
     },
   },
