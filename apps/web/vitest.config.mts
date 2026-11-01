@@ -129,13 +129,18 @@ export default defineConfig({
       // （MemoryCard 三口径 / MemoryEmpty 六态 / MemorySwitches 开关语义）
       // 组件渲染测试 35 项后实测：
       //   % Stmts **33.47** | % Branch 27.11 | % Funcs **31.20** | % Lines **34.01**
+      //
+      // P1 补测第十五批（2026-11-01 H1 续）：知识库组件（DocumentTable 三态/
+      // 双空态/删除二次确认 + DocumentSearch 防抖四态）+ 组织架构组件
+      // （DepartmentTree 选中/层级上限/拖拽移动）渲染测试 29 项后实测：
+      //   % Stmts **38.40** | % Branch 31.76 | % Funcs **35.78** | % Lines **39.03**
       // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 33.1 / branches 26.8 / functions 30.9 / lines 33.7
+      //   statements 38.1 / branches 31.4 / functions 35.4 / lines 38.7
       thresholds: {
-        statements: 33.1,
-        branches: 26.8,
-        functions: 30.9,
-        lines: 33.7,
+        statements: 38.1,
+        branches: 31.4,
+        functions: 35.4,
+        lines: 38.7,
       },
     },
   },
