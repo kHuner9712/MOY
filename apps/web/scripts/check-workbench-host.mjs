@@ -393,6 +393,10 @@ function main(argv) {
 
   for (const file of walk(SRC_ROOT)) {
     if (!/\.(ts|tsx)$/.test(file) || file.endsWith('.d.ts')) continue;
+    // 与下方 import 白名单同口径：测试文件不进生产红线扫描——测试夹具天然
+    // 写死 `plg_*` 标识（固定输入才可断言），「写死标识」红线防的是生产页面
+    // 把插件 ID 硬编码进源码。按插件分支在测试里同样无意义，一并跳过。
+    if (/\.(test|spec)\.tsx?$/.test(file)) continue;
     branchScanned += 1;
     const content = readFileSync(file, 'utf8');
     problems.push(...checkNoPluginBranch({ file: relative(WEB_ROOT, file).replace(/\\/g, '/'), content }));
@@ -404,7 +408,11 @@ function main(argv) {
     assetScanned += files.length;
     problems.push(...checkNoOwnAssets(files.map((file) => relative(WEB_ROOT, file).replace(/\\/g, '/'))));
     for (const file of files) {
-      if (!/\.(ts|tsx)$/.test(file)) continue;
+      // G-27 管的是**生产宿主**（随产物发布的源码）：import 白名单防的是宿主
+      // 引三方 UI/跨域组件。测试文件天然要引被测对象（./page）与测试工具
+      // （vitest / @/test/*），不随产物发布，白名单管不到也不该管——H1 补测
+      // 批次的 *.test.tsx 曾被误判红（CI 首跑抓到，M3 取证发现）。
+      if (!/\.(ts|tsx)$/.test(file) || /\.(test|spec)\.tsx?$/.test(file)) continue;
       problems.push(
         ...checkImports({
           file: relative(WEB_ROOT, file).replace(/\\/g, '/'),
