@@ -30,6 +30,11 @@ const mocks = vi.hoisted(() => ({
   auditLogs: vi.fn(),
   market: vi.fn(),
   setCapabilityPolicy: vi.fn(),
+  /**
+   * 幂等键作用域的直接替身（P1-12）：透传执行 `fn`，但要能被断言「两次点击拿到了同一把键」。
+   * 只透传不实现，是因为作用域本身的语义已由 `api-client-idempotency.test.ts` 锁死。
+   */
+  withIdempotencyKey: vi.fn((...args: [string, () => Promise<unknown>]) => args[1]()),
 }));
 
 vi.mock('@/components/ui/toast', () => ({ toast: mocks.toast }));
@@ -45,6 +50,7 @@ vi.mock('next/link', async () => {
 
 vi.mock('@/lib/api-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-client')>()),
+  withIdempotencyKey: mocks.withIdempotencyKey,
   identityApi: {
     profile: mocks.profile,
     listMembers: mocks.listMembers,
@@ -415,6 +421,45 @@ describe('团队管理页', () => {
     });
     // 成功后弹窗关闭并重置表单
     expect(document.body.querySelector('form')).toBeNull();
+    unmount();
+  });
+
+  it('同一邀请意图双击复用同一把幂等键，换邮箱才换新键（P1-12）', async () => {
+    mockTeamData();
+    // 让请求失败：弹窗保持打开，才能模拟「对着同一个提交按钮连点」
+    mocks.inviteMember.mockRejectedValue(new Error('服务暂时不可用'));
+    const { container, unmount } = renderWithClient(<TeamPage />);
+    await waitForText(container, '李四');
+
+    click(findButton(container, '邀请成员'));
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('邀请成员');
+      });
+    });
+
+    typeInto(document.body, '#invite-email', 'dup@example.com');
+    submitForm(document.body);
+    await act(async () => {});
+    submitForm(document.body);
+    await act(async () => {});
+    submitForm(document.body);
+    await act(async () => {});
+
+    const keys = mocks.withIdempotencyKey.mock.calls.map((call) => call[0] as string);
+    expect(keys).toHaveLength(3);
+    // 同一邮箱三次点击 = 一次用户动作 → 同一把键，后端才能去重
+    expect(keys[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).toBe(keys[0]);
+
+    // 换邮箱 = 另一次动作 → 必须换新键（否则第二个人会被后端认成第一个人的重复投递）
+    typeInto(document.body, '#invite-email', 'other@example.com');
+    submitForm(document.body);
+    await act(async () => {});
+    const after = mocks.withIdempotencyKey.mock.calls.map((call) => call[0] as string);
+    expect(after).toHaveLength(4);
+    expect(after[3]).not.toBe(keys[0]);
     unmount();
   });
 

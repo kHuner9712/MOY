@@ -253,17 +253,135 @@ export function setTenantId(tenantId: string | null): void {
   currentTenantId = tenantId;
 }
 
-/** 生成 UUID v4 幂等键 */
-function newIdempotencyKey(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID();
+/** UUID 原始字节数（v4 = 128 bit） */
+const UUID_BYTE_LENGTH = 16;
+
+/** 兜底熵计数器（同一毫秒内多次调用时保证两次取值不重复） */
+let fallbackEntropyCounter = 0;
+
+/**
+ * 在既无 `randomUUID` 又无 `getRandomValues` 的残缺运行时里填充熵。
+ *
+ * **刻意不使用 `Math.random()`**（审计 Q-11）：`Math.random()` 不是密码学随机源，
+ * 且其输出可被同页脚本预测——幂等键可预测意味着外部可以构造出与真实请求相同的键，
+ * 把后端幂等表当成缓存来投毒。这里用「时间戳 ^ 单调计数器」做种子的 32 位
+ * 线性同余发生器，逐次调用种子必然不同；它在正常运行时**不可达**
+ * （Node 18+ / 现代浏览器 / 微信 webview 都带 `crypto`）。
+ *
+ * @param bytes - 待填充的字节数组（原地写入）
+ */
+function fillFallbackEntropy(bytes: Uint8Array): void {
+  fallbackEntropyCounter = (fallbackEntropyCounter + 1) >>> 0;
+  let seed = (Date.now() ^ Math.imul(fallbackEntropyCounter, 2_654_435_761)) >>> 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    // Numerical Recipes 参数（1664525 / 1013904223），全 32 位整数运算，无浮点误差
+    seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+    bytes[index] = (seed >>> 24) & 0xff;
   }
-  // 兜底实现：老旧浏览器环境
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
-    const rand = Math.floor(Math.random() * 16);
-    const value = ch === 'x' ? rand : (rand & 0x3) | 0x8;
-    return value.toString(16);
-  });
+}
+
+/**
+ * 生成 UUID v4 幂等键。
+ *
+ * 优先 `crypto.randomUUID()`；缺失时用 `crypto.getRandomValues()` 手工拼 v4；
+ * 两者都缺失时才走 {@link fillFallbackEntropy}，全程不用 `Math.random()`。
+ *
+ * **为什么导出**：审计 Q-11 / S-09 的整改要求是「幂等键的生命周期对齐一次用户动作」，
+ * 而一次动作往往对应多次 HTTP 请求（双击、失败重试、回退再提交）。因此调用方需要
+ * 在**动作入口**生成一次键，再用 {@link withIdempotencyKey} 把它绑到作用域上。
+ *
+ * @returns UUID v4 字符串
+ */
+export function newIdempotencyKey(): string {
+  const cryptoApi: Crypto | undefined =
+    typeof globalThis !== 'undefined' && globalThis.crypto ? globalThis.crypto : undefined;
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+  const bytes = new Uint8Array(UUID_BYTE_LENGTH);
+  if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    fillFallbackEntropy(bytes);
+  }
+  // RFC 4122 §4.4：version 位 = 0100（v4）、variant 位 = 10xx
+  // `?? 0` 只为满足 `noUncheckedIndexedAccess`（定长数组此处恒有值），语义不变
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(
+    16,
+    20,
+  )}-${hex.slice(20)}`;
+}
+
+/**
+ * 当前「用户动作」声明的幂等键栈（末项生效）。
+ *
+ * 用栈而不是单个变量：一个动作内部可能再包一层更细的动作（如「批量授权」里
+ * 逐个提交），内层键优先且退出后必须还原外层键，否则外层后续请求会串到内层键上。
+ */
+const actionIdempotencyKeys: string[] = [];
+
+/**
+ * 把一段调用包进「一次用户动作」的幂等键作用域。
+ *
+ * 语义（审计 Q-11 / S-09）：作用域内打到**同一个写端点**的重复投递共用同一把
+ * `Idempotency-Key`，于是双击提交、网络失败后重试、回退再提交都会命中后端
+ * `IdempotencyManager` 的去重，而不是各自造一把新键把去重彻底废掉。
+ *
+ * ⚠️ 硬约束（后端 `IdempotencyManager.check_or_set` 的语义，别违反）：
+ * `Idempotency-Key` 的去重指纹是「方法 + 路径 + 租户 + 用户」。**同一把键打到不同
+ * 端点会被判成键复用冲突并返回 20005**，而不是回放上一笔的结果。因此：
+ * - 一个动作只调一个写端点时（下单、发邀请、删除某条），整段包一层即可；
+ * - 一个动作要调**多个不同**写端点时，按端点各包一层（每次各自
+ *   `newIdempotencyKey()`），绝不要用一把键串两个端点。
+ *
+ * 其余使用约束：作用域只覆盖 `fn` 的执行期间，两个动作不要在请求重叠时并发进入
+ * （UI 上表现为两个提交按钮同时提交）——那种情况请给每个动作各自包一层。
+ * 服务端 24h 内仍按键去重，因此宁可复用也不可重造。
+ *
+ * @param key - 幂等键（通常来自 `newIdempotencyKey()`）；空串视为「未声明」
+ * @param fn - 作用域内要执行的异步动作
+ * @returns `fn` 的返回值
+ */
+export async function withIdempotencyKey<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const trimmed = key.trim();
+  if (!trimmed) {
+    // 空键按「没声明」处理：直接透传，交给 `resolveIdempotencyKey` 现场生成，
+    // 绝不发出空的 `Idempotency-Key` 头（后端会当成非法键拒请求）。
+    return fn();
+  }
+  actionIdempotencyKeys.push(trimmed);
+  try {
+    return await fn();
+  } finally {
+    const index = actionIdempotencyKeys.lastIndexOf(trimmed);
+    if (index >= 0) {
+      actionIdempotencyKeys.splice(index, 1);
+    }
+  }
+}
+
+/**
+ * 解析本次请求应使用的幂等键。
+ *
+ * 优先级：当前用户动作作用域（`withIdempotencyKey`）> 现场生成。
+ * **兜底必须保留**：任何忘记包 `withIdempotencyKey` 的调用点一旦丢掉该头，
+ * 后端 52 个写端点的幂等中间件就会拒请求——「漏包」不该变成「不可用」，
+ * 只该退化成「不可去重」（这正是整改前的状态，可接受但不理想）。
+ *
+ * 刻意**不**提供「单请求显式传键」的旁路：那正是本次缺陷的形状——
+ * 一个动作里的每个请求各自带一把键，作用域一破，去重就整体失效。
+ *
+ * @returns 幂等键字符串
+ */
+function resolveIdempotencyKey(): string {
+  const scoped = actionIdempotencyKeys[actionIdempotencyKeys.length - 1];
+  if (scoped) {
+    return scoped;
+  }
+  return newIdempotencyKey();
 }
 
 /** 构造请求头 */
@@ -292,7 +410,7 @@ function buildHeaders(options: {
 
   const isWrite = options.method !== 'GET' && options.method !== 'HEAD';
   if (isWrite && options.idempotent !== false) {
-    headers.set(IDEMPOTENCY_HEADER, newIdempotencyKey());
+    headers.set(IDEMPOTENCY_HEADER, resolveIdempotencyKey());
   }
 
   return headers;
@@ -458,7 +576,9 @@ async function upload<T>(path: string, form: FormData, options: RequestOptions =
   if (tenantHeader !== null && tenantHeader !== undefined && tenantHeader !== '') {
     headers.set(TENANT_HEADER, tenantHeader);
   }
-  headers.set(IDEMPOTENCY_HEADER, newIdempotencyKey());
+  // 与 `buildHeaders` 同一口径：作用域键 > 现场生成。
+  // 上传是 413/重复扣额度的高发口，不能因为不走 `buildHeaders` 就退回「每次新键」。
+  headers.set(IDEMPOTENCY_HEADER, resolveIdempotencyKey());
 
   const response = await fetchWithTimeout(
     url,

@@ -19,9 +19,14 @@ import { Field, Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { QUERY_KEYS, useApiMutation } from '@/hooks/use-api';
-import { billingApi } from '@/lib/api-client';
+import { billingApi, withIdempotencyKey } from '@/lib/api-client';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { formatCents, formatDateTime, orPlaceholder } from '@/lib/format';
+import {
+  buildActionFingerprint,
+  resolveActionIdempotencyKey,
+  type ActionIdempotency,
+} from '@/lib/idempotency';
 import type { CreateOrderResult, PlanItem } from '@/lib/types';
 
 /** 支付方式选项（业务语言） */
@@ -75,6 +80,15 @@ export function OrderDrawer({
   const [created, setCreated] = React.useState<CreateOrderResult | null>(null);
   const [submitError, setSubmitError] = React.useState<string>('');
 
+  /**
+   * 当前「下单动作」的幂等键。
+   *
+   * 为什么是 ref 而不是 state：键的变化不该触发重渲染，且必须在**同一次交互
+   * 的多次提交**之间稳定保持（双击两次 `submit()` 拿到同一把键）。
+   * 用 state 会因为闭包快照与重渲染时序在双击时拿到两个不同的键，去重照样失效。
+   */
+  const actionKeyRef = React.useRef<ActionIdempotency | null>(null);
+
   // 每次打开重置为干净状态，避免上一次的支付结果串到新订单
   React.useEffect(() => {
     if (!open) return;
@@ -82,24 +96,42 @@ export function OrderDrawer({
     setPaymentMethod('online');
     setCreated(null);
     setSubmitError('');
+    // 每打开一次抽屉 = 一次新的下单会话：释放上一次的幂等键。
+    // 否则上一次失败的尝试会让新一次提交在 24h 内命中旧键的去重缓存，
+    // 用户在服务端已修好问题后重开抽屉，仍会拿到早就过期的响应。
+    actionKeyRef.current = null;
   }, [open, defaultSeats, plan]);
 
   const createOrder = useApiMutation(
-    (variables: { planCode: string; seatCount: number; method: 'online' | 'offline_transfer' }) =>
-      billingApi.createOrder({
-        plan_code: variables.planCode,
-        seats: variables.seatCount,
-        order_type: orderType,
-        payment_method: variables.method,
-      }),
+    (variables: {
+      planCode: string;
+      seatCount: number;
+      method: 'online' | 'offline_transfer';
+      idempotencyKey: string;
+    }) =>
+      // P1-12（审计 Q-11 / S-09）：幂等键按「一次下单动作」绑定，不按 HTTP 请求绑定。
+      // 双击「提交订单」、网络失败后重试、回退再提交，全部复用 `idempotencyKey`，
+      // 后端 24h 内才能把重复投递认成同一笔；否则每次都是一把新键，等于没有幂等。
+      withIdempotencyKey(variables.idempotencyKey, () =>
+        billingApi.createOrder({
+          plan_code: variables.planCode,
+          seats: variables.seatCount,
+          order_type: orderType,
+          payment_method: variables.method,
+        }),
+      ),
     {
       invalidateKeys: [QUERY_KEYS.subscription(), QUERY_KEYS.billingOrders()],
       onSuccess: (data) => {
+        // 动作完成 → 释放键：下一笔下单必须是新的幂等键
+        actionKeyRef.current = null;
         setCreated(data);
         setConfirmOpen(false);
         onCreated?.(data);
       },
       onError: (error) => {
+        // 失败**不**释放键：用户点「重试」时用的必须还是同一把键，
+        // 否则「已扣款但响应丢失」的场景会被重试成第二笔订单。
         setSubmitError(toBusinessMessage(error));
         setConfirmOpen(false);
         toast.error(toBusinessMessage(error));
@@ -114,7 +146,19 @@ export function OrderDrawer({
   const submit = (): void => {
     if (!plan) return;
     setSubmitError('');
-    createOrder.mutate({ planCode: plan.plan_code, seatCount: safeSeats, method: paymentMethod });
+    // 同一指纹（套餐 + 席位 + 支付方式 + 订单类型）复用同一把幂等键：
+    // 连点两次 = 一次动作；改了席位再提交 = 另一次动作，必须换新键。
+    const action = resolveActionIdempotencyKey(
+      actionKeyRef.current,
+      buildActionFingerprint([plan.plan_code, safeSeats, paymentMethod, orderType]),
+    );
+    actionKeyRef.current = action;
+    createOrder.mutate({
+      planCode: plan.plan_code,
+      seatCount: safeSeats,
+      method: paymentMethod,
+      idempotencyKey: action.key,
+    });
   };
 
   return (

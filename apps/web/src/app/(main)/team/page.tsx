@@ -34,7 +34,7 @@ import { TabPanel, Tabs, useUrlTab } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { Tooltip } from '@/components/ui/tooltip';
 import { QUERY_KEYS, useApiMutation, useApiQuery } from '@/hooks/use-api';
-import { identityApi, identityExtApi, pluginsApi } from '@/lib/api-client';
+import { identityApi, identityExtApi, pluginsApi, withIdempotencyKey } from '@/lib/api-client';
 import {
   PERSONAL_CAPABILITY_KEYS,
   capabilityLabel,
@@ -43,6 +43,11 @@ import {
 import { CapabilityList } from '@/components/plugin/capability-list';
 import { toBusinessMessage } from '@/lib/business-errors';
 import { formatDateTime, orPlaceholder } from '@/lib/format';
+import {
+  buildActionFingerprint,
+  resolveActionIdempotencyKey,
+  type ActionIdempotency,
+} from '@/lib/idempotency';
 import type {
   CapabilityPolicyItem,
   CapabilityPolicyRequestItem,
@@ -112,12 +117,23 @@ export default function TeamPage(): React.JSX.Element {
   const [inviteError, setInviteError] = React.useState<string>('');
   const [removeTarget, setRemoveTarget] = React.useState<OrganizationMember | null>(null);
 
+  /**
+   * 当前「邀请动作」的幂等键（P1-12 / 审计 Q-11）。
+   *
+   * 为什么用 ref：双击「发送邀请」是**同一个意图**，必须复用同一把键，
+   * 后端才会把第二发认成重复投递而不是又建一条邀请记录。
+   */
+  const inviteKeyRef = React.useRef<ActionIdempotency | null>(null);
+
   const inviteMutation = useApiMutation(
-    (variables: { email: string; role: string }) =>
-      identityApi.inviteMember(orgId, { email: variables.email, role: variables.role }),
+    (variables: { email: string; role: string; idempotencyKey: string }) =>
+      withIdempotencyKey(variables.idempotencyKey, () =>
+        identityApi.inviteMember(orgId, { email: variables.email, role: variables.role }),
+      ),
     {
       invalidateKeys: [QUERY_KEYS.members(orgId)],
       onSuccess: () => {
+        inviteKeyRef.current = null;
         toast.success('邀请已发送，对方接受后即可加入');
         setInviteOpen(false);
         setInviteEmail('');
@@ -162,7 +178,13 @@ export default function TeamPage(): React.JSX.Element {
       return;
     }
     setInviteError('');
-    inviteMutation.mutate({ email, role: inviteRole });
+    // 同邮箱同角色 = 同一次邀请动作；重复点击复用幂等键，换邮箱/角色才换新键
+    const action = resolveActionIdempotencyKey(
+      inviteKeyRef.current,
+      buildActionFingerprint([email.toLowerCase(), inviteRole]),
+    );
+    inviteKeyRef.current = action;
+    inviteMutation.mutate({ email, role: inviteRole, idempotencyKey: action.key });
   };
 
   // ------------------------------------------------------------ 操作记录
@@ -252,7 +274,13 @@ export default function TeamPage(): React.JSX.Element {
                     type="button"
                     size="sm"
                     disabled={!canManage}
-                    onClick={() => setInviteOpen(true)}
+                    onClick={() => {
+                      // 每开一次邀请弹窗 = 一次新的动作会话：释放上一次的键。
+                      // 不释放的话，上一次「已失败且服务端状态已修好」的尝试会让
+                      // 新一次提交在 24h 内命中旧键的去重缓存，拿到早就过期的响应。
+                      inviteKeyRef.current = null;
+                      setInviteOpen(true);
+                    }}
                   >
                     <UserPlus className="h-4 w-4" />
                     邀请成员

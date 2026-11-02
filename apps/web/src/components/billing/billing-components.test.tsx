@@ -18,10 +18,13 @@ import { UsageCharts } from './usage-charts';
 const mocks = vi.hoisted(() => ({
   toast: { success: vi.fn(), error: vi.fn() },
   createOrder: vi.fn(),
+  /** 幂等键作用域的替身（P1-12）：透传执行，但能断言「重试拿到了同一把键」 */
+  withIdempotencyKey: vi.fn((...args: [string, () => Promise<unknown>]) => args[1]()),
 }));
 
 vi.mock('@/lib/api-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-client')>()),
+  withIdempotencyKey: mocks.withIdempotencyKey,
   billingApi: { createOrder: mocks.createOrder },
 }));
 
@@ -379,6 +382,70 @@ describe('OrderDrawer', () => {
       });
     });
     expect(mocks.toast.error).toHaveBeenCalled();
+    unmount();
+  });
+
+  it('下单失败点重试复用同一把幂等键，改席位才换新键（P1-12）', async () => {
+    vi.mocked(billingApi.createOrder).mockRejectedValue(new Error('服务暂时不可用'));
+    const { unmount } = renderWithClient(
+      <OrderDrawer open onOpenChange={vi.fn()} plan={PRO_PLAN} defaultSeats={3} />,
+    );
+    await act(async () => {
+      clickButton(document.body, '确认下单');
+    });
+    await act(async () => {
+      clickButton(document.body, '提交订单');
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(mocks.createOrder).toHaveBeenCalledTimes(1);
+      });
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('重试');
+      });
+    });
+
+    // 重试 = 同一笔下单动作：键必须复用，否则「已扣款但响应丢失」会被重试成第二笔订单
+    await act(async () => {
+      clickButton(document.body, '重试');
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(mocks.createOrder).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    const keys = mocks.withIdempotencyKey.mock.calls.map((call) => call[0] as string);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(keys[1]).toBe(keys[0]);
+
+    // 改席位 = 另一次动作：必须换新键，否则后端会把「加席」当成上一笔的重复投递
+    const seatsInput = document.body.querySelector<HTMLInputElement>('#order-seats');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(seatsInput, '5');
+      seatsInput?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      clickButton(document.body, '确认下单');
+    });
+    await act(async () => {
+      clickButton(document.body, '提交订单');
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(mocks.createOrder).toHaveBeenCalledTimes(3);
+      });
+    });
+
+    const afterChange = mocks.withIdempotencyKey.mock.calls.map((call) => call[0] as string);
+    expect(afterChange).toHaveLength(3);
+    expect(afterChange[2]).not.toBe(keys[0]);
     unmount();
   });
 });
