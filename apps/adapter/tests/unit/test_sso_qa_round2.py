@@ -469,6 +469,51 @@ def test_refresh_upstream_5xx_must_not_be_treated_as_dead_token(
     )
 
 
+@pytest.mark.parametrize("idp_status", [429, 408])
+def test_refresh_upstream_throttling_is_transient_not_dead_token(
+    conf: Settings, client: TestClient, monkeypatch: pytest.MonkeyPatch, idp_status: int
+) -> None:
+    """**已修（QA-07）**：IdP 回 **429（限流）/ 408（超时响应）** 时不清 `oa_refresh`。
+
+    QA-06 把判据写成"5xx = 这一次问不到答案，4xx = 这份凭证有问题"，但 `429 Too Many
+    Requests` 与 `408 Request Timeout` 落在 4xx 桶里，语义上却是**典型的临时故障**：
+    身份平台过载时会主动限流，而不是告诉你"刷新令牌失效"。修复后判据扩成
+    "**4xx（除 408/429）= 凭证问题；5xx/408 = 30001；429 = 20006**"。
+
+    为什么 429 比 5xx 更值得单独一格——**放大回路**：access TTL 统一 300 s，一批用户往往在
+    同一时刻集中刷新；IdP 扛不住回 429，若实现清掉所有人的刷新令牌，这批人随即全部被推去
+    **重新登录**（密码 + 二次验证，比刷新重得多），把 429 放大成登录风暴，再触发一轮 429。
+    5xx 那一档没有这个回路（只影响恰好撞上的那一次）。
+
+    为什么 429 用 `20006`（`RATE_LIMITED`，映射 HTTP 429、文案「当前使用人数较多，请稍后再试」）
+    而不是塞进 `30001`：前者给前端的信号是**可退避重试**，后者是笼统的"服务不可用"；
+    两者都不是 `20002`，所以 `_refresh_or_clear_dead_token` 的"只对 20002 清"天然不动 Cookie。
+
+    Args:
+        conf: 配置。
+        client: 客户端。
+        monkeypatch: pytest 补丁器。
+        idp_status: 构造的上游状态码。
+    """
+    plan = [(idp_status, b'{"error": "temporarily_unavailable"}', "application/json")]
+    response = _refresh_with(conf, client, monkeypatch, plan)
+
+    assert _set_cookies(response) == [], (
+        f"上游 {idp_status} 属临时故障，不该清刷新令牌；实际 {_set_cookies(response)}"
+        f"（响应码 {response.json()['code']}）"
+    )
+    # 错误码也要钉：429 → 20006（可退避重试）、408 → 30001（服务不可用）。
+    # 两者都**不是** 20002，前端据此退避重试而不跳登录页。
+    expected = (
+        (429, int(ErrorCode.RATE_LIMITED))
+        if idp_status == 429
+        else (503, int(ErrorCode.DOWNSTREAM_UNAVAILABLE))
+    )
+    assert (response.status_code, response.json()["code"]) == expected, (
+        f"上游 {idp_status} 的错误码不对：{response.status_code} {response.text}"
+    )
+
+
 # ===========================================================================
 # 3. QA-03 四态必须两两可区分
 # ===========================================================================

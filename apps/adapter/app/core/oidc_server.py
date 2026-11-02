@@ -26,11 +26,13 @@ token endpoint 返回 **4xx**、响应不是 JSON、或 JSON 里没有 `access_t
 空的 `oa_session` 会让后续每个请求都走到验签失败，症状看起来像"登录成功但立刻
 掉线"，比一次明确的登录失败难查得多。
 
-**5xx 单独归成 30001（上游不可用），不是 20002**（QA-06）：真实现场里"LB/ingress
-后面的身份平台挂了"多数表现为 5xx 响应而不是 TCP 连不上。这个区分决定的是
-`/sso/refresh` 会不会把**仍然有效**的刷新令牌当"已死"清掉——
-临时故障应当让用户重试，而不是把他踢去重新登录。判据只有一条：
-**4xx = 这份凭证/这次请求有问题；5xx = 这一次问不到答案**。
+**5xx / 408 单独归成 30001、429 归成 20006，都不是 20002**（QA-06 / QA-07）：真实现场里
+"LB/ingress 后面的身份平台挂了"多数表现为 5xx 响应而不是 TCP 连不上；而 429（限流）是
+**唯一带放大回路**的一种——access TTL 统一 300 s，一批用户往往同一时刻集中刷新，若把
+"限流"读成"令牌已死"就会清掉这批人的刷新令牌、把他们全推去重新登录（比刷新重得多），
+于是 429 变成登录风暴。这个区分决定 `/sso/refresh` 会不会把**仍然有效**的刷新令牌当
+"已死"清掉——临时故障应当让用户重试，而不是把他踢去重新登录。判据只有一条：
+**4xx（除 408/429）= 这份凭证/这次请求有问题；5xx、408、429 = 这一次问不到答案**。
 
 不做重试
 --------
@@ -369,8 +371,8 @@ async def _post_form(
         dict[str, Any]: 解析后的 JSON 对象。
 
     Raises:
-        ApiError: 超时（30002）、连接失败（30001）、**上游 5xx**（30001）、
-            上游 4xx 或非 JSON（20002）。
+        ApiError: 超时（30002）、连接失败（30001）、**上游 5xx / 408**（30001）、
+            **上游 429**（20006，可退避重试）、上游其余 4xx 或非 JSON（20002）。
     """
     owns_client = client is None
     http = client if client is not None else _build_client(conf)
@@ -390,16 +392,30 @@ async def _post_form(
             await http.aclose()
 
     status = response.status_code
-    if status >= httpx.codes.INTERNAL_SERVER_ERROR:
-        # **5xx 是上游自己的故障，不是"令牌已死"**（QA-06）。真实现场里"LB/ingress
-        # 后面的身份平台挂了"多数就表现为 5xx 响应，而不是 TCP 连不上；若把它归成
-        # 20002，`/sso/refresh` 会顺手清掉仍然有效的刷新令牌 —— 身份平台恢复后用户
-        # 仍要重新输密码，而本来靠刷新就能自愈。故与"连不上/超时"同码（30001），
-        # 让 `_refresh_or_clear_dead_token` 的"临时故障不清 Cookie"逻辑天然生效。
+    if status >= httpx.codes.INTERNAL_SERVER_ERROR or status == httpx.codes.REQUEST_TIMEOUT:
+        # **5xx 与 408 是上游自己的故障，不是"令牌已死"**（QA-06 / QA-07）。真实现场里
+        # "LB/ingress 后面的身份平台挂了"多数就表现为 5xx 响应，而不是 TCP 连不上；
+        # 408 是"服务端等请求等超时"，同属临时。若把它们归成 20002，`/sso/refresh` 会顺手
+        # 清掉仍然有效的刷新令牌 —— 身份平台恢复后用户仍要重新输密码，而本来靠刷新就能自愈。
+        # 故与"连不上/超时"同码（30001），让 `_refresh_or_clear_dead_token` 的
+        # "临时故障不清 Cookie"逻辑天然生效。
         # 状态码必须进日志/内部细节：那是现场判断"是网关挂了还是令牌坏了"的唯一线索。
         logger.warning("identity_token_upstream_error", endpoint=label, status_code=status)
         raise ApiError(
             ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            internal_detail=f"endpoint={label} idp_status={status}",
+        )
+    if status == httpx.codes.TOO_MANY_REQUESTS:
+        # **429（限流）也是临时故障，而且要单独一个码**（QA-07）。它是本流程里唯一带
+        # **放大回路**的失败：access TTL 统一 300 s，一批用户往往同一时刻集中刷新；
+        # 身份平台扛不住回 429 → 若归成 20002 就会清掉这批人的刷新令牌 → 全部被推去
+        # **重新登录**（密码 + 二次验证，比刷新重得多）→ 登录风暴 → 再一轮 429。
+        # 归成 20006（映射 HTTP 429）而不是塞进 30001 的理由：它不是 20002，
+        # 清理逻辑天然不会动 Cookie；同时前端能拿到"稍后再试"这个**可退避**的明确信号，
+        # 而不是笼统的"服务不可用"。
+        logger.warning("identity_token_throttled", endpoint=label, status_code=status)
+        raise ApiError(
+            ErrorCode.RATE_LIMITED,
             internal_detail=f"endpoint={label} idp_status={status}",
         )
     if status != httpx.codes.OK:

@@ -487,3 +487,50 @@ async def test_refresh_tokens_maps_upstream_5xx_to_unavailable(oidc_settings: Se
             await refresh_tokens(oidc_settings, "rt", client=client)
 
     assert exc_info.value.code == ErrorCode.DOWNSTREAM_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (408, ErrorCode.DOWNSTREAM_UNAVAILABLE),  # 服务端等请求超时：临时
+        (429, ErrorCode.RATE_LIMITED),  # 限流：临时，且要单独一个"可退避"的信号
+    ],
+)
+async def test_exchange_code_maps_408_and_429_to_transient(
+    oidc_settings: Settings, status: int, expected: ErrorCode
+) -> None:
+    """408/429 不是"凭证已死"（QA-07）：408 → 30001，429 → 20006。
+
+    这两个码落在 4xx 桶里，语义上却是**典型临时故障**（身份平台过载时会主动限流）。
+    429 尤其危险：access TTL 统一 300 s → 一批用户同时刷新 → IdP 429 → 若归成 20002
+    就会清掉这批人的刷新令牌 → 全员被推去重新登录（比刷新重得多）→ 登录风暴 → 再一轮 429。
+    用 20006 而不是 30001 是给前端一个**可退避重试**的明确信号。
+
+    Args:
+        oidc_settings: 配置。
+        status: 上游状态码。
+        expected: 期望的业务错误码。
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, text="slow down")
+
+    async with _mock_client(handler) as client:
+        with pytest.raises(ApiError) as exc_info:
+            await exchange_code(oidc_settings, "c", "v", REDIRECT_URI, client=client)
+
+    assert exc_info.value.code == expected
+    assert str(status) in (exc_info.value.internal_detail or "")
+
+
+async def test_refresh_tokens_maps_429_to_rate_limited(oidc_settings: Settings) -> None:
+    """刷新路径同样把 429 归成 20006（`/sso/refresh` 因此不会清刷新令牌）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, text="slow down")
+
+    async with _mock_client(handler) as client:
+        with pytest.raises(ApiError) as exc_info:
+            await refresh_tokens(oidc_settings, "rt", client=client)
+
+    assert exc_info.value.code == ErrorCode.RATE_LIMITED
