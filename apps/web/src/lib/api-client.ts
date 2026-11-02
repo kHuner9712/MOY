@@ -121,7 +121,7 @@ import type {
   MemorySettingsUpdate,
 } from '@/lib/types';
 
-import { refreshWithRetry } from './auth-refresh';
+import { refreshShared } from './auth-refresh';
 import { emitUnauthorized } from './session-events';
 
 /** 统一响应包装 */
@@ -555,9 +555,12 @@ let recoveryInFlight: Promise<SessionRecovery> | null = null;
 /**
  * 尝试恢复会话（刷新一次），并报告**结局是什么**（而不是「成没成」）。
  *
- * 四分类由 `auth-refresh.refreshWithRetry()` 算出（`relogin` = 刷新令牌已死；
- * `transient` = 限流 / 网关或上游不可用 / 退避用尽），本函数只把它翻译成
- * 拦截层能据以分流的三态，绝不把两类失败合并。
+ * 四分类由 `auth-refresh.refreshShared()` 算出（`relogin` = 刷新令牌已死；
+ * `transient` = 限流 / 网关或上游不可用 / 退避用尽 / 服务端标注重试），本函数只
+ * 把它翻译成拦截层能据以分流的三态，绝不把两类失败合并。
+ *
+ * 走 `refreshShared`（跨标签单飞）而不是裸 `refreshWithRetry`：401 恢复与定时
+ * 刷新、多标签页之间共享同一次换发（M1），轮换令牌不会被自己打作废。
  *
  * @returns `refreshed` 可重试原请求；`dead` 必须重新登录；`unavailable` 只报暂时不可用
  */
@@ -565,7 +568,7 @@ async function recoverSession(): Promise<SessionRecovery> {
   if (recoveryInFlight !== null) {
     return recoveryInFlight;
   }
-  const task = refreshWithRetry()
+  const task = refreshShared()
     .then((outcome): SessionRecovery => {
       if (outcome.kind === 'refreshed') return 'refreshed';
       if (outcome.kind === 'relogin') return 'dead';

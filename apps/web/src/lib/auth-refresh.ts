@@ -144,10 +144,17 @@ const GATEWAY_TIMEOUT_BUSINESS_CODE = 30002;
 /**
  * 判断是否是「刷新令牌已死」。
  *
+ * **服务端的明确可重试信号优先于状态码/业务码**（M1）：`data.retryable = true`
+ * 表示这次 20002 不是会话失效（典型：并发刷新时被新轮换取代的旧令牌迟到），
+ * 此时会话其实健在，判「已死」就是把用户误踢下线。
+ *
  * @param error - 会话请求失败
  * @returns 已死返回 true（此时服务端已清 `oa_refresh`，重试没有任何意义）
  */
 function isDeadSignal(error: SessionRequestError): boolean {
+  if (error.retryable === true) {
+    return false;
+  }
   return error.status === DEAD_HTTP_STATUS || error.code === DEAD_BUSINESS_CODE;
 }
 
@@ -176,6 +183,7 @@ function isTransientSignal(error: SessionRequestError): boolean {
  * | 返回 | 分类 | 理由 |
  * | --- | --- | --- |
  * | `401` / `20002` | `dead` | 刷新令牌已死（服务端同时已清 `oa_refresh`），重试多少次都不会成功 |
+ * | `20002` + `data.retryable=true` | `retry` | 被新轮换取代的旧令牌迟到（并发刷新），会话健在，**绝不**登出（M1） |
  * | `429` / `20006` | `retry` | 限流：等一会儿再来，**绝不能**当成登录失效 |
  * | `503` / `30001`、`504` / `30002` | `retry` | 网关/上游不可用：临时故障 |
  * | 其他 5xx | `retry` | 同上 |
@@ -359,6 +367,193 @@ export async function refreshWithRetry(options: RefreshRetryOptions = {}): Promi
 }
 
 // ---------------------------------------------------------------------------
+// 跨标签单飞（M1：多标签页并发刷新只发一次请求）
+// ---------------------------------------------------------------------------
+
+/** 跨标签刷新互斥锁名（Web Locks API；同源跨标签页共享） */
+export const REFRESH_FLIGHT_LOCK = 'oa.session.refresh.flight';
+
+/** 跨标签「刷新已结算」广播通道名（BroadcastChannel；同源跨标签页共享） */
+export const REFRESH_SETTLE_CHANNEL = 'oa.session.refresh.settled';
+
+/**
+ * 复用窗口（毫秒）：收到「他标签页刚刷新成功」的结算消息且落在窗口内时，
+ * 直接复用结果、不再发请求。
+ *
+ * 取 15 秒 = 覆盖「多标签页同时刷新 / 传输层自动重试」的合法并发到达间隔；
+ * 窗口外的迟到者由服务端的「被取代不清 Cookie + 可重试信号」兜底（M1 两层）。
+ *
+ * **刻意不用 localStorage 落账**：`qa-token-unreachable` 门禁规定非测试源码
+ * 零存储访问（令牌不可达红线），结算消息只走内存 + BroadcastChannel，值里
+ * 也只有 `ts` / `expires_in` 两个非凭据字段。
+ */
+export const REFRESH_SETTLE_WINDOW_MS = 15_000;
+
+/** 一次刷新成功后的结算消息（只记时间与有效期，**绝不记任何令牌**） */
+export interface RefreshSettleMarker {
+  /** 刷新完成时刻（毫秒，{@link RefreshFlightBus.now}） */
+  ts: number;
+  /** 新的访问令牌有效期（秒）；未知为 null */
+  expires_in: number | null;
+}
+
+/**
+ * 跨标签单飞的共享通道（**可注入**，单测用替身；生产走默认实现）。
+ *
+ * 三件能力缺一不可：互斥（同一时刻只允许一个刷新在途）、结算广播（后到者
+ * 复用结果）、时钟（窗口判定）。默认实现分别是 Web Locks / BroadcastChannel / Date。
+ */
+export interface RefreshFlightBus {
+  /**
+   * 在互斥锁内执行（无锁实现可直接执行，但会失去跨标签互斥）。
+   *
+   * @param callback - 临界区
+   * @returns 临界区返回值
+   */
+  requestLock<T>(callback: () => Promise<T>): Promise<T>;
+  /**
+   * 订阅跨标签「刷新已结算」消息（收到即代表他标签页刚换发成功）。
+   *
+   * @param listener - 收到结算消息时的回调
+   * @returns 退订函数
+   */
+  onSettled(listener: (marker: RefreshSettleMarker) => void): () => void;
+  /** 广播「刷新已结算」（无跨标签通道时静默放弃） */
+  announceSettled(marker: RefreshSettleMarker): void;
+  /** 当前时刻（毫秒） */
+  now(): number;
+}
+
+/** `refreshShared` 的可注入选项（在 {@link RefreshRetryOptions} 之上加共享通道） */
+export interface RefreshSharedOptions extends RefreshRetryOptions {
+  /** 跨标签共享通道（默认 Web Locks + BroadcastChannel） */
+  bus?: RefreshFlightBus;
+}
+
+/**
+ * 默认共享通道：Web Locks 互斥 + BroadcastChannel 结算广播。
+ *
+ * 浏览器没有 Web Locks / BroadcastChannel（旧内核、jsdom）时降级为
+ * 「仅本标签单飞」——降级是**安全**的：服务端还有刷新幂等窗口兜底，同一只
+ * 令牌的两次请求共享同一次换发结果（`/sso/refresh` 的 M1 语义），绝不会
+ * 误判失效、也不会清掉赢家的新 Cookie。
+ */
+function defaultFlightBus(): RefreshFlightBus {
+  return {
+    requestLock<T>(callback: () => Promise<T>): Promise<T> {
+      const locks: LockManager | undefined = globalThis.navigator?.locks;
+      if (locks === undefined) {
+        return callback();
+      }
+      return locks.request(REFRESH_FLIGHT_LOCK, () => callback()) as Promise<T>;
+    },
+    onSettled(listener: (marker: RefreshSettleMarker) => void): () => void {
+      const ChannelCtor: typeof BroadcastChannel | undefined = globalThis.BroadcastChannel;
+      if (ChannelCtor === undefined) {
+        return () => undefined;
+      }
+      const channel = new ChannelCtor(REFRESH_SETTLE_CHANNEL);
+      channel.onmessage = (event: MessageEvent): void => {
+        const data: unknown = event.data;
+        if (
+          typeof data === 'object' &&
+          data !== null &&
+          typeof (data as RefreshSettleMarker).ts === 'number'
+        ) {
+          listener(data as RefreshSettleMarker);
+        }
+      };
+      return () => {
+        channel.close();
+      };
+    },
+    announceSettled(marker: RefreshSettleMarker): void {
+      const ChannelCtor: typeof BroadcastChannel | undefined = globalThis.BroadcastChannel;
+      if (ChannelCtor === undefined) {
+        return;
+      }
+      // 用完即关：广播是「发出即完成」，不需要常驻通道
+      const channel = new ChannelCtor(REFRESH_SETTLE_CHANNEL);
+      channel.postMessage(marker);
+      channel.close();
+    },
+    now(): number {
+      return Date.now();
+    },
+  };
+}
+
+/** 本标签在途的共享刷新任务（同一时刻只允许一个） */
+let sharedFlight: Promise<RefreshOutcome> | null = null;
+
+/**
+ * 刷新会话（**跨标签单飞入口**，生产路径一律走这里，不要直接调 `refreshWithRetry`）。
+ *
+ * 三层收敛（M1）：
+ * 1. **本标签单飞**：同标签并发调用（定时刷新 × 401 恢复）共享同一任务；
+ * 2. **跨标签单飞**：Web Locks 互斥 + 结算广播——别的标签页刚刷过就**直接复用
+ *    结果**（零请求），否则才发起网络刷新并广播结算；
+ * 3. **服务端幂等窗口兜底**：即使锁不可用、请求仍并发到达，`/sso/refresh`
+ *    对同一只令牌只换发一次（见 `sso_routes.py` 的刷新幂等窗口）。
+ *
+ * 三条合起来才敢说「多标签页同时刷新只发一次请求、后到者拿到同一结果」。
+ *
+ * @param options - 可注入项（生产路径全部走默认值）
+ * @returns 刷新结局（后到者与赢家的结局逐字段相同）
+ */
+export function refreshShared(options: RefreshSharedOptions = {}): Promise<RefreshOutcome> {
+  if (sharedFlight !== null) {
+    return sharedFlight;
+  }
+  const flight = runSharedRefresh(options);
+  sharedFlight = flight;
+  void flight.then(() => {
+    if (sharedFlight === flight) {
+      sharedFlight = null;
+    }
+  });
+  return flight;
+}
+
+/**
+ * 跨标签单飞的实际执行体（锁内：查结算 → 刷新 → 广播结算）。
+ *
+ * @param options - 可注入项
+ * @returns 刷新结局
+ */
+async function runSharedRefresh(options: RefreshSharedOptions): Promise<RefreshOutcome> {
+  const bus = options.bus ?? defaultFlightBus();
+  let settled: RefreshSettleMarker | null = null;
+  const unsubscribe = bus.onSettled((marker) => {
+    settled ??= marker;
+  });
+  try {
+    return await bus.requestLock(async () => {
+      if (settled !== null && bus.now() - settled.ts <= REFRESH_SETTLE_WINDOW_MS) {
+        // 别的标签页刚刷新成功（后到者）：复用同一结果，**零请求**
+        return {
+          kind: 'refreshed',
+          expires_in: settled.expires_in,
+          attempts: 0,
+          error: null,
+        };
+      }
+      const outcome = await refreshWithRetry(options);
+      if (outcome.kind === 'refreshed') {
+        const marker: RefreshSettleMarker = {
+          ts: bus.now(),
+          expires_in: outcome.expires_in,
+        };
+        bus.announceSettled(marker);
+      }
+      return outcome;
+    });
+  } finally {
+    unsubscribe();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 主动刷新排期（含抖动）
 // ---------------------------------------------------------------------------
 
@@ -437,7 +632,7 @@ export function scheduleRefresh(
   expiresIn: number | null,
   options: RefreshScheduleOptions = {},
 ): () => void {
-  const refresh = options.refresh ?? (() => refreshWithRetry({ random: options.random }));
+  const refresh = options.refresh ?? (() => refreshShared({ random: options.random }));
   const setTimer =
     options.setTimer ?? ((handler: () => void, ms: number) => setTimeout(handler, ms) as unknown);
   const clearTimer =

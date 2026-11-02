@@ -94,23 +94,31 @@ const MISSING_CODE_MESSAGE = '本次登录未完成，请重新登录';
  *
  * `status === 0` 表示**没有拿到响应**（断网、超时、DNS 失败）：
  * 与服务端明确拒绝是两件事，处置也不同（前者绝不能推出「登录失效」）。
+ *
+ * `retryable` 是服务端的**明确可重试信号**（`data.retryable = true`）：典型场景是
+ * 并发刷新时「被新轮换取代的旧令牌」迟到被判 20002——此时会话其实健在，
+ * 绝不能按「已死」处置（M1：否则多标签页用户被误踢下线）。
  */
 export class SessionRequestError extends Error {
   /** HTTP 状态码；0 = 未拿到响应（网络层失败） */
   readonly status: number;
   /** 后端业务码；0 = 无信封 / 未解析出业务码 */
   readonly code: number;
+  /** 服务端明确标注「可重试」（`data.retryable = true`）；缺失/false = 未标注 */
+  readonly retryable: boolean;
 
   /**
    * @param message - 业务语言文案（可直接展示给用户）
    * @param status - HTTP 状态码（网络层失败传 0）
    * @param code - 后端业务码（无信封传 0）
+   * @param retryable - 服务端是否明确标注可重试（默认 false）
    */
-  constructor(message: string, status: number, code: number) {
+  constructor(message: string, status: number, code: number, retryable: boolean = false) {
     super(message);
     this.name = 'SessionRequestError';
     this.status = status;
     this.code = code;
+    this.retryable = retryable;
   }
 }
 
@@ -197,7 +205,13 @@ async function callSession<T>(
       typeof payload.message === 'string' && payload.message.trim() !== ''
         ? payload.message
         : UNAVAILABLE_MESSAGE;
-    throw new SessionRequestError(message, response.status, payload.code);
+    // 服务端的明确可重试信号（M1）：`data.retryable = true` 表示「这次失败不是
+    // 会话失效」（如被新轮换取代的旧令牌迟到），四分类据此归「可重试」。
+    const retryable =
+      typeof payload.data === 'object' &&
+      payload.data !== null &&
+      (payload.data as { retryable?: unknown }).retryable === true;
+    throw new SessionRequestError(message, response.status, payload.code, retryable);
   }
 
   return payload.data as T;

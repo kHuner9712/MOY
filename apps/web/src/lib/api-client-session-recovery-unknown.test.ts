@@ -16,13 +16,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  refreshWithRetry: vi.fn(),
+  refreshShared: vi.fn(),
 }));
 
-// 只替换刷新策略：三态翻译与拦截逻辑仍跑真实实现
+// 只替换刷新入口（M1 起 `recoverSession` 走跨标签单飞入口 `refreshShared`）：
+// 三态翻译与拦截逻辑仍跑真实实现
 vi.mock('./auth-refresh', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./auth-refresh')>()),
-  refreshWithRetry: mocks.refreshWithRetry,
+  refreshShared: mocks.refreshShared,
 }));
 
 type ApiClientModule = typeof import('./api-client');
@@ -57,7 +58,7 @@ afterEach(() => {
 
 describe('recoverSession · 未知异常兜底', () => {
   it('刷新实现抛非预期异常时：按「暂时不可用」处理，**不广播**（不登出用户）', async () => {
-    mocks.refreshWithRetry.mockRejectedValue(new Error('第三方库炸了'));
+    mocks.refreshShared.mockRejectedValue(new Error('第三方库炸了'));
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => gateway401()),
@@ -80,7 +81,7 @@ describe('recoverSession · 未知异常兜底', () => {
   });
 
   it('同一轮里的并发 401 共享这一次兜底结论（不重复刷新）', async () => {
-    mocks.refreshWithRetry.mockRejectedValue(new Error('第三方库炸了'));
+    mocks.refreshShared.mockRejectedValue(new Error('第三方库炸了'));
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => gateway401()),
@@ -95,6 +96,6 @@ describe('recoverSession · 未知异常兜底', () => {
 
     expect(results.every((item) => item.status === 'rejected')).toBe(true);
     // 三个 401 只触发一次刷新（去重口径不因兜底而失效）
-    expect(mocks.refreshWithRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshShared).toHaveBeenCalledTimes(1);
   });
 });

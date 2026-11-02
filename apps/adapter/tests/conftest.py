@@ -609,3 +609,17 @@ async def seeded_tenants(pg_engine: Any) -> AsyncIterator[dict[str, dict[str, st
     finally:
         for key in ("b", "a"):
             await purge_one(tenants[key])
+
+
+@pytest.fixture(autouse=True)
+def _reset_sso_refresh_replay_state() -> Iterator[None]:
+    """跨用例清空 `/sso/refresh` 幂等窗口状态（M1）。
+
+    用例间共享窗口会把上一用例的重放结果/取代标记带进下一用例（假绿/假红）；
+    窗口是**进程内**状态，测试进程天然跨用例存活，故逐用例重置。
+    """
+    from app.api import sso_routes
+
+    sso_routes._reset_refresh_replay_state()  # noqa: SLF001
+    yield
+    sso_routes._reset_refresh_replay_state()  # noqa: SLF001

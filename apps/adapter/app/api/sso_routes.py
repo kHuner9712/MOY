@@ -62,7 +62,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import time
+from dataclasses import dataclass
 from typing import Any, Final
 
 from fastapi import APIRouter, Request, Response
@@ -516,6 +519,155 @@ def _clear_pending_cookie(response: Response, conf: Settings) -> None:
 
 
 # ===========================================================================
+# 刷新幂等窗口（审计 2026-11-02 M1：合法并发不得被判定为失效）
+# ===========================================================================
+#
+# 背景：刷新令牌在身份平台侧是**一次性**的（`revokeRefreshToken: true`），轮换后
+# 旧值立即作废。多标签页 / 传输层重试会并发发出同一只令牌的两个刷新请求：后到的
+# 那个拿 `invalid_grant`（20002），旧实现据此清 `oa_refresh` —— 浏览器按到达顺序
+# 后写覆盖先写，赢家刚轮换出的**新**刷新令牌被空 Cookie 抹掉，会话直接损毁；
+# 同时后到者前端判「已死」→ 被误踢下线。
+#
+# 对策（两层，缺一不可）：
+#   1. **单飞 + 重放**：同一只令牌在一个幂等窗口内只打一次身份平台，迟到的请求
+#      等待/重放同一个结果（{@link _refresh_with_replay}）；
+#   2. **被取代不清 Cookie**：窗口外迟到的旧令牌被判 20002 时，**不下发清除头**，
+#      并显式返回 `data.retryable = true`（「明确可重试」信号），前端据此归
+#      `retry`（临时故障）而不是 `dead`。
+#
+# **代价（写在明处）**：窗口是**进程内**状态，与 `ratelimit` 的内存后端同款口径
+# ——V1.0 单副本部署下行为正确；多副本扩容前需切共享后端（届时本窗口换成
+# `OA_RATELIMIT_BACKEND=redis` 同款的共享实现），跨副本并发仍靠前端跨标签单飞
+# 与「被取代不清 Cookie」兜底。
+
+#: 刷新幂等窗口（秒）：窗口内同一只刷新令牌的重复请求命中同一结果（单飞 + 重放），
+#: 不再打身份平台。覆盖「多标签页同时刷新 / 传输层自动重试」的合法并发。
+REFRESH_REPLAY_TTL_SECONDS: Final[float] = 120.0
+
+#: 「已被轮换取代」标记保留时长（秒）：远长于重放窗口，覆盖任何在途请求的迟到
+#: 到达（设备休眠后恢复、断点续传等），迟到的旧令牌一律不清 Cookie、返回可重试。
+REFRESH_SUPERSEDED_TTL_SECONDS: Final[float] = 1800.0
+
+
+@dataclass(slots=True)
+class _RefreshFlight:
+    """一次刷新的在途/已决状态（按刷新令牌摘要索引，**绝不存令牌原文**）。
+
+    Attributes:
+        task: 在途的换发任务（多个请求共享它）。
+        finished_at: 结束时刻（`time.monotonic()`；None = 仍在途）。
+        result: 成功结果（用于窗口内重放）。
+        error: 失败原因（用于窗口内同因重放，不再打下游）。
+    """
+
+    task: asyncio.Task[TokenSet]
+    finished_at: float | None
+    result: TokenSet | None
+    error: ApiError | None
+
+
+#: 摘要 → 在途/已决刷新记录（进程内；测试经 `_reset_refresh_replay_state` 清空）
+_refresh_flights: dict[str, _RefreshFlight] = {}
+
+#: 摘要 → 过期时刻：**已被新一轮换取代**的旧令牌（用于「不清 Cookie」判定）
+_superseded_tokens: dict[str, float] = {}
+
+
+def _token_digest(token: str) -> str:
+    """计算刷新令牌的 sha256 摘要（十六进制）。
+
+    只存摘要不存原文：进程内状态也按「不留明文凭据」的仓库红线对待。
+
+    Args:
+        token: 刷新令牌原文。
+
+    Returns:
+        str: 十六进制摘要。
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _reset_refresh_replay_state() -> None:
+    """清空幂等窗口状态（**仅测试用**：跨用例不得共享窗口状态）。
+
+    用例间共享窗口会把「上一用例的重放结果」带进下一用例，制造假绿/假红；
+    根 `conftest.py` 以 autouse 夹具在每条用例前后各调一次。
+    """
+    _refresh_flights.clear()
+    _superseded_tokens.clear()
+
+
+def _prune_refresh_replay_state(now: float) -> None:
+    """淘汰过期的窗口记录与取代标记（每次进入窗口顺手做，无独立清扫任务）。
+
+    Args:
+        now: 当前单调时刻。
+    """
+    stale = [
+        key
+        for key, flight in _refresh_flights.items()
+        if flight.finished_at is not None and now - flight.finished_at > REFRESH_REPLAY_TTL_SECONDS
+    ]
+    for key in stale:
+        del _refresh_flights[key]
+    expired = [key for key, until in _superseded_tokens.items() if now >= until]
+    for key in expired:
+        del _superseded_tokens[key]
+
+
+async def _refresh_with_replay(conf: Settings, current: str) -> TokenSet:
+    """换发令牌：**单飞 + 幂等窗口重放**（M1）。
+
+    - 同一只令牌有在途请求 → 等它，共享同一结果（绝不并发打身份平台）；
+    - 窗口内已有结果 → 直接重放（成功重放成功、失败重放失败）；
+    - 其余 → 发起换发；成功后把该令牌记为「已被取代」，供 20002 路径判定
+      「这是迟到的旧令牌」而不是「会话已死」。
+
+    Args:
+        conf: 配置实例。
+        current: 当前刷新令牌。
+
+    Returns:
+        TokenSet: 新的令牌集合（窗口内重放时与首次结果逐字段相同）。
+
+    Raises:
+        ApiError: 原样抛出下游错误（窗口内同因重放）。
+    """
+    digest = _token_digest(current)
+    now = time.monotonic()
+    _prune_refresh_replay_state(now)
+
+    flight = _refresh_flights.get(digest)
+    if flight is not None:
+        if not flight.task.done():
+            # 在途：等待并复用同一结果（并发的合法请求不各自打下游）
+            return await asyncio.shield(flight.task)
+        if (
+            flight.finished_at is not None
+            and now - flight.finished_at <= REFRESH_REPLAY_TTL_SECONDS
+        ):
+            if flight.result is not None:
+                return flight.result
+            if flight.error is not None:
+                raise flight.error
+
+    task = asyncio.create_task(refresh_tokens(conf, current))
+    flight = _RefreshFlight(task=task, finished_at=None, result=None, error=None)
+    _refresh_flights[digest] = flight
+    try:
+        result = await task
+    except ApiError as exc:
+        flight.finished_at = time.monotonic()
+        flight.error = exc
+        raise
+    flight.finished_at = time.monotonic()
+    flight.result = result
+    # 旧令牌已被轮换取代：窗口外的迟到请求凭它拿 20002 时不得清新 Cookie
+    _superseded_tokens[digest] = time.monotonic() + REFRESH_SUPERSEDED_TTL_SECONDS
+    return result
+
+
+# ===========================================================================
 # 端点
 # ===========================================================================
 @router.post(
@@ -728,7 +880,10 @@ def _remaining_seconds(claims: dict[str, Any]) -> int | None:
     description=(
         "用 httpOnly 的刷新令牌换发新的访问令牌，并覆写两个会话 Cookie。"
         "响应体不含任何令牌。刷新令牌是轮换的，旧值随即失效。"
-        "刷新令牌被身份平台判失效（20002）时同时清掉它；网络类失败（30001/30002）不清。"
+        "同一刷新令牌在幂等窗口（120s）内的并发/重复请求共享同一次换发结果，"
+        "合法并发不会被判定为失效。刷新令牌被身份平台判失效（20002）时清掉它；"
+        "但被新轮换取代的旧令牌迟到时不清（`data.retryable=true`）；"
+        "网络类失败（30001/30002）不清。"
     ),
     response_model=ApiResponse[SsoRefreshData],
 )
@@ -772,7 +927,7 @@ async def _refresh_or_clear_dead_token(
     conf: Settings,
     current: str,
 ) -> TokenSet:
-    """换发令牌；**只有身份平台明确判失效时才清 `oa_refresh`**（QA-02）。
+    """换发令牌；**只有身份平台明确判失效时才清 `oa_refresh`**（QA-02 + M1）。
 
     区分两类失败的判据是错误码，不是"有没有抛异常"：
 
@@ -780,6 +935,9 @@ async def _refresh_or_clear_dead_token(
       浏览器会一直带着它，前端每次重试都白打一次身份平台，而用户看不到"刷新已死"；
       此时清 `oa_refresh`，下一次 `/sso/session` 就会答 `refreshable=false`，
       前端立刻走"重新登录"这条正确路径。`oa_session` 不动（可能仍然有效）。
+      **例外（M1）**：若该令牌已被一次成功轮换**取代**（并发刷新的迟到者），
+      清除头**绝不能**下发——此刻浏览器里躺着的是赢家刚轮换的新令牌，空 Cookie
+      会把它抹掉（会话损毁）。此场景改发 `data.retryable = true`，前端归「可重试」。
     - `30001` / `30002`（连不上、超时）与其余错误：**临时故障**，绝不清。
       清掉等于把一次网络抖动升级成"强制重新登录"。
 
@@ -795,10 +953,11 @@ async def _refresh_or_clear_dead_token(
         TokenSet: 新的令牌集合。
 
     Raises:
-        ApiError: 原样抛出下游错误（20002 时附带清 `oa_refresh` 的响应头）。
+        ApiError: 原样抛出下游错误（20002 时附带清 `oa_refresh` 的响应头；
+            被取代的旧令牌 20002 时**不带**清除头、`data.retryable = true`）。
     """
     try:
-        return await refresh_tokens(conf, current)
+        return await _refresh_with_replay(conf, current)
     except ApiError as exc:
         if exc.code != ErrorCode.UNAUTHORIZED:
             logger.warning(
@@ -807,6 +966,17 @@ async def _refresh_or_clear_dead_token(
                 error_code=int(exc.code),
             )
             raise
+        digest = _token_digest(current)
+        if digest in _superseded_tokens:
+            # 被取代的旧令牌（合法并发的迟到者，M1）：不是会话失效。
+            # 不清 Cookie + 显式可重试信号，前端据此归「临时故障」而非「已死」。
+            logger.info("sso_refresh_superseded_token", path=request.url.path)
+            raise ApiError(
+                exc.code,
+                message=exc.message,
+                data={"retryable": True, "reason": "superseded"},
+                internal_detail="refresh token superseded by a newer rotation (concurrent refresh)",
+            ) from exc
         logger.info("sso_refresh_token_dead", path=request.url.path)
         raise ApiError(
             exc.code,
