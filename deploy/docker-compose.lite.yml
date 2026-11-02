@@ -166,6 +166,17 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/${OA_KEYCLOAK_DB:-keycloak}
       KC_DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
       KC_DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?必须在 .env.lite 中设置}
+      # R4 / K2（2026-11-02）：固定对外基址。
+      # 这不只是「生成正确的端点」——`KC_HOSTNAME_STRICT=false` 且**不设**
+      # `KC_HOSTNAME` 时，issuer 会随请求的 `Host` 头变化：攻击者用自己的域名
+      # 访问登录端点，就能拿到一枚 iss 指向该域名的令牌（Host 注入）。
+      # 取值来自 `OA_PUBLIC_BASE_URL`（单一真源）；缺失即拒绝启动——
+      # 静默回落到某个默认域名比启动失败更难排查。
+      # lite 的对外基址插值自 OA_LITE_PUBLIC_URL（`.env.lite` 里没有独立键）。
+      KC_HOSTNAME: ${OA_LITE_PUBLIC_URL:?必须在 .env.lite 中设置（对外基址）}
+      # 边缘反代后必须声明信任 `X-Forwarded-*`，否则 Keycloak 看到的是
+      # http + 内网主机名，拼出的跳转会把浏览器打回内网地址。
+      KC_PROXY_HEADERS: xforwarded
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
       # 命令行已带 --health-enabled=true，这里再显式给一份：环境变量是"契约"，
@@ -205,6 +216,43 @@ services:
           memory: 1024M
     networks: [officeai-lite]
     logging: *default-logging
+
+  # ---------------------------------------------------------------------
+  # realm 一次性导入器（K5 / R5）
+  #
+  # **刻意不用 `--import-realm`**（语义是"每次启动都尝试导入"，且已存在 realm 时的
+  # 行为依赖导入策略默认值）——客户已有 realm 被覆盖是不可挽回的事故，故改用
+  # `kcadm get` 显式探测，存在则 `[skip]` 退出 0。
+  # 用法：`docker compose --profile install up -d keycloak-import`
+  # ---------------------------------------------------------------------
+  keycloak-import:
+    image: quay.io/keycloak/keycloak:26.8.1
+    container_name: oa-keycloak-import
+    profiles: ["install"]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    volumes:
+      - ./keycloak/rendered/realm-officeai.json:/tmp/realm.json:ro
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${OA_KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${OA_KEYCLOAK_ADMIN_PASSWORD:?必须在 .env.lite 中设置}
+    networks: [officeai-lite]
+    logging: *default-logging
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        /opt/keycloak/bin/kcadm.sh config credentials \
+          --server http://keycloak:8080 --realm master \
+          --user "$$KC_BOOTSTRAP_ADMIN_USERNAME" \
+          --password "$$KC_BOOTSTRAP_ADMIN_PASSWORD"
+        if /opt/keycloak/bin/kcadm.sh get realms/officeai >/dev/null 2>&1; then
+          echo "[skip] realm officeai 已存在，不覆盖（客户既有配置优先）"
+          exit 0
+        fi
+        /opt/keycloak/bin/kcadm.sh create realms -f /tmp/realm.json
+        echo "[ok] realm officeai 已创建"
 
   # ---------------------------------------------------------------------
   # 底座层：Dify（api / worker，共用本栈 PG + Valkey）
@@ -432,6 +480,15 @@ services:
       OA_DIFY_BASE_URL: http://dify-api:5001
       # 键名必须与 `Settings.keycloak_base_url` 对齐（`OA_` + 字段名大写），
       # 否则 pydantic 静默忽略、回落到默认值（见 deploy/validate_config_names.py）
+      # K1 / R4（2026-11-02）：对外基址——**单一真源**。
+      # 适配层用它决定会话 Cookie 的 `Secure` 属性；编排用它给 Keycloak 设
+      # `KC_HOSTNAME`（= 令牌 `iss` 的域名）。两处必须同源，故只留这一个变量。
+      # 缺失即拒绝启动（`validate_auth_startup` → 30004）：空值不会报错，
+      # 只会让 Cookie 静默丢掉 Secure —— 那比启动失败难查得多。
+      # lite 的对外基址**插值**自 OA_LITE_PUBLIC_URL（单一事实来源）：
+      # 不再多一个独立键。两处各写一份是"配了、看起来生效了、其实没生效"的
+      # 最坏形态——install.sh 只维护旧的那个，新的恒空，`Secure` 永远缺席。
+      OA_PUBLIC_BASE_URL: ${OA_LITE_PUBLIC_URL:?必须在 .env.lite 中设置（对外基址）}
       OA_KEYCLOAK_BASE_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
       # 业务库必须用**应用角色**（NOSUPERUSER + NOBYPASSRLS）：
@@ -533,7 +590,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/lite.conf:/etc/nginx/conf.d/default.conf:ro
+      # K4-min：与 full/saas 共用同一份边缘路由（多 /sso/、/realms/、/resources/ 三条）。
+      # lite.conf 保留为历史参考；两套配置并存会漂移，故统一挂 edge.conf。
+      - ./nginx/edge.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       # 默认单 80 端口；TLS 由客户前置的负载均衡/证书终止（轻量版不代管证书）
       - "${OA_LITE_PROXY_PORT:-80}:80"

@@ -291,12 +291,41 @@ check "7b" "前端 typecheck" "0" - run_fe_typecheck
 check "7c" "前端 test --coverage" "0" x_fe_test run_fe_test
 
 # --- 第 8 项：三套 compose config ---------------------------------------------
-run_compose_base() { ( cd "$ROOT/deploy" && docker compose --env-file .env.example -f docker-compose.yml config --quiet ); }
-run_compose_saas() { ( cd "$ROOT/deploy" && docker compose --env-file .env.example -f docker-compose.saas.yml config --quiet ); }
+#
+# K1（2026-11-02）：`deploy/.env.example` 里 `OA_PUBLIC_BASE_URL` 是**空值**（有意为之：
+# 它是 issuer 与 Cookie `Secure` 的双重派生源，留空让 `compose up` 在插值阶段就失败，
+# 而不是让用户点登录时才发现）。因此正向断言必须显式给值——shell 环境变量优先于
+# `--env-file`，不需要为了跑绿而改动模板。
+COMPOSE_BASE_URL="http://localhost:3000"
+run_compose_base() { ( cd "$ROOT/deploy" && OA_PUBLIC_BASE_URL="$COMPOSE_BASE_URL" docker compose --env-file .env.example -f docker-compose.yml config --quiet ); }
+run_compose_saas() { ( cd "$ROOT/deploy" && OA_PUBLIC_BASE_URL="$COMPOSE_BASE_URL" docker compose --env-file .env.example -f docker-compose.saas.yml config --quiet ); }
 run_compose_lite() { ( cd "$ROOT/deploy" && docker compose --env-file .env.lite.example -f docker-compose.lite.yml config --quiet ); }
+
+# 反向断言：模板里 `OA_PUBLIC_BASE_URL` 为空时，compose 必须**拒绝**渲染。
+#
+# 为什么必须有这一条：只留"合法值能过"，无法区分「门禁在工作」与「门禁坏了」——
+# 有人把 `:?` 改成 `:-`（或给个默认值），正向断言照样绿，而"部署那一刻失败"的
+# 保证已经悄悄消失。**正例证明合法输入能过，反例证明非法输入被拦，两条一起才是自检。**
+# 这与 `validate_secrets.py --self-test` / `check-banned-terms.mjs --self-test` 同一思路。
+#
+# 另一句给下一个改这个脚本的人：**门禁断言的是失败行为，不是绕过失败行为。**
+# 如果你正打算把这条改成"忽略该变量让它跑绿"，那是在拔门禁的牙齿。
+run_compose_reject_blank_base() {
+  local blank_env="$OUT_DIR/env-blank-base.tmp" code
+  grep -v '^OA_PUBLIC_BASE_URL=' "$ROOT/deploy/.env.example" > "$blank_env" || true
+  # 不重定向输出：让 compose 的报错进 step8d.log，那是"门禁为什么红"的直接证据
+  ( cd "$ROOT/deploy" && docker compose --env-file "$blank_env" -f docker-compose.yml config --quiet )
+  code=$?
+  rm -f "$blank_env"
+  # compose 拒绝渲染时返回非 0；归一成 1，避免不同 compose 版本的退出码差异影响断言
+  [ "$code" -ne 0 ] && return 1
+  return 0
+}
+
 check "8a" "compose base config --quiet" "0" - run_compose_base
 check "8b" "compose saas config --quiet" "0" - run_compose_saas
 check "8c" "compose lite config --quiet" "0" - run_compose_lite
+check "8d" "compose base 拒绝空 OA_PUBLIC_BASE_URL" "1" - run_compose_reject_blank_base
 
 # --- 第 9 项：本轮新增交付物自检 ---------------------------------------------
 run_goldset_yaml() {

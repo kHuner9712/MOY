@@ -489,6 +489,16 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/${OA_KEYCLOAK_DB:-keycloak}
       KC_DB_USERNAME: ${OA_POSTGRES_USER:-officeai}
       KC_DB_PASSWORD: ${OA_POSTGRES_PASSWORD:?必须在 .env 中设置}
+      # R4 / K2（2026-11-02）：固定对外基址。
+      # 这不只是「生成正确的端点」——`KC_HOSTNAME_STRICT=false` 且**不设**
+      # `KC_HOSTNAME` 时，issuer 会随请求的 `Host` 头变化：攻击者用自己的域名
+      # 访问登录端点，就能拿到一枚 iss 指向该域名的令牌（Host 注入）。
+      # 取值来自 `OA_PUBLIC_BASE_URL`（单一真源）；缺失即拒绝启动——
+      # 静默回落到某个默认域名比启动失败更难排查。
+      KC_HOSTNAME: ${OA_PUBLIC_BASE_URL:?必须在 .env 中设置（对外基址）}
+      # 边缘反代后必须声明信任 `X-Forwarded-*`，否则 Keycloak 看到的是
+      # http + 内网主机名，拼出的跳转会把浏览器打回内网地址。
+      KC_PROXY_HEADERS: xforwarded
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
       # Keycloak 26 起 KEYCLOAK_ADMIN/PASSWORD 已移除，改用 KC_BOOTSTRAP_ADMIN_*
@@ -502,7 +512,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [officeai-backend]
+    networks: [officeai-backend, officeai-frontend]
     logging: *default-logging
     # ARC-03：探针照抄 lite 栈实跑口径——镜像内没有 curl（只有 bash 与 grep），
     # 用 bash 的 /dev/tcp 手写 HTTP；/health/ready 在管理端口 9000
@@ -528,8 +538,86 @@ services:
           memory: 1024M
 
   # ---------------------------------------------------------------------
+  # realm 一次性导入器（K5 / R5）
+  #
+  # **刻意不用 `--import-realm`**：那是「服务每次启动都尝试导入」的语义，而我们要的
+  # 是「安装期一次性动作」；更要紧的是，已存在 realm 时 `--import-realm` 的行为
+  # 依赖导入策略默认值——客户已有 realm **被覆盖是不可挽回的事故**，不能把安全性
+  # 押在工具默认值上。这里的「不覆盖」由 `kcadm get` 显式探测保证（见 command）。
+  #
+  # 用法：`docker compose --profile install up -d keycloak-import`
+  # 前置：先渲染模板（`sh deploy/keycloak/render-realm.sh`，install.sh 会自动调用）。
+  # ---------------------------------------------------------------------
+  keycloak-import:
+    image: quay.io/keycloak/keycloak:26.8.1
+    container_name: oa-keycloak-import
+    profiles: ["install"]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    volumes:
+      - ./keycloak/rendered/realm-officeai.json:/tmp/realm.json:ro
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${OA_KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${OA_KEYCLOAK_ADMIN_PASSWORD:?必须在 .env 中设置}
+    networks: [officeai-backend]
+    logging: *default-logging
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        /opt/keycloak/bin/kcadm.sh config credentials \
+          --server http://keycloak:8080 --realm master \
+          --user "$$KC_BOOTSTRAP_ADMIN_USERNAME" \
+          --password "$$KC_BOOTSTRAP_ADMIN_PASSWORD"
+        if /opt/keycloak/bin/kcadm.sh get realms/officeai >/dev/null 2>&1; then
+          echo "[skip] realm officeai 已存在，不覆盖（客户既有配置优先）"
+          exit 0
+        fi
+        /opt/keycloak/bin/kcadm.sh create realms -f /tmp/realm.json
+        echo "[ok] realm officeai 已创建"
+
+  # ---------------------------------------------------------------------
   # 自研层：统一适配层（唯一允许接触底座的应用）
   # ---------------------------------------------------------------------
+  # ---------------------------------------------------------------------
+  # 通用边缘（K4-min / R4）：**唯一对外入口**
+  #
+  # 为什么 full/saas 现在必须有它：Keycloak 没有任何宿主端口映射，浏览器要打开
+  # 登录页就必须有一个对外入口把 `/realms/**` 转出去。给 keycloak 加
+  # `8080:8080` 等于把身份底座明文端口裸绑 0.0.0.0，比加边缘明显更糟（且与
+  # 端口收口方向相反）。同理 P0-5 的 `/sso/*` 是同源相对路径设计，没有边缘无处落地。
+  #
+  # 路由口径见 `nginx/edge.conf`（与 lite 共用同一份，避免两套漂移）。
+  # ⚠ 其中 `^~ /files/artifacts/` 一条**不可删**：该端点不带 `/api` 前缀，
+  #   漏掉会被 `location /` 转给 Next.js → 生产恒定 404（审计 S-03 / e074372）。
+  # ---------------------------------------------------------------------
+  edge:
+    image: nginx:1.28-alpine
+    container_name: oa-edge
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/edge.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # 宿主端口：默认 80；多栈并存或宿主 80 被占时用 OA_EDGE_HTTP_PORT 覆盖
+      - "${OA_EDGE_HTTP_PORT:-80}:80"
+    depends_on:
+      adapter:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    networks: [officeai-frontend]
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz | grep -q ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   adapter:
     build:
       context: ../apps/adapter
@@ -568,6 +656,12 @@ services:
       # 环境变量 = `OA_` + 字段名大写。此前这里写成 `OA_KEYCLOAK_URL`，无 alias 承接，
       # pydantic 直接忽略 → 静默回落到默认值（恰好同值，所以一直没炸）。改名前请确认
       # `deploy/validate_config_names.py` 为绿，它是这条约束的机械防线。
+      # K1 / R4（2026-11-02）：对外基址——**单一真源**。
+      # 适配层用它决定会话 Cookie 的 `Secure` 属性；编排用它给 Keycloak 设
+      # `KC_HOSTNAME`（= 令牌 `iss` 的域名）。两处必须同源，故只留这一个变量。
+      # 缺失即拒绝启动（`validate_auth_startup` → 30004）：空值不会报错，
+      # 只会让 Cookie 静默丢掉 Secure —— 那比启动失败难查得多。
+      OA_PUBLIC_BASE_URL: ${OA_PUBLIC_BASE_URL:?必须在 .env 中设置（对外基址）}
       OA_KEYCLOAK_BASE_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
       # **业务库连接串必须取 `.env` 的 `OA_DATABASE_URL`**（`.env.example:160` 要求用
@@ -624,7 +718,10 @@ services:
       additional_contexts:
         lockroot: ..
       args:
-        NEXT_PUBLIC_ADAPTER_BASE_URL: ${OA_WEB_ADAPTER_BASE_URL:-http://localhost:8000}
+        # K4-min：边缘化后浏览器必须走**同源相对路径**（/api/v1/*），不再直连 8000。
+        # 置空 = 前端用相对路径；配成 http://host:8000 会绕过边缘（也绕过限流与
+        # 安全头），且在轮 2 端口收口后直接不可达。
+        NEXT_PUBLIC_ADAPTER_BASE_URL: ""
         # 统一登录：公开接入信息（不含密钥），**构建期内联**进 bundle。
         # ⚠ 改完必须 `docker compose build web`（重新构建），`restart` 不生效——
         #   运行期改环境变量对 NEXT_PUBLIC_* 无效。

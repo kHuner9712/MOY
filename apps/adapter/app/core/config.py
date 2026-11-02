@@ -71,6 +71,17 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_audience: str = "officeai-adapter"
     jwt_issuer: str = "officeai"
+    #: 对外基址（浏览器地址栏里的那个地址，如 `https://moy.example.com`）。
+    #:
+    #: K1 / R4（2026-11-02）：它是**单一真源**，同时决定三件事——
+    #: ① Keycloak 的 `KC_HOSTNAME`（编排读它）→ 令牌 `iss` 的域名；
+    #: ② 会话 Cookie 的 `Secure` 属性（`https://` 开头才加）；
+    #: ③ realm 渲染时的 `redirectUris` / `rootUrl`（`deploy/keycloak/render-realm.sh`）。
+    #:
+    #: 为空时**无法**安全地推导以上任何一项：`Secure` 会静默缺席（明文传输会话 id），
+    #: 且 realm 渲染会产出 `redirectUris: ["/auth/callback"]` 这类非法值。
+    #: 故生产/预发环境空值由 `validate_auth_startup` 直接判 30004（fail loud）。
+    public_base_url: str = ""
     default_tenant_id: str = "default"
     #: 跨租户切换时的成员关系校验开关（AR-017 配套回退开关）。
     #:

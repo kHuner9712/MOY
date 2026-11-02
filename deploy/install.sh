@@ -236,7 +236,9 @@ check_prereqs_install() {
   [[ -f "${COMPOSE_FILE}" ]] || abort_env "缺编排文件：${COMPOSE_FILE}" "从交付包完整拷贝 deploy/ 目录"
   [[ -f "${IMAGES_LOCK}" ]] || abort_env "缺镜像锁文件：${IMAGES_LOCK}" "images.lock 是 digest 的唯一来源，缺了无法核对现场镜像"
   [[ -f "${SCRIPT_DIR}/nginx/nginx.conf" ]] || abort_env "缺 nginx 主配置：${SCRIPT_DIR}/nginx/nginx.conf"
-  [[ -f "${SCRIPT_DIR}/nginx/lite.conf" ]] || abort_env "缺 nginx 站点配置：${SCRIPT_DIR}/nginx/lite.conf"
+  # K4-min：proxy 挂的是 `edge.conf`（与 full/saas 共用一套路由）。
+  # 检查旧文件 `lite.conf` 会变成"断言了一个不再被挂载的文件"——假绿。
+  [[ -f "${SCRIPT_DIR}/nginx/edge.conf" ]] || abort_env "缺 nginx 站点配置：${SCRIPT_DIR}/nginx/edge.conf"
 
   check_memory
   check_project_name
@@ -328,6 +330,10 @@ generate_env_file() {
   if [[ -f "${ENV_FILE}" ]]; then
     # 重复执行 install 的路径：口令已经在用，重新生成等于把线上口令换掉
     info "环境文件已存在，保持不动（不覆盖既有口令）：${ENV_FILE}"
+    # 但**派生键**必须补：K1 起 `OA_PUBLIC_BASE_URL` 是 compose 的必填项
+    # （`${VAR:?}`），老现场的环境文件里没有这个键 → 升级后 `compose up`
+    # 直接拒绝启动。只补缺失/仍是旧占位值的键，已有人工值的键一律不动。
+    backfill_derived_env
     return 0
   fi
   [[ -f "${ENV_EXAMPLE}" ]] || abort_env "缺环境样例：${ENV_EXAMPLE}" "从交付包完整拷贝 deploy/ 目录"
@@ -390,7 +396,7 @@ generate_env_file() {
 #: 为什么对外基址必须跟着端口改：Dify 用它生成文件/回调链接，端口不一致时
 #: 客户点开下载链接会打到 80 端口 → 404。
 apply_proxy_port_on_new_file() {
-  local port url scheme host
+  local port url scheme host base_url realm
   port="${PROXY_PORT_OVERRIDE:-$(env_get OA_LITE_PROXY_PORT 80)}"
   port="${port:-80}"
   url="$(env_get OA_LITE_PUBLIC_URL http://localhost)"
@@ -400,10 +406,98 @@ apply_proxy_port_on_new_file() {
   [[ -n "${host}" ]] || host="localhost"
   env_set OA_LITE_PROXY_PORT "${port}"
   if [[ "${port}" == "80" ]]; then
-    env_set OA_LITE_PUBLIC_URL "${scheme}://${host}"
+    base_url="${scheme}://${host}"
   else
-    env_set OA_LITE_PUBLIC_URL "${scheme}://${host}:${port}"
+    base_url="${scheme}://${host}:${port}"
   fi
+  env_set OA_LITE_PUBLIC_URL "${base_url}"
+
+  # ---------------------------------------------------------------------
+  # K1 / R4（2026-11-02）：对外基址派生出三个键。
+  #
+  # 为什么必须在这里由脚本写，而不是让部署者手填四处：
+  #   OA_PUBLIC_BASE_URL / OA_JWT_ISSUER / OA_WEB_OIDC_ISSUER 三者必须**逐字符**
+  #   自洽（后者 = <基址>/realms/<realm>）。手填等于把"三处一致"变成一个靠人记的
+  #   纪律，而这套系统里最贵的故障正是"两个配置各写一份、其中一份没改"。
+  #   与 OA_LITE_PUBLIC_URL 同源，也保证轻量版只有一个对外地址事实来源。
+  # ---------------------------------------------------------------------
+  realm="$(env_get OA_KEYCLOAK_REALM officeai)"
+  realm="${realm:-officeai}"
+  # **不写 OA_PUBLIC_BASE_URL**：轻量版编排里它是 `OA_PUBLIC_BASE_URL: ${OA_LITE_PUBLIC_URL}`
+  # 的插值。再往 .env.lite 写一个字面量，会让"谁生效"取决于变量替换顺序——
+  # 这正是"配了、看起来生效了、其实没生效"的最坏形态。
+  env_set OA_JWT_ISSUER "${base_url}/realms/${realm}"
+  env_set OA_WEB_OIDC_ISSUER "${base_url}/realms/${realm}"
+  env_set OA_WEB_OIDC_CLIENT_ID "$(env_get OA_KEYCLOAK_CLIENT_ID officeai-adapter)"
+
+  # ---------------------------------------------------------------------
+  # realm 模板渲染：把上面算出的基址写进 `keycloak/rendered/realm-officeai.json`。
+  # 渲染产物不进库（含现场域名），但必须"有"，否则 `keycloak-import` 服务挂载
+  # 不到文件（bind mount 一个不存在的路径会变成空目录，报错更难懂）。
+  # ---------------------------------------------------------------------
+  render_realm_template "${base_url}"
+}
+
+#: 渲染 realm 模板（幂等；失败只告警不中断）。
+#:
+#: Args:
+#:   $1: 对外基址（不含尾斜杠）。
+render_realm_template() {
+  local base_url="$1"
+  [[ -f "${SCRIPT_DIR}/keycloak/render-realm.sh" ]] || return 0
+  if OA_PUBLIC_BASE_URL="${base_url}" \
+     KC_SSL_REQUIRED="${KC_SSL_REQUIRED:-}" \
+     sh "${SCRIPT_DIR}/keycloak/render-realm.sh" >/dev/null; then
+    ok "realm 模板已渲染（keycloak/rendered/realm-officeai.json）"
+  else
+    # 不中断安装：realm 导入是**后置**动作，缺它不影响栈起来；
+    # 但必须让部署者看到，否则等到"登录跳不出去"时已无从追溯。
+    warn "realm 模板渲染失败，登录链路需人工处理：sh deploy/keycloak/render-realm.sh"
+  fi
+}
+
+#: 升级路径：给**既有**环境文件补派生键（只补缺失 / 旧占位值，绝不覆盖人工值）。
+#:
+#: 为什么需要它：`OA_PUBLIC_BASE_URL` 在编排里是 `${VAR:?}`（缺失即拒绝启动），
+#: 而 K1 之前生成的环境文件里没有这个键。只"保持不动"会让每一个老现场
+#: 升级后都起不来，且报错只说"变量缺失"，不会提示"跑一次 install.sh 就好"。
+backfill_derived_env() {
+  local base_url realm added=0 current legacy_issuer
+
+  # 基址唯一来源是 OA_LITE_PUBLIC_URL（编排把它插值给 OA_PUBLIC_BASE_URL）。
+  # 这里**只读不写** OA_PUBLIC_BASE_URL，理由见 apply_proxy_port_on_new_file。
+  base_url="$(env_get OA_LITE_PUBLIC_URL http://localhost)"
+  base_url="${base_url%/}"
+
+  realm="$(env_get OA_KEYCLOAK_REALM officeai)"
+  realm="${realm:-officeai}"
+
+  # `iss` 校验值：空值或**仍是历史占位值**（`officeai`）时才改。
+  # 历史占位值下 OIDC 登录本来就不可用（R4：没有 realm、issuer 不可达），
+  # 所以覆盖它不会破坏任何"正在工作"的配置；但若运维填了别的值，一律尊重。
+  legacy_issuer="$(env_get OA_JWT_ISSUER "")"
+  if [[ -z "${legacy_issuer}" || "${legacy_issuer}" == "officeai" ]]; then
+    env_set OA_JWT_ISSUER "${base_url}/realms/${realm}"
+    added=1
+  elif [[ "${legacy_issuer}" != "${base_url}/realms/${realm}" ]]; then
+    warn "OA_JWT_ISSUER 与对外基址不自洽：${legacy_issuer} ≠ ${base_url}/realms/${realm}"
+    warn "  登录会失败（令牌 iss 校验不通过）。确认哪个是对的，然后改到一致。"
+  fi
+
+  if [[ -z "$(env_get OA_WEB_OIDC_ISSUER "")" ]]; then
+    env_set OA_WEB_OIDC_ISSUER "${base_url}/realms/${realm}"
+    added=1
+  fi
+  if [[ -z "$(env_get OA_WEB_OIDC_CLIENT_ID "")" ]]; then
+    env_set OA_WEB_OIDC_CLIENT_ID "$(env_get OA_KEYCLOAK_CLIENT_ID officeai-adapter)"
+    added=1
+  fi
+
+  if [[ ${added} -eq 1 ]]; then
+    ok "既有环境文件已补齐派生键（对外基址 / 两个 issuer / client id），其余值未改动"
+    warn "派生键变了 → 前端必须重建才生效：docker compose build web（restart 不够）"
+  fi
+  render_realm_template "${base_url}"
 }
 
 #: 环境文件内容检查：CHANGE_ME 归零、必需键非空、端口与基址一致（复用校验脚本的实现）

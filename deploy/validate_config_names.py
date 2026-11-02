@@ -147,6 +147,7 @@ CONSUMED_BY_BASE_CONTAINERS: Final[dict[str, str]] = {
 CONSUMED_BY_HOST_SIDE: Final[dict[str, str]] = {
     "OA_IMAGE_TAG": "编排层的镜像 tag 插值，不注入容器环境",
     "OA_ADAPTER_PORT": "编排层的宿主机端口映射（仅左侧取值）",
+    "OA_EDGE_HTTP_PORT": ("K4-min：边缘服务的宿主机端口映射（仅左侧取值），不进容器环境"),
     "OA_DB_APP_USER": "初始化 SQL（init-app-role.sql）建应用角色用，由 DBA/initdb 执行",
     "OA_DB_APP_PASSWORD": "同上，应用角色的口令",
 }

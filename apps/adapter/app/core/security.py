@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Annotated, Any, Final
+from urllib.parse import urlsplit
 
 from fastapi import Depends, Header, Request
 
@@ -125,6 +126,186 @@ def _extract_roles(claims: dict[str, Any]) -> list[str]:
     return [str(item) for item in raw if str(item).strip()]
 
 
+#: JWKS 拉取超时（秒）。与 `keycloak_read_timeout_seconds` 同量级：
+#: JWKS 是热路径，卡住请求比拉不到更糟（拉不到只是 20002，卡住会拖垮整个 worker）。
+JWKS_TIMEOUT_SECONDS: Final[float] = 5.0
+
+#: asymmetry 判定：算法名以 `RS` 开头即走 JWKS 公钥验签（RS256/RS384/RS512）。
+#: 刻意**只认 `RS`**（K6 规格）：`PS*` / `ES*` / `EdDSA` 当前无现场，多开一条分支
+#: 就多一条没人跑过的路径。将来要支持时在这里加前缀并同时补 JWKS 用例。
+ASYMMETRIC_ALGORITHM_PREFIX: Final[str] = "RS"
+
+#: JWKS 客户端进程内缓存（按 URL 缓存实例；实例内部再按 `kid` 缓存公钥）
+_JWKS_CLIENTS: dict[str, Any] = {}
+
+
+def uses_asymmetric_algorithm(algorithm: str) -> bool:
+    """判断验签算法是否走 JWKS 公钥路径。
+
+    Args:
+        algorithm: `jwt_algorithm` 配置值（如 `RS256` / `HS256`）。
+
+    Returns:
+        bool: 以 `RS` 开头返回 True（走 JWKS），否则 False（走 `jwt_secret`）。
+    """
+    return algorithm.strip().upper().startswith(ASYMMETRIC_ALGORITHM_PREFIX)
+
+
+def resolve_jwks_url(conf: Settings) -> str:
+    """推导 JWKS 地址（**纯配置态、单一路径、无分支、无探测**）。
+
+    JWKS 拉取与 `iss` 校验用的是**两个不同基准**：
+
+    - `iss` 校验用 `jwt_issuer`（公网值，必须与 Keycloak 实际发出的 `iss` 逐字符相等）；
+    - JWKS 拉取用 `keycloak_base_url`（**内网**地址）。
+
+    为什么不能都走公网 issuer（私有化现场必踩）：
+
+    - 内网 DNS 通常没有公网域名的记录，容器解析直接失败；
+    - 即便能解析，也要回环绕到边缘，并信任边缘证书——自签现场必然失败；
+    - JWKS 是每个请求都要走的热路径，多一跳就多一个失败面。
+
+    这样拆不会导致 issuer 不一致：设了 `KC_HOSTNAME` 后，从内网拉 discovery 得到的
+    `issuer` 仍是公网值。
+
+    **为什么没有「外部 IdP 则从 issuer 派生」的回落分支——这是范围决定，不是漏写。**
+
+    路径模板 `{base}/realms/{realm}/protocol/openid-connect/certs` 里的
+    `/realms/{realm}` 是 **Keycloak 专有**的：Auth0 / Okta / Azure AD 的 JWKS 在
+    `{issuer}/.well-known` 或 `{issuer}/...` 下，没有这一段。所以「支持任意 OIDC IdP」
+    不是一个分支能解决的——本系统整套身份骨架都假设 IdP 是 Keycloak 形态：
+    `keycloak_realm` 是独立配置项、令牌自省路径是
+    `/realms/{realm}/protocol/openid-connect/token/introspect`
+    （`KeycloakClient.INTROSPECT_PATH`）、角色映射读 `realm_access.roles`。
+    只把 JWKS 改成"跟着 issuer 走"，会让 JWKS 能拉、自省/资料/角色三条链路照样 404，
+    故障从一个 401 变成四个，更难查。
+
+    因此 **V1.0 的 IdP 固定为 Keycloak 形态**（含旧版 `/auth/realms/{realm}` 前缀），
+    非 Keycloak IdP（Auth0/Okta/Azure AD）留到 V1.1：届时走显式 `OA_JWKS_URL`
+    覆盖项，或做整条链路的完整分流（自省 + 资料 + 角色映射一起）。
+
+    也**不做**「拉取失败就换数据源」：那会把「网络抖动 → 悄悄切到公网地址 →
+    自签证书不受信 → 401」变成一个新的隐性故障源，症状与本项要修的问题完全同款。
+
+    `keycloak_base_url` 为空属配置错误，由 `validate_auth_startup` 在启动时拦
+    （仅 `jwt_algorithm` 以 `RS` 开头时检查——HS256 对称签发现场不依赖它）。
+
+    Args:
+        conf: 配置实例。
+
+    Returns:
+        str: JWKS 地址；`keycloak_base_url` 为空时返回空串（调用方须已 fail-fast）。
+    """
+    base = conf.keycloak_base_url.strip().rstrip("/")
+    realm = conf.keycloak_realm.strip().strip("/")
+    if not base:
+        # 正常不可达：`validate_auth_startup` 已在启动期拦下 RS* + 空 base。
+        # 走到这里说明有人绕过了启动校验（如直接构造 Settings 的测试），
+        # 返回空串让上层按"拉不到公钥"fail-closed，而不是拼出一个畸形的相对 URL。
+        return ""
+    return f"{base}/realms/{realm}/protocol/openid-connect/certs"
+
+
+def get_jwks_client(jwks_url: str) -> Any:
+    """取得（并缓存）JWKS 客户端。
+
+    为什么必须缓存实例：`PyJWKClient` 把公钥按 `kid` 缓存在实例里。每次请求新建实例
+    等于每个请求都打一次 Keycloak——把对方的 JWKS 端点变成我方可用性的单点。
+
+    Args:
+        jwks_url: JWKS 地址。
+
+    Returns:
+        Any: `jwt.PyJWKClient` 实例（返回类型用 Any，避免把 PyJWT 类型泄漏到模块接口）。
+    """
+    import jwt
+
+    client = _JWKS_CLIENTS.get(jwks_url)
+    if client is None:
+        client = jwt.PyJWKClient(
+            jwks_url,
+            cache_keys=True,
+            # 允许缓存足够多的 key：Keycloak 轮换期间新旧 key 并存
+            max_cached_keys=32,
+            timeout=JWKS_TIMEOUT_SECONDS,
+        )
+        _JWKS_CLIENTS[jwks_url] = client
+    return client
+
+
+def reset_jwks_cache() -> None:
+    """清空 JWKS 客户端缓存（测试与密钥轮换后的紧急处置用）。"""
+    _JWKS_CLIENTS.clear()
+
+
+def _load_signing_key(token: str, conf: Settings) -> Any:
+    """按 `kid` 从 JWKS 取验签公钥。
+
+    两个极端都要避免，故实现为「先查缓存，`kid` 未命中时强制刷新**一次**」：
+
+    - 只缓存不刷新 → Keycloak 轮换密钥后永久 401（缓存里永远没有新 `kid`）；
+    - 只刷新不缓存 → 每个请求都打一次 Keycloak（热路径上自造单点）。
+
+    Args:
+        token: 待验签的令牌原文（用于读 `kid`）。
+        conf: 配置实例。
+
+    Returns:
+        Any: `cryptography` 公钥对象，可直接交给 `jwt.decode`。
+
+    Raises:
+        ApiError: JWKS 不可达或取不到对应 `kid` 的公钥（20002，fail-closed）。
+    """
+    import jwt
+
+    jwks_url = resolve_jwks_url(conf)
+    if not jwks_url:
+        # 正常由 `validate_auth_startup` 在启动期拦住（RS* + 空 base → 30004）。
+        # 这里再兜一次：宁可 20002，也不要拼出 `/realms/...` 这种相对地址去打
+        # 自己（会得到一个与鉴权无关的 404，排查方向直接被带偏）。
+        logger.error("jwks_source_unconfigured", keycloak_base_url="")
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED,
+            internal_detail="jwks source unconfigured: OA_KEYCLOAK_BASE_URL is empty",
+        )
+
+    # 现场排查"到底走了哪个源"就看这一条：只打 scheme+host，不打完整 URL
+    # （完整 URL 含 realm 名与路径，日志里的价值不如一行 host 直观）。
+    _url = urlsplit(jwks_url)
+    logger.info("jwks_source_selected", jwks_source=f"{_url.scheme}://{_url.netloc}")
+
+    client = get_jwks_client(jwks_url)
+
+    try:
+        return client.get_signing_key_from_jwt(token).key
+    except jwt.exceptions.PyJWKClientConnectionError as exc:
+        # fail-closed：拉不到公钥就拒绝，**绝不**退化成不验签
+        logger.error("jwks_unreachable", jwks_url=jwks_url, error=type(exc).__name__)
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED,
+            internal_detail=f"jwks unreachable: {jwks_url}",
+        ) from exc
+    except Exception:
+        # 落在「kid 不在缓存」上：可能是对方轮换了密钥，强制刷新一次再试
+        logger.info("jwks_kid_miss_refresh", jwks_url=jwks_url)
+
+    try:
+        client.get_signing_keys(refresh=True)
+        return client.get_signing_key_from_jwt(token).key
+    except jwt.exceptions.PyJWKClientConnectionError as exc:
+        logger.error("jwks_unreachable_on_refresh", jwks_url=jwks_url)
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED,
+            internal_detail=f"jwks unreachable: {jwks_url}",
+        ) from exc
+    except Exception as exc:
+        logger.error("jwks_signing_key_not_found", jwks_url=jwks_url, error=type(exc).__name__)
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED,
+            internal_detail="jwks has no key matching token kid",
+        ) from exc
+
+
 def _decode_token(token: str, conf: Settings) -> dict[str, Any]:
     """校验并解码 JWT 令牌。
 
@@ -159,13 +340,22 @@ def _decode_token(token: str, conf: Settings) -> dict[str, Any]:
             "verify_aud": False,
             "verify_iss": False,
         }
-    else:
+        key: Any = conf.jwt_secret
+    elif uses_asymmetric_algorithm(conf.jwt_algorithm):
+        # K6（R8）：Keycloak 默认签 RS256，而本模块此前只支持 HS256 + 共享密钥。
+        # 症状是「登录看起来成功了，但每个业务接口 401」，且极易被误判成 Cookie 问题。
+        # 公钥从 JWKS 取（内网地址、按 kid 缓存、未命中刷新一次、不可达 fail-closed）。
         options = {"verify_signature": True}
+        key = _load_signing_key(token, conf)
+    else:
+        # 对称签发现场（私有化自签）：继续用共享密钥，行为不变
+        options = {"verify_signature": True}
+        key = conf.jwt_secret
 
     try:
         claims = jwt.decode(
             token,
-            conf.jwt_secret,
+            key,
             algorithms=[conf.jwt_algorithm],
             audience=conf.jwt_audience,
             issuer=conf.jwt_issuer,
@@ -947,7 +1137,11 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
        是仓库公开常量，手抄不改等于把签发权交给所有能读仓库的人；
        长度下限见 `MIN_JWT_SECRET_LENGTH`）；
     5. 同一环境下 `tenant_membership_check == "off"` 且未显式放行
-       `allow_security_downgrade` → 30004（QA-V04）。
+       `allow_security_downgrade` → 30004（QA-V04）；
+    6. 同一环境下 `public_base_url` 为空 → 30004（K1 / R4：对外基址同时决定
+       `KC_HOSTNAME` 与 Cookie `Secure`，缺它两者静默退化）；
+    7. 同一环境下 `jwt_algorithm` 以 `RS` 开头但 `keycloak_base_url` 为空 →
+       30004（K6 / R8：JWKS 地址只能由它推导，否则每个请求都 20002，而真因是配置）。
 
     第 5 条的理由：`off` 会跳过跨租户成员校验，等于允许「持 A 租户令牌 +
     `X-Tenant-Id: B`」跨租户读写。它必须保留（线上卡死时要能止血），但**不能
@@ -1019,6 +1213,48 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
                 "模板里的 CHANGE_ME_* 是仓库公开常量，拿它当签名密钥等于让任何人都能自造令牌。"
                 f"请用 `openssl rand -hex 32` 生成不少于 {MIN_JWT_SECRET_LENGTH} 字符的"
                 "随机密钥写入 OA_JWT_SECRET 后重启（`bash deploy/install.sh` 会自动生成）。"
+            ),
+        )
+    if uses_asymmetric_algorithm(conf.jwt_algorithm) and not conf.keycloak_base_url.strip():
+        # K6（R8）：RS* 验签的公钥只能从 JWKS 取，而 JWKS 地址由
+        # `keycloak_base_url` 推导（**内网**地址，不用公网 issuer——理由见
+        # `resolve_jwks_url`）。为空时若放行，运行期会拼出一个
+        # `/realms/...` 相对地址，表现为 404 或连接失败，而错误码是 20002
+        # 「令牌非法」——排障会被引向令牌而不是配置。
+        # 只拦 RS*：HS256 的私有化对称签发现场不依赖它，别把那些人挡在门外。
+        logger.error(
+            "jwks_base_url_missing_in_production",
+            env=conf.env,
+            jwt_algorithm=conf.jwt_algorithm,
+        )
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=(
+                f"当前环境为 {conf.env}，OA_JWT_ALGORITHM={conf.jwt_algorithm}（非对称）"
+                "但 OA_KEYCLOAK_BASE_URL 为空：JWKS 公钥地址只能由它推导，"
+                "缺失时每个请求都会 20002（令牌非法），而真正的原因是配置。"
+                "请设置为**适配层视角的 IdP 地址**（Keycloak 现场即 http://keycloak:8080；"
+                "客户自带外部 IdP 时填客户 IdP 地址）后重启。"
+            ),
+        )
+    if not conf.public_base_url.strip():
+        # K1 / R4（2026-11-02）：对外基址是**单一真源**——它同时决定
+        # `KC_HOSTNAME`（→ 令牌 iss 的域名）与会话 Cookie 的 `Secure` 属性。
+        # 空值不会立刻报错，而是表现为两件更难定位的事：Cookie 静默丢掉 `Secure`
+        # （会话 id 走明文），以及 realm 渲染出 `/auth/callback` 这种非法
+        # `redirectUris`（登录被 Keycloak 以 `Invalid parameter: redirect_uri` 拒绝）。
+        # 故与其余"配错了才发现"的项一样处理：生产/预发直接启动失败。
+        # 之所以放在密钥校验**之后**：缺密钥是更紧的阻断（连校验都做不了），
+        # 报错顺序应反映修复顺序。
+        logger.error("public_base_url_missing_in_production", env=conf.env)
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=(
+                f"当前环境为 {conf.env}，OA_PUBLIC_BASE_URL 为空："
+                "对外基址同时决定 Keycloak 的 KC_HOSTNAME（令牌 iss 的域名）"
+                "与会话 Cookie 的 Secure 属性，缺它时两者都会静默退化。"
+                "请设置形如 https://moy.example.com 的地址（不带尾斜杠）后重启；"
+                "改完还需重跑 `sh deploy/keycloak/render-realm.sh` 并重建 web 镜像。"
             ),
         )
     if conf.tenant_membership_check == "off":

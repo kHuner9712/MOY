@@ -135,7 +135,9 @@ check_prereqs() {
 
   [[ -f "${COMPOSE_FILE}" ]] || abort_env "缺编排文件：${COMPOSE_FILE}"
   [[ -f "${SCRIPT_DIR}/nginx/nginx.conf" ]] || abort_env "缺 nginx 主配置：${SCRIPT_DIR}/nginx/nginx.conf"
-  [[ -f "${SCRIPT_DIR}/nginx/lite.conf" ]] || abort_env "缺 nginx 站点配置：${SCRIPT_DIR}/nginx/lite.conf"
+  # K4-min：proxy 挂的是 `edge.conf`（与 full/saas 共用一套路由）。
+  # 检查旧文件 `lite.conf` 会变成"断言了一个不再被挂载的文件"——假绿。
+  [[ -f "${SCRIPT_DIR}/nginx/edge.conf" ]] || abort_env "缺 nginx 站点配置：${SCRIPT_DIR}/nginx/edge.conf"
 
   if [[ ! -f "${ENV_FILE}" ]]; then
     if [[ "${STATIC_ONLY}" == "1" && -f "${ENV_EXAMPLE}" ]]; then
@@ -538,30 +540,44 @@ PY
 #: 每一条都对应一次真实故障：少了 proxy_buffering off，流式回答会憋到最后一次性吐出；
 #: 少了 resolver，adapter 重建后 proxy 会一直打旧 IP（502 到手工 reload 为止）。
 run_nginx_assertions() {
-  local lite="${SCRIPT_DIR}/nginx/lite.conf"
+  # 断言对象 = **实际挂载**的站点配置（`edge.conf`）。此前指向 `lite.conf`，
+  # 在 proxy 改挂 edge.conf 后会变成"检查一个没人用的文件"，是典型的假绿。
+  local site="${SCRIPT_DIR}/nginx/edge.conf"
   local main="${SCRIPT_DIR}/nginx/nginx.conf"
   local -a missing=()
 
-  grep -Eq 'proxy_buffering[[:space:]]+off' "${lite}" \
+  grep -Eq 'proxy_buffering[[:space:]]+off' "${site}" \
     || missing+=("SSE 关代理缓冲：proxy_buffering off")
-  grep -q 'X-Accel-Buffering' "${lite}" \
+  grep -q 'X-Accel-Buffering' "${site}" \
     || missing+=("SSE 响应头：X-Accel-Buffering no")
-  grep -Eq 'location[[:space:]]+/api/' "${lite}" \
+  grep -Eq 'location[[:space:]]+/api/' "${site}" \
     || missing+=("/api/ 反代到 adapter")
-  grep -Eq 'location[[:space:]]+=[[:space:]]+/healthz' "${lite}" \
+  grep -Eq 'location[[:space:]]+=[[:space:]]+/healthz' "${site}" \
     || missing+=("/healthz 供 compose 健康检查")
-  grep -Eq 'location[[:space:]]+=[[:space:]]+/readyz' "${lite}" \
+  grep -Eq 'location[[:space:]]+=[[:space:]]+/readyz' "${site}" \
     || missing+=("/readyz 运维探针（起栈校验从这里轮询）")
-  grep -Eq 'deny[[:space:]]+all' "${lite}" \
+  grep -Eq 'deny[[:space:]]+all' "${site}" \
     || missing+=("/readyz 与 /metrics 的 deny all 兜底")
-  grep -Eq 'resolver[[:space:]]+127\.0\.0\.11' "${lite}" \
+  grep -Eq 'resolver[[:space:]]+127\.0\.0\.11' "${site}" \
     || missing+=("Docker 内置 DNS resolver（跟随容器重建换 IP）")
-  grep -Eq 'listen[[:space:]]+80' "${lite}" \
+  grep -Eq 'listen[[:space:]]+80' "${site}" \
     || missing+=("proxy 监听 80")
   grep -Eq 'client_max_body_size[[:space:]]+50m' "${main}" \
     || missing+=("上传上限 50m（必须与 OA_MAX_UPLOAD_BYTES=52428800 一致）")
   grep -Eq 'proxy_read_timeout[[:space:]]+300s' "${main}" \
     || missing+=("流式读超时 300s（默认 60s 会掐断长回答）")
+
+  # --- R4 / K4-min（2026-11-02）：登录链路的四条路由 ---
+  # 每一条都对应一种"端点落错地方"的故障：落到 `location /` 会被 Next.js 吃成 404，
+  # 而 404 的页面看起来像"功能没做"，会把排障引向错误方向。
+  grep -Eq 'location[[:space:]]+\^~[[:space:]]+/realms/' "${site}" \
+    || missing+=("/realms/ 反代到 keycloak（登录页本身，缺了点登录即 404）")
+  grep -Eq 'location[[:space:]]+\^~[[:space:]]+/resources/' "${site}" \
+    || missing+=("/resources/ 反代到 keycloak（登录页静态资源）")
+  grep -Eq 'location[[:space:]]+\^~[[:space:]]+/sso/' "${site}" \
+    || missing+=("/sso/ 反代到 adapter（服务端会话端点）")
+  grep -Eq 'location[[:space:]]+\^~[[:space:]]+/files/artifacts/' "${site}" \
+    || missing+=("/files/artifacts/ 反代到 adapter（产物下载，漏了生产恒定 404）")
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     err "nginx 配置缺少关键项："

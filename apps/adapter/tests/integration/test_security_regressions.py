@@ -493,6 +493,10 @@ def test_healthz_reflects_injected_settings() -> None:
             # 这条用例只验证「配置注入生效」，不再顺带验证桩模式。
             auth_mode="oidc",
             jwt_secret="staging-secret-for-healthz-injection-test",
+            # K1（2026-11-02）：对外基址在 staging/production 也是必填项
+            # （决定 KC_HOSTNAME 与 Cookie `Secure`），不补会先撞上 30004，
+            # 测的就不是「配置注入」这件事了。
+            public_base_url="https://moy.example.com",
         )
     )
     with TestClient(app) as client:

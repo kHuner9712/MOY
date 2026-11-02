@@ -44,7 +44,10 @@ def test_production_oidc_with_secret_passes() -> None:
     """
     validate_auth_startup(
         Settings(
-            env="production", auth_mode="oidc", jwt_secret="production-secret-32-chars-long-v2"
+            env="production",
+            auth_mode="oidc",
+            jwt_secret="production-secret-32-chars-long-v2",
+            public_base_url="https://moy.example.com",
         )
     )
 
@@ -134,6 +137,7 @@ def test_production_strong_secret_still_passes() -> None:
             env="production",
             auth_mode="oidc",
             jwt_secret="9f2c7b1e4d8a6f0c3b5e7d9a1c2f4b6e",
+            public_base_url="https://moy.example.com",
         )
     )
 
@@ -161,6 +165,9 @@ def test_downgrade_switch_off_is_rejected_without_explicit_allow(env_name: str) 
                 env=env_name,  # type: ignore[arg-type]
                 auth_mode="oidc",
                 jwt_secret="downgrade-secret-32-chars-long-v2",
+                # K1 起对外基址是必填项；不补会让本用例先撞上"缺基址"而非被测的
+                # "降级开关未放行"，断言就测错了对象。
+                public_base_url="https://moy.example.com",
                 tenant_membership_check="off",
             )
         )
@@ -184,6 +191,7 @@ def test_downgrade_switch_off_passes_with_explicit_allow(
             env="production",
             auth_mode="oidc",
             jwt_secret="downgrade-secret-32-chars-long-v2",
+            public_base_url="https://moy.example.com",
             tenant_membership_check="off",
             allow_security_downgrade=True,
         )
@@ -199,6 +207,7 @@ def test_auto_mode_passes_in_production() -> None:
             env="production",
             auth_mode="oidc",
             jwt_secret="downgrade-secret-32-chars-long-v2",
+            public_base_url="https://moy.example.com",
         )
     )
 
@@ -207,4 +216,105 @@ def test_downgrade_switch_off_allowed_in_test_env() -> None:
     """development/test 不受新门禁影响（离线单测需要能构造降级态）。"""
     validate_auth_startup(
         Settings(env="test", auth_mode="stub", jwt_secret="", tenant_membership_check="off")
+    )
+
+
+# ===========================================================================
+# 对外基址必填（K1 / R4）
+#
+# 空 `OA_PUBLIC_BASE_URL` 不会立刻抛错，而是让两件事**静默**退化：
+#   - 会话 Cookie 丢掉 `Secure`（会话 id 走明文，反代后尤其危险）；
+#   - realm 渲染出 `redirectUris: ["/auth/callback"]` 这类非法值，
+#     登录被 Keycloak 拒绝，报 `Invalid parameter: redirect_uri`（现场极难定位）。
+# 所以与"配错了才发现"的其余项同一处置：生产/预发直接启动失败。
+# ===========================================================================
+
+
+def test_production_requires_public_base_url() -> None:
+    """生产 + OIDC + 强密钥但缺对外基址 → 30004，且文案点名该配置项。"""
+    with pytest.raises(ApiError) as excinfo:
+        validate_auth_startup(
+            Settings(
+                env="production",
+                auth_mode="oidc",
+                jwt_secret="9f2c7b1e4d8a6f0c3b5e7d9a1c2f4b6e",
+            )
+        )
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+    assert "OA_PUBLIC_BASE_URL" in excinfo.value.internal_detail
+
+
+def test_production_blank_public_base_url_is_rejected() -> None:
+    """只有空白字符也按"空"处理（配置文件里写成空格是最常见的误配形态）。"""
+    with pytest.raises(ApiError) as excinfo:
+        validate_auth_startup(
+            Settings(
+                env="production",
+                auth_mode="oidc",
+                jwt_secret="9f2c7b1e4d8a6f0c3b5e7d9a1c2f4b6e",
+                public_base_url="   ",
+            )
+        )
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+
+
+def test_development_does_not_require_public_base_url() -> None:
+    """development 不拦（本地演示没有域名，且该环境不对外）。"""
+    validate_auth_startup(
+        Settings(env="development", auth_mode="stub", jwt_secret="", public_base_url="")
+    )
+
+
+# ===========================================================================
+# JWKS 数据源必填（K6 / R8，定稿判据）
+#
+# RS* 验签的公钥只能从 JWKS 取，而 JWKS 地址恒由 `OA_KEYCLOAK_BASE_URL` 推导
+# （**无回落分支**：外部 IdP 现场该变量本就指向客户 IdP）。为空时若放行，
+# 运行期每个请求都 20002「令牌非法」，而真因是配置——排障会被引向令牌。
+# 只拦 RS*：HS256 的私有化对称签发现场不依赖它。
+# ===========================================================================
+
+
+def test_production_rs256_requires_keycloak_base_url() -> None:
+    """RS256 + 空 `keycloak_base_url` → 30004，且文案点名该项。"""
+    with pytest.raises(ApiError) as excinfo:
+        validate_auth_startup(
+            Settings(
+                env="production",
+                auth_mode="oidc",
+                jwt_secret="9f2c7b1e4d8a6f0c3b5e7d9a1c2f4b6e",
+                public_base_url="https://moy.example.com",
+                jwt_algorithm="RS256",
+                keycloak_base_url="",
+            )
+        )
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+    assert "OA_KEYCLOAK_BASE_URL" in excinfo.value.internal_detail
+
+
+def test_production_rs256_with_base_url_passes() -> None:
+    """RS256 + 非空 base_url → 放行（不能误伤合法配置）。"""
+    validate_auth_startup(
+        Settings(
+            env="production",
+            auth_mode="oidc",
+            jwt_secret="9f2c7b1e4d8a6f0c3b5e7d9a1c2f4b6e",
+            public_base_url="https://moy.example.com",
+            jwt_algorithm="RS256",
+            keycloak_base_url="http://keycloak:8080",
+        )
+    )
+
+
+def test_production_hs256_does_not_require_keycloak_base_url() -> None:
+    """HS256 的私有化对称签发现场**不依赖** base_url，不能被这条门禁挡在门外。"""
+    validate_auth_startup(
+        Settings(
+            env="production",
+            auth_mode="oidc",
+            jwt_secret="9f2c7b1e4d8a6f0c3b5e7d9a1c2f4b6e",
+            public_base_url="https://moy.example.com",
+            jwt_algorithm="HS256",
+            keycloak_base_url="",
+        )
     )

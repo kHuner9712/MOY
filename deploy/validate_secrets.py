@@ -73,6 +73,7 @@ SCAN_SUFFIXES: Final[frozenset[str]] = frozenset({".yml", ".yaml", ".sh", ".exam
 #: 文件名前缀含 `.env` 的也参与扫描（如 `.env.example` / `.env.lite.example`）
 ENV_FILE_PREFIX: Final[str] = ".env"
 
+
 #: `.env` 本地文件（含真实密钥）不参与扫描——`.gitignore` 排除，不入库；
 #: `.env.example` / `.env.lite.example` 模板入库，必须扫描
 def _is_local_env(path: Path) -> bool:
@@ -89,6 +90,7 @@ def _is_local_env(path: Path) -> bool:
         return False
     # `.env.example` / `.env.lite.example` 是入库模板，要扫
     return not name.endswith(".example")
+
 
 #: 变量名中命中即视为「密钥类」的词
 SECRET_WORDS: Final[tuple[str, ...]] = ("KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")
@@ -185,10 +187,7 @@ def scan_dir(target: Path) -> list[dict[str, str]]:
         if path.is_dir():
             continue
         # 参与扫描的文件类型：yml/yaml、.env* 模板（不含本地 .env）、shell 脚本
-        is_scannable = (
-            path.suffix in SCAN_SUFFIXES
-            or path.name.startswith(ENV_FILE_PREFIX)
-        )
+        is_scannable = path.suffix in SCAN_SUFFIXES or path.name.startswith(ENV_FILE_PREFIX)
         if not is_scannable:
             continue
         # 跳过本地 .env 文件（含真实密钥，.gitignore 排除，不入库）
@@ -456,8 +455,7 @@ def self_test() -> int:
         # 负样本 B：应被拦截 —— .env.example 密钥变量带真实值
         bad_env = target / ".env.example"
         bad_env.write_text(
-            "# 测试文件\n"
-            "OA_JWT_SECRET=Xk9mQ2rT5wY8nA1bD4fG7hJ0kL3pS6uV9xC2zE5g\n",
+            "# 测试文件\nOA_JWT_SECRET=Xk9mQ2rT5wY8nA1bD4fG7hJ0kL3pS6uV9xC2zE5g\n",
             encoding="utf-8",
         )
         got = scan_dir(target)
@@ -481,16 +479,14 @@ def self_test() -> int:
         good_sh.write_text(
             "#!/bin/bash\n"
             'pg_pw="$(openssl rand -hex 24)"\n'
-            "env_set OA_POSTGRES_PASSWORD \"${pg_pw}\"\n",
+            'env_set OA_POSTGRES_PASSWORD "${pg_pw}"\n',
             encoding="utf-8",
         )
         got = scan_dir(target)
         # 此时 bad.yml 与 .env.example 仍在，故只断言 good 文件均未命中
         (
             caught.append("C 良性兜底放行")
-            if not any(
-                "good" in o["file"] or "generate.sh" in o["file"] for o in got
-            )
+            if not any("good" in o["file"] or "generate.sh" in o["file"] for o in got)
             else missed.append("C 良性兜底放行")
         )
 
