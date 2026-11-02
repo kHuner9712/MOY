@@ -6,43 +6,44 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorState, LoadingState } from '@/components/ui/feedback';
-import { setAccessToken } from '@/lib/api-client';
-import { completeAuthorization, type PendingAuthorization } from '@/lib/oidc';
+import { parseCallbackQuery } from '@/lib/oidc';
 import { resolveNextPath } from '@/lib/redirect';
-import { clearPending, loadPending, saveSession } from '@/lib/session-store';
+import { completeLogin } from '@/lib/session-client';
 
 /**
  * 统一登录回跳的实际处理流程（挂载后立即执行，不渲染任何中间数据）。
  *
  * 为什么把流程放在子组件而不是页面里：`page.tsx` 需要导出 `metadata`
- * （服务端），而这一段必须跑在浏览器里（要读地址栏、要碰存储、要用 Web Crypto）。
+ * （服务端），而这一段必须跑在浏览器里（要读地址栏）。
  *
  * 步骤与每一步的**安全约束**（顺序不可调整）：
  * 1. 先取地址栏 query，取到后立刻 `replaceState` 清掉——授权码不应留在历史与 Referer；
- * 2. 解析 query：服务端拒绝 / 缺授权码 / 缺一次性随机值 → 直接失败，不兑换；
- * 3. 读「待完成登录」：不存在或超过 10 分钟 → 失败，不兑换；
- * 4. 逐字比对一次性随机值：不相等 → 失败，**不兑换、不写任何存储**
- *    （否则伪造一个跳转就能把用户正在进行的正常登录清掉）；
- * 5. 校验通过后才兑换（S256，公开客户端，不带客户端密钥）；
- * 6. 兑换成功 → 写会话 → 注入内存 → 进入工作台；写不进存储 → 明确失败，
- *    不给「看起来登录了其实没登录」的假象。
+ * 2. 解析 query：服务端拒绝 / 缺授权码 / 缺一次性随机值 → 直接失败，**不发起兑换**；
+ * 3. 交给服务端完成兑换（`POST /sso/complete`）：`state` 与 PKCE verifier 都在
+ *    服务端的 httpOnly 暂存 Cookie 里，前端只递 `code` 与 `state`；
+ * 4. 成功即进入工作台——令牌由服务端以 `Set-Cookie` 下发，前端**没有任何落库动作**
+ *    （这正是本轮改造的目标：浏览器里不存在 JS 可读的令牌）。
+ *
+ * 与改造前的两点差异（都是**能力变强**，不是能力缺失）：
+ * - 「兑换失败不写会话」这条顺序纪律现在由结构保证：本页根本不具备写会话的能力；
+ * - 校验不再依赖本地存储的「待完成登录」，因此也不存在「本地状态不可信就清掉用户
+ *   正常登录」的风险面——伪造一次回跳最多换来一次失败提示。
+ *
+ * 已知限制（**契约所致，不是缺陷**）：深链 `next` 目前无法在回跳后恢复。
+ * 授权地址由服务端生成、回跳地址固定为 `/auth/callback`，`next` 只随服务端的一次性
+ * 状态 Cookie 走、而 `/sso/complete` 的响应体按契约只含 `{ok, expires_in}`。
+ * 因此回跳后统一回到默认落地页。要恢复深链需要服务端在 `complete` 响应里回传
+ * `next`（属于后端契约变更，本轮不做）。
  *
  * 已知残余风险（App Router 设计所致，本页无法消除）：
  * 授权码会出现在**首屏响应体的 RSC flight 载荷**里（形如 `"q":"?code=...&state=..."`）。
  * Referrer 泄露面已用响应头堵住（`next.config.js` 的 `/auth/callback` 规则下发
  * `no-referrer`，优先于页面 metadata）；但「参数不会到达客户端」这类说法是错的——
- * 清地址栏只能缩短它在浏览器历史与后续请求里的存活时间。真要在网关层也不留痕，
- * 需要改成「后端代理兑换」，属本轮冻结方案之外。
+ * 清地址栏只能缩短它在浏览器历史与后续请求里的存活时间。
  */
-
-/** 统一登录未配置时的业务语言提示 */
-const NOT_CONFIGURED_MESSAGE = '统一登录尚未配置，请联系管理员';
 
 /** 失败态的统一文案（业务语言：不提任何协议参数与内部原因） */
 const FAILURE_MESSAGE = '本次登录未完成，请重新登录';
-
-/** 浏览器无法保存登录状态时的业务语言提示 */
-const STORAGE_UNAVAILABLE_MESSAGE = '当前环境无法保存登录状态，请更换浏览器或联系管理员';
 
 /** 流程阶段 */
 type Phase = 'working' | 'failed';
@@ -69,9 +70,9 @@ export function CallbackFlow(): React.JSX.Element {
   /**
    * 失败收尾：只切界面状态，**不碰任何存储**。
    *
-   * 为什么连「清一下更干净」都不做：校验未通过时（尤其一次性随机值不匹配）
-   * 这次跳转本身就是不可信的，此时动存储等于允许伪造链接清掉用户正在用的会话。
-   * 已有会话是否还有效，由 `useSession` 按过期时间统一判定。
+   * 为什么连「清一下更干净」都不做：校验未通过时（尤其回跳参数异常），这次跳转
+   * 本身就是不可信的，此时动任何本地状态都等于允许伪造链接影响用户正在用的会话。
+   * 会话是否还有效，由会话门问服务端统一判定。
    */
   const fail = useCallback((message: string) => {
     setFailureMessage(message);
@@ -82,56 +83,32 @@ export function CallbackFlow(): React.JSX.Element {
     if (startedRef.current || typeof window === 'undefined') return;
     startedRef.current = true;
 
-    const issuer = (process.env.NEXT_PUBLIC_OIDC_ISSUER ?? '').trim();
-    const clientId = (process.env.NEXT_PUBLIC_OIDC_CLIENT_ID ?? '').trim();
-    if (issuer === '' || clientId === '') {
-      fail(NOT_CONFIGURED_MESSAGE);
-      return;
-    }
-
     // ① 先取参数，取到后立刻清地址栏（缩短授权码在历史/Referer 里的存活窗口）
     const search = window.location.search;
     window.history.replaceState({}, '', '/auth/callback');
 
-    // 待完成登录必须**只读一次**并提到外面：它既是校验依据，也是「回到哪个页面」的来源，
-    // 校验过程内部会把它作废（`onValidated`），读第二次就永远是 null 了。
-    const pending: PendingAuthorization | null = loadPending();
-
     const run = async (): Promise<void> => {
-      // ②③④ 解析 + 校验 + 兑换：全部收敛在纯函数里，便于门禁逐条断言。
-      // `onValidated` 在**兑换之前**被调用：一次性随机值一旦比对通过就作废，
-      // 不留「兑换挂在网络上、本地状态还留着」的可重放窗口。
-      const outcome = await completeAuthorization({
-        search,
-        pending,
-        issuer,
-        clientId,
-        onValidated: clearPending,
-      });
-
-      // 判定过期时也要清掉：留着只会让用户每次回来都撞同一个死状态
-      if (outcome.consumePending) clearPending();
-
-      if (outcome.kind !== 'authorized' || !outcome.session) {
+      // ② 解析：服务端拒绝 / 缺授权码 / 缺状态串 → 直接失败，一次兑换请求都不发
+      const parsed = parseCallbackQuery(search);
+      if (parsed.kind !== 'ok') {
         fail(FAILURE_MESSAGE);
         return;
       }
 
-      // ⑥ 落库失败必须明确失败：内存里有令牌、存储里没有，刷新后就会「掉线」
-      if (!saveSession(outcome.session)) {
-        fail(STORAGE_UNAVAILABLE_MESSAGE);
-        return;
-      }
+      // ③ 交给服务端兑换：state 与 verifier 只在 httpOnly 暂存 Cookie 里
+      await completeLogin(parsed.code, parsed.state);
 
-      setAccessToken(outcome.session.access_token);
-      // 深链场景回到用户原本要去的页面；`returnTo` 已在校验层过滤过开放重定向，
-      // 缺失或不合法时回落默认落地页。
-      router.replace(resolveNextPath(pending?.returnTo));
+      // ④ 浏览器此时已持有会话 Cookie，直接进工作台
+      router.replace(resolveNextPath(null));
     };
 
-    void run().catch(() => {
-      // 任何未预期异常都按「本次登录未完成」处理，不向用户暴露内部细节
-      fail(FAILURE_MESSAGE);
+    void run().catch((error: unknown) => {
+      // 任何未预期异常都按「本次登录未完成」处理，不向用户暴露内部细节；
+      // 服务端拒绝时的文案（如「登录请求已失效，请重新发起登录」）是可操作的，
+      // 因此优先用它，其余一律收敛到统一文案。
+      const message =
+        error instanceof Error && error.message.trim() !== '' ? error.message : FAILURE_MESSAGE;
+      fail(message);
     });
   }, [fail, router]);
 

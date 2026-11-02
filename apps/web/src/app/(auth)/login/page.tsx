@@ -8,56 +8,38 @@ import { useCallback, useState } from 'react';
 import { BrandMark } from '@/components/brand/brand-mark';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Field, Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
-import { getAdapterBaseUrl, setAccessToken } from '@/lib/api-client';
+import { getAdapterBaseUrl } from '@/lib/api-client';
 import { BRAND } from '@/lib/brand';
 import { toBusinessMessage } from '@/lib/business-errors';
-import { buildAuthorizeUrl, createPkcePair, createState } from '@/lib/oidc';
 import { resolveNextPath } from '@/lib/redirect';
-import { savePending, saveSession } from '@/lib/session-store';
+import { startLogin } from '@/lib/session-client';
 
 /**
  * 登录页（AR-013 / D-26：生产构建不得提供任何绕过登录的入口）。
  *
  * 设计要点（总方案 5.5 / 附录 A-1）：
  * - 界面不出现任何技术术语、组件名称、身份服务品牌名——统一称「统一登录」；
- * - **生产构建**只有一条路径：跳转统一登录。未配置统一登录时**只显示提示**，
- *   不提供「进入工作台」按钮、不提供凭证输入框（诚实降级：宁可挡住，
- *   也不给一个"点一下就进去"的假入口）；
- * - **开发构建**保留凭据入口便于本地联调，但必须显式标注「仅开发环境」。
+ * - **生产构建**只有一条路径：跳转统一登录；
+ * - **开发构建**保留「进入工作台」入口便于本地联调，但必须显式标注「仅开发环境」。
  *
- * 本批次补上登录闭环的另一半（审计 A-01）：
- * 跳转前生成一次性随机值与 PKCE（S256）挑战，连同回跳地址存进 sessionStorage，
- * 回跳页据此校验「这次回来的是我发起的」并完成兑换。**不生成、不保存就跳转**
- * 等于把回跳参数变成任何人可构造的登录态写入入口，因此这一步是硬要求。
+ * 本页在 P0-5 路线 A 里的变化（令牌不进 JavaScript）：
+ * - 不再生成 PKCE、不再拼授权地址、不再存任何东西：`verifier` 与 `state` 现在
+ *   只存在于服务端的 httpOnly 暂存 Cookie 里，前端连「存」的机会都没有了；
+ * - 统一登录的完整配置（身份服务地址、客户端标识、回跳地址、授权范围）已全部
+ *   搬到服务端 —— 前端既不知道也不需要知道，少一处配置就少一处漂移；
+ * - 因此**不再有「统一登录尚未配置」的本地判定**：能不能登录由
+ *   `POST /sso/start` 的响应回答（未启用时是「统一登录未启用」），前端如实转述。
+ *
+ * 一并删除的还有「手粘访问凭证进入」这条开发路径：令牌已经不可能被写进任何
+ * 请求（身份只走 Cookie），保留一个「粘贴后看起来登录了但每个请求都匿名」的
+ * 入口，比没有入口更糟。
  *
  * @returns 登录页元素
  */
 
 /** 是否生产构建（Next 在构建期静态替换该表达式） */
 const IS_PRODUCTION_BUILD = process.env.NODE_ENV === 'production';
-
-/** 统一登录服务地址（生产必须配置；未配置时不提供进入入口） */
-const UNIFIED_LOGIN_ISSUER = (process.env.NEXT_PUBLIC_OIDC_ISSUER ?? '').trim();
-
-/** 统一登录客户端标识（生产必须配置；与地址成对生效） */
-const UNIFIED_LOGIN_CLIENT_ID = (process.env.NEXT_PUBLIC_OIDC_CLIENT_ID ?? '').trim();
-
-/** 统一登录是否已配置完整（两项缺一即视为未配置） */
-const IS_UNIFIED_LOGIN_READY = UNIFIED_LOGIN_ISSUER !== '' && UNIFIED_LOGIN_CLIENT_ID !== '';
-
-/**
- * 统一登录的授权范围。
- *
- * 以片段拼接书写的原因：其中第二段是协议规定的固定取值，同时也是文案门禁
- * （scripts/check-banned-terms.mjs）在「模型档位」语境下的禁用词；这里是协议
- * 参数、不是用户可见文案，拆写可避免门禁误报。
- */
-const UNIFIED_LOGIN_SCOPE = ['openid', 'pro' + 'file', 'email'].join(' ');
-
-/** 统一登录完成后回到本应用的地址（与统一登录侧登记的回跳地址一致） */
-const CALLBACK_PATH = '/auth/callback';
 
 /**
  * 读取地址栏里的 `next` 原始值（登录后要回到哪里）。
@@ -67,7 +49,7 @@ const CALLBACK_PATH = '/auth/callback';
  * 而本页的交互全部发生在浏览器里，读地址栏即可；这里只在点击时使用，
  * 不参与首帧渲染，因此不需要额外的挂载时状态。
  *
- * 返回值**未校验**：必须交给 `resolveNextPath` 处理后才能用于跳转。
+ * 返回值**未校验**：必须交给 `resolveNextPath` 处理后才能使用。
  *
  * @returns 地址栏里的 `next`；不存在时为空串
  */
@@ -78,9 +60,6 @@ function readNextParam(): string {
   return new URLSearchParams(window.location.search).get('next') ?? '';
 }
 
-/** 浏览器无法保存登录状态时的业务语言提示（不出现任何技术词） */
-const STORAGE_UNAVAILABLE_MESSAGE = '当前环境无法保存登录状态，请更换浏览器后重试';
-
 /**
  * 登录页组件。
  *
@@ -88,50 +67,22 @@ const STORAGE_UNAVAILABLE_MESSAGE = '当前环境无法保存登录状态，请�
  */
 export default function LoginPage(): React.JSX.Element {
   const router = useRouter();
-  const [token, setToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   /**
-   * 生产路径：生成一次性随机值与 PKCE，存待完成登录，然后跳转统一登录。
+   * 生产路径：向服务端要授权地址，然后整页跳过去。
    *
-   * 顺序不可颠倒：**先存后跳**。若先跳再存（或干脆不存），回跳页就没有
-   * 可用于比对的本地状态，只能「来什么兑换什么」——那正是本轮要修掉的缺口。
+   * 顺序不可颠倒：**先取地址、再跳转**。取不到地址（`auth_mode=stub`、网关不可用、
+   * 身份平台配置缺失）时必须停在原地给出提示——跳一个空地址会把用户带到
+   * 一个更莫名其妙的错误页，而且再回来时本次登录往返已经作废了。
    */
   const handleUnifiedLogin = useCallback(async () => {
-    if (!IS_UNIFIED_LOGIN_READY) {
-      // 理论上按钮不会渲染；兜底为提示而非静默失败
-      toast.error('统一登录尚未配置，请联系管理员');
-      return;
-    }
     setSubmitting(true);
     try {
-      const redirectUri = `${window.location.origin}${CALLBACK_PATH}`;
-      const pkce = await createPkcePair();
-      const state = createState();
-      const stored = savePending({
-        state,
-        codeVerifier: pkce.codeVerifier,
-        redirectUri,
-        createdAt: Date.now(),
-        // 深链场景：把「登录后回到哪里」随一次性状态一起带到回跳页
-        returnTo: resolveNextPath(readNextParam()),
-      });
-      if (!stored) {
-        // 存不下就不跳：跳过去也回不来（回跳页没有状态可比对）
-        setSubmitting(false);
-        toast.error(STORAGE_UNAVAILABLE_MESSAGE);
-        return;
-      }
-      window.location.assign(
-        buildAuthorizeUrl({
-          issuer: UNIFIED_LOGIN_ISSUER,
-          clientId: UNIFIED_LOGIN_CLIENT_ID,
-          redirectUri,
-          state,
-          codeChallenge: pkce.codeChallenge,
-          scope: UNIFIED_LOGIN_SCOPE,
-        }),
-      );
+      // `next` 交给服务端随一次性状态一起带走（服务端契约 `{next?}`）；
+      // 越界路径已在本地被 `resolveNextPath` 过滤成默认落地页。
+      const authorizeUrl = await startLogin(resolveNextPath(readNextParam()));
+      window.location.assign(authorizeUrl);
       // 成功后浏览器即将离开本页，保持按钮禁用态，避免重复发起
     } catch (error) {
       setSubmitting(false);
@@ -154,41 +105,6 @@ export default function LoginPage(): React.JSX.Element {
     }
   }, [router]);
 
-  /**
-   * 开发路径：粘贴访问凭证进入工作台（**仅开发构建可见**）。
-   *
-   * 本批次把这条路径接上了：以前只把凭证写进一个没人读的存储键，
-   * 表现为「登录了但每个请求都没有身份」。现在统一写入会话存储并注入内存，
-   * 与统一登录走同一套读取逻辑（`useSession` 从会话恢复），避免两套行为。
-   */
-  const handleTokenSubmit = useCallback(() => {
-    const trimmed = token.trim();
-    if (!trimmed) {
-      toast.error('请输入访问凭证');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const saved = saveSession({
-        access_token: trimmed,
-        refresh_token: null,
-        // 手粘凭证没有过期信息：按「无过期信息」处理，不判过期
-        expires_at: null,
-      });
-      if (!saved) {
-        toast.error(STORAGE_UNAVAILABLE_MESSAGE);
-        return;
-      }
-      setAccessToken(trimmed);
-      toast.success('已进入工作台');
-      router.push(resolveNextPath(readNextParam()));
-    } catch (error) {
-      toast.error(toBusinessMessage(error));
-    } finally {
-      setSubmitting(false);
-    }
-  }, [router, token]);
-
   return (
     <Card>
       <CardHeader className="text-center">
@@ -202,22 +118,13 @@ export default function LoginPage(): React.JSX.Element {
       </CardHeader>
       <CardContent className="space-y-6">
         {IS_PRODUCTION_BUILD ? (
-          IS_UNIFIED_LOGIN_READY ? (
-            <Button className="w-full" size="lg" disabled={submitting} onClick={handleUnifiedLogin}>
-              统一登录
-            </Button>
-          ) : (
-            <div
-              className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground"
-              role="status"
-            >
-              统一登录尚未配置，请联系管理员
-            </div>
-          )
+          <Button className="w-full" size="lg" disabled={submitting} onClick={handleUnifiedLogin}>
+            统一登录
+          </Button>
         ) : (
           <div className="space-y-6">
             <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              仅开发环境：以下两种方式都绕过身份校验，正式环境不提供
+              仅开发环境：以下入口绕过身份校验，正式环境不提供
             </div>
 
             <Button className="w-full" size="lg" disabled={submitting} onClick={handleEnter}>
@@ -229,52 +136,28 @@ export default function LoginPage(): React.JSX.Element {
                 <span className="w-full border-t" />
               </div>
               <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">开发联调</span>
+                <span className="bg-card px-2 text-muted-foreground">联调验证</span>
               </div>
             </div>
-
-            <Field
-              label="访问凭证"
-              htmlFor="access-token"
-              hint="仅开发联调使用，正式环境由统一登录提供"
-            >
-              <Input
-                id="access-token"
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
-                placeholder="粘贴访问凭证"
-                autoComplete="off"
-              />
-            </Field>
 
             <Button
               variant="outline"
               className="w-full"
               disabled={submitting}
-              onClick={handleTokenSubmit}
+              onClick={handleUnifiedLogin}
             >
-              使用凭证进入
+              统一登录（联调验证用）
             </Button>
-
-            {IS_UNIFIED_LOGIN_READY ? (
-              <Button
-                variant="ghost"
-                className="w-full"
-                disabled={submitting}
-                onClick={handleUnifiedLogin}
-              >
-                统一登录（联调验证用）
-              </Button>
-            ) : null}
           </div>
         )}
 
         {/* 服务状态只在开发构建显示：联调时必须一眼看到连的是哪个适配层，
             但它的取值是后端地址，属于「用户可见文案不得出现后端地址」的红线内容。
-            写成门控而不是删掉，是为了不把「生产不暴露」做成「开发者看不见」。 */}
+            写成门控而不是删掉，是为了不把「生产不暴露」做成「开发者看不见」。
+            缺省基址是空串（同源），此时显示「同源」而不是一段空白。 */}
         {IS_PRODUCTION_BUILD ? null : (
           <p className="text-center text-xs text-muted-foreground">
-            服务状态：{getAdapterBaseUrl()}
+            服务状态：{getAdapterBaseUrl() || '同源'}
           </p>
         )}
       </CardContent>

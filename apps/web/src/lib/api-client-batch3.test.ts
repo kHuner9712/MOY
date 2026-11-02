@@ -60,17 +60,47 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 令牌与租户状态
+// 身份载体：Cookie（令牌不进 JavaScript）
 // ---------------------------------------------------------------------------
 
-describe('api-client · 令牌与租户状态', () => {
-  it('setAccessToken / getAccessToken 往返', async () => {
+describe('api-client · 身份载体', () => {
+  it('令牌读写接口已删除（P0-5：JS 里不该有令牌）', async () => {
     const api = await load();
-    expect(api.getAccessToken()).toBeNull();
-    api.setAccessToken('tok_abc');
-    expect(api.getAccessToken()).toBe('tok_abc');
-    api.setAccessToken(null);
-    expect(api.getAccessToken()).toBeNull();
+    // 这两个导出一旦回来，就说明令牌又能被页面脚本读到/写进内存缓存
+    expect('setAccessToken' in api).toBe(false);
+    expect('getAccessToken' in api).toBe(false);
+  });
+
+  it('请求带 credentials=include（浏览器才会附加 httpOnly 会话 Cookie）', async () => {
+    const api = await load();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => envelope({})),
+    );
+    await api.identityApi.profile();
+    expect(callOf(vi.mocked(fetch)).init.credentials).toBe('include');
+  });
+
+  it('请求头里没有 Authorization（身份不靠请求头）', async () => {
+    const api = await load();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => envelope({})),
+    );
+    await api.identityApi.profile();
+    expect(headersOf(vi.mocked(fetch)).get('Authorization')).toBeNull();
+  });
+
+  it('写请求同样带 Cookie 且不带 Authorization', async () => {
+    const api = await load();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => envelope({})),
+    );
+    await api.identityApi.verify({ permission: 'knowledge:read' });
+    const { init } = callOf(vi.mocked(fetch));
+    expect(init.credentials).toBe('include');
+    expect(new Headers(init.headers).get('Authorization')).toBeNull();
   });
 
   it('setTenantId 后请求头带 X-Tenant-Id', async () => {
@@ -93,27 +123,6 @@ describe('api-client · 令牌与租户状态', () => {
     );
     await api.identityApi.profile();
     expect(headersOf(vi.mocked(fetch)).get('X-Tenant-Id')).toBeNull();
-  });
-
-  it('setAccessToken 后请求头带 Authorization', async () => {
-    const api = await load();
-    api.setAccessToken('tok_xyz');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => envelope({})),
-    );
-    await api.identityApi.profile();
-    expect(headersOf(vi.mocked(fetch)).get('Authorization')).toBe('Bearer tok_xyz');
-  });
-
-  it('未设 token 时不带 Authorization 头', async () => {
-    const api = await load();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => envelope({})),
-    );
-    await api.identityApi.profile();
-    expect(headersOf(vi.mocked(fetch)).get('Authorization')).toBeNull();
   });
 });
 
@@ -375,10 +384,21 @@ describe('api-client · 各 API 组方法', () => {
     expect(callOf(vi.mocked(fetch)).url).toContain('/readyz');
   });
 
-  it('getAdapterBaseUrl 返回非空地址', async () => {
+  it('getAdapterBaseUrl 默认空串（同源相对路径，不直连适配层端口）', async () => {
     const api = await load();
-    expect(api.getAdapterBaseUrl()).toBeTruthy();
-    expect(api.getAdapterBaseUrl()).toContain('http');
+    // 边缘化/反代部署后浏览器与适配层同源：写死 http://127.0.0.1:8000 会在用户
+    // 机器上打不通，而 Cookie 会话跨源还要 SameSite=None + Secure，等于降安全基线
+    expect(api.getAdapterBaseUrl()).toBe('');
+  });
+
+  it('请求 URL 是相对路径（默认不拼任何主机名）', async () => {
+    const api = await load();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => envelope({})),
+    );
+    await api.identityApi.profile();
+    expect(callOf(vi.mocked(fetch)).url.startsWith('/api/v1/')).toBe(true);
   });
 });
 

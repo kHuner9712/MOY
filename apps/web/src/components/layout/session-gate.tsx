@@ -4,29 +4,33 @@
  * 会话门（F-01）—— 主界面布局的「就绪开关」。
  *
  * 要解决的问题（审计 A-01 的根因）：
- * 令牌只存在 `api-client` 的模块内存里，唯一的回灌点是会话恢复逻辑，而这段逻辑
- * 原先只在 `/profile` 一页挂载 → **除 `/profile` 外的任何整页加载都不带身份**，
- * 表现为「硬刷新 / 从收藏夹进深链就掉登录」。
+ * 令牌只存在内存里，唯一的回灌点是会话恢复逻辑，而这段逻辑原先只在 `/profile`
+ * 一页挂载 → **除 `/profile` 外的任何整页加载都不带身份**，表现为「硬刷新 /
+ * 从收藏夹进深链就掉登录」。改造后身份由 httpOnly Cookie 承载，这个问题从根上
+ * 消失（Cookie 由浏览器自动附加），但「什么时候可以渲染子页面」仍需一个判据。
  *
- * 设计口径（三条，互相支撑，改一条要先想清另外两条）：
- * 1. **以 `profile` 返回为就绪判据**，不是「令牌注入即就绪」。因为租户请求头
- *    `X-Tenant-Id` 的正确值只能从 `profile.tenant.tenant_id` 得到，提前挂载子页面
- *    会让整批请求带上错的租户。代价是硬刷新多一次轻量往返。
- * 2. **子页面在就绪前不挂载**（条件渲染）。`AppSidebar` 内的插件分组也在门内——
+ * 设计口径（四条，互相支撑，改一条要先想清另外三条）：
+ * 1. **以服务端会话状态 + `profile` 为就绪判据**，不是「Cookie 存在即就绪」。
+ *    Cookie 是 httpOnly 的，前端读不到（也不该读），必须问 `/sso/session`；
+ *    而租户头 `X-Tenant-Id` 的正确值只能从 `profile.tenant.tenant_id` 得到，
+ *    提前挂载子页面会让整批请求带上错的租户。代价是硬刷新多两次轻量往返。
+ * 2. **三态判据，不是单布尔**：`/sso/session` 回答四个字段，`authenticated=false`
+ *    既可能是「过期但可刷新」（该去刷新）也可能是「从未登录」（该去登录页）。
+ *    判据收敛在 `auth-refresh.decideSession()` 一处，本文件不自己拼条件。
+ * 3. **子页面在就绪前不挂载**（条件渲染）。`AppSidebar` 内的插件分组也在门内——
  *    它一挂载就发请求，漏在门外等于刷新页面时仍有一次无身份请求。
- * 3. **会话失效只有两个入口**：本门自己请求 `profile` 拿到 20002，或运行期任意请求
- *    由 `api-client` 广播（`session-events`）。页面不参与处置。
- * 4. **租户头由服务端教**：就绪前 `setTenantId(null)`（请求不带该头），`profile` 回来后
- *    才写入真租户。反向（先猜一个）会让请求头压过令牌声明，SaaS 下首个 `profile` 即 403。
+ * 4. **会话失效只有三个入口**：本门自己的会话探针/刷新给出「刷新令牌已死」、
+ *    本门请求 `profile` 拿到 20002、运行期任意请求由 `api-client` 广播
+ *    （`session-events`）。页面不参与处置。
  *
  * 状态与渲染的映射（这张表就是实现契约）：
  *
  * | phase | 渲染 | 副作用 |
  * | --- | --- | --- |
  * | `restoring` | 骨架（无任何「未登录」文案） | 无 |
- * | `ready` | 侧栏 + 顶栏 + 子页面 | 租户头已在数据落缓存前写好 |
+ * | `ready` | 侧栏 + 顶栏 + 子页面 | 租户头已在数据落缓存前写好；已排下次主动刷新 |
  * | `anonymous` | 骨架 | 跳登录（带 `next`），ref 去重 |
- * | `expired` | 骨架 | 清会话 + 清租户头 + 跳登录 |
+ * | `expired` | 骨架 | 清租户头 + 跳登录 |
  * | `error` | 错误态（带重试） | **不清会话**（网络抖动不等于失效） |
  */
 
@@ -36,15 +40,25 @@ import * as React from 'react';
 
 import { ErrorState, Skeleton } from '@/components/ui/feedback';
 import { QUERY_KEYS, useApiQuery } from '@/hooks/use-api';
-import { identityApi, setAccessToken, setTenantId } from '@/lib/api-client';
+import { identityApi, setTenantId } from '@/lib/api-client';
+import { decideSession, refreshWithRetry, scheduleRefresh } from '@/lib/auth-refresh';
 import { shouldReauthenticate, toBusinessMessage } from '@/lib/business-errors';
 import { buildLoginHref } from '@/lib/redirect';
 import { onUnauthorized } from '@/lib/session-events';
-import { clearSession, isSessionExpired, loadSession } from '@/lib/session-store';
+import { fetchSession, logoutSession, type SessionState } from '@/lib/session-client';
+import { purgeLegacySessionStorage } from '@/lib/session-store';
 import type { CurrentUser } from '@/lib/types';
 
 /** 会话阶段（五态，与状态机一一对应） */
 export type SessionPhase = 'restoring' | 'ready' | 'anonymous' | 'expired' | 'error';
+
+/**
+ * 握手阶段（会话探针 + 必要时刷新之后得到的结论）。
+ *
+ * 与 `SessionPhase` 分开是因为二者回答的问题不同：握手阶段回答「**浏览器有没有
+ * 可用会话**」，`SessionPhase` 还叠加了「资料取回来了没有」。
+ */
+type Handshake = 'restoring' | 'authenticated' | 'anonymous' | 'expired' | 'unavailable';
 
 /** 会话上下文（对外 API） */
 export interface SessionContextValue {
@@ -56,12 +70,21 @@ export interface SessionContextValue {
   errorMessage: string;
   /** 重新请求资料（error 态的重试，也可做「刷新账户信息」） */
   refreshProfile: () => void;
-  /** 清会话 + 清查询缓存 + 跳登录 */
+  /** 清查询缓存 + 通知服务端登出 + 跳登录 */
   logout: () => void;
 }
 
 /** 本地会话失效时的提示：与业务错误码 20002 的既有口径保持一致（同码同文案） */
 export const SESSION_EXPIRED_MESSAGE = '登录状态已失效，请重新登录';
+
+/**
+ * 会话服务不可用时的提示。
+ *
+ * 与「登录状态已失效」**必须分开**：前者是临时故障（服务端在维护、网关 503），
+ * 用户既没做错什么也不该被登出；后者才是「请重新登录」。混成一句就是把一次
+ * 抖动升级成强制重新登录（服务端 QA-02 的同类错误在客户端的翻版）。
+ */
+export const SESSION_UNAVAILABLE_MESSAGE = '登录服务暂时不可用，请稍后再试';
 
 const SessionContext = React.createContext<SessionContextValue | null>(null);
 
@@ -122,7 +145,7 @@ export function SessionErrorState({
 }: {
   /** 业务语言文案 */
   message: string;
-  /** 重试回调（重新请求资料） */
+  /** 重试回调（重新握手 / 重新请求资料） */
   onRetry: () => void;
 }): React.JSX.Element {
   return (
@@ -133,7 +156,7 @@ export function SessionErrorState({
 }
 
 /**
- * 会话门：Provider + 就绪判定 + 跳登录。
+ * 会话门：Provider + 就绪判定 + 跳登录 + 主动刷新排期。
  *
  * @param props - 组件属性
  * @returns 门内元素或等待态
@@ -143,39 +166,74 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
   const pathname = usePathname();
   const queryClient = useQueryClient();
 
-  /**
-   * 「本地会话握手」阶段：与请求结果无关，只看存储。
-   *
-   * 之所以与查询状态分开存：`anonymous` / `expired` 是**推断出来的前置结论**
-   * （没有会话 / 已过期），此时连请求都不该发，不能用「请求成功与否」表达。
-   */
-  const [handshake, setHandshake] = React.useState<'restoring' | 'anonymous' | 'expired'>(
-    'restoring',
-  );
-  /** 令牌已注入，可以请求资料（没有本地会话时保持 false，不发匿名请求） */
-  const [tokenReady, setTokenReady] = React.useState<boolean>(false);
+  /** 握手阶段（见 `Handshake` 注释） */
+  const [handshake, setHandshake] = React.useState<Handshake>('restoring');
+  /** 握手轮次：错误态点「重试」时自增，驱动握手 effect 重跑 */
+  const [epoch, setEpoch] = React.useState<number>(0);
   /** 跳登录只跳一次（否则每次重渲染都会 replace 一次，挡住用户手动返回） */
   const redirectedRef = React.useRef<boolean>(false);
+  /**
+   * 当前访问令牌剩余有效期（秒）。
+   *
+   * 用 ref 而不是 state：它只喂给刷新排期（副作用），不参与渲染。若放进 state，
+   * 每次刷新成功都会触发整棵布局重渲染 —— 而刷新每几分钟就发生一次。
+   */
+  const expiresInRef = React.useRef<number | null>(null);
 
-  // ① 挂载：读本地会话（同步存储）→ 决定「没有 / 过期 / 可以取资料」
+  // ① 启动清理：删掉旧版本留在客户端的令牌键（只删不读，见 session-store）
+  // ② 握手：问服务端「我还登录着吗」，再按三态判据决定「直接用 / 去刷新 / 去登录」
   React.useEffect(() => {
-    const stored = loadSession();
-    if (!stored) {
-      setAccessToken(null);
-      setHandshake('anonymous');
-      return;
-    }
-    if (isSessionExpired(stored)) {
-      // 过期即视为未登录：别再拿一个必然被拒的令牌去请求
-      clearSession();
-      setAccessToken(null);
-      setTenantId(null);
-      setHandshake('expired');
-      return;
-    }
-    setAccessToken(stored.access_token);
-    setTokenReady(true);
-  }, []);
+    purgeLegacySessionStorage();
+    let cancelled = false;
+
+    const run = async (): Promise<void> => {
+      let state: SessionState;
+      try {
+        state = await fetchSession();
+      } catch {
+        // 探针本身失败（网关 5xx、断网、`auth_mode=stub` 的 30001）：**不是**未登录，
+        // 不能跳登录页（那会把一次维护变成全员重新登录）
+        if (!cancelled) setHandshake('unavailable');
+        return;
+      }
+      if (cancelled) return;
+
+      const decision = decideSession(state);
+      if (decision !== 'refresh') {
+        if (decision === 'use') {
+          expiresInRef.current = state.expires_in;
+          setHandshake('authenticated');
+        } else {
+          // `expired=true` 说明用户确实登录过、只是令牌失效了；仅用于区分文案/日志，
+          // 渲染与跳转行为完全相同（都是骨架 + 跳登录页）。
+          setHandshake(state.expired ? 'expired' : 'anonymous');
+        }
+        return;
+      }
+
+      // decision === 'refresh'：过期但还能续期。四分类处置在 refreshWithRetry 内部。
+      const outcome = await refreshWithRetry();
+      if (cancelled) return;
+      if (outcome.kind === 'refreshed') {
+        expiresInRef.current = outcome.expires_in;
+        setHandshake('authenticated');
+        return;
+      }
+      if (outcome.kind === 'relogin') {
+        // 刷新令牌已死：这是唯一「必须重新登录」的服务端结论
+        setHandshake('expired');
+        return;
+      }
+      // transient：临时故障且重试已用尽 → 停在错误态，给用户「重试」，绝不登出
+      setHandshake('unavailable');
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [epoch]);
 
   const profileQuery = useApiQuery(
     QUERY_KEYS.profile(),
@@ -191,34 +249,42 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
       setTenantId(profile.tenant.tenant_id);
       return profile;
     },
-    { enabled: tokenReady, staleTime: Number.POSITIVE_INFINITY, retry: 0 },
+    {
+      enabled: handshake === 'authenticated',
+      staleTime: Number.POSITIVE_INFINITY,
+      retry: 0,
+    },
   );
 
   const profileError = profileQuery.error;
   const needsReauth = profileError !== null && shouldReauthenticate(profileError);
   const profile = profileQuery.data ?? null;
 
-  // ② 派生阶段：不做第二份状态，避免「状态与请求结果打架」
+  // ③ 派生阶段：不做第二份状态，避免「状态与请求结果打架」
   const phase: SessionPhase =
-    handshake !== 'restoring'
-      ? handshake
-      : needsReauth
-        ? 'expired'
-        : profile !== null
-          ? 'ready'
-          : profileError !== null
-            ? 'error'
-            : 'restoring';
+    handshake === 'restoring'
+      ? 'restoring'
+      : handshake === 'unavailable'
+        ? 'error'
+        : handshake === 'authenticated'
+          ? needsReauth
+            ? 'expired'
+            : profile !== null
+              ? 'ready'
+              : profileError !== null
+                ? 'error'
+                : 'restoring'
+          : handshake;
 
-  // ③ 失效处置：清会话 + 清租户头（`expired` 的两种来源都收敛到这里）
+  // ④ 失效处置：清租户头（`expired` 的两种来源都收敛到这里）。
+  //    不在这里清任何令牌：浏览器里的令牌是 httpOnly Cookie，只有服务端能删。
   React.useEffect(() => {
     if (phase !== 'expired') return;
-    clearSession();
-    setAccessToken(null);
+    expiresInRef.current = null;
     setTenantId(null);
   }, [phase]);
 
-  // ④ 跳登录：`anonymous` / `expired` 都继续渲染骨架，只做一次 replace
+  // ⑤ 跳登录：`anonymous` / `expired` 都继续渲染骨架，只做一次 replace
   React.useEffect(() => {
     if (phase !== 'anonymous' && phase !== 'expired') return;
     if (redirectedRef.current) return;
@@ -227,9 +293,29 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
     router.replace(buildLoginHref(pathname, search));
   }, [phase, pathname, router]);
 
-  // ⑤ 运行期失效：任意请求拿到 20002 → 传输层广播 → 这里收敛
+  // ⑥ 主动刷新排期：提前 30–60 秒 + 0–30 秒抖动（`nextRefreshDelay` 内部实现），
+  //    多标签页因此不会在同一毫秒一起刷新（服务端刷新令牌是轮换的，同时刷新会
+  //    互相把对方的令牌打作废 → 401 → 跳登录页，即服务端 QA-07 的风暴回路）。
+  React.useEffect(() => {
+    if (phase !== 'ready') return undefined;
+    return scheduleRefresh(expiresInRef.current, {
+      onRefreshed: (nextExpiresIn) => {
+        expiresInRef.current = nextExpiresIn;
+      },
+      onRelogin: () => {
+        // 刷新令牌已死：走与其他失效入口一致的处置（清租户头 + 跳登录）
+        expiresInRef.current = null;
+        setHandshake('expired');
+      },
+      onUnavailable: () => {
+        // 临时故障：**保持会话**，排期内部会在固定间隔后重试下一轮
+      },
+    });
+  }, [phase]);
+
+  // ⑦ 运行期失效：任意请求拿到 20002（且刷新失败）→ 传输层广播 → 这里收敛
   const handleUnauthorized = React.useCallback(() => {
-    setTokenReady(false);
+    expiresInRef.current = null;
     setHandshake('expired');
   }, []);
 
@@ -248,16 +334,31 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
   }, [refetchProfile]);
 
   /**
-   * 退出登录：清会话 + 清查询缓存 + 回登录页。
+   * 错误态的重试：握手失败时重跑握手，资料失败时重发资料。
    *
-   * 必须 `queryClient.clear()`（而不是 `invalidateQueries`）：后者保留旧数据直到新数据
-   * 回来，换账号后会在界面上短暂看到上一个账号的插件/知识库列表。
+   * 两者分开而不是一律重跑：资料请求失败时重新握手会多一次 `/sso/session`
+   * 往返，而会话本身刚刚才确认有效。
+   */
+  const retry = React.useCallback(() => {
+    if (handshake === 'unavailable' || handshake === 'restoring') {
+      setHandshake('restoring');
+      setEpoch((current) => current + 1);
+      return;
+    }
+    void refetchProfile();
+  }, [handshake, refetchProfile]);
+
+  /**
+   * 退出登录：通知服务端删 Cookie → 清本地遗留键 → 清查询缓存 → 回登录页。
+   *
+   * 服务端调用失败也继续本地清理：用户点的是「退出」，本地的可见状态必须立刻
+   * 清干净（`queryClient.clear()` 保留旧数据会让换账号后短暂看到上一个账号的数据）。
    */
   const logout = React.useCallback(() => {
-    clearSession();
-    setAccessToken(null);
+    void logoutSession().catch(() => undefined);
+    purgeLegacySessionStorage();
     setTenantId(null);
-    setTokenReady(false);
+    expiresInRef.current = null;
     queryClient.clear();
     setHandshake('anonymous');
   }, [queryClient]);
@@ -268,18 +369,22 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
       user: phase === 'ready' ? profile : null,
       errorMessage:
         phase === 'error'
-          ? toBusinessMessage(profileError)
+          ? handshake === 'unavailable'
+            ? SESSION_UNAVAILABLE_MESSAGE
+            : toBusinessMessage(profileError)
           : phase === 'expired'
             ? SESSION_EXPIRED_MESSAGE
             : '',
       refreshProfile,
       logout,
     }),
-    [phase, profile, profileError, refreshProfile, logout],
+    [phase, profile, profileError, handshake, refreshProfile, logout],
   );
 
   if (phase === 'error') {
-    return <SessionErrorState message={toBusinessMessage(profileError)} onRetry={refreshProfile} />;
+    const message =
+      handshake === 'unavailable' ? SESSION_UNAVAILABLE_MESSAGE : toBusinessMessage(profileError);
+    return <SessionErrorState message={message} onRetry={retry} />;
   }
 
   if (phase !== 'ready') {

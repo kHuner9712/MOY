@@ -8,7 +8,8 @@
  *
  * 统一约定（架构文档 3.0.1 / 3.0.2 / 3.0.4）：
  * - 所有接口返回 `{code, message, data}`，`code=0` 成功；
- * - 除健康检查外均需 `Authorization: Bearer <token>`；
+ * - 身份**由 httpOnly Cookie 承载**（P0-5 路线 A：令牌不进 JavaScript），
+ *   因此每个请求都必须 `credentials: 'include'`，且**不再注入 `Authorization` 头**；
  * - 所有写接口必须携带 `Idempotency-Key`（UUID v4，24h 内有效）。
  */
 
@@ -120,6 +121,7 @@ import type {
   MemorySettingsUpdate,
 } from '@/lib/types';
 
+import { refreshWithRetry } from './auth-refresh';
 import { emitUnauthorized } from './session-events';
 
 /** 统一响应包装 */
@@ -176,9 +178,15 @@ export class BusinessError extends Error {
 // 运行时配置
 // ---------------------------------------------------------------------------
 
-/** 适配层地址（来自 NEXT_PUBLIC_ADAPTER_BASE_URL） */
-const ADAPTER_BASE_URL: string =
-  process.env.NEXT_PUBLIC_ADAPTER_BASE_URL ?? 'http://127.0.0.1:8000';
+/**
+ * 适配层地址（来自 NEXT_PUBLIC_ADAPTER_BASE_URL）。
+ *
+ * 缺省 `''` = **同源相对路径**：边缘化 / 反代部署后浏览器与适配层同源，
+ * 直连 `http://127.0.0.1:8000` 既打不通（用户机器上没有这个端口），也会被
+ * 浏览器的混合内容与 CORS 规则拒掉；而 Cookie 会话在跨源下还需要
+ * `SameSite=None` + `Secure`，等于把安全基线往下拉。
+ */
+const ADAPTER_BASE_URL: string = process.env.NEXT_PUBLIC_ADAPTER_BASE_URL ?? '';
 
 /** API 版本前缀 */
 const API_PREFIX = '/api/v1';
@@ -206,11 +214,25 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const STREAM_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
-// 令牌与请求头
+// 身份与请求头
 // ---------------------------------------------------------------------------
 
-/** 访问令牌内存缓存（由登录流程写入） */
-let accessToken: string | null = null;
+/**
+ * 为什么这里**没有**访问令牌变量、也没有 `setAccessToken` / `getAccessToken`
+ * （P0-5 路线 A，删掉的东西不要再加回来）：
+ *
+ * 改造前令牌存在本地存储里，再由本文件注入 `Authorization: Bearer`。
+ * 本地存储对同源脚本完全可读 —— 任何一处 XSS 都能把它取走并外传；
+ * 而 httpOnly Cookie 是浏览器里**唯一**脚本读不到也写不上的凭证载体。
+ * 因此令牌改由服务端 `Set-Cookie` 下发，本文件只负责让请求带上 Cookie
+ * （`credentials: 'include'`），服务端凭 Cookie 认人。
+ *
+ * 由此带来的三个连带变化，都是刻意的：
+ * 1. 没有「注入令牌」这一步，也就没有「注入晚了 / 注入漏了」导致的整页无身份；
+ * 2. 会话是否有效必须去问服务端（`/sso/session`），不能靠本地过期时间自己算；
+ * 3. 令牌不进任何请求头 ⇒ 不会进浏览器开发者工具的请求体、不会进日志、
+ *    也不会被任何一段页面脚本读到。
+ */
 
 /**
  * 当前租户（`null` = 尚不知道，一律**不带**该请求头）。
@@ -225,24 +247,6 @@ let accessToken: string | null = null;
  * 私有化模式后端忽略该头，行为不变。
  */
 let currentTenantId: string | null = null;
-
-/**
- * 设置访问令牌。
- *
- * @param token - OIDC 访问令牌
- */
-export function setAccessToken(token: string | null): void {
-  accessToken = token;
-}
-
-/**
- * 获取当前访问令牌。
- *
- * @returns 令牌字符串；未登录时为 null
- */
-export function getAccessToken(): string | null {
-  return accessToken;
-}
 
 /**
  * 设置当前租户。
@@ -395,10 +399,11 @@ function buildHeaders(options: {
   const headers = new Headers();
   headers.set('Accept', options.accept ?? 'application/json');
 
-  if (accessToken) {
-    headers.set('Authorization', `Bearer ${accessToken}`);
-  }
-  // 只有「已经知道租户」时才带该头：未知时留空，让后端按令牌声明解析。
+  // 这里**刻意不设 `Authorization`**：身份由 httpOnly Cookie 承载，
+  // `fetch` 的 `credentials: 'include'` 会让浏览器自动附加（见 `fetchWithTimeout`
+  // 的调用点）。任何在此处拼令牌的改动都等于把 XSS 面还回来。
+  //
+  // 只有「已经知道租户」时才带租户头：未知时留空，让后端按令牌声明解析。
   // 反过来（预设一个默认值）会让首个 profile 自证租户，形成循环。
   if (!options.tenantId && currentTenantId !== null) {
     headers.set(TENANT_HEADER, currentTenantId);
@@ -425,7 +430,11 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    // `credentials: 'include'` 在**这一处**统一补齐：本函数是除 SSE 之外所有
+    // 请求的唯一出口，补在这里就不会有「新加的调用点忘了带 Cookie」的漏网。
+    // 它让浏览器自动附加 httpOnly 会话 Cookie（`oa_session`），且不会把
+    // Cookie 暴露给脚本。
+    return await fetch(url, { ...init, credentials: 'include', signal: controller.signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new AdapterUnavailableError('服务响应超时，请重试');
@@ -455,12 +464,9 @@ async function unwrap<T>(response: Response): Promise<T> {
   //   请稍后再试"，用户永远不知道是额度用完了）。
   // 现状成立的前提是 `fetchWithTimeout` 不对 4xx/5xx 抛错（fetch 语义），
   // 且后端 402 响应体始终是统一信封 `{code,message,data}`。
-  if (payload.code === UNAUTHORIZED_CODE) {
-    // 会话失效的处置**只有这一处出口**：先在传输层广播，由会话门统一清会话并跳登录。
-    // 不在各页面重复实现，是因为 20 个页面平均 3 个查询 = 60 个调用点，
-    // 新增页面必然漏写，漏写后就会把「登录状态已失效」这种内部状态词留给用户。
-    emitUnauthorized();
-  }
+  //
+  // 注意：`20002` 的**处置**不在这里，而在 `request()` / `upload()`（见
+  // `recoverSession`）：本函数是纯解析，处置要带着「能否重试一次」的上下文。
   throw new BusinessError(payload.code, payload.message);
 }
 
@@ -521,15 +527,78 @@ function throwIfGatewayStatusRejected(response: Response): void {
   }
 }
 
-/** 执行一次适配层请求 */
-async function request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
-  const url = `${ADAPTER_BASE_URL}${API_PREFIX}${path}${buildQuery(options.query)}`;
-  const headers = buildHeaders({
-    method,
-    body: options.body === undefined ? null : JSON.stringify(options.body),
-    idempotent: options.idempotent,
-    tenantId: options.tenantId,
+/**
+ * 在途的会话恢复任务（同一时刻只允许一次刷新）。
+ *
+ * 为什么必须去重：刷新令牌是**轮换**的。首屏往往并发 3 个查询，若三个 401 各自
+ * 触发一次 `/sso/refresh`，先成功的那次会让后到的那两次拿着已作废的刷新令牌 →
+ * 401 → 跳登录页。去重后三个请求共享同一次刷新，正是服务端 QA-07 的客户端对策。
+ */
+let recoveryInFlight: Promise<boolean> | null = null;
+
+/**
+ * 尝试恢复会话（刷新一次），并报告是否值得重试原请求。
+ *
+ * 四分类由 `auth-refresh.refreshWithRetry()` 负责（200 成功 / 401·20002 跳登录 /
+ * 429·20006 退避 / 5xx 退避），本函数只关心「拿到新令牌了吗」。
+ *
+ * @returns 刷新成功返回 true（调用方可以重试一次原请求）
+ */
+async function recoverSession(): Promise<boolean> {
+  if (recoveryInFlight !== null) {
+    return recoveryInFlight;
+  }
+  const task = refreshWithRetry()
+    .then((outcome) => outcome.kind === 'refreshed')
+    .catch(() => false);
+  recoveryInFlight = task;
+  void task.then(() => {
+    if (recoveryInFlight === task) {
+      recoveryInFlight = null;
+    }
   });
+  return task;
+}
+
+/**
+ * 会话彻底失效时的统一处置：广播 + 抛业务错误。
+ *
+ * 「会话失效」的**唯一**出口就在这里（`request` / `upload` 共用）。不在各页面
+ * 重复实现，是因为 20 个页面平均 3 个查询 = 60 个调用点，新增页面必然漏写，
+ * 漏写后就会把「登录状态已失效」这种内部状态词留给用户。
+ *
+ * @throws BusinessError 恒抛 20002
+ */
+function rejectUnauthorized(): never {
+  emitUnauthorized();
+  throw new BusinessError(UNAUTHORIZED_CODE, '登录状态已失效，请重新登录');
+}
+
+/** 已发出的请求参数（重试时原样复用，避免幂等键被重新生成） */
+interface RetryContext {
+  /** 完整 URL（重试不再重算查询串，避免两次请求不一致） */
+  url: string;
+  /** 请求头（含 `Idempotency-Key`：重试必须复用同一把键才谈得上「同一次动作」） */
+  headers: Headers;
+}
+
+/** 执行一次适配层请求 */
+async function request<T>(
+  method: string,
+  path: string,
+  options: RequestOptions = {},
+  retryContext?: RetryContext,
+): Promise<T> {
+  const url =
+    retryContext?.url ?? `${ADAPTER_BASE_URL}${API_PREFIX}${path}${buildQuery(options.query)}`;
+  const headers =
+    retryContext?.headers ??
+    buildHeaders({
+      method,
+      body: options.body === undefined ? null : JSON.stringify(options.body),
+      idempotent: options.idempotent,
+      tenantId: options.tenantId,
+    });
 
   const response = await fetchWithTimeout(
     url,
@@ -552,42 +621,87 @@ async function request<T>(method: string, path: string, options: RequestOptions 
   // 那样 `unwrap` 会退化成 AdapterUnavailableError，用户看到「服务暂时不可用」，
   // 而真实原因是登录过期——错因误导比错误本身更难排。
   if (response.status === 401) {
-    emitUnauthorized();
-    throw new BusinessError(UNAUTHORIZED_CODE, '登录状态已失效，请重新登录');
+    if (retryContext === undefined && (await recoverSession())) {
+      // 只重试一次：`retryContext` 一旦传下去，就不再进入本分支（防死循环）
+      return request<T>(method, path, options, { url, headers });
+    }
+    rejectUnauthorized();
   }
 
   // 网关层的 413 / 429 同样**没有统一信封**，必须在 `unwrap` 之前拦下。
   // 顺序不能变：401 → 413/429 → `unwrap(code=20002)`；三者互不覆盖（上面那条 throw 即返回）。
   throwIfGatewayStatusRejected(response);
 
-  return unwrap<T>(response);
+  try {
+    return await unwrap<T>(response);
+  } catch (error) {
+    // 信封里的 `20002`（HTTP 200 + 业务码）与网关 401 是同一件事的两种形状，
+    // 处置必须一致：先尝试刷新一次，失败才广播并抛出。
+    // **重试后仍然是 20002** 的情况也走这里（只是不再刷新），否则一次刷新之后的
+    // 真实失效会被静默吞掉——会话门收不到广播，界面停在一条错误文案上而不跳登录页。
+    if (error instanceof BusinessError && error.code === UNAUTHORIZED_CODE) {
+      if (retryContext === undefined && (await recoverSession())) {
+        return request<T>(method, path, options, { url, headers });
+      }
+      rejectUnauthorized();
+    }
+    throw error;
+  }
 }
 
 /** 执行 multipart 上传 */
-async function upload<T>(path: string, form: FormData, options: RequestOptions = {}): Promise<T> {
-  const url = `${ADAPTER_BASE_URL}${API_PREFIX}${path}`;
-  const headers = new Headers();
-  headers.set('Accept', 'application/json');
-  if (accessToken) {
-    headers.set('Authorization', `Bearer ${accessToken}`);
+async function upload<T>(
+  path: string,
+  form: FormData,
+  options: RequestOptions = {},
+  retryContext?: RetryContext,
+): Promise<T> {
+  const url = retryContext?.url ?? `${ADAPTER_BASE_URL}${API_PREFIX}${path}`;
+  let headers: Headers;
+  if (retryContext) {
+    headers = retryContext.headers;
+  } else {
+    headers = new Headers();
+    headers.set('Accept', 'application/json');
+    // 与 `buildHeaders` 同一口径：身份走 Cookie（无 `Authorization`），
+    // 租户未知时不带头（否则会写出字面量 "null"）。
+    const tenantHeader = options.tenantId ?? currentTenantId;
+    if (tenantHeader !== null && tenantHeader !== undefined && tenantHeader !== '') {
+      headers.set(TENANT_HEADER, tenantHeader);
+    }
+    // 与 `buildHeaders` 同一口径：作用域键 > 现场生成。
+    // 上传是 413/重复扣额度的高发口，不能因为不走 `buildHeaders` 就退回「每次新键」。
+    headers.set(IDEMPOTENCY_HEADER, resolveIdempotencyKey());
   }
-  // 与 `buildHeaders` 同一口径：租户未知时不带头（否则会写出字面量 "null"）
-  const tenantHeader = options.tenantId ?? currentTenantId;
-  if (tenantHeader !== null && tenantHeader !== undefined && tenantHeader !== '') {
-    headers.set(TENANT_HEADER, tenantHeader);
-  }
-  // 与 `buildHeaders` 同一口径：作用域键 > 现场生成。
-  // 上传是 413/重复扣额度的高发口，不能因为不走 `buildHeaders` 就退回「每次新键」。
-  headers.set(IDEMPOTENCY_HEADER, resolveIdempotencyKey());
 
   const response = await fetchWithTimeout(
     url,
     { method: 'POST', headers, body: form, cache: 'no-store' },
     options.timeoutMs ?? REQUEST_TIMEOUT_MS,
   );
+
+  if (response.status === 401) {
+    if (retryContext === undefined && (await recoverSession())) {
+      return upload<T>(path, form, options, { url, headers });
+    }
+    rejectUnauthorized();
+  }
+
   // 上传是 413 的主战场（网关 body limit 先于业务层生效），必须与 `request()` 同口径
   throwIfGatewayStatusRejected(response);
-  return unwrap<T>(response);
+
+  try {
+    return await unwrap<T>(response);
+  } catch (error) {
+    // 与 `request()` 同口径：重试后仍 20002 也要广播（否则会话门学不到「真失效」）
+    if (error instanceof BusinessError && error.code === UNAUTHORIZED_CODE) {
+      if (retryContext === undefined && (await recoverSession())) {
+        return upload<T>(path, form, options, { url, headers });
+      }
+      rejectUnauthorized();
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -723,6 +837,10 @@ function openStream(
         body: JSON.stringify(body),
         signal: controller.signal,
         cache: 'no-store',
+        // 这是本文件里**唯一**一处不走 `fetchWithTimeout` 的 fetch（SSE 需要自己
+        // 控制 signal 与读取流），因此必须显式带 Cookie：漏了它，流式对话与任务
+        // 事件推送就会变成匿名请求，表现为「一进页面就 401」。
+        credentials: 'include',
       });
 
       if (!response.ok || !response.body) {

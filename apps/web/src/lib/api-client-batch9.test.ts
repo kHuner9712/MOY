@@ -1,8 +1,10 @@
 /**
  * 前端补测第九批（审计 2026-10-31 H1 续）。
  *
- * 覆盖：api-client 剩余插件方法、session-store 存储降级分支、
- * format 边界分支。
+ * 覆盖：api-client 剩余插件方法、format 边界分支。
+ *
+ * 注：本批原有的 `session-store` 存储用例已随 P0-5（令牌不进 JavaScript）删除——
+ * 该模块现在只剩「清理历史键」，其行为由 `session-store.test.ts` 单独覆盖。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -121,127 +123,6 @@ describe('api-client · pluginsApi 剩余', () => {
     const { url, init } = callOf(vi.mocked(fetch));
     expect(url).toContain('/plugins/capability-policy');
     expect(init.method).toBe('PUT');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// session-store 存储降级分支
-// ---------------------------------------------------------------------------
-
-describe('session-store · 存储降级', () => {
-  it('saveSession / loadSession 往返', async () => {
-    const store = await import('./session-store');
-    store.clearSession();
-    const ok = store.saveSession({
-      access_token: 'tok',
-      refresh_token: 'ref',
-      expires_at: Date.now() + 60_000,
-    });
-    expect(ok).toBe(true);
-    const loaded = store.loadSession();
-    expect(loaded?.access_token).toBe('tok');
-    expect(loaded?.refresh_token).toBe('ref');
-  });
-
-  it('expires_at 为 null（无过期信息）可存可读', async () => {
-    const store = await import('./session-store');
-    store.clearSession();
-    expect(store.saveSession({ access_token: 'tok', refresh_token: null, expires_at: null })).toBe(
-      true,
-    );
-    expect(store.loadSession()?.access_token).toBe('tok');
-  });
-
-  it('loadSession 无数据时返回 null', async () => {
-    const store = await import('./session-store');
-    store.clearSession();
-    expect(store.loadSession()).toBeNull();
-  });
-
-  it('clearSession 清除后 loadSession 返回 null', async () => {
-    const store = await import('./session-store');
-    store.saveSession({
-      access_token: 'tok',
-      refresh_token: 'ref',
-      expires_at: Date.now() + 60_000,
-    });
-    store.clearSession();
-    expect(store.loadSession()).toBeNull();
-  });
-
-  it('形状非法的会话拒绝写入', async () => {
-    const store = await import('./session-store');
-    store.clearSession();
-    // 空令牌
-    expect(store.saveSession({ access_token: '', refresh_token: null, expires_at: null })).toBe(
-      false,
-    );
-    // 非法 expires_at（既不是数字也不是 null）
-    expect(
-      store.saveSession({
-        access_token: 'tok',
-        refresh_token: null,
-        expires_at: 'not-a-date' as unknown as number,
-      }),
-    ).toBe(false);
-    expect(store.loadSession()).toBeNull();
-  });
-
-  it('存储内容损坏（非法 JSON）读取返回 null', async () => {
-    const store = await import('./session-store');
-    window.localStorage.setItem(store.SESSION_STORAGE_KEY, '{broken');
-    expect(store.loadSession()).toBeNull();
-  });
-
-  it('旧键凭证一次性迁移到新键', async () => {
-    const store = await import('./session-store');
-    store.clearSession();
-    window.localStorage.setItem(store.LEGACY_SESSION_STORAGE_KEY, 'legacy-token');
-    const loaded = store.loadSession();
-    expect(loaded?.access_token).toBe('legacy-token');
-    // 迁移后新键存在、旧键已删
-    expect(window.localStorage.getItem(store.SESSION_STORAGE_KEY)).not.toBeNull();
-    expect(window.localStorage.getItem(store.LEGACY_SESSION_STORAGE_KEY)).toBeNull();
-  });
-
-  it('isSessionExpired：无过期信息不判过期', async () => {
-    const store = await import('./session-store');
-    const session = { access_token: 'tok', refresh_token: null, expires_at: null };
-    expect(store.isSessionExpired(session, 1_000)).toBe(false);
-  });
-
-  it('isSessionExpired：过去时刻判过期、未来时刻不判', async () => {
-    const store = await import('./session-store');
-    const now = 1_000_000;
-    expect(
-      store.isSessionExpired({ access_token: 't', refresh_token: null, expires_at: now - 1 }, now),
-    ).toBe(true);
-    expect(
-      store.isSessionExpired({ access_token: 't', refresh_token: null, expires_at: now + 1 }, now),
-    ).toBe(false);
-  });
-
-  it('savePending / loadPending / clearPending 往返', async () => {
-    const store = await import('./session-store');
-    const pending = {
-      state: 'st',
-      codeVerifier: 'cv',
-      redirectUri: 'https://app/cb',
-      createdAt: 123,
-    };
-    expect(store.savePending(pending)).toBe(true);
-    expect(store.loadPending()).toEqual(pending);
-    store.clearPending();
-    expect(store.loadPending()).toBeNull();
-  });
-
-  it('形状非法的 pending 拒绝写入', async () => {
-    const store = await import('./session-store');
-    store.clearPending();
-    expect(
-      store.savePending({ state: '', codeVerifier: 'cv', redirectUri: 'u', createdAt: 1 }),
-    ).toBe(false);
-    expect(store.loadPending()).toBeNull();
   });
 });
 

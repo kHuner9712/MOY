@@ -292,9 +292,8 @@ describe('SSE 流 · 降级分支', () => {
 // ---------------------------------------------------------------------------
 
 describe('upload · multipart 上传', () => {
-  it('uploadDocument 以 FormData 提交并携带令牌与幂等键', async () => {
+  it('uploadDocument 以 FormData 提交并携带幂等键与 Cookie 凭据', async () => {
     const api = await load();
-    api.setAccessToken('tok');
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => envelope({ document_id: 'd1' })),
@@ -307,7 +306,9 @@ describe('upload · multipart 上传', () => {
     expect(init.body).toBeInstanceOf(FormData);
     const headers = new Headers(init.headers);
     expect(headers.has('Idempotency-Key')).toBe(true);
-    expect(headers.get('Authorization')).toBe('Bearer tok');
+    // 身份走 httpOnly Cookie：上传也必须带凭据，且**不得**出现 Authorization
+    expect(init.credentials).toBe('include');
+    expect(headers.get('Authorization')).toBeNull();
   });
 
   it('上传被网关 413 拦截时抛业务错误 20008', async () => {
