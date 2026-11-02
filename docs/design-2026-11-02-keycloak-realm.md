@@ -14,6 +14,22 @@
 
 ## 0. 结论摘要
 
+### 能力边界（V1.0 定稿，可直接对外引用）
+
+> **V1.0 仅支持 Keycloak 形态的身份提供方（含客户自建 Keycloak）。**
+> **Auth0 / Okta / Azure AD / 其他非 Keycloak IdP 不在 V1.0 范围内**，计划在 V1.1 提供。
+
+这条不是"没来得及做"，而是**范围声明**：V1.0 的身份链路在四处绑定了 Keycloak 形态——
+`keycloak_base_url` + `keycloak_realm`（`config.py:146-147`）、自省端点
+`/realms/{realm}/protocol/openid-connect/token/introspect`（`keycloak_client.py:26`）、
+以及依赖 `realm_access` / `attributes` 等原生字段的用户资料与角色映射（`identity_service.py`）。
+换 IdP 要改的是**整条链路**，不是某个配置项。
+
+**现场话术（供销售/交付直接引用）**：客户说"我们用的是 Okta"时，
+答"V1.0 以 Keycloak 作为身份底座，支持客户自建 Keycloak 实例并接入既有 AD/LDAP；
+非 Keycloak 的 IdP 适配在 V1.1 规划中"——不要答"我们支持标准 OIDC"，
+那会让客户合理地期待 Okta 能直接接。
+
 ### R4（issuer 可达性）：**不可达，三套编排全部不可达**
 
 浏览器拿不到 issuer，不是因为地址配错了，而是**根本没有暴露路径**：三套 compose 里 `keycloak` 都没有任何 `ports` 映射（只在内部网络里），而边缘 nginx（只有 lite 有）的 location 清单里**没有 `/realms/` 与 `/resources/`**，请求会落到 `location /` 交给 Next.js 变成 404。叠加 `OA_WEB_OIDC_ISSUER` 在两个 `.env` 示例里都是**空值**，`install.sh` 也从不写它——登录页直接显示"统一登录尚未配置"，连跳转都不会发生。
@@ -129,7 +145,19 @@ OA_PUBLIC_BASE_URL=https://officeai.example.com
 | `lite` | `OA_PUBLIC_BASE_URL: ${OA_LITE_PUBLIC_URL}`（在 adapter/web/keycloak 服务里插值） | 单一事实来源仍是 `OA_LITE_PUBLIC_URL`；`install.sh` 一个字不改；`validate_lite_up.sh` 的既有校验继续有效 |
 | `full` / `saas` | `${OA_PUBLIC_BASE_URL:?必须设置平台对外规范地址}`（**fail loud**） | 标准栈原本没有对外基址变量，属于新增 |
 
-**标准栈为什么不给默认值**：给 `http://localhost` 之类的"能启动"的默认值，会让现场在**配错却不报错**的状态下跑起来（issuer 变成 `http://localhost/realms/officeai`，登录跳到自己机器）。宁可让 compose 在 `up` 时直接拒绝启动——**失败要发生在部署那一刻，不能发生在用户点登录那一刻**。
+**标准栈不给默认值（2026-11-02 已拍板，与上面 `:?` 是同一套机制）**：
+
+> 不给默认值是有意的：它是 issuer 与 Cookie `Secure` 的**双重派生源**，一个错值会同时污染这两条链路，且错误要等到用户点登录才暴露。空值让它在 `compose up` 阶段就失败——**判据必须简单到不需要维护**。
+
+三条支撑理由，按力度排序：
+
+1. **失败点更早，信息量差几十倍**。模板留空 → `compose up` **插值阶段**就拒绝（"required variable missing"），现场只可能是"你没填"；而"给默认值 + 启动校验拦"是**容器起来之后 adapter 启动时**才拦，同样 fail-loud，但人第一反应会去怀疑镜像、数据卷、依赖顺序。**同样是失败，早一层就是几十倍的信息量。**
+2. **判据必须简单到不需要维护**。"什么算配置错误"没有确定答案：`127.0.0.1` / `[::1]` 好判（`ipaddress.is_loopback` 语义判定即可，不会漏），但客户的 `192.168.1.50` 直连、`0.0.0.0`、`host.docker.internal` 该不该拦，**每一个都要一次判断，每次判断都可能误伤真实现场**。问题不在于枚举是否完整，而在于**这个判据本身在回答一个没有确定答案的问题**。
+3. **能复用就不要新增平行的第二套机制**。`:?` 已经存在且在别处生效，再加一条 loopback 校验就是第二个判据——**两个判据将来会分叉**，这比"少写几行代码"重要得多。
+
+> 被否的选项（③ 保留默认值 + 启动校验拦 loopback）**不删除记录**，理由见 §2.4.3 —— 下一轮若有人再提 loopback 校验，那行能省一次讨论。
+
+**当前代码状态与目标差一步**：`.env.example:64` 现在仍是 `OA_PUBLIC_BASE_URL=http://localhost`（字面量），**需按本决策改为空**，并同步 `qa/phase4-verify.sh`。改的时候有一条硬约束（主理人 2026-11-02 明确）：**不许把 QA 脚本改成"忽略该变量"来换绿灯**——那等于拔掉门禁的牙齿。正确改法是让脚本断言"该键存在但为空/未设置时，`compose config` 必须失败"。
 
 **`OA_PUBLIC_BASE_URL` 的"生成路径"**：标准栈由 `install.sh` 按与 lite 同款的逻辑（`scheme` + `host` + 可选 `port`）写入；`.env.example` 里留空并注明"必填，由 install.sh 生成"。
 （这不触发 `validate_secrets.py` 的生成路径门禁——该门禁只针对含 `CHANGE_ME` 的密钥类变量；但按同样纪律给出生成路径，现场才不需要手工拼 URL。）
@@ -246,7 +274,7 @@ OA_JWT_ALGORITHM=RS256                                  # 见 §2
 1. `_decode_token` 分流：
    - `jwt_algorithm` 以 `RS` 开头 → `PyJWKClient`（按 `kid` 取键，**内存缓存 + 未命中时刷新一次**，避免 JWKS 轮换后永久 401 与每请求打 Keycloak 两种极端）；
    - 其他（HS256）→ 走现有 `jwt_secret` 路径（私有化对称签发现场）。
-2. **JWKS 地址必须走内网，不能用公网 issuer 派生**（本节 v1.1 修正，见下）：默认取
+2. **JWKS 地址必须走内网，不能用公网 issuer 派生**（本节 v1.2 修正，见下）：默认取
    `{OA_KEYCLOAK_BASE_URL}/realms/{OA_KEYCLOAK_REALM}/protocol/openid-connect/certs`，
    **不是** `{OA_JWT_ISSUER}/protocol/openid-connect/certs`。
    这两件事用的是**不同的基准**，不能合并：
@@ -267,9 +295,13 @@ OA_JWT_ALGORITHM=RS256                                  # 见 §2
    （`INTROSPECT_PATH`，`keycloak_client.py:26`）——**JWKS 只是第三个消费者**。
 
    **不做运行期回落（重要）**：不存在"回落到从 issuer 派生"的分支。
-   理由：`OA_KEYCLOAK_BASE_URL` 在编排里**无条件注入、永远非空**，且它的语义本来就是
-   "**适配层视角的 IdP 地址**"而不是"我们自己的 keycloak"——客户自带外部 IdP 时这个变量也必须指向客户 IdP（否则令牌自省与用户资料接口先就挂了）。
-   因此 JWKS 地址**恒为** `{OA_KEYCLOAK_BASE_URL}/realms/{OA_KEYCLOAK_REALM}/protocol/openid-connect/certs`，纯配置态推导，确定性、可预测。
+   理由见本节末的"定稿理由"，一句话版本：**V1.0 的 IdP 固定为 Keycloak 形态，这是范围声明。**
+   JWKS 地址**恒为** `{OA_KEYCLOAK_BASE_URL}/realms/{OA_KEYCLOAK_REALM}/protocol/openid-connect/certs`，纯配置态推导，确定性、可预测。
+
+   > 关于 `OA_KEYCLOAK_BASE_URL` 的语义（保留，它是判据的前提）：它指的是
+   > "**适配层视角的 IdP 地址**"而不是"我们自己的 keycloak"——正因为它的语义这么宽，
+   > 才必须额外声明"V1.0 只接受 Keycloak 形态的 IdP"（见 §0 能力边界）。
+   > **不能**从"语义宽"推出"不需要分支"，那个推论有漏洞，见下方论证纠错。
 
    **为什么必须禁止"拉取失败就换数据源"**：那会把
    「网络抖动 → 悄悄切到公网地址 → 自签现场证书不受信 → 401」变成一个新的隐性故障源，
@@ -278,8 +310,129 @@ OA_JWT_ALGORITHM=RS256                                  # 见 §2
    `http://idp.internal:8080` 这类非默认地址时会静默走错分支。
    **若将来出现非标准 realm 路径的 IdP**，再加显式 `OA_JWKS_URL` 覆盖项（显式优先、不做探测）；
    V1.0 不加，因为它会多一个可配错的项，而当前没有这个现场。
+
+   **"外部 IdP 回落"这个备选方案曾被提出，最终未采纳（2026-11-02 定稿）。** 但请注意：
+   **"未采纳"的理由是范围声明，不是技术妥协**；本文件 v1.2 曾给出的那个理由**有漏洞，已作废**。
+
+   **① 先记一次论证纠错（避免后人重走弯路）**
+
+   v1.2 的论证是：「`keycloak_base_url` 的语义是"适配层视角的 IdP 地址"，外部 IdP 也走这条路径，
+   所以不需要分支」。**这个论证只防住了一半**：
+
+   - 它防住的是"**网络不可达**"（内网 DNS 无记录、绕回边缘需信任自签证书）；
+   - 它**没防住"URL 拼错"**：路径模板 `/realms/{realm}/...` 是 **Keycloak 专有**的。
+     把 `keycloak_base_url` 指向 Auth0 / Okta / Azure AD 后，拼出来是
+     `https://login.example.com/realms/officeai/protocol/openid-connect/certs` → **必然 404**；
+     而 OIDC 标准公钥位置是 `{issuer}/protocol/openid-connect/certs`，**没有 `/realms/{realm}` 这一段**。
+
+   一句话：**非空 ≠ 路径形态正确。** 这是两种不同的失效模式，不能用一个论证互相顶替。
+
+   **② 真正的理由（定稿）：整副骨架假设 IdP 就是 Keycloak，这是范围声明**
+
+   不是"不需要分支"，而是"V1.0 不支持非 Keycloak IdP"。证据是三件套把这个假设绑死了：
+
+   | 绑定物 | 位置 | 假设 |
+   | --- | --- | --- |
+   | `keycloak_base_url` + `keycloak_realm` | `config.py:146-147` | realm 是 Keycloak 的概念 |
+   | `INTROSPECT_PATH = /realms/{realm}/protocol/openid-connect/token/introspect` | `keycloak_client.py:26` | 自省端点也是 Keycloak 专有路径 |
+   | 用户资料 / 组织成员 / 角色管理 | `identity_service.py` | 依赖 `realm_access` / `attributes` 等 Keycloak 原生字段 |
+
+   要让非 Keycloak IdP 真正可用，**要改的不是 JWKS 一处，而是"自省 + 用户资料 + 角色映射"一整条链路**。
+   只给 JWKS 加分流，会产生"能验签但拿不到角色"的**半可用状态**——比明确不支持更糟，
+   因为它会在登录成功那一刻给出"看起来能用"的错觉。
+
+   **②b 补一条更硬的事实：那个回落分支即使加上，本身也不成立**
+
+   （此段修正一处过强表述：本文件曾写"该分支永远走不到、是死分支"——**不准确，已改**。
+   对非 Keycloak IdP，分支**会被走到**。但走到也没用，原因如下。）
+
+   备选分支的产物是 `{issuer}/protocol/openid-connect/certs`。
+   **这个路径同样是 Keycloak 专有约定，不是 OIDC 标准**（RFC 8414 / OIDC Discovery 规定的是
+   从 `{issuer}/.well-known/openid-configuration` 读 `jwks_uri` 字段，而不是任何固定路径）。
+
+   **实测证据（任何人可复现，2026-11-02）**：
+
+   ```bash
+   $ curl -s https://accounts.google.com/.well-known/openid-configuration \
+       | python -c "import json,sys; d=json.load(sys.stdin); print(d['issuer']); print(d['jwks_uri'])"
+   https://accounts.google.com
+   https://www.googleapis.com/oauth2/v3/certs
+   ```
+
+   两者**连域都不同**（`accounts.google.com` vs `www.googleapis.com`）。再直接验反证：
+
+   ```bash
+   $ curl -s -o /dev/null -w '%{http_code}\n' https://accounts.google.com/protocol/openid-connect/certs
+   404
+   ```
+
+   即：把 Keycloak 的惯用路径套到 Google 上，返回的是 **404**，不是公钥。
+   这条实证证明的是**一般命题**——各家 `jwks_uri` 位置不同，不存在可拼的固定模板。
+
+   主流非 Keycloak IdP 的公钥位置对照（google 行即上述实测）：
+
+   | IdP | 实际 JWKS 位置 | `{issuer}/protocol/openid-connect/certs` 的结果 |
+   | --- | --- | --- |
+   | Keycloak | `{issuer}/protocol/openid-connect/certs` | ✅ 正确 |
+   | **Google** | **`https://www.googleapis.com/oauth2/v3/certs`（实测）** | **❌ 404（实测）** |
+   | Auth0 | `https://{tenant}/.well-known/jwks.json` | ❌ 404 |
+   | Microsoft Entra ID | `https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys` | ❌ 404 |
+   | Okta（Workforce） | `https://{domain}/oauth2/{authServerId}/v1/keys` | ❌ 404 |
+
+   > 表中 Keycloak / Google 两行为本次实测（命令与输出见上）；Auth0 / Entra / Okta 三行取自各家公开文档，
+   > **我未逐一实拉**——但它们只是"各家不同"的补充例证，**结论不依赖它们**：
+   > Google 一行已足够证伪"存在可拼的固定模板"这个命题。
+
+   所以两种情形下该分支都不产生额外价值：
+   **IdP 是 Keycloak 形态**时，内网派生本来就对，分支走不到（或走到了结果相同）；
+   **IdP 不是 Keycloak 形态**时，分支会走到，但拼出的仍是 Keycloak 专有路径 → 照样 404。
+   换句话说：**这条分支只对 Keycloak 形态有效，而 Keycloak 形态本来就不需要它。**
+
+   推论也落到 V1.1 的后继动作上：**不要用"路径模板分流"支持外部 IdP**，
+   唯一标准做法是读 discovery 的 `jwks_uri`（或显式配置 `OA_JWKS_URL`）。
+
+   **③ 为什么也不采用"按 issuer 形态嗅探"的判据**
+
+   曾有一个版本定为「`iss` 路径含 `/realms/` → 内网派生；不含 → 从 issuer 派生」。
+   **该判据作废**：它只解决 JWKS 一个点，却让"外部 IdP 可用"变成一个局部成立的假象
+   （自省仍然 404）。而且形态嗅探天然脆弱（旧版 Keycloak 是 `/auth/realms/`，
+   用"等于"会误判，用"包含"则任何路径里带 `/realms/` 的外部 IdP 都会被误判）。
+   **判据越聪明，误判越难排查**——这类"按字符串形态猜供应商"的逻辑不进入安全路径。
+
+   **④ 后继动作（V1.1，若确有非 Keycloak 现场）**
+
+   **首选：读 discovery 的 `jwks_uri`**（`{issuer}/.well-known/openid-configuration` → `jwks_uri`），
+   这是 OIDC 标准做法，对任何合规 IdP 都成立；或提供显式 `OA_JWKS_URL` 覆盖项（显式优先、不做探测）。
+   **不要**用"按 issuer 路径形态拼模板"的方式支持外部 IdP——见 ②b 的对照表，那样对 Auth0/Entra/Okta 全是 404。
+   无论走哪条，**必须连带改自省 + 用户资料 + 角色映射**，禁止只做 JWKS 一侧。
+
+   **⑤ 现状以代码为准**：`app/core/security.py::resolve_jwks_url` **不读 `jwt_issuer`**，
+   且有测试正面锁定 ——
+   `tests/unit/test_jwt_jwks.py::test_rs256_external_idp_still_hits_configured_idp_base`
+   断言"外部 IdP 仍打配置的 IdP base"。
+   ⚠ **下一轮实现者注意**：不要凭"应该有回落"的直觉把它加回来；先读 §0 的能力边界。
 3. **JWKS 不可达时的 fail-closed**：与既有 fail-closed 纪律一致（`security.py:242-249` 的延迟判权白名单是同一思路），返回 20002 而不是放行。
-4. `OA_JWT_AUDIENCE` 要与令牌 `aud` 对齐：Keycloak access token 的 `aud` 默认可能是 `account`。**在 realm.json 里给 client 加 audience mapper**，把 `aud` 固定为 `officeai-adapter`，与现有 `OA_JWT_AUDIENCE=officeai-adapter`（`.env.example:199`）一致——**用 realm 适配已有配置，而不是反过来改配置**，可减少改动面。
+4. **`keycloak_base_url` 为空时必须返回空串，不能拼相对路径**（落地期补记，比"会不会 404"更值钱）：
+
+   若空 base 被拼成 `/realms/{realm}/protocol/openid-connect/certs`（一个**相对 URL**），
+   它会被当成同源路径打到自己身上 → 得到一个与鉴权**无关**的 404，
+   而错误码仍是 20002「令牌非法」。**排障方向被引向令牌，真因是配置**——这类"错误码指向错误方向"的故障，
+   比 404 本身难查一个量级。
+
+   因此实现为返回**空串**，由上层按"拉不到公钥"fail-closed（见 `test_rs256_empty_base_url_fails_closed`
+   ——断言 20002 且**零网络请求**）。并在启动期前置拦截：
+   `validate_auth_startup` 第 7 条，**`RS*` 算法 + 空 `keycloak_base_url` → 30004 拒绝启动**。
+   **只拦 `RS*`**：HS256 对称签发的私有化现场不依赖它，不能把那些人挡在门外。
+
+5. **"无分支"已由测试锁死**（防止后人凭直觉加回来）：
+   `test_jwks_url_is_independent_of_jwt_issuer` 用 **4 种 `jwt_issuer` 形态**
+   （realm URL / 外部 IdP URL / 非 URL 的旧占位 `officeai` / 空串）断言推导结果**逐字相同**。
+   一旦有人加回回落分支，这条立刻红——**用"锁定不变式"比"删掉一个用例"强**：
+   删用例只是去掉证据，锁不变式是让错误实现无法通过。
+
+6. **日志只记来源、不记地址细节**：选中 JWKS 来源时打 `jwks_source_selected`，
+   内容为 `{scheme}://{host}`（`security.py:265`）。够定位"打的是内网还是外部"，又不把完整路径与参数写进日志。
+7. `OA_JWT_AUDIENCE` 要与令牌 `aud` 对齐：Keycloak access token 的 `aud` 默认可能是 `account`。**在 realm.json 里给 client 加 audience mapper**，把 `aud` 固定为 `officeai-adapter`，与现有 `OA_JWT_AUDIENCE=officeai-adapter`（`.env.example:199`）一致——**用 realm 适配已有配置，而不是反过来改配置**，可减少改动面。
 
 ### 2.4 结论：全链路只需新增 2 个环境变量（原设计 4 个，已收敛）
 
@@ -302,6 +455,87 @@ OA_JWT_ALGORITHM=RS256                                  # 见 §2
 > 说明：`OA_OIDC_TOKEN_ENDPOINT` 被裁掉的首要理由仍然是 §2.4 表里的"同一语义两个变量会漂移"，
 > **不是**门禁（名字含 `TOKEN` 并不构成拦截条件）。此处不夸大裁剪的附带收益。
 
+#### 2.4.1 落地状态（2026-11-02 轮 1a 实测核对）
+
+| 项 | 状态 | 实测依据 |
+| --- | --- | --- |
+| `Settings.public_base_url` | ✅ **已加** | `config.py` 已有字段；`security.py:1230` `if not conf.public_base_url.strip():` → 30004 |
+| `Settings.auth_cookie_enabled` | ⬜ **未加（有意）** | 与 `/sso/*`（轮 1b）同批提，避免出现"配了但没人读"的字段 |
+| `OA_PUBLIC_BASE_URL` 注入 compose | ✅ **已加** | 三套 compose 均以 `${OA_PUBLIC_BASE_URL:?...}` 取（标准栈） |
+| `validate_auth_startup` 第 6 条 | ✅ **已加** | `security.py:1131`（判据说明）/ `:1239`（`public_base_url_missing_in_production`）；**生产/预发为空即拒绝启动** |
+| `validate_auth_startup` 第 7 条 | ✅ **已加** | `security.py:1208` `if uses_asymmetric_algorithm(conf.jwt_algorithm) and not conf.keycloak_base_url.strip():` → 30004 / `jwks_base_url_missing_in_production`（`:1216`）。**只拦 `RS*`**，HS256 对称签发现场不受影响 |
+| JWKS 空 base 处置 | ✅ **已加** | `resolve_jwks_url` 空 base 返回**空串**（不拼相对路径）；`test_rs256_empty_base_url_fails_closed` 断言 20002 + **零网络请求** |
+| "无分支"测试锁 | ✅ **已加** | `test_jwks_url_is_independent_of_jwt_issuer`：4 种 `jwt_issuer` 形态推导结果**逐字相同**，加回分支即红 |
+| JWKS 来源日志 | ✅ **已加** | `security.py:265` `jwks_source_selected`，内容仅 `{scheme}://{host}` |
+| `OA_JWT_SECRET` 启动校验 | ✅ **未放宽一个字** | 产物下载 HMAC 仍依赖它（`artifact_token.py`），故 `_jwt_secret_placeholder_reason` 路径原样保留 |
+
+> 实跑核对：`pytest tests/unit/test_jwt_jwks.py -q` → **17 passed**（本次自跑确认，非转述）。
+> 小瑕疵（不影响功能，改不改随轮次）：`test_jwks_url_is_independent_of_jwt_issuer` 的 docstring 写"三种 issuer 形态"，
+> 而循环实际覆盖 **4 种**（多一个空串）。描述与断言不符时，以断言为准。
+
+#### 2.4.2 两个基址变量必须单一真源（**落地约束，勿手改单个**）
+
+`OA_PUBLIC_BASE_URL`（新）与 lite 既有的 `OA_LITE_PUBLIC_URL`（老）指向同一件事。**两者若各自被维护，`Secure` 派生会静默失效**（新变量恒空 → 判定恒 false → 反代后 Cookie 永远不带 `Secure`）。已落地的处置是**分形态、单一来源**：
+
+| 形态 | 谁是源 | 谁被派生 | 实测依据 |
+| --- | --- | --- | --- |
+| **标准栈**（full / saas） | `base_url`（`install.sh` 计算出）；**模板留空，不在 `.env.example` 给字面量** | `env_set OA_PUBLIC_BASE_URL "${base_url}"` + 派生 `OA_JWT_ISSUER` / `OA_WEB_OIDC_ISSUER` / `OA_WEB_OIDC_CLIENT_ID` | `install.sh:413,448`（`OA_PUBLIC_BASE_URL="${base_url}" ...`）；**缺口**：`.env.example:64` 仍是字面量，待改为空（见 §2.4.3） |
+| **轻量版**（lite） | `OA_LITE_PUBLIC_URL` | **不写** `OA_PUBLIC_BASE_URL`——编排里用 `OA_PUBLIC_BASE_URL: ${OA_LITE_PUBLIC_URL}` 插值过去 | `install.sh:422-426`（注释明确"不写 `OA_PUBLIC_BASE_URL`"）、`:467-469`（`backfill_derived_env` 只读不写） |
+
+**纪律**：改端口/域名时**只改源**（标准栈改 `base_url` 来源、lite 改 `OA_LITE_PUBLIC_URL` 或 `install.sh --proxy-port`），
+**不要单独去改 `OA_PUBLIC_BASE_URL` / `OA_JWT_ISSUER` / `OA_WEB_OIDC_ISSUER` 三者中任一个**——
+它们差一个字符（多/少尾斜杠）就是"所有接口 401"，而这个错误在联调时表现极难归因。
+
+**实测印证（轮 1a，lite 现场）**：`.env.lite` 里**没有** `OA_PUBLIC_BASE_URL` 这一行，但 `compose config` 解出：
+
+```
+OA_PUBLIC_BASE_URL: http://localhost:65200     ← 由 ${OA_LITE_PUBLIC_URL} 插值而来
+KC_HOSTNAME:        http://localhost:65200     ← 同源
+```
+
+**这印证了插值确实生效，也印证了它的反向风险**：`compose config` 的输出取决于**替换顺序**——
+`.env` 里的字面量与编排插值同时存在时，谁赢不是由直觉决定的。因此 `.env.lite.example:56-57`
+已加**禁令注释**（"不要在轻量版写 `OA_PUBLIC_BASE_URL`，编排里是插值"），把"两个来源"降到"一个来源"。
+这是本设计里唯一一处**靠注释而非代码**保证的约束，因此更需要在评审时检查。
+
+#### 2.4.3 ✅ 已拍板（2026-11-02）：模板**不给**字面量默认值（选 ②）
+
+**结论**：`deploy/.env.example` 的 `OA_PUBLIC_BASE_URL` **改为空值**，由 `install.sh` 生成；
+缺失/为空时在 `compose up` **插值阶段**直接失败。同步修改 `qa/phase4-verify.sh`。
+
+**两个层面要分清**（这是之前两次讨论混在一起的原因）：
+
+| 层 | 结论 | 含义 |
+| --- | --- | --- |
+| compose 层 | ✅ 用 `:?` fail-loud，**不给 `:-` 兜底** | 变量缺失/为空 → `up` 直接失败 |
+| 模板层 | ✅ **留空**（已拍板） | `.env.example` 不放字面量 |
+
+**当前代码状态**：`.env.example:64` 仍是 `OA_PUBLIC_BASE_URL=http://localhost`（**与决策不符，待改**）；
+`qa/phase4-verify.sh` 待同步。
+
+**QA 脚本改动的硬约束**（主理人 2026-11-02 明确）：**不许把它改成"忽略该变量"来换绿灯**——那等于拔掉门禁的牙齿。
+正确改法是断言"该键为空/未设置时 `compose config` 必须失败"，即**门禁断言失败行为，而不是绕过失败行为**。
+
+**决策理由（按力度排序）**：
+
+1. **失败点更早，信息量差几十倍**。留空 → `compose up` 插值阶段拒绝，现场只可能是"你没填"；
+   "给默认值 + 启动校验拦"是容器起来后 adapter 启动时才拦，同样 fail-loud，但人会先去怀疑镜像、数据卷、依赖顺序。
+2. **判据必须简单到不需要维护**。"什么算配置错误"没有确定答案：`127.0.0.1`/`[::1]` 可用
+   `ipaddress.is_loopback` 语义判定（不会漏），但客户的 `192.168.1.50` 直连、`0.0.0.0`、
+   `host.docker.internal` 每一个都要一次判断，**每次判断都可能误伤真实现场**。
+3. **能复用就不要新增平行的第二套机制**。`:?` 已存在且生效，再加 loopback 校验就是第二个判据，**两个判据将来会分叉**。
+
+**被否的选项（保留记录，供下一轮省一次讨论）**：
+
+| 选项 | 结论 | 理由 |
+| --- | --- | --- |
+| ① 保留字面量 | ❌ 否 | 生产忘改则**起来了但 issuer=localhost**，失败推迟到用户点登录那一刻——把配置错误推给最终用户 |
+| **② 改空 + 同步改 QA** | ✅ **采纳** | 失败发生在部署那一刻，判据最简单（空就是空） |
+| ③ 保留字面量 + 启动校验拦 loopback | ❌ 否 | 问题不在枚举是否完整（`is_loopback` 能覆盖 127.0.0.0/8 与 ::1），而在**这个判据本身在回答一个没有确定答案的问题**（见理由 2）；且引入与 `:?` 平行的第二套判据 |
+
+> **下一轮若有人再提"启动校验拦 loopback"**：请先读上表 ③ 那行。
+> 这不是"当时没考虑到"，是**评估后否决**——定 `0.0.0.0`/私网 IP/`host.docker.internal` 该不该算错的讨论成本，会持续高于它挡住的收益。
+
 ### 2.5 落库顺序：`Settings` 字段必须与编排注入**同一提交**
 
 `deploy/validate_config_names.py:19` 的 **R1** 判据是「**编排注入**的每个 `OA_*` 必须是 `Settings` 的字段（`OA_` + 字段名大写）或白名单」，而 `:28` 明确「**不校验 `.env` 模板与编排的对齐关系**」。由此得出两条落地纪律：
@@ -311,15 +545,31 @@ OA_JWT_ALGORITHM=RS256                                  # 见 §2
 
 因此下列三项**必须同一个提交**：
 
-| 项 | 内容 |
-| --- | --- |
-| `apps/adapter/app/core/config.py` | 新增 2 个字段：`public_base_url: str = ""`、`auth_cookie_enabled: bool = True`（已核实当前**均不存在**，是净新增，不是复用） |
-| `deploy/docker-compose*.yml` | 向 `adapter` 注入 `OA_PUBLIC_BASE_URL` / `OA_AUTH_COOKIE_ENABLED` |
-| `deploy/.env.example` / `.env.lite.example` | 同名键（模板侧；不参与 R1 判定，但属于同一变更的完整性） |
+| 项 | 内容 | 落地状态 |
+| --- | --- | --- |
+| `apps/adapter/app/core/config.py` | `public_base_url: str = ""`、`auth_cookie_enabled: bool = True` | `public_base_url` ✅ 已加（轮 1a）；`auth_cookie_enabled` ⬜ 与 `/sso/*` 同批（轮 1b），**不要提前加**——单加字段而无人读，会让人误以为开关已生效 |
+| `deploy/docker-compose*.yml` | 向 `adapter` 注入 `OA_PUBLIC_BASE_URL` / `OA_AUTH_COOKIE_ENABLED` | `OA_PUBLIC_BASE_URL` ✅ 已注入（`${...:?}`）；`OA_AUTH_COOKIE_ENABLED` ⬜ 轮 1b |
+| `deploy/.env.example` / `.env.lite.example` | 同名键（模板侧；不参与 R1 判定，但属于同一变更的完整性） | ⬜ 随轮 1b |
 
 **分两次提交的后果**：先注入编排 → CI 红（看起来像"注入写错了"）；先加 `Settings` → 不红但容器读不到（看起来像"配置没生效"）。两种都浪费一轮排障。
 
 > 附注：因 `Settings` 采用 `extra="ignore"`（`docker-compose.yml:567-570` 的注释记录过这个坑：`OA_KEYCLOAK_URL` 被静默丢弃），**拼错变量名不会报错、只会静默回落到默认值**。这也是为什么 `OA_` + 字段名大写的规则只能靠机械门禁守，不能靠人记。
+
+### 2.6 升级路径的坑：老现场会"起不来"且报错不指向原因（已修，但必须写进运维认知）
+
+这是加 `OA_PUBLIC_BASE_URL` 时必然踩到的一次性坑，**下一轮任何人再加 `${VAR:?}` 必填变量都会重演**：
+
+1. `install.sh` 遇到**已存在**的环境文件会「保持不动」直接 return（不覆盖人工配置，这个行为是对的）；
+2. 而新变量在编排里是 `${OA_PUBLIC_BASE_URL:?}` → **老现场升级后容器直接起不来**；
+3. 报错只说"变量缺失"，**不会提示"先去跑一次 install.sh"** —— 现场很容易误判成"编排写错了"。
+
+已落地的修法：`install.sh:464` 的 **`backfill_derived_env()`**（在 `:336` 调用）——只补**缺失或仍是旧占位值**（如 `officeai`）的派生键，**人工填过的一律不动**，并提示需要 `docker compose build web`（`NEXT_PUBLIC_*` 是构建期内联，`restart` 不生效）。
+
+**对 K5 同样适用**：realm 渲染依赖基址，升级现场必须先能拿到 `OA_PUBLIC_BASE_URL`，否则 realm 里的 `redirectUris` 会渲染成错误的域名。
+
+**给下一轮的纪律**：任何新增的"必填派生变量"都要同时回答两个问题——
+（a）老现场升级时它从哪来？（b）缺失时的报错能不能让人直接定位到"跑 `install.sh`"？
+只做（a）不做（b），等于把一个可自愈的问题变成一次现场排障。
 
 ---
 

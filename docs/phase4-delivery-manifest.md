@@ -77,7 +77,7 @@
 | `T4-02.4` | `apps/adapter/app/business/conversation_service.py` | T4-02.4 | W2 | 代码 | 已建 | dc9ec39 | — |
 | `T4-02.5` | `apps/adapter/app/api/v1/conversation.py` | T4-02.5 | W2 | 代码 | 已建 | e3fda3b | — |
 | `T4-02.5` | `apps/adapter/tests/integration/test_conversation_endpoints.py` | T4-02.5 | W2 | 测试 | 已建 | e3fda3b | — |
-| `T4-02.6` | `apps/web/src/components/chat/*` | T4-02.6 | W2 | 代码 | 已建 | a26b5c1 | — |
+| `T4-02.6` | `apps/web/src/components/chat/*` | T4-02.6 | W2 | 代码 | 已建 | 460f177 | — |
 | `T4-02.6` | `apps/web/src/components/chat/conversation-sidebar.tsx` | T4-02.6 | W2 | 代码 | 已建 | f46544f | — |
 | `T4-02.6` | `apps/web/src/hooks/use-conversation-store.ts` | T4-02.6 | W2 | 代码 | 已建 | f46544f | — |
 | `T4-02.6` | `apps/web/src/lib/api-client.ts` | T4-02.6 | W2 | 代码 | 已建 | f46544f | — |
@@ -98,7 +98,7 @@
 | `T4-03.5` | `apps/adapter/app/api/v1/memory.py` | T4-03.5 | W3 | 代码 | 已建 | 98d726d | — |
 | `T4-03.5` | `apps/adapter/tests/integration/test_memory_endpoints.py` | T4-03.5 | W3 | 测试 | 已建 | 98d726d | — |
 | `T4-03.6` | `apps/web/src/app/(main)/profile/memories/page.tsx` | T4-03.6 | W3 | 代码 | 已建 | 3f234fb | — |
-| `T4-03.6` | `apps/web/src/components/memory/*` | T4-03.6 | W3 | 代码 | 已建 | 3f234fb | — |
+| `T4-03.6` | `apps/web/src/components/memory/*` | T4-03.6 | W3 | 代码 | 已建 | 4e2fde5 | — |
 | `T4-03.7` | `apps/web/package.json` | T4-03.7 | W3 | 代码 | 已建 | f46544f | — |
 | `T4-03.7` | `apps/web/scripts/check-banned-terms.mjs` | T4-03.7 | W3 | 代码 | 已建 | 45f9d3a | — |
 | `T4-03.7` | `docs/prd-phase2-increment.md` | T4-03.7 | W3 | 文档 | 已建 | c0dc7ee | — |
@@ -132,13 +132,13 @@
 | `T4-05.3` | `apps/adapter/app/workers/tasks/retention_cleanup.py` | T4-05.3 | W4 | 代码 | 已建 | f30c95e | — |
 | `T4-05.3` | `apps/adapter/tests/integration/test_retention_export_delete.py` | T4-05.3 | W4 | 测试 | 已建 | f30c95e | — |
 | `T4-05.3` | `sql/retention-audit.sql` | T4-05.3 | W4 | 代码 | 已建 | f30c95e | — |
-| `T4-05.4` | `deploy/.env.lite.example` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（11,151 B / 10.9 KiB） |
-| `T4-05.4` | `deploy/docker-compose.lite.yml` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（31,615 B / 30.9 KiB） |
-| `T4-05.4` | `deploy/nginx/lite.conf` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（6,015 B / 5.9 KiB） |
-| `T4-05.4` | `deploy/nginx/nginx.conf` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（2,228 B / 2.2 KiB） |
-| `T4-05.4` | `deploy/validate_lite_up.sh` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（35,098 B / 34.3 KiB） |
+| `T4-05.4` | `deploy/.env.lite.example` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（13,500 B / 13.2 KiB） |
+| `T4-05.4` | `deploy/docker-compose.lite.yml` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（35,948 B / 35.1 KiB） |
+| `T4-05.4` | `deploy/nginx/lite.conf` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（9,290 B / 9.1 KiB） |
+| `T4-05.4` | `deploy/nginx/nginx.conf` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（2,588 B / 2.5 KiB） |
+| `T4-05.4` | `deploy/validate_lite_up.sh` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（37,257 B / 36.4 KiB） |
 | `T4-05.5` | `deploy/backup.sh` | T4-05.5 | W4 | 代码 | 已建 | 5d1f29b | D-28 核实：已建（19,513 B / 19.1 KiB） |
-| `T4-05.5` | `deploy/install.sh` | T4-05.5 | W4 | 代码 | 已建 | e5f031a | D-28 核实：已建（45,701 B / 44.6 KiB） |
+| `T4-05.5` | `deploy/install.sh` | T4-05.5 | W4 | 代码 | 已建 | e5f031a | D-28 核实：已建（52,029 B / 50.8 KiB） |
 | `T4-05.5` | `deploy/restore.sh` | T4-05.5 | W4 | 代码 | 已建 | 5d1f29b | D-28 核实：已建（19,086 B / 18.6 KiB） |
 | `T4-05.5` | `deploy/rollback.sh` | T4-05.5 | W4 | 代码 | 已建 | 18eff2e | — |
 | `T4-05.5` | `deploy/upgrade.sh` | T4-05.5 | W4 | 代码 | 已建 | 18eff2e | — |

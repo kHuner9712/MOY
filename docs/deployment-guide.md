@@ -78,7 +78,7 @@
 | 端口 | 用途 | 是否必须对外开放 |
 | --- | --- | --- |
 | **80**（可改） | 平台统一入口（页面 + 接口都走它） | **是**，唯一对外端口 |
-| 443 | TLS（由客户前置负载均衡/网关终止） | 按客户规范 |
+| 443 | TLS。**两种形态**：A 由客户前置 LB/网关终止（平台不开 443）；B 由平台自建边缘终止（轮 2 交付，平台开 443） | A 形态：按客户规范；B 形态：**是** |
 
 - 轻量版**只发布一个端口**。数据库、缓存、身份服务、业务服务一律不映射宿主端口——它们没有面向公网的鉴权模型，暴露即风险。
 - 80 被占用时不要改编排文件，用安装参数换端口（只影响新生成的环境文件）：
@@ -584,7 +584,7 @@ OA_MAINTENANCE=1 bash deploy/restore.sh --from <dir> --stop-apps   # 抢不到�
 | 适用规模 | 单机、中小团队、单租户（私有化） | 多租户（SaaS）、较大并发、需要独立扩缩容 |
 | 监控 | 不内置 | 内置指标采集 + 5 条告警规则（`deploy/prometheus.yml`、`deploy/alert.rules.yml`） |
 | 入口端口 | 只暴露 1 个 | 业务与前端 2 个；基础设施一律绑回环 |
-| 证书 | 由客户前置网关终止 | 同左 |
+| 证书 | 默认由客户前置网关终止（形态 A）；可选平台自建 TLS 终止（形态 B，轮 2 交付） | 同左 |
 
 轻量版的**已知限制**（是取舍，不是缺陷）：
 
@@ -651,12 +651,53 @@ du -sh deploy/backups/*
 
 ### 12.5 证书 / HTTPS 相关
 
-**现象**：浏览器提示不安全；或登录后立刻跳回登录页。
-**原因**：平台自身不代管证书，TLS 由客户前置负载均衡/网关终止。若网关未透传 `X-Forwarded-Proto`，平台会认为"当前是明文"，与强制 HTTPS 的响应头冲突。
-**处置**：
-1. 网关补 `X-Forwarded-Proto: https`；
-2. 确认访问地址（`OA_LITE_PUBLIC_URL`）与证书域名一致；
-3. 纯内网只有 HTTP 时，需要现场调整前端安全头的 `connect-src`（见《安全白皮书》已知边界）。
+**现象**：浏览器提示不安全；登录后立刻跳回登录页；或登录成功但业务接口全部 401。
+
+#### 12.5.1 先确认当前是哪种形态（两种并存）
+
+| 形态 | 何时选它 | 平台开放端口 | TLS 由谁终止 | 生效时点 |
+| --- | --- | --- | --- | --- |
+| **A. 前置网关终止（默认推荐）** | 客户已有 LB / 网关 / WAF，或需要与企业既有证书体系统一 | 只开 80 | 客户前置 LB / 网关 | **现在即支持** |
+| **B. 平台自建 TLS 终止** | 私有化现场确实没有 LB，又必须对外提供 HTTPS | 80 + 443 | 平台自身（`edge-tls.conf`） | 轮 2 交付（`docker-compose.tls.yml`） |
+
+**默认推荐 A**，理由不是省事，是**责任边界**：证书生命周期由客户既有体系管理，平台不持有私钥，轮换不需要动平台；出现证书问题时责任方一目了然。只有"现场确实没有 LB 且必须 HTTPS"时才选 B。
+
+> B 形态现在还没有交付物。**在它落地之前，不要按本节 B 的步骤操作**——`docker-compose.tls.yml` 与 `edge-tls.conf` 尚不存在。
+
+#### 12.5.2 B 形态（平台自建 TLS）的证书约定
+
+- 证书放 `deploy/nginx/tls/fullchain.pem` 与 `deploy/nginx/tls/privkey.pem`；`chmod 600 privkey.pem`。
+- `deploy/nginx/tls/` 已在 `.gitignore` 内：**证书不入库、不进镜像**。
+- 启动：`docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tls.yml up -d`。
+- 轮换证书后只需 `docker compose exec edge nginx -s reload`，**不要重启容器**（会掐断进行中的 SSE 流）。
+- 自签证书**仅限验证用途**，必须导入客户端信任链，否则用户看到证书告警——这一条要写进验收单，避免现场把"证书告警"当成"部署失败"。
+
+#### 12.5.3 `OA_PUBLIC_BASE_URL` 决定 Cookie 的 `Secure`（唯一判定处）
+
+登录态承载在 httpOnly Cookie 上，它的 `Secure` 属性**只由 `OA_PUBLIC_BASE_URL` 的 scheme 决定**：
+
+| `OA_PUBLIC_BASE_URL` 取值 | Cookie `Secure` | 适用 |
+| --- | --- | --- |
+| `https://<域名>` | **设** | A 形态与 B 形态都属于此类——只要**对外**是 HTTPS 就必须设 |
+| `http://<域名或IP>` | 不设 | 纯内网 HTTP；浏览器接受，但 Cookie 明文传输 |
+
+三条必须记住的：
+
+1. **判定只读配置、不读请求头**。平台**不采信** `X-Forwarded-Proto` 来决定 `Secure`——否则任何人伪造该头就能让服务端下发或不带 `Secure`。所以 A 形态下即使容器内部看到的是 `http`，`OA_PUBLIC_BASE_URL` **也必须写成 `https://`**。
+2. **它是单一真源**：同一个值派生 `KC_HOSTNAME`、`OA_WEB_OIDC_ISSUER`、`OA_JWT_ISSUER`。**只改它一处**，不要单独去改后三个——那三个差一个字符（多/少尾斜杠）就是"所有接口 401"。
+3. **留空或写成 `http://localhost` 会让登录页跳回用户自己的机器**。标准栈因此配置为 `docker compose up` 时**直接拒绝启动**（有意为之）：失败要发生在部署那一刻，不能发生在用户点登录那一刻。
+
+> 轻量版无需手工设：它沿用既有的 `OA_LITE_PUBLIC_URL`（编排里插值过去），改端口时仍只用 `install.sh --proxy-port`。
+
+#### 12.5.4 按现象的处置
+
+| 现象 | 根因 | 处置 |
+| --- | --- | --- |
+| 浏览器提示不安全 | 证书链或域名不匹配 | 确认 `OA_PUBLIC_BASE_URL` 与证书域名一致；A 形态还要确认网关已换好证书 |
+| 登录后立刻跳回登录页 | A 形态下网关未透传 `X-Forwarded-Proto: https`；或 `OA_PUBLIC_BASE_URL` 写成了 `http://` | 网关补 `X-Forwarded-Proto: https`；把 `OA_PUBLIC_BASE_URL` 改成 `https://` 后重启适配层 |
+| **登录成功但业务接口全部 401** | **不是证书问题** | 属令牌校验链路（签名算法 / issuer / aud 不匹配），见 `docs/design-2026-11-02-keycloak-realm.md` §2 |
+| 纯内网只有 HTTP | 无 TLS | 预期行为：会打 `cookie_secure_disabled` 启动告警，**属告警不属故障**；同时需调整前端安全头的 `connect-src`（见《安全白皮书》已知边界） |
+| 443 端口起不来（B 形态） | 证书文件缺失或权限不对 | `docker compose exec edge nginx -t` 先行验证；确认两个 pem 都已挂载且 `privkey.pem` 为 600 |
 
 ### 12.6 时区 / 时钟漂移
 

@@ -3,9 +3,9 @@
 | 项 | 内容 |
 | --- | --- |
 | 文档 | `docs/design-2026-11-02-security-deploy.md` |
-| 版本 | v1.1（2026-11-02，追加 §4 拍板结果 / §4.2 阻断项 / §4.4 已知残留） |
+| 版本 | v1.2（2026-11-02）· 变更：v1.1 追加 §4 拍板结果/阻断项/已知残留；v1.2 追加 §3.4.1 K4-min 交接面，并同步 R4/R8 的两处修正（JWKS 走内网、环境变量 4→2） |
 | 作者 | 高见远（架构师） |
-| 配套文档 | **`docs/design-2026-11-02-keycloak-realm.md`**（R4/R5/R8 阻断项核查与 realm 配置，含实测证据） |
+| 配套文档 | **`docs/design-2026-11-02-keycloak-realm.md`**（R4/R5/R8 阻断项核查与 realm 配置，含实测证据）<br/>**`docs/remediation-ledger-2026-11-02.md`**（46 条审计项 + R1-R8 整改台账，轮 2 对账用） |
 | 输入 | `docs/audit-2026-11-02-full-repo-audit.md`（P0-4 / P0-5）、`docs/audit-2026-11-02-quality-security.md`（S-01） |
 | 基线 | `main @ e074372`。开工时工作区干净；定稿时工作区已有**并行成员**的改动（幂等性/订单抽屉等，非本文作者所为），本文未触碰任何代码 |
 | 性质 | **设计决策文档**。本文不改任何代码；落地另立任务。所有"现状"均为本次实际读码/实跑所得，行号以 `e074372` 为准 |
@@ -38,6 +38,15 @@
 3. **端口收口**：只保留边缘服务映射宿主端口；`adapter`/`web` 改 `expose:`。私有化现场需要直连时用 `docker-compose.direct.yml` override（默认不加载）作逃生开关——**不能靠"把端口变量置空"实现**，compose 的 `ports` 不支持空值跳过。
 4. **资源限制的真实缺口与审计表述不同**（见 §3.1 勘误）：`docker-compose.yml` 已有 8 处、`lite.yml` 已有 10 处内存限制，**只有 `saas.yml` 是 0 处**；真正的缺口是 `saas.yml` 全量 16 个、`docker-compose.yml` 缺 11 个（含 `web`）、以及**三套都没有任何 CPU 限制**。取值依据用 `docs/lite-container-baseline.md` 的实测口径，无实测项的按 3× 估。
 5. **k8s 只做最小三件套且按单副本**（V1.0 是单副本部署，`deploy/k8s/README.md:6-7` 里"HPA 2-10"的旧口径在 V1.0 不成立），配置单一真源靠"`.env` 为唯一键集合 + k8s Secret 由 env 文件生成 + 机械断言"，不手写密钥值。
+
+### 1.3 能力边界（V1.0 定稿，可直接对外引用）
+
+> **V1.0 仅支持 Keycloak 形态的身份提供方（含客户自建 Keycloak）。**
+> **Auth0 / Okta / Azure AD / 其他非 Keycloak IdP 不在 V1.0 范围内**，计划 V1.1 提供。
+
+这是**范围声明**而非能力缺口：V1.0 的身份链路在四处绑定 Keycloak 形态（`keycloak_base_url`/`keycloak_realm`、自省端点 `/realms/{realm}/.../introspect`、依赖 `realm_access`/`attributes` 的用户资料与角色映射），换 IdP 要改整条链路。
+
+**因此令牌校验（R8）不实现"非 Keycloak IdP 分流"**，并明确**不做按 issuer 字符串形态的嗅探**——那会让"外部 IdP 可用"变成一个只在登录那一刻成立的假象（自省仍 404）。理由与论证纠错见配套文档 `docs/design-2026-11-02-keycloak-realm.md` §0 与 §2.3。
 
 ---
 
@@ -757,6 +766,33 @@ type: Opaque
 > 轮 1 = K4-min + P0-5 + K5 + K6 + K7（目标：登录通、令牌不进 JS、接口不再 401）；
 > 轮 2 = 上表剩余部分（TLS、端口收口、资源限制、k8s）。
 > **S1/S2 的资源限制与 S4/S5 的端口收口仍留在轮 2，不因拆轮而失效。**
+
+#### 3.4.1 轮 1（K4-min）→ 轮 2（P0-4）的交接面
+
+轮 2 **不重写**轮 1 的产物，只在其上追加。开工前按下表核对"已建好 / 待追加"，避免有人把已建的东西重做一遍或另起一份。
+
+| 文件 / 对象 | 轮 1（K4-min）交付 | 轮 2 只追加 |
+| --- | --- | --- |
+| `deploy/nginx/edge.conf` | ✅ **已建（轮 1a）**：HTTP 版，**9 条 location**（`= /healthz`、`= /readyz`、`= /metrics`、`^~ /files/artifacts/`、`^~ /sso/`、`^~ /realms/`、`^~ /resources/`、`/api/`、`/`） | 端口收口后如需按 `expose` 调整上游名，仅改 `set $adapter_backend` / `$web_backend`；**不新增 location** |
+| `deploy/nginx/edge-tls.conf` | ⬜ **未建（留轮 2）** | **整份新建**：由 `edge.conf` 派生 + TLS 段 + `ssl_ciphers` |
+| `deploy/nginx/lite.conf` / `lite-tls.conf` | 文件**仍在**（未删）；`install.sh:241` 与 `validate_lite_up.sh:140` 的挂载断言已改指 `edge.conf` | 轮 2 创建 `edge-tls.conf` 后可删除 `lite-tls.conf`；`lite.conf` 建议保留为"边缘未落地形态"的参照，但**必须同步维护**，否则两套行为漂移（见 §4.3 风险表） |
+| `deploy/nginx/nginx.conf` | 追加 `map $http_x_forwarded_proto $edge_proto` | 无（若轮 1 未加 `map`，轮 2 必须补，否则 `/realms/` 在 TLS 边缘后生成 http 端点） |
+| `deploy/docker-compose.tls.yml` | 不建 | **整份新建** |
+| `deploy/docker-compose.direct.yml` | 不建 | **整份新建**（逃生开关） |
+| 三套 compose 的 `edge` / `proxy` 服务 | **已加 HTTP 版**（挂 `edge.conf`，映射 `${OA_EDGE_HTTP_PORT:-80}:80`） | 追加 `deploy:` 资源限制 + `memswap_limit` + `security_opt`；TLS 形态由 override 文件改挂载与 443 |
+| `adapter` / `web` 的 `ports` | **未动**（仍映射宿主端口，轮 1 允许） | 改为 `expose:`（这就是 S4/S5 的核心动作） |
+| `keycloak.networks`（full 栈） | **已加 `officeai-frontend`** | 无 |
+| `KC_HOSTNAME` / `KC_PROXY_HEADERS` / OIDC 变量 | **已注入** | 无 |
+| `apps/web` 构建参数 `NEXT_PUBLIC_ADAPTER_BASE_URL` | **已置空** | 无 |
+| `apps/adapter` 的 `OA_TRUSTED_PROXY_CIDRS` + `client_ip()` | 未做（轮 1 不做端口收口，此项无意义） | **S7 整项**（含 `artifact_files.py:65` 改用 `client_ip()`） |
+| 资源限制（三套） | 未做 | **S2 整项** |
+| k8s manifests | 未做 | **S8 整项**（V1.1 准备，V1.0 不阻塞） |
+| HSTS 单点化（删 Next 的 HSTS） | 未做 | **随 S3/S6**：`edge-tls.conf` 下发唯一一份，同时删 `next.config.js:24-27` 并改写其注释 |
+
+**两条交接纪律**：
+
+1. **`edge.conf` 是同一份文件，不是两份**。轮 2 若因 TLS 需要复制出 `edge-tls.conf`，必须让两者共用同一段上游与 location 定义（`include` 片段或软链），否则"只在某一形态复现"的缺陷会长期存在——这条已列为主文档 §4.3 的技术风险。
+2. **`/files/artifacts/` 这条 location 在轮 1 建好后不许任何人删**。它是 `e074372` 修的 S-03 的防线，回归代价是"产物下载生产全 404"。
 
 ### 3.5 验收判据（可执行）
 
