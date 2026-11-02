@@ -177,7 +177,7 @@ OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing   # OA_BATCH �
 | 口径 | 前置条件 | 命令 | 期望 | 用途 |
 | --- | --- | --- | --- | --- |
 | **无 PG（本机默认）** | 只设 `OA_BATCH` | 上方命令（不带 `--run-pg`） | 0 failed；PG 用例按设计 skip（当前 212 条） | 快速回归 |
-| **有 PG（CI 口径）** | `--run-pg` + `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 | 上方命令追加 `--run-pg` | **skipped 必须为 0**；`--cov-fail-under=85` 卡合并；另卡 `db/repositories/*/postgres.py ≥ 50%` | **唯一权威口径** |
+| **有 PG（CI 口径）** | `--run-pg` + `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 | 上方命令追加 `--run-pg` | **skipped 必须为 0**；`--cov-fail-under=85` 卡合并；另卡 `db/repositories/*/postgres.py ≥ 88%`（实测 90.66% − 2.66pp，审计 2026-11-02 M2） | **唯一权威口径** |
 | **前端** | 仓库根 `npm ci` 后 | `npm run test --workspace apps/web -- --coverage` | 四指标达 `vitest.config.mts` 阈值（只升不降棘轮） | 前端回归 |
 
 - **`OA_BATCH` 缺失即红**：`tests/expected_xfail.py::current_batch()` 故意不设默认值，
