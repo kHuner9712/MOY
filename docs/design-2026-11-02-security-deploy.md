@@ -177,7 +177,7 @@ sequenceDiagram
 | 文件 | 改动点 |
 | --- | --- |
 | `apps/adapter/app/core/security.py:185-205` | `extract_bearer_token()` 改为 `extract_credential()`：`Authorization` 优先（双轨兼容，见 §2.4.7），无则读 `oa_session`；**仅在走 Cookie 轨时**调 `csrf.assert_same_site()`。Bearer 轨不做 CSRF 判定（无 Cookie 即无 CSRF） |
-| `apps/adapter/app/core/config.py` | 新增 `auth_cookie_enabled: bool = True`（**唯一新增项，回滚开关**）；`auth_cookie_name` 为代码常量不开放配置；`Secure` 由 `OA_PUBLIC_BASE_URL` 的 scheme 派生（仍满足"只由配置决定、不读请求头"）；`trusted_proxy_cidrs: str = ""`（服务 P0-4 的 N-4）。**复用既有** `keycloak_base_url` / `keycloak_realm` / `keycloak_client_id`（`:146-148`），不再新增 `oidc_token_endpoint` / `oidc_client_id`——详见 `docs/design-2026-11-02-keycloak-realm.md` §2.4 |
+| `apps/adapter/app/core/config.py` | 新增 **2 个字段**：`public_base_url: str = ""`、`auth_cookie_enabled: bool = True`（核对确认当前均不存在）。`auth_cookie_name` 为代码常量不开放配置；`Secure` 由 `OA_PUBLIC_BASE_URL` 的 scheme 派生（仍满足"只由配置决定、不读请求头"）；`trusted_proxy_cidrs: str = ""`（服务 P0-4 的 N-4）。**复用既有** `keycloak_base_url` / `keycloak_realm` / `keycloak_client_id`（`:146-148`），不再新增 `oidc_token_endpoint` / `oidc_client_id`。⚠ **这 2 个字段必须与编排注入同一提交**，否则 `validate_config_names.py:19` 的 R1 判据会红（详见 `docs/design-2026-11-02-keycloak-realm.md` §2.4 / §2.5） |
 | `apps/adapter/app/main.py:500-501` | 注册 `sso_routes`（在 `include_all_routers` 之后单独 `include_router`） |
 | `apps/adapter/app/api/v1/artifact_files.py:65` | `request.client.host` → `client_ip(request)`（可信代理感知），供 P0-4 共用 |
 

@@ -113,6 +113,27 @@ OA_PUBLIC_BASE_URL=https://officeai.example.com
 
 **为什么派生而不是让人手填三个**：`OA_JWT_ISSUER` 与 `OA_WEB_OIDC_ISSUER` 只要差一个字符（多/少尾斜杠）就是"全部 401"，而这个错误在联调时表现极难归因。派生是唯一能保证一致的做法。
 
+##### ⚠ 与 lite 既有 `OA_LITE_PUBLIC_URL` 的冲突必须显式解决（v1.2 补充）
+
+`OA_LITE_PUBLIC_URL` **已经存在**（`.env.lite.example:54`，默认 `http://localhost`），而且有两条现役机制在维护它：
+
+- `install.sh:396-405` 的 `apply_proxy_port_on_new_file()` 按 `--proxy-port` 推导并 `env_set`（`:403`,`:405`）；
+- `validate_lite_up.sh:190-194` 校验"入口端口与对外基址一致"，不一致就 `warn`。
+
+若 `Secure` 派生改读 `OA_PUBLIC_BASE_URL` 而 lite 现场只维护老变量，结果是**两个对外基址、新的那个恒为空** → `https://` 判定恒为 false → 反向代理后 `Secure` **永远缺席**。这是最坏的形态：配了、看起来也生效了、其实没生效。
+
+**收敛方案（采用"插值"，不改 `install.sh`）**：
+
+| 编排 | 写法 | 理由 |
+| --- | --- | --- |
+| `lite` | `OA_PUBLIC_BASE_URL: ${OA_LITE_PUBLIC_URL}`（在 adapter/web/keycloak 服务里插值） | 单一事实来源仍是 `OA_LITE_PUBLIC_URL`；`install.sh` 一个字不改；`validate_lite_up.sh` 的既有校验继续有效 |
+| `full` / `saas` | `${OA_PUBLIC_BASE_URL:?必须设置平台对外规范地址}`（**fail loud**） | 标准栈原本没有对外基址变量，属于新增 |
+
+**标准栈为什么不给默认值**：给 `http://localhost` 之类的"能启动"的默认值，会让现场在**配错却不报错**的状态下跑起来（issuer 变成 `http://localhost/realms/officeai`，登录跳到自己机器）。宁可让 compose 在 `up` 时直接拒绝启动——**失败要发生在部署那一刻，不能发生在用户点登录那一刻**。
+
+**`OA_PUBLIC_BASE_URL` 的"生成路径"**：标准栈由 `install.sh` 按与 lite 同款的逻辑（`scheme` + `host` + 可选 `port`）写入；`.env.example` 里留空并注明"必填，由 install.sh 生成"。
+（这不触发 `validate_secrets.py` 的生成路径门禁——该门禁只针对含 `CHANGE_ME` 的密钥类变量；但按同样纪律给出生成路径，现场才不需要手工拼 URL。）
+
 #### 改动 2：keycloak 服务环境变量（三套都改）
 
 ```yaml
@@ -239,11 +260,28 @@ OA_JWT_ALGORITHM=RS256                                  # 见 §2
 
    **这样拆不会导致 issuer 不一致**：实测证明，设了 `KC_HOSTNAME` 后，从**内网地址**拉 discovery 得到的 `issuer` 仍是公网值（见 §1.4 的实测输出）。所以"内网取 JWKS + 公网值校验 `iss`"完全自洽。
 
-   **兜底**：客户自带外部 IdP（`OA_KEYCLOAK_BASE_URL` 指向别处或不可达）时，回落到从 `OA_JWT_ISSUER` 派生 JWKS。
+   **这不是新增约定，而是沿用编排早已确立的内外分离**：三套 compose **无条件**注入内网地址
+   （`docker-compose.yml:571` / `docker-compose.saas.yml:385` / `docker-compose.lite.yml:435`
+   均为 `OA_KEYCLOAK_BASE_URL: http://keycloak:8080`），且 `docker-compose.yml:567-570` 的既有注释
+   已经把"字段名 ↔ 环境变量名"的映射规则写清楚了。`KeycloakClient` 也一直用它做令牌自省
+   （`INTROSPECT_PATH`，`keycloak_client.py:26`）——**JWKS 只是第三个消费者**。
+
+   **不做运行期回落（重要）**：不存在"回落到从 issuer 派生"的分支。
+   理由：`OA_KEYCLOAK_BASE_URL` 在编排里**无条件注入、永远非空**，且它的语义本来就是
+   "**适配层视角的 IdP 地址**"而不是"我们自己的 keycloak"——客户自带外部 IdP 时这个变量也必须指向客户 IdP（否则令牌自省与用户资料接口先就挂了）。
+   因此 JWKS 地址**恒为** `{OA_KEYCLOAK_BASE_URL}/realms/{OA_KEYCLOAK_REALM}/protocol/openid-connect/certs`，纯配置态推导，确定性、可预测。
+
+   **为什么必须禁止"拉取失败就换数据源"**：那会把
+   「网络抖动 → 悄悄切到公网地址 → 自签现场证书不受信 → 401」变成一个新的隐性故障源，
+   **症状与本项要修的问题完全同款**（都是 401），排障时无法区分。
+   同理，"`keycloak_base_url == 默认值 才走内网"这种判定也不采用——客户把 IdP 部署在
+   `http://idp.internal:8080` 这类非默认地址时会静默走错分支。
+   **若将来出现非标准 realm 路径的 IdP**，再加显式 `OA_JWKS_URL` 覆盖项（显式优先、不做探测）；
+   V1.0 不加，因为它会多一个可配错的项，而当前没有这个现场。
 3. **JWKS 不可达时的 fail-closed**：与既有 fail-closed 纪律一致（`security.py:242-249` 的延迟判权白名单是同一思路），返回 20002 而不是放行。
 4. `OA_JWT_AUDIENCE` 要与令牌 `aud` 对齐：Keycloak access token 的 `aud` 默认可能是 `account`。**在 realm.json 里给 client 加 audience mapper**，把 `aud` 固定为 `officeai-adapter`，与现有 `OA_JWT_AUDIENCE=officeai-adapter`（`.env.example:199`）一致——**用 realm 适配已有配置，而不是反过来改配置**，可减少改动面。
 
-### 2.4 结论：K8 只需新增 2 个环境变量（原设计 4 个，已收敛）
+### 2.4 结论：全链路只需新增 2 个环境变量（原设计 4 个，已收敛）
 
 复核既有 `Settings` 后发现两个"本来就有、不必新加"的配置（`config.py:146-148`），据此收敛：
 
@@ -256,10 +294,32 @@ OA_JWT_ALGORITHM=RS256                                  # 见 §2
 | `OA_PUBLIC_BASE_URL` | **保留（新增）** | 单一真源，派生 `KC_HOSTNAME` / 两个 issuer / Cookie `Secure` |
 | `OA_AUTH_COOKIE_NAME` | **删除** | Cookie 名是代码常量，不需要现场配置；可配只会让"运维改了个名 → 前端读不到" |
 
-**净新增 2 个键：`OA_PUBLIC_BASE_URL`、`OA_AUTH_COOKIE_ENABLED`。两者都不是密钥类**，
-因此**不需要** `# 生成：...` 注释（`deploy/validate_secrets.py` 的门禁只要求"带 `CHANGE_ME` 占位值的密钥/口令类变量"有生成路径）。
-⚠ 但 `OA_AUTH_COOKIE_ENABLED` 的取值请写成纯布尔（`true`/`false`），
-**不要**用 `CHANGE_ME` 风格的占位——那会命中名称启发式里含 `TOKEN`/`KEY` 的规则并触发门禁（`OA_OIDC_TOKEN_ENDPOINT` 名字含 `TOKEN`，正是它被裁掉的一个附带好处）。
+**净新增 2 个键：`OA_PUBLIC_BASE_URL`、`OA_AUTH_COOKIE_ENABLED`。两者都不是密钥类、值里不含 `CHANGE_ME`**，
+因此**不触发** `deploy/validate_secrets.py` 的门禁——按工程侧核实，该门禁的判据是
+「**占位值必须有生成路径**」而**不是**「名字像密钥就拦」；且 URL 类取值走良性前缀白名单（`http://` / `https://`）。
+所以这里不需要 `# 生成：...` 注释（但 `OA_PUBLIC_BASE_URL` 仍建议给出生成方式，见 §1.5——不是为了过门禁，是为了现场不必手拼 URL）。
+
+> 说明：`OA_OIDC_TOKEN_ENDPOINT` 被裁掉的首要理由仍然是 §2.4 表里的"同一语义两个变量会漂移"，
+> **不是**门禁（名字含 `TOKEN` 并不构成拦截条件）。此处不夸大裁剪的附带收益。
+
+### 2.5 落库顺序：`Settings` 字段必须与编排注入**同一提交**
+
+`deploy/validate_config_names.py:19` 的 **R1** 判据是「**编排注入**的每个 `OA_*` 必须是 `Settings` 的字段（`OA_` + 字段名大写）或白名单」，而 `:28` 明确「**不校验 `.env` 模板与编排的对齐关系**」。由此得出两条落地纪律：
+
+1. **只往 `.env.example` 加键不会红**（模板与编排对齐不在该门禁范围内）；
+2. **一旦往 compose 注入，`Settings` 就必须有同名字段**，否则 R1 直接红并报"未登记的配置名"。
+
+因此下列三项**必须同一个提交**：
+
+| 项 | 内容 |
+| --- | --- |
+| `apps/adapter/app/core/config.py` | 新增 2 个字段：`public_base_url: str = ""`、`auth_cookie_enabled: bool = True`（已核实当前**均不存在**，是净新增，不是复用） |
+| `deploy/docker-compose*.yml` | 向 `adapter` 注入 `OA_PUBLIC_BASE_URL` / `OA_AUTH_COOKIE_ENABLED` |
+| `deploy/.env.example` / `.env.lite.example` | 同名键（模板侧；不参与 R1 判定，但属于同一变更的完整性） |
+
+**分两次提交的后果**：先注入编排 → CI 红（看起来像"注入写错了"）；先加 `Settings` → 不红但容器读不到（看起来像"配置没生效"）。两种都浪费一轮排障。
+
+> 附注：因 `Settings` 采用 `extra="ignore"`（`docker-compose.yml:567-570` 的注释记录过这个坑：`OA_KEYCLOAK_URL` 被静默丢弃），**拼错变量名不会报错、只会静默回落到默认值**。这也是为什么 `OA_` + 字段名大写的规则只能靠机械门禁守，不能靠人记。
 
 ---
 
