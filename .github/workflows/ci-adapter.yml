@@ -94,7 +94,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # **必须全量历史**：交付清单门禁（`scripts/gen_delivery_manifest.py --check`）
           # 的证据列是「引入该文件的短 SHA」，它用 `git log --diff-filter=A -1` 反查。
@@ -102,14 +102,14 @@ jobs:
           fetch-depth: 0
 
       - name: 安装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
 
       # H-2（审计 2026-10-28）：改用 uv 锁定安装——uv.lock 是依赖版本的唯一
       # 事实源，`--frozen` 禁止现场重新解析，CI 环境与本地锁定环境一致。
       - name: 安装依赖（uv sync --frozen）
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           enable-cache: true
           cache-dependency-glob: apps/adapter/uv.lock
@@ -602,7 +602,7 @@ jobs:
 
       - name: 上传测试报告
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: adapter-junit
           path: apps/adapter/junit.xml
@@ -610,7 +610,7 @@ jobs:
 
       - name: 上传覆盖率报告
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: adapter-coverage
           path: apps/adapter/coverage.xml
@@ -623,10 +623,10 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: 安装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
 
@@ -803,17 +803,17 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: 安装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
 
       # 契约门禁脚本是零依赖 Node 脚本（只用 node:fs / node:path），
       # 因此只需 Node 运行时，不必 `npm ci`（省 2-3 分钟与一次 lock 校验）。
       - name: 安装 Node.js（契约门禁用）
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -878,7 +878,7 @@ jobs:
           PY
 
       - name: 上传接口规范
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: openapi-spec
           path: docs/api/openapi.json
