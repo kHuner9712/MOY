@@ -1123,3 +1123,29 @@ def test_non_bearer_authorization_still_rejected(header: str, sso_settings: Sett
     with pytest.raises(ApiError) as exc_info:
         extract_credential(request, sso_settings)
     assert exc_info.value.code == ErrorCode.UNAUTHORIZED
+
+
+# ===========================================================================
+# 11. 上游违约令牌：不得 500（QA 第 5 项）
+# ===========================================================================
+def test_complete_with_cookie_illegal_token_reports_login_failure(
+    sso_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """IdP 返回含空格/逗号的 `access_token` → `20002 登录失败`，**不是 500/30003**。
+
+    写不出合法 Cookie 时必须 fail-closed（一个都不下发），但错误码要指向"登录失败"：
+    这是上游违约，不是平台内部故障，报 500 会触发错误告警、把排障方向引向自身代码。
+    """
+    _patch_exchange_token(monkeypatch, "bad token,with;spaces", refresh_value="rt-value")
+    start = sso_client.post("/sso/start", json={}, headers=SAME_ORIGIN)
+    state = _state_of(start.json()["data"]["authorize_url"])
+
+    response = sso_client.post(
+        "/sso/complete", json={"code": "c", "state": state}, headers=SAME_ORIGIN
+    )
+
+    assert response.status_code == 401, response.text
+    assert response.json()["code"] == int(ErrorCode.UNAUTHORIZED)
+    assert _set_cookies(response) == [], "宁可失败，也不写下会被浏览器截断的 Cookie"
+    assert "bad token" not in response.text

@@ -443,3 +443,47 @@ def test_token_set_requires_access_token() -> None:
     with pytest.raises(ApiError) as exc_info:
         TokenSet.from_payload({"refresh_token": "rt"})
     assert exc_info.value.code == ErrorCode.UNAUTHORIZED
+
+
+# ===========================================================================
+# 7. 上游 5xx 与 4xx 必须分开（QA-06）
+# ===========================================================================
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+async def test_exchange_code_maps_upstream_5xx_to_unavailable(
+    oidc_settings: Settings, status: int
+) -> None:
+    """上游 5xx → `30001`（临时故障），**不是** `20002`（凭证已死）。
+
+    这个区分决定 `/sso/refresh` 会不会把仍然有效的刷新令牌当"已死"清掉。真实现场里
+    "LB/ingress 后面的身份平台挂了"多数就表现为 5xx 响应，而不是 TCP 连不上——
+    若归成 20002，身份平台恢复后用户仍要重新输密码。
+
+    Args:
+        oidc_settings: 配置。
+        status: 上游状态码。
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, text="upstream busy")
+
+    async with _mock_client(handler) as client:
+        with pytest.raises(ApiError) as exc_info:
+            await exchange_code(oidc_settings, "c", "v", REDIRECT_URI, client=client)
+
+    assert exc_info.value.code == ErrorCode.DOWNSTREAM_UNAVAILABLE
+    assert str(status) in (exc_info.value.internal_detail or ""), (
+        "上游状态码必须进内部细节——那是现场判断『网关挂了还是令牌坏了』的唯一线索"
+    )
+
+
+async def test_refresh_tokens_maps_upstream_5xx_to_unavailable(oidc_settings: Settings) -> None:
+    """刷新路径同样：上游 5xx → 30001（不会被当成死令牌清掉）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="upstream busy")
+
+    async with _mock_client(handler) as client:
+        with pytest.raises(ApiError) as exc_info:
+            await refresh_tokens(oidc_settings, "rt", client=client)
+
+    assert exc_info.value.code == ErrorCode.DOWNSTREAM_UNAVAILABLE

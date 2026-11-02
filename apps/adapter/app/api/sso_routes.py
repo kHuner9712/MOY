@@ -73,6 +73,7 @@ from app.core.config import Settings, get_request_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
 from app.core.oidc_server import (
+    LOGIN_FAILED_MESSAGE,
     TokenSet,
     build_authorize_url,
     exchange_code,
@@ -394,29 +395,46 @@ def _issue_session_cookies(response: Response, conf: Settings, tokens: TokenSet)
         response: FastAPI 注入的响应对象。
         conf: 配置实例。
         tokens: 令牌集合（**只经 Cookie 下发，绝不进响应体**）。
+
+    Raises:
+        ApiError: 令牌含 Cookie 不允许的字符（20002）。
+            上游给了一份我们无法安全写进 Cookie 的令牌，**这不是平台内部故障**：
+            按 500/30003 报会触发错误告警、把排障方向引向自身代码。故归成
+            20002「登录失败」，同时保持 fail-closed（一个 Cookie 都不下发）——
+            写出被浏览器截断的头，症状会变成"登录成功但下一页又未登录"，
+            比一次明确的登录失败难查得多。
     """
     secure = _secure_flag(conf)
-    _append_cookie(
-        response,
-        build_set_cookie(
+    try:
+        session_header = build_set_cookie(
             SESSION_COOKIE_NAME,
             tokens.access_token,
             max_age=SESSION_MAX_AGE_SECONDS,
             path=SESSION_COOKIE_PATH,
             secure=secure,
-        ),
-    )
-    if tokens.refresh_token:
-        _append_cookie(
-            response,
+        )
+        refresh_header = (
             build_set_cookie(
                 REFRESH_COOKIE_NAME,
                 tokens.refresh_token,
                 max_age=SESSION_MAX_AGE_SECONDS,
                 path=SSO_COOKIE_PATH,
                 secure=secure,
-            ),
+            )
+            if tokens.refresh_token
+            else ""
         )
+    except ValueError as exc:
+        logger.error("sso_token_unsafe_for_cookie", error=str(exc))
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED,
+            message=LOGIN_FAILED_MESSAGE,
+            internal_detail="identity provider returned a token with cookie-illegal characters",
+        ) from exc
+
+    _append_cookie(response, session_header)
+    if refresh_header:
+        _append_cookie(response, refresh_header)
     else:
         # 没有刷新令牌（public client / 未申请 offline 作用域）：明确告警，
         # 不要装作"刷新能力可用"——前端会在 access 过期后收到 401，那时只能重新登录。

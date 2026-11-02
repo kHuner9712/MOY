@@ -20,11 +20,17 @@
 失败一律 fail-closed
 --------------------
 
-token endpoint 返回非 200、响应不是 JSON、或 JSON 里没有 `access_token`，
+token endpoint 返回 **4xx**、响应不是 JSON、或 JSON 里没有 `access_token`，
 **全部抛 `ApiError(20002)`** 并附内部细节（只写状态码与端点路径，不写响应体：
 响应体里可能含有令牌，日志落地即等于二次泄露）。绝不"降级"为下发空 Cookie——
 空的 `oa_session` 会让后续每个请求都走到验签失败，症状看起来像"登录成功但立刻
 掉线"，比一次明确的登录失败难查得多。
+
+**5xx 单独归成 30001（上游不可用），不是 20002**（QA-06）：真实现场里"LB/ingress
+后面的身份平台挂了"多数表现为 5xx 响应而不是 TCP 连不上。这个区分决定的是
+`/sso/refresh` 会不会把**仍然有效**的刷新令牌当"已死"清掉——
+临时故障应当让用户重试，而不是把他踢去重新登录。判据只有一条：
+**4xx = 这份凭证/这次请求有问题；5xx = 这一次问不到答案**。
 
 不做重试
 --------
@@ -363,7 +369,8 @@ async def _post_form(
         dict[str, Any]: 解析后的 JSON 对象。
 
     Raises:
-        ApiError: 超时（30002）、连接失败（30001）、非 200 或响应非 JSON（20002）。
+        ApiError: 超时（30002）、连接失败（30001）、**上游 5xx**（30001）、
+            上游 4xx 或非 JSON（20002）。
     """
     owns_client = client is None
     http = client if client is not None else _build_client(conf)
@@ -382,18 +389,28 @@ async def _post_form(
         if owns_client:
             await http.aclose()
 
-    if response.status_code != httpx.codes.OK:
+    status = response.status_code
+    if status >= httpx.codes.INTERNAL_SERVER_ERROR:
+        # **5xx 是上游自己的故障，不是"令牌已死"**（QA-06）。真实现场里"LB/ingress
+        # 后面的身份平台挂了"多数就表现为 5xx 响应，而不是 TCP 连不上；若把它归成
+        # 20002，`/sso/refresh` 会顺手清掉仍然有效的刷新令牌 —— 身份平台恢复后用户
+        # 仍要重新输密码，而本来靠刷新就能自愈。故与"连不上/超时"同码（30001），
+        # 让 `_refresh_or_clear_dead_token` 的"临时故障不清 Cookie"逻辑天然生效。
+        # 状态码必须进日志/内部细节：那是现场判断"是网关挂了还是令牌坏了"的唯一线索。
+        logger.warning("identity_token_upstream_error", endpoint=label, status_code=status)
+        raise ApiError(
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            internal_detail=f"endpoint={label} idp_status={status}",
+        )
+    if status != httpx.codes.OK:
+        # 4xx 才是**凭证类**问题（`invalid_grant` / `invalid_client` / `code` 已用过）。
         # 只记状态码：响应体里可能带 `error_description`，也可能（异常情况下）带回
         # 令牌片段，写进日志等于二次泄露。
-        logger.warning(
-            "identity_token_rejected",
-            endpoint=label,
-            status_code=response.status_code,
-        )
+        logger.warning("identity_token_rejected", endpoint=label, status_code=status)
         raise ApiError(
             ErrorCode.UNAUTHORIZED,
             message=LOGIN_FAILED_MESSAGE,
-            internal_detail=f"endpoint={label} status={response.status_code}",
+            internal_detail=f"endpoint={label} status={status}",
         )
 
     try:

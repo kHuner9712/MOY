@@ -581,7 +581,7 @@ def test_complete_error_body_never_echoes_upstream_payload(
 # ===========================================================================
 # 盲区 2：刷新令牌已失效（invalid_grant）时的 Cookie 处置
 # ===========================================================================
-def test_refresh_invalid_grant_issues_no_cookies_and_keeps_state(
+def test_refresh_invalid_grant_clears_only_dead_refresh(
     sso_settings: Settings,
     sso_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -628,11 +628,19 @@ def test_session_still_reports_authenticated_after_refresh_died(
     sso_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """刷新令牌已死、access 仍有效时，`/sso/session` 报 `authenticated=true`。
+    """刷新令牌已死、access 仍有效时：`authenticated=true` **且** `refreshable=false`。
 
-    这是**当前口径**（access 本身还能用几分钟，不算错），但要写进交付说明：
-    `/sso/session` **不能**当作"刷新能力探针"——它从不检查 `oa_refresh`。
-    前端若把 session 当刷新探针，会在 access 过期后才第一次发现刷新已死。
+    两个断言各自钉一件事：
+    1. `authenticated=true`：access 本身还能用几分钟，不因为刷新失败就把人踢掉；
+    2. `refreshable=false`：这就是 QA-02/QA-03 的收益——`/sso/session` 现在**会**看
+       `oa_refresh`。修复前它完全不读那条 Cookie，前端只有等 access 过期（收到 401）
+       才发现"刷新早就死了"，中间那段时间用户的每一次重试都在白打 IdP。
+
+    注意：`refreshable` 反映的是"浏览器手里还有没有刷新令牌"，**不代表它一定有效**。
+    这里断言 False 是因为上一步 `/sso/refresh` 已把死令牌清掉（QA-02）——
+    所以必须用 `_BrowserJar`（尊重 `Max-Age=0`）走完整流程；若像最初那样把同一串
+    `Cookie` 头复用给两次请求，浏览器侧的删除根本没发生，`refreshable` 会（正确地）报
+    true，这条断言就变成了假验证。
 
     Args:
         sso_settings: 配置。
@@ -645,20 +653,28 @@ def test_session_still_reports_authenticated_after_refresh_died(
             ApiError(ErrorCode.UNAUTHORIZED, internal_detail="invalid_grant")
         ),
     )
-    cookies = "; ".join(
-        [
-            _encoded_pair(SESSION_COOKIE_NAME, make_token(settings=sso_settings, expires_in=300)),
-            _encoded_pair(REFRESH_COOKIE_NAME, "rt-already-dead"),
-        ]
+    jar = _BrowserJar()
+    jar.put(
+        SESSION_COOKIE_NAME,
+        _encoded_value(SESSION_COOKIE_NAME, make_token(settings=sso_settings, expires_in=300)),
     )
+    jar.put(REFRESH_COOKIE_NAME, _encoded_value(REFRESH_COOKIE_NAME, "rt-already-dead"))
 
-    refresh = sso_client.post("/sso/refresh", headers={"Cookie": cookies, **SAME_ORIGIN})
-    session = sso_client.get("/sso/session", headers={"Cookie": cookies, **SAME_ORIGIN})
+    refresh = sso_client.post(
+        "/sso/refresh", headers={"Cookie": jar.header_for("/sso/refresh"), **SAME_ORIGIN}
+    )
+    jar.absorb(refresh)
+    session = sso_client.get(
+        "/sso/session", headers={"Cookie": jar.header_for("/sso/session"), **SAME_ORIGIN}
+    )
 
     assert refresh.status_code == 401
     assert session.status_code == 200
     assert session.json()["data"]["authenticated"] is True, (
-        "session 不读 oa_refresh：刷新已失效也不会体现在 authenticated 上"
+        "access 仍有效时不该因为刷新失败就把人踢掉"
+    )
+    assert session.json()["data"]["refreshable"] is False, (
+        "死掉的刷新令牌已被 /sso/refresh 清掉，session 必须如实报 refreshable=false（QA-02/03）"
     )
 
 
@@ -1124,7 +1140,10 @@ def test_complete_failure_keeps_pending_so_user_can_retry(
         json={"code": "the-code", "state": state},
         headers={"Cookie": pending, **SAME_ORIGIN},
     )
-    assert failed.status_code == 401
+    # QA-06 之后：上游 5xx 归 30001（503「服务暂时不可用」），而不是 20002。
+    # 对前端更准确——它该"重试"，而不是"回去重新登录"；pending 仍然保留（下面验证）。
+    assert failed.status_code == 503, failed.text
+    assert failed.json()["code"] == int(ErrorCode.DOWNSTREAM_UNAVAILABLE)
     assert _set_cookie_values(failed) == [], "失败时不得下发 Cookie，也不得清暂存"
 
     retried = sso_client.post(
@@ -1263,33 +1282,58 @@ def test_session_with_base64_garbage_token(sso_settings: Settings, sso_client: T
 def test_session_payload_distinguishes_expired_from_never_logged_in(
     sso_settings: Settings, sso_client: TestClient
 ) -> None:
-    """**已修（QA-03）**：`/sso/session` 的 data 能区分"未登录"与"登录已过期"。
+    """**已修（QA-03）**：`/sso/session` 的 data 对四种情形**逐字段**正确。
 
-    前端需要两个完全不同的动作："令牌过期了，去刷新（还能救）" 与 "没登录/刷新令牌也没了，
-    去重新登录"。修复前两者响应逐字相同，而唯一能区分的判据（浏览器里还有没有
-    `oa_refresh`）在 httpOnly Cookie 里，前端读不到。现在由 `refreshable` / `expired`
-    两个布尔直接回答。
+    | 情形 | authenticated | refreshable | expired |
+    | --- | --- | --- | --- |
+    | 从未登录 | F | F | F |
+    | 过期但可刷新 | F | T | T |
+    | 过期且刷新也没了 | F | F | T |
+    | 有效 | T | 有 refresh 则 T | F |
+
+    前端据此有**唯一确定性规则**：`authenticated` → 直接用；`refreshable` → 刷新；
+    否则 → 登录页。
+
+    **断言必须逐字段**：最初这里只写 `expired != missing`，而 `refreshable` 恒为 False
+    也能满足它——四个字段一个都没钉住（第二轮 QA 评审指出后改写）。
 
     Args:
         sso_settings: 配置。
         sso_client: 测试客户端。
     """
-    missing = sso_client.get("/sso/session", headers=SAME_ORIGIN).json()["data"]
-    expired = sso_client.get(
-        "/sso/session",
-        headers={
-            "Cookie": "; ".join(
-                [
-                    _encoded_pair(SESSION_COOKIE_NAME, make_expired_token(settings=sso_settings)),
-                    _encoded_pair(REFRESH_COOKIE_NAME, "rt-still-good"),
-                ]
-            ),
-            **SAME_ORIGIN,
-        },
-    ).json()["data"]
-
-    assert expired != missing, (
-        "未登录与登录过期返回完全相同的 data "
-        f"({missing})：前端无法区分「该刷新」与「该重新登录」，"
-        "建议增加 refreshable/expired 之类的字段"
+    expired_token = _encoded_pair(SESSION_COOKIE_NAME, make_expired_token(settings=sso_settings))
+    alive_token = _encoded_pair(
+        SESSION_COOKIE_NAME, make_token(settings=sso_settings, expires_in=300)
     )
+    refresh_pair = _encoded_pair(REFRESH_COOKIE_NAME, "rt-still-good")
+
+    def _data(cookie: str | None) -> dict[str, Any]:
+        headers = dict(SAME_ORIGIN) if cookie is None else {"Cookie": cookie, **SAME_ORIGIN}
+        return sso_client.get("/sso/session", headers=headers).json()["data"]
+
+    never = _data(None)
+    expired_refreshable = _data(f"{expired_token}; {refresh_pair}")
+    expired_no_refresh = _data(expired_token)
+    alive = _data(f"{alive_token}; {refresh_pair}")
+
+    assert never == {
+        "authenticated": False,
+        "expires_in": None,
+        "refreshable": False,
+        "expired": False,
+    }
+    assert expired_refreshable == {
+        "authenticated": False,
+        "expires_in": None,
+        "refreshable": True,
+        "expired": True,
+    }, f"过期但可刷新：{expired_refreshable}"
+    assert expired_no_refresh == {
+        "authenticated": False,
+        "expires_in": None,
+        "refreshable": False,
+        "expired": True,
+    }, f"过期且刷新也没了：{expired_no_refresh}"
+    assert alive["authenticated"] is True and alive["expired"] is False, alive
+    assert alive["refreshable"] is True, f"有效会话也应报告可刷新：{alive}"
+    assert isinstance(alive["expires_in"], int) and alive["expires_in"] > 0
