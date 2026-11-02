@@ -163,6 +163,19 @@ x_fe_test() {
 x_goldset() { strip_ansi "$1" | tail -1; }
 
 # --- 第 1 项：pytest 全量 ------------------------------------------------------
+# ⚠ **判定以 junitxml 为准，不以退出码为准**（实测踩过两次，2026-11-02 P0-5）。
+#
+# 症状：pytest 在收尾时清自己的 tmp 垃圾目录，一次批量删 127 个临时文件，被宿主的
+# safe-delete 钩子（`threshold: 50`）拦下，**进程在打印 summary 行之前被打断**——
+# 于是终端上没有 `N passed` 那一行、`$?` 是 1，而用例其实全过。
+#
+# 判据（出现"没有 summary 行"时按这三步走，别再从头查一遍）：
+#   1. 看 junitxml 的 `tests/failures/errors/skipped` 四个数——这是 pytest 自己写的，
+#      不受钩子影响；
+#   2. 看日志里有没有 `FAILED` / `ERROR` 行（没有 = 没有失败）；
+#   3. 需要干净退出码时加 `-p no:cacheprovider --basetemp=<仓库内目录>` 重跑。
+#      实测同一份代码：默认 tmp 目录 → `$?`=1 且无 summary；换成仓库内 basetemp
+#      → `2441 passed, 235 skipped`、`$?`=0，两次 junit 的四个数**完全一致**。
 run_pytest_nopg() {
   (
     cd "$ROOT/apps/adapter" || exit 2

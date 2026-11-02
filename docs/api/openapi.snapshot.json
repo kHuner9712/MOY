@@ -1910,6 +1910,136 @@
         "title": "ApiResponse[SettingsData]",
         "type": "object"
       },
+      "ApiResponse_SsoCompleteData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SsoCompleteData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[SsoCompleteData]",
+        "type": "object"
+      },
+      "ApiResponse_SsoLogoutData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SsoLogoutData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[SsoLogoutData]",
+        "type": "object"
+      },
+      "ApiResponse_SsoRefreshData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SsoRefreshData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[SsoRefreshData]",
+        "type": "object"
+      },
+      "ApiResponse_SsoSessionData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SsoSessionData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[SsoSessionData]",
+        "type": "object"
+      },
+      "ApiResponse_SsoStartData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SsoStartData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[SsoStartData]",
+        "type": "object"
+      },
       "ApiResponse_StateData_": {
         "properties": {
           "code": {
@@ -8137,6 +8267,113 @@
           }
         },
         "title": "SettingsRequest",
+        "type": "object"
+      },
+      "SsoCompleteData": {
+        "description": "`POST /sso/complete` 的业务数据（**不含任何令牌**）。\n\nAttributes:\n    ok: 登录是否成功（能返回即成功）。\n    expires_in: 访问令牌有效期（秒），供前端决定何时主动刷新。",
+        "properties": {
+          "expires_in": {
+            "default": 0,
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "SsoCompleteData",
+        "type": "object"
+      },
+      "SsoCompleteRequest": {
+        "description": "`POST /sso/complete` 的请求体。\n\nAttributes:\n    code: 授权码。\n    state: 回调带回的 `state`（缺失按\"不匹配\"处理，统一回 20002）。",
+        "properties": {
+          "code": {
+            "description": "授权码",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "state": {
+            "default": "",
+            "description": "登录往返状态串",
+            "maxLength": 512,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "SsoCompleteRequest",
+        "type": "object"
+      },
+      "SsoLogoutData": {
+        "description": "`POST /sso/logout` 的业务数据。\n\nAttributes:\n    ok: 登出是否完成（本地 Cookie 一定已删）。",
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "SsoLogoutData",
+        "type": "object"
+      },
+      "SsoRefreshData": {
+        "description": "`POST /sso/refresh` 的业务数据（**不含任何令牌**）。\n\nAttributes:\n    ok: 刷新是否成功。\n    expires_in: 新的访问令牌有效期（秒）。",
+        "properties": {
+          "expires_in": {
+            "default": 0,
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "SsoRefreshData",
+        "type": "object"
+      },
+      "SsoSessionData": {
+        "description": "`GET /sso/session` 的业务数据（**不含任何令牌**）。\n\nAttributes:\n    authenticated: 是否已登录（Cookie 存在且令牌验签通过）。\n    expires_in: 访问令牌剩余有效期（秒）；未登录时为 None。",
+        "properties": {
+          "authenticated": {
+            "default": false,
+            "title": "Authenticated",
+            "type": "boolean"
+          },
+          "expires_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In"
+          }
+        },
+        "title": "SsoSessionData",
+        "type": "object"
+      },
+      "SsoStartData": {
+        "description": "`POST /sso/start` 的业务数据。\n\nAttributes:\n    authorize_url: 浏览器应跳转的授权地址（含 PKCE 挑战，**不含 verifier**）。",
+        "properties": {
+          "authorize_url": {
+            "title": "Authorize Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorize_url"
+        ],
+        "title": "SsoStartData",
         "type": "object"
       },
       "StateData": {
@@ -17342,6 +17579,191 @@
         "summary": "就绪探针（免鉴权）",
         "tags": [
           "健康检查"
+        ]
+      }
+    },
+    "/sso/complete": {
+      "post": {
+        "description": "校验登录状态串后，用授权码在服务端换取令牌，并以 httpOnly Cookie 下发。响应体只含 `ok` 与 `expires_in`，不含任何令牌。",
+        "operationId": "complete_login_sso_complete_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsoCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SsoCompleteData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "完成统一登录",
+        "tags": [
+          "sso"
+        ]
+      }
+    },
+    "/sso/logout": {
+      "post": {
+        "description": "删除两个会话 Cookie，并尽力在身份平台侧撤销刷新令牌。撤销失败不影响本地登出结果（Cookie 已删，浏览器不再持有任何令牌）。",
+        "operationId": "logout_session_sso_logout_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SsoLogoutData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "退出登录",
+        "tags": [
+          "sso"
+        ]
+      }
+    },
+    "/sso/refresh": {
+      "post": {
+        "description": "用 httpOnly 的刷新令牌换发新的访问令牌，并覆写两个会话 Cookie。响应体不含任何令牌。刷新令牌是轮换的，旧值随即失效。",
+        "operationId": "refresh_sso_refresh_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SsoRefreshData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "续期会话",
+        "tags": [
+          "sso"
+        ]
+      }
+    },
+    "/sso/session": {
+      "get": {
+        "description": "回答当前请求是否已登录，响应体不含任何令牌。",
+        "operationId": "session_state_sso_session_get",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SsoSessionData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "查询登录状态",
+        "tags": [
+          "sso"
+        ]
+      }
+    },
+    "/sso/start": {
+      "post": {
+        "description": "生成 PKCE 挑战并下发登录暂存 Cookie，返回应跳转的授权地址。响应体不含任何令牌，访问令牌只经 httpOnly Cookie 下发。",
+        "operationId": "start_login_sso_start_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SsoStartData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "发起统一登录",
+        "tags": [
+          "sso"
         ]
       }
     }

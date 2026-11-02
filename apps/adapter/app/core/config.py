@@ -82,6 +82,19 @@ class Settings(BaseSettings):
     #: 且 realm 渲染会产出 `redirectUris: ["/auth/callback"]` 这类非法值。
     #: 故生产/预发环境空值由 `validate_auth_startup` 直接判 30004（fail loud）。
     public_base_url: str = ""
+    #: 是否接受**会话 Cookie** 作为凭证（P0-5 路线 A）。
+    #:
+    #: 关闭时：`/sso/*` 五个端点全部 503（不下发任何 Cookie），鉴权只认
+    #: `Authorization: Bearer`（`security.extract_credential`），也就是回到 V1.0
+    #: 之前的纯 Bearer 形态。存在的理由是**回滚**：Cookie 轨若在现场出现
+    #: 无法定位的问题，把这一项置 false 即可退回旧链路，不必回滚整个镜像。
+    #:
+    #: 默认 `true`：路线 A 的目标态就是只有 Cookie，Bearer 轨留着是为了让旧前端
+    #: （localStorage 形态）在灰度期继续工作（§2.4.8 双轨）。
+    #:
+    #: **本项与 `public_base_url` 必须同时被编排注入**（`OA_AUTH_COOKIE_ENABLED`），
+    #: 否则改配置无从生效——`deploy/.env.example` 里两者同名登记。
+    auth_cookie_enabled: bool = True
     default_tenant_id: str = "default"
     #: 跨租户切换时的成员关系校验开关（AR-017 配套回退开关）。
     #:

@@ -18,10 +18,12 @@ from urllib.parse import urlsplit
 
 from fastapi import Depends, Header, Request
 
+from app.core import csrf
 from app.core.config import Settings, get_request_settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import TENANT_ID_KEY, USER_ID_KEY, bind_context, get_logger
 from app.core.ratelimit import get_request_rate_limiter
+from app.core.session_cookie import SESSION_COOKIE_NAME, is_secure_from_base_url, read_cookie
 
 logger = get_logger(__name__)
 
@@ -372,8 +374,92 @@ def _decode_token(token: str, conf: Settings) -> dict[str, Any]:
     return claims
 
 
+def _credentials_settings(request: Request) -> Settings:
+    """取凭证解析所需的配置（容忍"非请求链路"构造的 Request）。
+
+    正常路径上 `get_auth_context` 会显式把配置传进来，本函数只是兜底：
+    单测里常用 `Request({"type": "http", "headers": ...})` 直接构造请求对象，
+    其 `scope` 里没有 `app`，`request.app` 会抛 `KeyError`。这种请求不会出现在
+    生产链路上，因此退化成全局单例是安全的。
+
+    Args:
+        request: 请求对象。
+
+    Returns:
+        Settings: 生效配置。
+    """
+    scope = getattr(request, "scope", None)
+    app = scope.get("app") if isinstance(scope, dict) else None
+    state_settings = getattr(getattr(app, "state", None), "settings", None)
+    if isinstance(state_settings, Settings):
+        return state_settings
+    return get_settings()
+
+
+def extract_credential(request: Request, settings: Settings | None = None) -> str:
+    """从请求中提取凭证（**双轨**：Authorization 头优先，其次会话 Cookie）。
+
+    判据顺序与理由：
+
+    1. **有非空 `Authorization` 头 → 走 Bearer 轨，逐字沿用旧行为**（含"非 Bearer
+       前缀即 20002"）。这条轨**不做 CSRF 判定**：跨站页面无法替用户设置自定义头，
+       没有 Cookie 参与也就没有 CSRF（`docs` 里 P0-5 §2.4.8 的双轨约定）。
+       先看头再读 Cookie，是为了让双轨期内旧前端（Bearer）与浏览器自身携带的
+       残留 Cookie 不互相干扰——头在就有明确意图。空值的头等同于没有该头（它不是
+       一份凭证），此时仍可回落 Cookie 轨。
+    2. **无该头且 `auth_cookie_enabled=true` → 读 `oa_session` Cookie**。命中后必须
+       过 `csrf.assert_same_site()`：Cookie 会被浏览器自动附加，跨站写请求可以
+       带上来，这一判是 L2 防线（L1 是 `SameSite=Lax`，见 `app/core/csrf.py`）。
+    3. 都不满足 → 20002（与旧行为同一错误码与同一句终端文案）。
+
+    Args:
+        request: FastAPI 请求对象。
+        settings: 可选配置实例；缺省从请求注入的配置读取。
+
+    Returns:
+        str: 令牌原文（不含 `Bearer ` 前缀）。
+
+    Raises:
+        ApiError: 缺少凭证（20002）、Authorization 头格式非法（20002）、
+            Cookie 轨来源校验未通过（20003）。
+    """
+    conf = settings or _credentials_settings(request)
+
+    header = request.headers.get("Authorization", "")
+    if header:
+        lowered = header.lower()
+        if not lowered.startswith(_BEARER_PREFIX):
+            raise ApiError(
+                ErrorCode.UNAUTHORIZED, internal_detail="Authorization scheme must be Bearer"
+            )
+        return header[len(_BEARER_PREFIX) :].strip()
+
+    if not conf.auth_cookie_enabled:
+        raise ApiError(ErrorCode.UNAUTHORIZED, internal_detail="missing Authorization header")
+
+    cookie_token = read_cookie(request.headers.get("cookie"), SESSION_COOKIE_NAME)
+    if not cookie_token:
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED,
+            internal_detail="missing Authorization header and session cookie",
+        )
+    if not csrf.assert_same_site(request):
+        # 20003 而不是 20002：凭证本身可能是好的，拒绝的理由是"来源不可信"。
+        # 混成 20002 会让前端把用户踢去重新登录，而正确动作是重发同源请求。
+        logger.warning("cookie_credential_csrf_rejected", path=request.url.path)
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            message="请求来源校验未通过，请刷新页面后重试",
+            internal_detail=f"cross-site {request.method} rejected for cookie credential",
+        )
+    return cookie_token
+
+
 def extract_bearer_token(request: Request) -> str:
-    """从请求头提取 Bearer 令牌。
+    """历史函数名（保留以兼容既有调用点与用例）。
+
+    语义已由 `extract_credential` 接管（Bearer 头优先，无头时回落 Cookie）。
+    新代码请直接用 `extract_credential`。
 
     Args:
         request: FastAPI 请求对象。
@@ -382,17 +468,10 @@ def extract_bearer_token(request: Request) -> str:
         str: 令牌原文（不含 `Bearer ` 前缀）。
 
     Raises:
-        ApiError: 缺少或格式非法的 Authorization 头（20002）。
+        ApiError: 缺少凭证（20002）、Authorization 头格式非法（20002）、
+            Cookie 轨来源校验未通过（20003）。
     """
-    header = request.headers.get("Authorization", "")
-    if not header:
-        raise ApiError(ErrorCode.UNAUTHORIZED, internal_detail="missing Authorization header")
-    lowered = header.lower()
-    if not lowered.startswith(_BEARER_PREFIX):
-        raise ApiError(
-            ErrorCode.UNAUTHORIZED, internal_detail="Authorization scheme must be Bearer"
-        )
-    return header[len(_BEARER_PREFIX) :].strip()
+    return extract_credential(request)
 
 
 def resolve_tenant_id(request: Request, auth: AuthContext, settings: Settings | None = None) -> str:
@@ -646,9 +725,15 @@ async def get_auth_context(request: Request) -> AuthContext:
 
     除 `/healthz`、`/readyz` 外的所有端点都必须声明本依赖。
 
+    凭证来源是**双轨**的（P0-5 §2.4.8）：`Authorization: Bearer` 头优先，
+    无该头时回落 `oa_session` Cookie（`extract_credential`）。两条轨最终喂给
+    同一个 `AuthContext.resolve`，因此验签、租户与角色的判定**只有一套**。
+
     配置来源：`app.state.settings`（`create_app(settings=...)` 注入），
     而非全局单例——否则注入 `auth_mode=oidc` 会被降级为 stub，
-    伪造令牌即可登录（QA BUG-01）。
+    伪造令牌即可登录（QA BUG-01）。这里把配置**显式**传给 `extract_credential`：
+    否则 Cookie 轨会去读全局单例的 `auth_cookie_enabled`，注入式构造的应用
+    在关掉 Cookie 后仍会接受 Cookie 凭证。
 
     Args:
         request: FastAPI 请求对象。
@@ -657,10 +742,10 @@ async def get_auth_context(request: Request) -> AuthContext:
         AuthContext: 鉴权上下文。
 
     Raises:
-        ApiError: 令牌缺失或校验失败（20002）。
+        ApiError: 凭证缺失或校验失败（20002）；Cookie 轨来源校验未通过（20003）。
     """
     settings = get_request_settings(request)
-    auth = AuthContext.resolve(extract_bearer_token(request), settings)
+    auth = AuthContext.resolve(extract_credential(request, settings), settings)
     request.state.user_id = auth.user_id
     request.state.tenant_id = auth.tenant_id
     bind_context(**{TENANT_ID_KEY: auth.tenant_id, USER_ID_KEY: auth.user_id})
@@ -1075,6 +1160,14 @@ async def require_ops_access(
 #: 只要环境不在其中，`auth_mode=stub` 一律视为配置错误——这是 S1 的收口点。
 _INSECURE_AUTH_ENVS: Final[frozenset[str]] = frozenset({"development", "test"})
 
+#: 「会话 Cookie 不带 `Secure`」必须告警的环境（P0-5 §2.4.6）。
+#:
+#: 为什么**只告警、不拦启动**：私有化现场纯 HTTP 是**合法形态**（客户内网、临时
+#: 联调、没有域名也就没有证书），判 fail 会把这类部署直接挡在门外——而它们的
+#: 实际风险是"同网段可嗅探"，与"平台不能用"不是一回事。是否必须上 TLS 由交付
+#: 场景决定，代码不替客户拍板，但要**大声告警**，别让它在生产里静默存在。
+_COOKIE_SECURE_WARN_ENVS: Final[frozenset[str]] = frozenset({"staging", "production"})
+
 #: `OA_JWT_SECRET` 的最小长度（P1-10）。
 #:
 #: HS256 的密钥短于 SHA-256 分组长度（32 字节）时，爆破成本随长度骤降，
@@ -1141,7 +1234,15 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
     6. 同一环境下 `public_base_url` 为空 → 30004（K1 / R4：对外基址同时决定
        `KC_HOSTNAME` 与 Cookie `Secure`，缺它两者静默退化）；
     7. 同一环境下 `jwt_algorithm` 以 `RS` 开头但 `keycloak_base_url` 为空 →
-       30004（K6 / R8：JWKS 地址只能由它推导，否则每个请求都 20002，而真因是配置）。
+       30004（K6 / R8：JWKS 地址只能由它推导，否则每个请求都 20002，而真因是配置）；
+    8. 同一环境下 `OA_PUBLIC_BASE_URL` 不是 `https://` → **只告警不阻断**
+       （P0-5 §2.4.6：会话 Cookie 会丢掉 `Secure`，会话标识在明文 HTTP 上传输）。
+
+    第 8 条为什么**不是**判据：私有化纯 HTTP 是合法现场（客户内网、无域名无证书），
+    屏蔽它等于把这类部署挡在门外。但"能部署"不等于"可以没人知道"——故用
+    `cookie_secure_disabled` 这条 WARNING 留痕，SaaS 环境据此必须修正。
+    判定只读配置（`OA_PUBLIC_BASE_URL` 的 scheme），**不读转发头**：
+    `X-Forwarded-Proto` 可被任何客户端伪造，采信它等于让攻击者决定会话是否加密。
 
     第 5 条的理由：`off` 会跳过跨租户成员校验，等于允许「持 A 租户令牌 +
     `X-Tenant-Id: B`」跨租户读写。它必须保留（线上卡死时要能止血），但**不能
@@ -1307,4 +1408,20 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
                 tenant_membership_check=conf.tenant_membership_check,
                 hint="安全降级已显式放行：跨租户切换未做成员校验，止血后必须改回 auto",
             )
+    if conf.env in _COOKIE_SECURE_WARN_ENVS and not is_secure_from_base_url(conf.public_base_url):
+        # P0-5 §2.4.6：`Secure` 只由 `OA_PUBLIC_BASE_URL` 的 scheme 派生，**不读
+        # `X-Forwarded-Proto`**（那个头可以让任何客户端决定会话是否加密）。
+        # 走到这里说明现场显式配了 http://（或省了协议），会话 Cookie 会明文传输。
+        # 不抛错的理由：私有化 HTTP 是合法形态；但这条 WARNING 必须能被检索到，
+        # 否则"会话在明文里漂"就会成为交付后才被发现的隐性问题。
+        logger.warning(
+            "cookie_secure_disabled",
+            env=conf.env,
+            public_base_url=conf.public_base_url,
+            hint=(
+                "会话 Cookie 不带 Secure：会话标识将在明文 HTTP 上传输。"
+                "私有化 HTTP 现场可接受；SaaS 环境必须改用 https:// 对外基址并重建镜像。"
+                "（本项不阻断启动，属显式告警）"
+            ),
+        )
     logger.info("auth_startup_validated", env=conf.env, auth_mode=conf.auth_mode)

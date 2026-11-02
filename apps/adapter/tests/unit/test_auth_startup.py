@@ -318,3 +318,73 @@ def test_production_hs256_does_not_require_keycloak_base_url() -> None:
             keycloak_base_url="",
         )
     )
+
+
+# ===========================================================================
+# P0-5 §2.4.6：会话 Cookie 的 `Secure` 只由对外基址派生，非 https 现场必须告警
+# ===========================================================================
+def test_http_public_base_url_warns_but_does_not_block(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """生产 + `http://` 基址 → **启动通过**，但必须留下 `cookie_secure_disabled` 告警。
+
+    为什么不判 fail：私有化纯 HTTP（客户内网、无域名无证书）是**合法现场**，
+    判 fail 会把这类部署直接挡在门外。但"能部署"不等于"可以没人知道"——会话
+    Cookie 丢掉 `Secure` 后，会话标识在同网段可被嗅探，这条 WARNING 是它唯一的
+    可观测痕迹。
+
+    Args:
+        capsys: pytest 输出捕获夹具（本仓结构化日志直写 stdout，`caplog` 看不到）。
+    """
+    validate_auth_startup(
+        Settings(
+            env="production",
+            auth_mode="oidc",
+            jwt_secret="9f2c7b1e4d8a6f0c3b5e7d9a1c2f4b6e",
+            public_base_url="http://192.168.1.50:8080",
+            jwt_algorithm="HS256",
+        )
+    )
+    captured = capsys.readouterr().out
+    assert "cookie_secure_disabled" in captured, "HTTP 现场必须留下可见告警"
+    # 文案要点名后果与处置，而不是只丢一个事件名
+    assert "Secure" in captured
+    assert "明文" in captured
+
+
+def test_https_public_base_url_has_no_insecure_cookie_warning(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """生产 + `https://` 基址 → 不应出现该告警（否则告警会被当噪声忽略）。
+
+    Args:
+        capsys: pytest 输出捕获夹具。
+    """
+    validate_auth_startup(
+        Settings(
+            env="production",
+            auth_mode="oidc",
+            jwt_secret="9f2c7b1e4d8a6f0c3b5e7d9a1c2f4b6e",
+            public_base_url="https://moy.example.com",
+            jwt_algorithm="HS256",
+        )
+    )
+    assert "cookie_secure_disabled" not in capsys.readouterr().out
+
+
+def test_http_public_base_url_does_not_warn_in_development(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """本地开发（`OA_ENV=development`）用 http 是常态，不该刷这条告警。
+
+    Args:
+        capsys: pytest 输出捕获夹具。
+    """
+    validate_auth_startup(
+        Settings(
+            env="development",
+            auth_mode="stub",
+            public_base_url="http://localhost:3000",
+        )
+    )
+    assert "cookie_secure_disabled" not in capsys.readouterr().out

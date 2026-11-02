@@ -38,6 +38,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
+from app.api.sso_routes import router as sso_router
 from app.api.v1.artifact_files import router as artifact_files_router
 from app.api.v1.router import include_all_routers
 from app.core.cache_backend import aclose_shared_redis, validate_cache_backend_startup
@@ -499,6 +500,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(include_all_routers(conf))
+    # 会话端点挂在 `/sso` 下（**不进 `/api/v1`**）：96 条端点基线一条不动，
+    # 理由与产物下载同款（`app/api/v1/artifact_files.py:3-5`）。注册位置在
+    # `include_all_routers` 之后，照抄产物下载的注册方式。
+    app.include_router(sso_router)
     # 对外文档补齐公共层（安全方案 / 逐操作 security / X-Tenant-Id / servers）。
     # 用 functools.partial 绑定 app 而不是 lambda：partial 可被 mypy 推导出
     # 「零参返回 dict」的签名，与 FastAPI 的 `openapi()` 一致，且不会引入闭包延迟绑定。

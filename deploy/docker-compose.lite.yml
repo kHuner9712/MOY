@@ -489,6 +489,12 @@ services:
       # 不再多一个独立键。两处各写一份是"配了、看起来生效了、其实没生效"的
       # 最坏形态——install.sh 只维护旧的那个，新的恒空，`Secure` 永远缺席。
       OA_PUBLIC_BASE_URL: ${OA_LITE_PUBLIC_URL:?必须在 .env.lite 中设置（对外基址）}
+      # 会话 Cookie 开关（P0-5 路线 A）：**回滚开关**，不是功能开关。
+      # 关掉后 `/sso/*` 五个端点返回 503，适配层回到只认 `Authorization: Bearer`
+      # 的旧形态——现场 Cookie 轨出问题时不回滚镜像也能退回，这是灰度期最后一道退路。
+      # 缺省 true：目标态就是"令牌只在 httpOnly Cookie 里"；双轨期内 Bearer 仍然接受，
+      # 旧前端（localStorage 形态）不受影响。
+      OA_AUTH_COOKIE_ENABLED: ${OA_AUTH_COOKIE_ENABLED:-true}
       OA_KEYCLOAK_BASE_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
       # 业务库必须用**应用角色**（NOSUPERUSER + NOBYPASSRLS）：

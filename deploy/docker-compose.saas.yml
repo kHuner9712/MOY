@@ -473,6 +473,12 @@ services:
       # 缺失即拒绝启动（`validate_auth_startup` → 30004）：空值不会报错，
       # 只会让 Cookie 静默丢掉 Secure —— 那比启动失败难查得多。
       OA_PUBLIC_BASE_URL: ${OA_PUBLIC_BASE_URL:?必须在 .env 中设置（对外基址）}
+      # 会话 Cookie 开关（P0-5 路线 A）：**回滚开关**，不是功能开关。
+      # 关掉后 `/sso/*` 五个端点返回 503，适配层回到只认 `Authorization: Bearer`
+      # 的旧形态——现场 Cookie 轨出问题时不回滚镜像也能退回，这是灰度期最后一道退路。
+      # 缺省 true：目标态就是"令牌只在 httpOnly Cookie 里"；双轨期内 Bearer 仍然接受，
+      # 旧前端（localStorage 形态）不受影响。
+      OA_AUTH_COOKIE_ENABLED: ${OA_AUTH_COOKIE_ENABLED:-true}
       OA_KEYCLOAK_BASE_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
       # SaaS 同样必须使用 officeai_app（NOSUPERUSER + NOBYPASSRLS）：

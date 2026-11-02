@@ -34,17 +34,27 @@ _FALLBACK_CODE: Final[ErrorCode] = ErrorCode.INTERNAL_ERROR
 
 #: **免鉴权白名单**（架构文档 3.0.2 + 阶段二 §4.5 BL10）
 #:
-#: 除下列三项外，**所有**端点都必须带 `Authorization: Bearer`：
+#: 除下列各项外，**所有**端点都必须带 `Authorization: Bearer`：
 #:
 #: | 路径 | 理由 |
 #: | --- | --- |
 #: | `/healthz` | 容器存活探针（编排层调用，无令牌） |
 #: | `/readyz` | 容器就绪探针（编排层调用，无令牌） |
 #: | `/api/v1/billing/payments/callback` | 支付渠道服务端回调（**验签代替鉴权**） |
+#: | `/sso/*` 五个会话端点 | 登录往返本身发生在"还没有令牌"的时刻（见下） |
 #:
-#: **新增任何免鉴权端点都必须先在此登记**，否则
-#: `tests/integration/test_billing_and_callback.py::test_only_callback_is_public`
-#: 会失败——这条断言是「不许悄悄开洞」的机械防线（G-24）。
+#: `/sso/*` 为什么在这张表里：`/sso/start` 与 `/sso/complete` 是**登录**端点，
+#: 用户此刻必然没有令牌；`/sso/session` 回答"是否已登录"，未登录是它的正常输入；
+#: `/sso/refresh` 与 `/sso/logout` 用 `oa_refresh` Cookie 自证（不是 Bearer）。
+#: 它们**不是"不设防"**：`oa_oidc_pending` 的 state 校验（防登录 CSRF/重放）、
+#: 刷新令牌的 httpOnly Cookie、以及 `csrf.assert_same_site()` 才是它们的鉴权与
+#: 防护手段——只是不用 `Authorization` 头这一种形式。
+#: 登记在这里还带来两个副作用，都是我们想要的：OpenAPI **不会**把会话端点标成
+#: 「需要 Bearer」（否则生成的客户端会去要一个用户还没有的令牌）；
+#: `tests/integration/test_billing_and_callback.py::test_only_callback_is_auth_exempt`
+#: 这条「不许悄悄开洞」的机械防线不会把它们误判成漏鉴权。
+#:
+#: **新增任何免鉴权端点都必须先在此登记**，否则上面那条用例会失败（G-24）。
 AUTH_EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
     {
         "/healthz",
@@ -53,6 +63,12 @@ AUTH_EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
         # 且**不映射到宿主机公网端口**（compose 仅内网暴露）。
         "/metrics",
         "/api/v1/billing/payments/callback",
+        # P0-5 路线 A：会话端点（Cookie 轨的登录/续期/登出，详见上面的表）
+        "/sso/start",
+        "/sso/complete",
+        "/sso/session",
+        "/sso/refresh",
+        "/sso/logout",
     }
 )
 
