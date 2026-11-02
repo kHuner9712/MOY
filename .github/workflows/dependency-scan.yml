@@ -73,6 +73,17 @@ jobs:
 
           MATCHES=$(grep -rniE "$FORBIDDEN" $TARGETS $EXCLUDE 2>/dev/null || true)
 
+          # 测试文件不随产物发布，夹具合法含 URL / 底座字样（M3 取证发现，
+          # 与 G-27 同口径）；门禁管的是**产物源码**的直连痕迹。
+          MATCHES=$(printf '%s\n' "$MATCHES" | grep -vE '\.(test|spec)\.[mc]?[jt]sx?:' || true)
+
+          # 合规署名表行显式白名单（审计 2026-11-02 建议 16「显式白名单例外」）：
+          # about 页的开源组件署名表按许可要求必须点名组件（如 Dify），只放行
+          # **署名表行**（含 `license:` 字段）；直连 URL / 其他任何字样照红。
+          # P1-07（角色描述改业务语言）仍是开放的产品项，不因本豁免关闭。
+          MATCHES=$(printf '%s\n' "$MATCHES" | grep -vE '^apps/web/src/app/\(main\)/about/page\.tsx:.*license:' || true)
+          MATCHES=$(printf '%s\n' "$MATCHES" | grep -v '^$' || true)
+
           if [ -n "$MATCHES" ]; then
             echo "::error::前端/插件代码中出现底座直连痕迹（违反架构红线 1.4）"
             echo "$MATCHES"
@@ -225,6 +236,11 @@ jobs:
           # 依赖问题）。修正为 `--format=markdown`。
           pip-licenses --format=markdown --with-urls --with-license-file \
             > python-licenses.md
+          # 判定用的**字段级**清单（只有包名与 License 字段）：markdown 版带
+          # `--with-license-file` 是合规留档用的许可全文，而协议判定跑的是正则，
+          # 全文里的 "GPL-compatible" 之类叙述会把 MIT/PSF 误判成黑名单
+          # （M3 取证发现：PSF 全文 9 行误命中）。判定只吃这份 json。
+          pip-licenses --format=json > python-licenses.json
           echo "[OK] Python 依赖清单已生成"
 
       # ------------------------------------------------------------------
@@ -314,13 +330,18 @@ jobs:
           findings = {'black': [], 'grey': []}
 
           # ---- Python 依赖 ----
-          report = pathlib.Path('python-licenses.md')
+          # 只看 **License 字段**（python-licenses.json），不扫许可全文：
+          # 全文里的 "GPL-compatible" 等叙述会让黑名单正则误伤 MIT/PSF
+          # （M3 取证发现）。markdown 全文版仅供合规留档。
+          report = pathlib.Path('python-licenses.json')
           if report.is_file():
-              for line in report.read_text(encoding='utf-8').splitlines():
-                  if line.startswith('|') and BLACKLIST.search(line):
-                      findings['black'].append(f'[python] {line.strip()}')
-                  elif line.startswith('|') and GREYLIST.search(line):
-                      findings['grey'].append(f'[python] {line.strip()}')
+              for entry in json.loads(report.read_text(encoding='utf-8')):
+                  name = str(entry.get('Name', ''))
+                  licenses = str(entry.get('License', ''))
+                  if BLACKLIST.search(licenses):
+                      findings['black'].append(f'[python] {name}: {licenses}')
+                  elif GREYLIST.search(licenses):
+                      findings['grey'].append(f'[python] {name}: {licenses}')
 
           # ---- Node 依赖 ----
           node_report = pathlib.Path('apps/web/node-licenses.json')
@@ -400,11 +421,13 @@ jobs:
                   image = (service or {}).get('image')
                   if not image or ':' not in image:
                       continue
-                  name, tag = image.rsplit(':', 1)
-                  # 解析 ${VAR:-default} 模板语法，取默认值参与比对
-                  template = re.search(r'\$\{[A-Z_]+:-([^}]+)\}', tag)
+                  # 先解析 ${VAR:-default} 模板、再按冒号切分——模板里的 `:-`
+                  # 本身含冒号，先切分会把 `${OA_IMAGE_TAG:-1.0.0}` 劈成两半
+                  # （M3 取证发现：officeai/adapter/web 被误报"未登记"）。
+                  template = re.search(r'\$\{[A-Z_]+:-([^}]+)\}', image)
                   if template:
-                      tag = template.group(1)
+                      image = re.sub(r'\$\{[A-Z_]+:-[^}]+\}', template.group(1), image)
+                  name, tag = image.rsplit(':', 1)
                   if '@sha256:' in tag:
                       # digest 锁定形式，视为合规
                       continue
