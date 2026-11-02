@@ -528,29 +528,53 @@ function throwIfGatewayStatusRejected(response: Response): void {
 }
 
 /**
+ * 会话恢复的三种结局。
+ *
+ * **为什么必须是三态而不是一个布尔**（服务端 QA-02 在客户端的翻版）：
+ * 刷新的失败分成两类，处置**完全相反**——
+ * - `dead`（`401` / `20002`）：刷新令牌真死了，服务端同时已清 `oa_refresh`，
+ *   唯一出路是重新登录；
+ * - `unavailable`（`429`/`20006`、`503`/`30001`、`504`/`30002`、其他 5xx、断网、
+ *   重试用尽）：身份平台暂时不可用，**用户的凭据没有任何问题**。
+ *
+ * 用布尔时两者都塌缩成「没拿到新令牌」，拦截层只好一律广播「登录失效」并跳登录页
+ * ——发布 / 扩缩容期间一次网关抖动就把在线用户集体踢下线。这正是服务端 QA-02
+ * 修掉的那件事（「清掉等于把网络抖动升级成强制重新登录」），不能在客户端重演。
+ */
+type SessionRecovery = 'refreshed' | 'dead' | 'unavailable';
+
+/**
  * 在途的会话恢复任务（同一时刻只允许一次刷新）。
  *
  * 为什么必须去重：刷新令牌是**轮换**的。首屏往往并发 3 个查询，若三个 401 各自
  * 触发一次 `/sso/refresh`，先成功的那次会让后到的那两次拿着已作废的刷新令牌 →
  * 401 → 跳登录页。去重后三个请求共享同一次刷新，正是服务端 QA-07 的客户端对策。
  */
-let recoveryInFlight: Promise<boolean> | null = null;
+let recoveryInFlight: Promise<SessionRecovery> | null = null;
 
 /**
- * 尝试恢复会话（刷新一次），并报告是否值得重试原请求。
+ * 尝试恢复会话（刷新一次），并报告**结局是什么**（而不是「成没成」）。
  *
- * 四分类由 `auth-refresh.refreshWithRetry()` 负责（200 成功 / 401·20002 跳登录 /
- * 429·20006 退避 / 5xx 退避），本函数只关心「拿到新令牌了吗」。
+ * 四分类由 `auth-refresh.refreshWithRetry()` 算出（`relogin` = 刷新令牌已死；
+ * `transient` = 限流 / 网关或上游不可用 / 退避用尽），本函数只把它翻译成
+ * 拦截层能据以分流的三态，绝不把两类失败合并。
  *
- * @returns 刷新成功返回 true（调用方可以重试一次原请求）
+ * @returns `refreshed` 可重试原请求；`dead` 必须重新登录；`unavailable` 只报暂时不可用
  */
-async function recoverSession(): Promise<boolean> {
+async function recoverSession(): Promise<SessionRecovery> {
   if (recoveryInFlight !== null) {
     return recoveryInFlight;
   }
   const task = refreshWithRetry()
-    .then((outcome) => outcome.kind === 'refreshed')
-    .catch(() => false);
+    .then((outcome): SessionRecovery => {
+      if (outcome.kind === 'refreshed') return 'refreshed';
+      if (outcome.kind === 'relogin') return 'dead';
+      // transient：临时故障且重试已用尽。**不登出**——用户没做错任何事
+      return 'unavailable';
+    })
+    // `refreshWithRetry` 自身不抛异常；这里兜住「万一」的未知异常，并按临时故障处理：
+    // 语义不明的时候，保持会话永远比把用户踢下线安全（错的代价不对称）
+    .catch((): SessionRecovery => 'unavailable');
   recoveryInFlight = task;
   void task.then(() => {
     if (recoveryInFlight === task) {
@@ -580,6 +604,45 @@ interface RetryContext {
   url: string;
   /** 请求头（含 `Idempotency-Key`：重试必须复用同一把键才谈得上「同一次动作」） */
   headers: Headers;
+}
+
+/**
+ * 401 / 20002 的统一处置入口（`request` 与 `upload` 共用，三态分流）。
+ *
+ * 三态的落点（这张表就是契约，改它先读 {@link SessionRecovery} 的说明）：
+ *
+ * | 结局 | 动作 | 用户看到 |
+ * | --- | --- | --- |
+ * | `refreshed` | 重试原请求一次（复用同一把幂等键） | 无感 |
+ * | `dead` | `emitUnauthorized()` + 抛 20002 | 「登录状态已失效，请重新登录」+ 跳登录页 |
+ * | `unavailable` | **不广播**，抛暂时不可用 | 「服务暂时不可用，请稍后再试」，留在原地 |
+ *
+ * `unavailable` 为什么**绝不能**广播：广播是「清会话 + 跳登录页」的命令
+ * （`session-gate` 的 `onUnauthorized` 就是这么处理的）。把它用在网关抖动上，
+ * 等于替用户把一次可自愈的临时故障判成永久失效——用户被迫重新登录一次，
+ * 而在发布窗口里这会是**全体在线用户**同时被踢。
+ *
+ * @param retryContext - 已发出请求的重试上下文；有值表示「本次就是重试」
+ * @param retry - 重试原请求（只在 `refreshed` 时调用，且只调一次）
+ * @returns 重试的结果
+ * @throws BusinessError 20002（`dead`）；AdapterUnavailableError（`unavailable`）
+ */
+async function recoverOrReject<T>(
+  retryContext: RetryContext | undefined,
+  retry: () => Promise<T>,
+): Promise<T> {
+  // 已经是重试过一次的请求：不再刷新（`recoveryInFlight` 也挡不住第二次 401 的循环，
+  // 只有这个判据能），按「会话确实失效」收口
+  const outcome: SessionRecovery = retryContext === undefined ? await recoverSession() : 'dead';
+  if (outcome === 'refreshed') {
+    return retry();
+  }
+  if (outcome === 'dead') {
+    rejectUnauthorized();
+  }
+  // `unavailable`：文案必须是「服务暂时不可用」而不是「登录已失效」——
+  // 后者会诱导用户去重新登录（白费一次登录、且此时他们根本登不上）
+  throw new AdapterUnavailableError();
 }
 
 /** 执行一次适配层请求 */
@@ -620,12 +683,11 @@ async function request<T>(
   // HTTP 401 先于信封解析判定：网关 / 反向代理层的 401 可能没有统一信封，
   // 那样 `unwrap` 会退化成 AdapterUnavailableError，用户看到「服务暂时不可用」，
   // 而真实原因是登录过期——错因误导比错误本身更难排。
+  //
+  // 注意这里用的是 `recoverOrReject`（三态）而不是「刷新成功了吗」：刷新**失败**
+  // 也分两种，一种该登出、一种绝不能登出（见 `SessionRecovery` 的说明）。
   if (response.status === 401) {
-    if (retryContext === undefined && (await recoverSession())) {
-      // 只重试一次：`retryContext` 一旦传下去，就不再进入本分支（防死循环）
-      return request<T>(method, path, options, { url, headers });
-    }
-    rejectUnauthorized();
+    return recoverOrReject(retryContext, () => request<T>(method, path, options, { url, headers }));
   }
 
   // 网关层的 413 / 429 同样**没有统一信封**，必须在 `unwrap` 之前拦下。
@@ -636,14 +698,13 @@ async function request<T>(
     return await unwrap<T>(response);
   } catch (error) {
     // 信封里的 `20002`（HTTP 200 + 业务码）与网关 401 是同一件事的两种形状，
-    // 处置必须一致：先尝试刷新一次，失败才广播并抛出。
+    // 处置必须一致（同一个三态入口）：先尝试刷新一次，`dead` 才广播并抛出。
     // **重试后仍然是 20002** 的情况也走这里（只是不再刷新），否则一次刷新之后的
     // 真实失效会被静默吞掉——会话门收不到广播，界面停在一条错误文案上而不跳登录页。
     if (error instanceof BusinessError && error.code === UNAUTHORIZED_CODE) {
-      if (retryContext === undefined && (await recoverSession())) {
-        return request<T>(method, path, options, { url, headers });
-      }
-      rejectUnauthorized();
+      return recoverOrReject(retryContext, () =>
+        request<T>(method, path, options, { url, headers }),
+      );
     }
     throw error;
   }
@@ -681,10 +742,8 @@ async function upload<T>(
   );
 
   if (response.status === 401) {
-    if (retryContext === undefined && (await recoverSession())) {
-      return upload<T>(path, form, options, { url, headers });
-    }
-    rejectUnauthorized();
+    // 与 `request()` 同一个三态入口：上传通道的 401 也不许把临时故障判成失效
+    return recoverOrReject(retryContext, () => upload<T>(path, form, options, { url, headers }));
   }
 
   // 上传是 413 的主战场（网关 body limit 先于业务层生效），必须与 `request()` 同口径
@@ -695,10 +754,7 @@ async function upload<T>(
   } catch (error) {
     // 与 `request()` 同口径：重试后仍 20002 也要广播（否则会话门学不到「真失效」）
     if (error instanceof BusinessError && error.code === UNAUTHORIZED_CODE) {
-      if (retryContext === undefined && (await recoverSession())) {
-        return upload<T>(path, form, options, { url, headers });
-      }
-      rejectUnauthorized();
+      return recoverOrReject(retryContext, () => upload<T>(path, form, options, { url, headers }));
     }
     throw error;
   }

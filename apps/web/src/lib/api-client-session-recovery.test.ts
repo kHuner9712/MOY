@@ -125,7 +125,7 @@ describe('会话恢复 · HTTP 401', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('刷新遇到网关 503 时不登出用户，仍按 20002 收敛（本轮不具备无线重试条件）', async () => {
+  it('刷新遇到 503/30001（统一登录未启用）：抛「暂时不可用」且**不广播**，用户不被踢下线', async () => {
     const { api, events } = await loadModules();
     let broadcast = 0;
     events.onUnauthorized(() => (broadcast += 1));
@@ -136,9 +136,61 @@ describe('会话恢复 · HTTP 401', () => {
 
     const error = await api.identityApi.profile().catch((caught: unknown) => caught);
 
-    // stub 环境下刷新必然 503：请求链路只能如实报「登录状态已失效」并广播
-    expect((error as InstanceType<ApiClientModule['BusinessError']>).code).toBe(20002);
-    expect(broadcast).toBe(1);
+    // 临时故障 ≠ 登录失效：错误类型必须是「服务不可用」，不是 20002
+    expect(error).toBeInstanceOf(api.AdapterUnavailableError);
+    expect(error).not.toBeInstanceOf(api.BusinessError);
+    expect((error as Error).message).toContain('暂时不可用');
+    // 文案不许诱导用户去重新登录（此时他根本登不上）
+    expect((error as Error).message).not.toContain('登录状态已失效');
+    // 关键：**不广播**。广播 = 清会话 + 跳登录页 = 把网关抖动升级成强制重新登录
+    expect(broadcast).toBe(0);
+    // 「统一登录未启用」是配置决定的必然失败 → 立即放弃，不重试
+    expect(countByUrl(fetchMock, '/sso/refresh')).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('刷新遇到 504/30002：退避重试用尽后抛「暂时不可用」，仍然不广播', async () => {
+    const { api, events } = await loadModules();
+    let broadcast = 0;
+    events.onUnauthorized(() => (broadcast += 1));
+    const fetchMock = sequentialFetch([() => new Response('', { status: 401 })], () =>
+      envelope(null, { status: 504, code: 30002, message: '上游服务超时' }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    vi.useFakeTimers();
+    const pending = api.identityApi.profile().catch((caught: unknown) => caught);
+    // 覆盖刷新内部两次退避（1s + 2s）与 ≤300ms 抖动，再留余量
+    await vi.advanceTimersByTimeAsync(8_000);
+    const error = await pending;
+
+    expect(error).toBeInstanceOf(api.AdapterUnavailableError);
+    expect(broadcast).toBe(0);
+    // 退避重试确实发生了（1 次首发 + 2 次重试），但业务请求**没有**被重试
+    expect(countByUrl(fetchMock, '/sso/refresh')).toBe(3);
+    const businessCalls = fetchMock.mock.calls.filter((call) => !String(call[0]).includes('/sso/'));
+    expect(businessCalls).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
+  it('刷新请求断网（无响应）：抛「暂时不可用」，不广播', async () => {
+    const { api, events } = await loadModules();
+    let broadcast = 0;
+    events.onUnauthorized(() => (broadcast += 1));
+    const fetchMock = sequentialFetch([() => new Response('', { status: 401 })], () => {
+      throw new TypeError('Failed to fetch');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    vi.useFakeTimers();
+    const pending = api.identityApi.profile().catch((caught: unknown) => caught);
+    await vi.advanceTimersByTimeAsync(8_000);
+    const error = await pending;
+
+    expect(error).toBeInstanceOf(api.AdapterUnavailableError);
+    expect((error as Error).message).not.toContain('登录状态已失效');
+    expect(broadcast).toBe(0);
+    vi.useRealTimers();
   });
 });
 
@@ -292,6 +344,29 @@ describe('会话恢复 · 上传通道', () => {
     expect(broadcast).toBe(1);
     // 原上传 + 刷新 + 一次重试 = 3，不再继续
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('上传首响就是信封 20002（HTTP 200）：刷新后重试一次，重试也 20002 才收口', async () => {
+    const { api, events } = await loadModules();
+    let broadcast = 0;
+    events.onUnauthorized(() => (broadcast += 1));
+    const unauthorizedBody = () =>
+      envelope(null, { code: 20002, message: '登录状态已失效，请重新登录' });
+    const fetchMock = sequentialFetch([unauthorizedBody, unauthorizedBody]);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File(['x'], 'a.txt');
+    const error = await api.knowledgeApi
+      .uploadDocument('kb_1', file)
+      .catch((caught: unknown) => caught);
+
+    expect((error as InstanceType<ApiClientModule['BusinessError']>).code).toBe(20002);
+    expect(broadcast).toBe(1);
+    const uploadCalls = fetchMock.mock.calls.filter(
+      (call) => !String(call[0]).includes('/sso/refresh'),
+    );
+    // 原上传 + 重试一次 = 2（信封 20002 与网关 401 是同一件事的两种形状）
+    expect(uploadCalls).toHaveLength(2);
   });
 });
 
