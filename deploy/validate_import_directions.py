@@ -1477,6 +1477,17 @@ def _self_test() -> int:
         empty_cycle_baseline = root / "cycle_baseline_empty.txt"
         empty_cycle_baseline.write_text("# 自检样本：无登记环\n", encoding="utf-8")
 
+        # 空违规基线：用例 10b/10c 只验「同层环」的行为，不需要任何违规登记。
+        #
+        # **必须显式传给 main()**：`--baseline` 的默认值已被改成真实仓库的
+        # `DEFAULT_BASELINE`（2026-11-02 修「裸跑恒红」时改的）。而这两个用例
+        # 扫描的是 3 个夹具文件，真实基线里的 23 条违规全部判 stale，于是：
+        #   10b（期望「新增环」导致 exit 1）——stale 也返回 1，**假通过**；
+        #   10c（期望「环已登记」放行 exit 0）——被 stale 顶成 exit 1，**真失败**。
+        # 假通过比真失败更危险：它把「环检出」这条唯一要验的行为掩盖掉了。
+        empty_violation_baseline = root / "violation_baseline_empty.txt"
+        empty_violation_baseline.write_text("", encoding="utf-8")
+
         good_baseline = root / "baseline_good.txt"
         good_baseline.write_text(
             "\n".join(
@@ -1659,6 +1670,8 @@ def _self_test() -> int:
             [
                 "--app-root",
                 str(cycle_app),
+                "--baseline",
+                str(empty_violation_baseline),
                 "--cycle-baseline",
                 str(empty_cycle_baseline),
                 "--min-files",
@@ -1679,6 +1692,8 @@ def _self_test() -> int:
             [
                 "--app-root",
                 str(cycle_app),
+                "--baseline",
+                str(empty_violation_baseline),
                 "--cycle-baseline",
                 str(registered_cycle_baseline),
                 "--min-files",
