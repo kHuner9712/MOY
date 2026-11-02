@@ -219,7 +219,11 @@ jobs:
             --project apps/adapter -o locked-requirements.txt
           pip install -r locked-requirements.txt
           pip install -e "apps/adapter" --no-deps --quiet
-          pip-licenses format=markdown --with-urls --with-license-file \
+          # M3 取证发现（2026-11-02）：此处原写 `pip-licenses format=markdown`，
+          # 少了 `--` 前缀 → CLI 把 `format=markdown` 当未知参数，整条 SCA 门禁
+          # 恒红（Dependency Scan 的 push/定时运行均因此失败，属脚本 bug 而非
+          # 依赖问题）。修正为 `--format=markdown`。
+          pip-licenses --format=markdown --with-urls --with-license-file \
             > python-licenses.md
           echo "[OK] Python 依赖清单已生成"
 
