@@ -70,6 +70,70 @@ SESSION_MAX_AGE_SECONDS: int = 8 * 60 * 60
 #: 在 Keycloak 页面上输密码、过二次验证的时间。
 PENDING_MAX_AGE_SECONDS: int = 10 * 60
 
+#: 值**不需要** base64url 编码的 Cookie 名（QA-04）。
+#:
+#: 为什么 `oa_session` 特殊：它的值是访问令牌，也就是 base64url 的 JWT
+#: （`A-Za-z0-9` + `-` + `_` + `.`）。这些字符**全部**落在 RFC 6265 的 cookie-octet
+#: 允许集内（`.` = 0x2E ∈ `%x2D-3A`，`-`/`_` 同理），可以直接放进 Cookie 头部，
+#: 不需要再包一层编码。
+#:
+#: 为什么必须去掉这层编码：base64 会把值放大 4/3。QA 实测一份 **12 角色的真实
+#: 令牌 2202 字符 → `Set-Cookie` 3002 字节**，边界（令牌 3023 字符）已经逼近浏览器
+#: 4096 字节上限；企业客户角色一多就越界，而**越界是静默丢弃**——表现为"登录成功
+#: 但下一页又未登录"，是现场最难查的一类故障。不编码后同一令牌 2256 字节，边界
+#: 推到 4 KB 以上。
+#:
+#: `oa_oidc_pending` **必须**编码：它是 JSON，含 `{` `}` `"` `:` 与逗号，直接写会
+#: 破坏 `Set-Cookie` 头部（逗号在 RFC 6265 里是分隔符）。`oa_refresh` 的值来自
+#: 身份平台、格式不受我们控制，保守起见也走编码。
+RAW_VALUE_COOKIES: frozenset[str] = frozenset({SESSION_COOKIE_NAME})
+
+
+def _should_encode(name: str, encode: bool | None) -> bool:
+    """判断某个 Cookie 的值是否需要 base64url 编码。
+
+    默认（`encode is None`）**按 Cookie 名判定**，而不是让每个调用点自己传：
+    编码方式与读取方式必须由**同一处**决定，否则"写入时编码、读取时当原文"
+    （或反过来）会得到一个能登录但读不出值的 Cookie——而症状只是"登录后又未登录"。
+    显式传 `encode=True/False` 只用于构造畸形输入的测试。
+
+    Args:
+        name: Cookie 名。
+        encode: 显式指定；None 表示按名字判定。
+
+    Returns:
+        bool: 需要编码返回 True。
+    """
+    if encode is not None:
+        return encode
+    return name not in RAW_VALUE_COOKIES
+
+
+def _is_cookie_octet_safe(value: str) -> bool:
+    """判断文本能否**原样**放进 Cookie 值（RFC 6265 §4.1.1 cookie-octet）。
+
+    允许集：`%x21` / `%x23-2B` / `%x2D-3A` / `%x3C-5B` / `%x5D-7E`。
+    被排除的正是会破坏头部的字符：`"` `,` `;` `\\`、空格与控制字符。
+
+    Args:
+        value: 原始值。
+
+    Returns:
+        bool: 全部字符都在允许集内返回 True。
+    """
+    for char in value:
+        code = ord(char)
+        allowed = (
+            code == 0x21
+            or 0x23 <= code <= 0x2B
+            or 0x2D <= code <= 0x3A
+            or 0x3C <= code <= 0x5B
+            or 0x5D <= code <= 0x7E
+        )
+        if not allowed:
+            return False
+    return True
+
 
 def is_secure_from_base_url(public_base_url: str) -> bool:
     """判断会话 Cookie 是否应带 `Secure`。
@@ -95,7 +159,10 @@ def _encode_value(value: str) -> str:
 
     RFC 6265 的 cookie-value 不允许 `;`、`,`、空格与控制字符。PKCE 的 verifier 是
     base64url（本身安全），但 `oa_oidc_pending` 存的是 JSON（含 `{}`、`:`、引号），
-    故统一走 base64url + 百分号兜底。
+    故走 base64url。
+
+    哪些 Cookie **不走**这里由 `RAW_VALUE_COOKIES` 决定（`oa_session` 的 JWT 本身就是
+    允许字符集，再编码只会放大 4/3 并逼近浏览器 4 KB 上限，见 QA-04）。
 
     Args:
         value: 原始文本。
@@ -133,23 +200,42 @@ def build_set_cookie(
     secure: bool,
     http_only: bool = True,
     same_site: str = "Lax",
+    encode: bool | None = None,
 ) -> str:
     """构造 `Set-Cookie` 响应头值。
 
     Args:
         name: Cookie 名。
-        value: 原始值（内部会编码）。
+        value: 原始值。
         max_age: 有效期（秒）。
         path: 作用域路径。
         secure: 是否带 `Secure`（由 `is_secure_from_base_url` 决定）。
         http_only: 是否禁止 JS 读取。**默认 True**，只有需要 JS 读的 Cookie 才关。
         same_site: `Lax` / `Strict` / `None`。
+        encode: 是否 base64url 编码值。默认 `None` = **按 Cookie 名判定**：
+            `oa_session` 不编码（值是 JWT，本身符合 cookie-octet，编码会膨胀 33%
+            并逼近 4 KB 上限，见 `RAW_VALUE_COOKIES`），其余 Cookie 编码。
 
     Returns:
         str: 可直接放进响应头的字符串。
+
+    Raises:
+        ValueError: 该 Cookie 走不编码路径，但值里含 cookie-octet 之外的字符。
+            这是**格式违约**（访问令牌必须是 base64url 的 JWT，这也是无状态验签的
+            前提）。宁可写日志/抛错，也不要写出一个会被浏览器截断或静默丢弃的
+            Cookie——那种失败没有任何错误码，只会表现为"登录成功但下一页未登录"。
     """
+    if _should_encode(name, encode):
+        encoded = _encode_value(value)
+    elif _is_cookie_octet_safe(value):
+        encoded = value
+    else:
+        raise ValueError(
+            f"{name} 的值含 Cookie 不允许的字符（令牌必须是 base64url 的 JWT；"
+            "若换成不透明令牌，请把它加回编码路径）"
+        )
     parts = [
-        f"{name}={_encode_value(value)}",
+        f"{name}={encoded}",
         f"Path={path}",
         f"Max-Age={max_age}",
         f"SameSite={same_site}",
@@ -233,25 +319,35 @@ def decode_pending(encoded: str) -> dict[str, Any] | None:
     return loaded if isinstance(loaded, dict) else None
 
 
-def read_cookie(header: str | None, name: str) -> str | None:
-    """从 `Cookie` 头取出指定 Cookie 的**解码后**值。
+def read_cookie(header: str | None, name: str, *, encode: bool | None = None) -> str | None:
+    """从 `Cookie` 头取出指定 Cookie 的**原始**值（必要时先解码）。
 
     Args:
         header: `Cookie` 头原文。
         name: 目标 Cookie 名。
+        encode: 是否按 base64url 解码。默认 `None` = 按 Cookie 名判定（与
+            `build_set_cookie` 同一套判据，避免"写时编码、读时当原文"）。
 
     Returns:
         str | None: 解码后的值；不存在或编码非法时返回 None。
+
+    Notes:
+        编码非法返回 None 而不是抛异常：攻击者可以随意构造 Cookie 值，
+        抛异常等于给了一条 DoS 面。调用方如需区分"没有这个 Cookie"与"有但不可用"，
+        用 `parse_cookie_header` 看键是否存在。
     """
     raw = parse_cookie_header(header).get(name)
     if raw is None:
         return None
+    if not _should_encode(name, encode):
+        return raw
     return _decode_value(raw)
 
 
 __all__: list[str] = [
     "PENDING_COOKIE_NAME",
     "PENDING_MAX_AGE_SECONDS",
+    "RAW_VALUE_COOKIES",
     "REFRESH_COOKIE_NAME",
     "SESSION_COOKIE_NAME",
     "SESSION_COOKIE_PATH",

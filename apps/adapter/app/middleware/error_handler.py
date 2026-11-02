@@ -87,7 +87,12 @@ def is_auth_exempt(path: str) -> bool:
 
 
 def _json_error(
-    code: ErrorCode, *, message: str | None = None, data: Any = None, status: int | None = None
+    code: ErrorCode,
+    *,
+    message: str | None = None,
+    data: Any = None,
+    status: int | None = None,
+    headers: list[tuple[str, str]] | None = None,
 ) -> JSONResponse:
     """构造统一失败 JSON 响应。
 
@@ -96,13 +101,20 @@ def _json_error(
         message: 覆盖默认业务文案。
         data: 附加业务数据。
         status: 覆盖默认 HTTP 状态码。
+        headers: 需要附加的原始响应头（如失败路径上的 `Set-Cookie`）。
 
     Returns:
         JSONResponse: 带正确 HTTP 状态码的失败响应。
     """
     payload = error_response(code, message=message, data=data)
     http_status = status if status is not None else http_status_of(code)
-    return JSONResponse(status_code=http_status, content=payload.model_dump())
+    response = JSONResponse(status_code=http_status, content=payload.model_dump())
+    # 用 `headers.append` 而不是构造时传 headers：Starlette 的 `headers=` 只接受
+    # **映射**，而 `Set-Cookie` 一类头天然可重复（多条 Cookie 同时失效），
+    # 塞进 dict 会被静默合并成一条——那等于"只清掉了其中一个 Cookie"。
+    for key, value in headers or []:
+        response.headers.append(key, value)
+    return response
 
 
 async def api_error_handler(_request: Request, exc: Exception) -> JSONResponse:
@@ -122,7 +134,7 @@ async def api_error_handler(_request: Request, exc: Exception) -> JSONResponse:
         logger.error("api_error", error_code=int(exc.code), detail=exc.log_message)
     else:
         logger.warning("api_error", error_code=int(exc.code), detail=exc.log_message)
-    return _json_error(exc.code, message=exc.message, data=exc.data)
+    return _json_error(exc.code, message=exc.message, data=exc.data, headers=exc.headers or None)
 
 
 async def validation_error_handler(_request: Request, exc: Exception) -> JSONResponse:

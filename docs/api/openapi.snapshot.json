@@ -8340,11 +8340,16 @@
         "type": "object"
       },
       "SsoSessionData": {
-        "description": "`GET /sso/session` 的业务数据（**不含任何令牌**）。\n\nAttributes:\n    authenticated: 是否已登录（Cookie 存在且令牌验签通过）。\n    expires_in: 访问令牌剩余有效期（秒）；未登录时为 None。",
+        "description": "`GET /sso/session` 的业务数据（**不含任何令牌**）。\n\n**为什么是三个布尔而不是一个 `authenticated`**（QA-03）：前端要区分两件完全不同\n的事——「令牌过期了，去刷新（还能救）」和「没登录 / 刷新令牌也没了，去重新登录」。\n只有一个 `authenticated` 时两者的响应体**逐字相同**，而唯一能区分的信息\n（浏览器里还有没有 `oa_refresh`）在 httpOnly Cookie 里，前端读不到。\n\nAttributes:\n    authenticated: 访问令牌有效（Cookie 存在且验签通过）。\n    expires_in: 访问令牌剩余有效期（秒）；未登录时为 None。\n    refreshable: 浏览器是否还持有刷新令牌（能否续期）。前端据此决定\"刷新\"还是\"重登\"。\n    expired: **曾带着会话 Cookie 来，但它不可用**（过期 / 签名不符 / 无法解析）。\n        与\"从未登录\"区分：`expired=true` 说明用户确实登录过，只是令牌失效了。",
         "properties": {
           "authenticated": {
             "default": false,
             "title": "Authenticated",
+            "type": "boolean"
+          },
+          "expired": {
+            "default": false,
+            "title": "Expired",
             "type": "boolean"
           },
           "expires_in": {
@@ -8357,6 +8362,11 @@
               }
             ],
             "title": "Expires In"
+          },
+          "refreshable": {
+            "default": false,
+            "title": "Refreshable",
+            "type": "boolean"
           }
         },
         "title": "SsoSessionData",
@@ -17670,7 +17680,7 @@
     },
     "/sso/refresh": {
       "post": {
-        "description": "用 httpOnly 的刷新令牌换发新的访问令牌，并覆写两个会话 Cookie。响应体不含任何令牌。刷新令牌是轮换的，旧值随即失效。",
+        "description": "用 httpOnly 的刷新令牌换发新的访问令牌，并覆写两个会话 Cookie。响应体不含任何令牌。刷新令牌是轮换的，旧值随即失效。刷新令牌被身份平台判失效（20002）时同时清掉它；网络类失败（30001/30002）不清。",
         "operationId": "refresh_sso_refresh_post",
         "parameters": [
           {
@@ -17703,7 +17713,7 @@
     },
     "/sso/session": {
       "get": {
-        "description": "回答当前请求是否已登录，响应体不含任何令牌。",
+        "description": "回答当前请求是否已登录、能否刷新、以及令牌是否曾经失效，响应体不含任何令牌。这是前端启动时的唯一判据：authenticated=true 直接用；authenticated=false 且 refreshable=true 去调 /sso/refresh；两者皆 false 才跳登录页。",
         "operationId": "session_state_sso_session_get",
         "parameters": [
           {

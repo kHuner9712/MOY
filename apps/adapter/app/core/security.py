@@ -405,8 +405,9 @@ def extract_credential(request: Request, settings: Settings | None = None) -> st
        前缀即 20002"）。这条轨**不做 CSRF 判定**：跨站页面无法替用户设置自定义头，
        没有 Cookie 参与也就没有 CSRF（`docs` 里 P0-5 §2.4.8 的双轨约定）。
        先看头再读 Cookie，是为了让双轨期内旧前端（Bearer）与浏览器自身携带的
-       残留 Cookie 不互相干扰——头在就有明确意图。空值的头等同于没有该头（它不是
-       一份凭证），此时仍可回落 Cookie 轨。
+       残留 Cookie 不互相干扰——头在就有明确意图。**空值（纯空白、或只有 `Bearer`
+       前缀而没有令牌）等同于没有该头**：它不构成一份凭证，此时仍回落 Cookie 轨；
+       而带了非 Bearer 前缀的头仍是 20002（说明调用方用错了鉴权方式，不该被静默兜住）。
     2. **无该头且 `auth_cookie_enabled=true` → 读 `oa_session` Cookie**。命中后必须
        过 `csrf.assert_same_site()`：Cookie 会被浏览器自动附加，跨站写请求可以
        带上来，这一判是 L2 防线（L1 是 `SameSite=Lax`，见 `app/core/csrf.py`）。
@@ -425,14 +426,21 @@ def extract_credential(request: Request, settings: Settings | None = None) -> st
     """
     conf = settings or _credentials_settings(request)
 
-    header = request.headers.get("Authorization", "")
-    if header:
-        lowered = header.lower()
-        if not lowered.startswith(_BEARER_PREFIX):
-            raise ApiError(
-                ErrorCode.UNAUTHORIZED, internal_detail="Authorization scheme must be Bearer"
-            )
-        return header[len(_BEARER_PREFIX) :].strip()
+    # 判空用 `strip()`（QA-05）：`Authorization: " "`（纯空白）与 `"Bearer "`（只有前缀、
+    # 没有令牌）都不构成凭证。此前只判 `== ""`，这两种会走 Bearer 轨拿 20002 而**不回落**
+    # Cookie——与本函数承诺的"空值等同于没有该头"有缝，且现场排查时会误以为是令牌坏了。
+    header = request.headers.get("Authorization", "").strip()
+    token = ""
+    if header.lower().startswith(_BEARER_PREFIX):
+        token = header[len(_BEARER_PREFIX) :].strip()
+    elif header and header.lower() != "bearer":
+        # 带了别的前缀（`Basic` / `Token`）= 用错了鉴权方式，必须报错，不能被 Cookie 静默兜住。
+        # 纯 "bearer"（没有分隔空格）按"只有前缀、没有令牌"处理，落到下面的 Cookie 轨。
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED, internal_detail="Authorization scheme must be Bearer"
+        )
+    if token:
+        return token
 
     if not conf.auth_cookie_enabled:
         raise ApiError(ErrorCode.UNAUTHORIZED, internal_detail="missing Authorization header")

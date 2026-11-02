@@ -173,14 +173,23 @@ x_goldset() { strip_ansi "$1" | tail -1; }
 #   1. 看 junitxml 的 `tests/failures/errors/skipped` 四个数——这是 pytest 自己写的，
 #      不受钩子影响；
 #   2. 看日志里有没有 `FAILED` / `ERROR` 行（没有 = 没有失败）；
-#   3. 需要干净退出码时加 `-p no:cacheprovider --basetemp=<仓库内目录>` 重跑。
-#      实测同一份代码：默认 tmp 目录 → `$?`=1 且无 summary；换成仓库内 basetemp
+#   3. 需要干净退出码时加 `-p no:cacheprovider --basetemp=<唯一目录>` 重跑。
+#      实测同一份代码：默认 tmp 目录 → `$?`=1 且无 summary；换成独立 basetemp
 #      → `2441 passed, 235 skipped`、`$?`=0，两次 junit 的四个数**完全一致**。
+#
+# ⚠ **basetemp 必须每次唯一，且跑之前确认它不存在**（QA 实测，2026-11-02）。
+# 复用同一个 `--basetemp` 连跑两次时，第二次**开头**要清上一次留下的目录，同样会被
+# safe-delete 钩子拦下 → pytest 以 `SystemExit:1` 退出 → 几十条与该目录无关的用例
+# 变成 setup error（看起来像"改坏了"，其实是清理被拦）。故本脚本用 `$$` 保证唯一：
+#   --basetemp="/tmp/oapytest_p4_$$"
+# 手工复跑时也请照做（或用 `--basetemp=$(mktemp -d)`），不要图省事复用固定路径。
 run_pytest_nopg() {
   (
     cd "$ROOT/apps/adapter" || exit 2
-    rm -rf /tmp/oapytest_p4
-    OA_BATCH=B21 "$PY" -m pytest tests -q --no-header --basetemp=/tmp/oapytest_p4
+    # 唯一目录 + 先确认不存在：避免"开头清上次残留"被拦（见上）
+    local base="/tmp/oapytest_p4_$$"
+    rm -rf "$base"
+    OA_BATCH=B21 "$PY" -m pytest tests -q --no-header --basetemp="$base"
   )
 }
 
@@ -192,9 +201,10 @@ run_pytest_pg() {
   fi
   (
     cd "$ROOT/apps/adapter" || exit 2
-    rm -rf /tmp/oapytest_p4_pg
+    local base="/tmp/oapytest_p4_pg_$$"
+    rm -rf "$base"
     OA_BATCH=B21 "$PY" -m pytest tests -q --no-header -rs --run-pg \
-      --basetemp=/tmp/oapytest_p4_pg
+      --basetemp="$base"
   )
 }
 

@@ -42,6 +42,7 @@ from app.core.session_cookie import (
     SSO_COOKIE_PATH,
     build_set_cookie,
     encode_pending,
+    read_cookie,
 )
 from app.main import create_app
 from tests.conftest import make_expired_token, make_token
@@ -213,6 +214,30 @@ def _patch_exchange(
 
     monkeypatch.setattr(sso_routes, "exchange_code", fake_exchange)
     return calls
+
+
+def _patch_exchange_token(
+    monkeypatch: pytest.MonkeyPatch, access_token: str, *, refresh_value: str
+) -> None:
+    """替换 `exchange_code`，返回**指定的**访问令牌（用于度量 Cookie 体积）。
+
+    Args:
+        monkeypatch: pytest 补丁器。
+        access_token: 期望下发到 `oa_session` 的令牌原文。
+        refresh_value: 刷新令牌值。
+    """
+
+    async def fake_exchange(
+        conf: Settings, code: str, verifier: str, redirect_uri: str
+    ) -> TokenSet:
+        return TokenSet(
+            access_token=access_token,
+            refresh_token=refresh_value,
+            expires_in=300,
+            refresh_expires_in=1800,
+        )
+
+    monkeypatch.setattr(sso_routes, "exchange_code", fake_exchange)
 
 
 def _patch_refresh(
@@ -540,7 +565,12 @@ def test_session_reports_anonymous_without_cookie(sso_client: TestClient) -> Non
     response = sso_client.get("/sso/session")
 
     assert response.status_code == 200
-    assert response.json()["data"] == {"authenticated": False, "expires_in": None}
+    assert response.json()["data"] == {
+        "authenticated": False,
+        "expires_in": None,
+        "refreshable": False,
+        "expired": False,
+    }
 
 
 def test_session_reports_authenticated_after_login(
@@ -548,7 +578,7 @@ def test_session_reports_authenticated_after_login(
     monkeypatch: pytest.MonkeyPatch,
     sso_settings: Settings,
 ) -> None:
-    """登录后 `authenticated=true`，且**不回显任何令牌**。"""
+    """登录后 `authenticated=true` + `refreshable=true`，且**不回显任何令牌**。"""
     _login(sso_client, monkeypatch, sso_settings)
 
     response = sso_client.get("/sso/session")
@@ -558,19 +588,99 @@ def test_session_reports_authenticated_after_login(
     assert data["authenticated"] is True
     assert isinstance(data["expires_in"], int)
     assert 0 < data["expires_in"] <= 3600
+    assert data["refreshable"] is True, "登录成功后浏览器持有刷新令牌"
+    assert data["expired"] is False, "有效会话不该被标成已过期"
     _assert_no_token_leak(response.text)
 
 
 def test_session_clears_expired_token(sso_client: TestClient, sso_settings: Settings) -> None:
-    """Cookie 里的令牌已过期 → 按未登录处理并顺手清掉废 Cookie。"""
+    """Cookie 里的令牌已过期 → 按未登录处理并清掉**这条**废 Cookie。"""
     expired = _cookie_header(make_expired_token(settings=sso_settings))
 
     response = sso_client.get("/sso/session", headers={"Cookie": expired})
 
     assert response.status_code == 200
-    assert response.json()["data"]["authenticated"] is False
+    data = response.json()["data"]
+    assert data["authenticated"] is False
+    assert data["expired"] is True, "带了会话 Cookie 但不可用 = expired，不是从未登录"
     cleared = _cookie_named(_set_cookies(response), SESSION_COOKIE_NAME)
     assert "Max-Age=0" in cleared
+
+
+def test_session_probe_keeps_refresh_token(sso_settings: Settings, sso_client: TestClient) -> None:
+    """**QA-01 回归**：探测会话只清 `oa_session`，绝不删 `oa_refresh`。
+
+    access TTL 是 300 秒、会话上限 8 小时，"access 过期但 refresh 有效"是会话期内的
+    正常状态。前端每次启动都会问一次"我还登录着吗"；若这一问删掉刷新令牌，
+    8 小时会话就退化成 300 秒（用户每 5 分钟被踢一次）。
+    """
+    cookie = "; ".join(
+        [
+            _cookie_header(make_expired_token(settings=sso_settings)),
+            _cookie_header_for(REFRESH_COOKIE_NAME, "rt-still-good"),
+        ]
+    )
+
+    response = sso_client.get("/sso/session", headers={"Cookie": cookie})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data == {
+        "authenticated": False,
+        "expires_in": None,
+        "refreshable": True,
+        "expired": True,
+    }
+    headers = _set_cookies(response)
+    assert SESSION_COOKIE_NAME in {value.split("=", 1)[0] for value in headers}
+    assert REFRESH_COOKIE_NAME not in {value.split("=", 1)[0] for value in headers}, (
+        "探测会话不得下发 oa_refresh 的清除头（QA-01）"
+    )
+
+
+def test_session_probe_then_refresh_succeeds(
+    sso_settings: Settings,
+    sso_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**QA-01 的用户可见后果**：探一次会话之后，刷新仍然可用。
+
+    这条用例走的是现场最常见的路径：用户离开几分钟回来刷新页面 → 前端问一次
+    `/sso/session` → 业务请求 401 → 调 `/sso/refresh`。修复前第二步就把刷新令牌删了，
+    第三步必然 20002。
+    """
+    cookie = "; ".join(
+        [
+            _cookie_header(make_expired_token(settings=sso_settings)),
+            _cookie_header_for(REFRESH_COOKIE_NAME, "rt-still-good"),
+        ]
+    )
+    sso_client.get("/sso/session", headers={"Cookie": cookie})
+    calls = _patch_refresh(monkeypatch, sso_settings)
+
+    refreshed = sso_client.post("/sso/refresh", headers={"Cookie": cookie, **SAME_ORIGIN})
+
+    assert refreshed.status_code == 200, refreshed.text
+    assert calls == ["rt-still-good"], "刷新令牌必须还在，并且真的被送去续期"
+
+
+def test_session_with_undecodable_session_cookie_clears_it(sso_client: TestClient) -> None:
+    """**QA-05 回归**：不可解码的 `oa_session` 也要清掉（僵尸 Cookie）。
+
+    此前 `read_cookie` 对该输入返回 None，与"根本没有这条 Cookie"无法区分，
+    于是这条 Cookie 会永远挂在每个请求上；而 base64 可解的垃圾值却会被清掉——
+    同类输入两种处置。
+    """
+    response = sso_client.get(
+        "/sso/session",
+        headers={"Cookie": f"{SESSION_COOKIE_NAME}=%%%garbage", **SAME_ORIGIN},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["expired"] is True
+    assert SESSION_COOKIE_NAME in {value.split("=", 1)[0] for value in _set_cookies(response)}, (
+        "僵尸 Cookie 必须被清掉"
+    )
 
 
 # ===========================================================================
@@ -605,12 +715,12 @@ def test_refresh_without_cookie_is_unauthorized(sso_client: TestClient) -> None:
     assert response.json()["code"] == int(ErrorCode.UNAUTHORIZED)
 
 
-def test_refresh_propagates_invalid_grant_without_cookies(
+def test_refresh_invalid_grant_clears_only_refresh_cookie(
     sso_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     sso_settings: Settings,
 ) -> None:
-    """刷新令牌失效 → 20002，且不覆写 Cookie（不下发半个会话）。"""
+    """刷新令牌被身份平台判失效（20002）→ 只清 `oa_refresh`，不动 `oa_session`（QA-02）。"""
     _login(sso_client, monkeypatch, sso_settings)
     _patch_refresh(
         monkeypatch,
@@ -621,7 +731,38 @@ def test_refresh_propagates_invalid_grant_without_cookies(
     response = sso_client.post("/sso/refresh", headers=SAME_ORIGIN)
 
     assert response.status_code == 401
-    assert _set_cookies(response) == []
+    cleared = {value.split("=", 1)[0] for value in _set_cookies(response)}
+    assert cleared == {REFRESH_COOKIE_NAME}, (
+        "已死的刷新令牌必须清掉（否则前端每次重试都白打一次身份平台）；"
+        f"而 oa_session 可能仍然有效，不得连带删除；实际 Set-Cookie={_set_cookies(response)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [
+        (ErrorCode.DOWNSTREAM_UNAVAILABLE, 503),
+        (ErrorCode.DOWNSTREAM_TIMEOUT, 504),
+    ],
+)
+def test_refresh_transient_failure_keeps_refresh_cookie(
+    sso_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    sso_settings: Settings,
+    code: ErrorCode,
+    status: int,
+) -> None:
+    """身份平台不可用/超时（30001/30002）→ **绝不清** `oa_refresh`（QA-02）。
+
+    临时故障被当成"令牌已死"清掉，等于把一次网络抖动升级成强制重新登录。
+    """
+    _login(sso_client, monkeypatch, sso_settings)
+    _patch_refresh(monkeypatch, sso_settings, error=ApiError(code))
+
+    response = sso_client.post("/sso/refresh", headers=SAME_ORIGIN)
+
+    assert response.status_code == status
+    assert _set_cookies(response) == [], "临期故障不得清任何 Cookie（否则误伤仍可用的会话）"
 
 
 def test_refresh_rejects_cross_site(
@@ -722,19 +863,30 @@ def _request(
     )
 
 
+def _cookie_header_for(name: str, value: str, *, path: str = "/") -> str:
+    """把任意 Cookie 包成请求头里的 `name=value` 片段（编码方式与下发完全一致）。
+
+    Args:
+        name: Cookie 名。
+        value: 原始值。
+        path: 作用域（构造请求头时只影响可读性，不影响匹配）。
+
+    Returns:
+        str: `name=value` 片段。
+    """
+    return build_set_cookie(name, value, max_age=28800, path=path, secure=True).split(";", 1)[0]
+
+
 def _cookie_header(token: str) -> str:
-    """把令牌包成 `Cookie` 头（使用与下发完全相同的编码）。
+    """把令牌包成 `oa_session=...` 的 Cookie 片段。
 
     Args:
         token: 令牌原文。
 
     Returns:
-        str: `oa_session=...` 形式的 Cookie 头。
+        str: `oa_session=...` 形式的 Cookie 片段。
     """
-    pair = build_set_cookie(SESSION_COOKIE_NAME, token, max_age=28800, path="/", secure=True).split(
-        ";", 1
-    )[0]
-    return pair
+    return _cookie_header_for(SESSION_COOKIE_NAME, token)
 
 
 def test_cookie_credential_passes_for_same_origin(sso_settings: Settings) -> None:
@@ -847,3 +999,127 @@ def test_business_endpoint_rejects_cross_site_cookie_write(
 
     assert response.status_code == 403
     assert response.json()["code"] == int(ErrorCode.FORBIDDEN)
+
+
+# ===========================================================================
+# 9. Cookie 体积（QA-04）：`oa_session` 不做 base64，边界从 3 KB 推到 4 KB 以上
+# ===========================================================================
+#: 浏览器单 Cookie 上限（Chrome/Firefox 均 4096 字节；超限**静默丢弃**）
+BROWSER_COOKIE_LIMIT: int = 4096
+
+
+def _cookie_value_of(header: str) -> str:
+    """从一条 `Set-Cookie` 里取出值部分。
+
+    Args:
+        header: `Set-Cookie` 头值。
+
+    Returns:
+        str: `name=value` 里的 `value`。
+    """
+    return header.split("=", 1)[1].split(";", 1)[0]
+
+
+def test_session_cookie_value_is_the_raw_token() -> None:
+    """`oa_session` 的值就是令牌原文（不再套 base64）。
+
+    套一层 base64 会放大 4/3：QA 实测 12 角色的真实令牌 2202 字符 → 编码后 3002 字节，
+    边界（令牌 3023 字符）贴着 4096 上限；角色一多就越界，而**超限是静默丢弃**。
+    """
+    token = "a" * 4000 + ".signature-part"
+
+    header = build_set_cookie(SESSION_COOKIE_NAME, token, max_age=28800, path="/", secure=True)
+
+    assert _cookie_value_of(header) == token, "访问令牌必须原样写入（QA-04）"
+    assert len(header) < BROWSER_COOKIE_LIMIT, (
+        f"4000 字符的令牌不该逼近 4 KB 上限；实际 {len(header)} 字节"
+    )
+
+
+def test_pending_cookie_is_still_encoded() -> None:
+    """`oa_oidc_pending` 是 JSON（含 `{}"` 与逗号），**必须**继续编码，且能原样读回。"""
+    payload = encode_pending({"state": "s", "verifier": "v"})
+
+    header = build_set_cookie(
+        PENDING_COOKIE_NAME, payload, max_age=600, path=SSO_COOKIE_PATH, secure=True
+    )
+
+    value = _cookie_value_of(header)
+    assert "{" not in value and '"' not in value
+    assert read_cookie(f"{PENDING_COOKIE_NAME}={value}", PENDING_COOKIE_NAME) == payload
+
+
+def test_session_cookie_rejects_value_unsafe_for_raw_cookie() -> None:
+    """访问令牌若含 Cookie 不允许的字符 → 显式失败，而不是写出一条会被截断的 Cookie。
+
+    访问令牌必须是 base64url 的 JWT（这也是无状态验签的前提）。不静默降级为
+    "编码后写入"：写读两侧必须用同一套判据，否则会得到一个写得进、读不出的 Cookie，
+    症状是"登录成功但下一页又未登录"。
+    """
+    with pytest.raises(ValueError, match="Cookie 不允许的字符"):
+        build_set_cookie(
+            SESSION_COOKIE_NAME, "not a jwt; with separators", max_age=1, path="/", secure=False
+        )
+
+
+def test_login_issues_compact_session_cookie(
+    sso_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    sso_settings: Settings,
+) -> None:
+    """端到端：登录下发的 `oa_session` 与令牌逐字相等，且远小于 4 KB。"""
+    token = make_token(settings=sso_settings)
+    _patch_exchange_token(monkeypatch, token, refresh_value="rt-value")
+    start = sso_client.post("/sso/start", json={}, headers=SAME_ORIGIN)
+    state = _state_of(start.json()["data"]["authorize_url"])
+
+    response = sso_client.post(
+        "/sso/complete", json={"code": "c", "state": state}, headers=SAME_ORIGIN
+    )
+
+    assert response.status_code == 200, response.text
+    session = _cookie_named(_set_cookies(response), SESSION_COOKIE_NAME)
+    assert _cookie_value_of(session) == token
+    assert len(session) < BROWSER_COOKIE_LIMIT
+
+
+# ===========================================================================
+# 10. 空 `Authorization` 头（QA-05）：纯空白 / 只有前缀都要回落 Cookie 轨
+# ===========================================================================
+@pytest.mark.parametrize(
+    "header", ["", " ", "   ", "\t", "Bearer", "Bearer ", "Bearer   ", " bearer "]
+)
+def test_blank_authorization_header_falls_back_to_cookie(
+    header: str, sso_settings: Settings
+) -> None:
+    """`Authorization` 不构成凭证时（空、纯空白、只有 `Bearer` 前缀）必须回落 Cookie。
+
+    此前只判 `== ""`，`" "` 与 `"Bearer "` 会走 Bearer 轨拿到 20002 而**不回落**——
+    与"空值等同于没有该头"的承诺有缝，现场会被误判成令牌损坏。
+    """
+    token = make_token(settings=sso_settings)
+    request = _request(
+        {
+            "Authorization": header,
+            "Cookie": _cookie_header(token),
+            "Sec-Fetch-Site": "same-origin",
+        }
+    )
+
+    assert extract_credential(request, sso_settings) == token
+
+
+@pytest.mark.parametrize("header", ["Basic abc", "Token xyz", "bearerx"])
+def test_non_bearer_authorization_still_rejected(header: str, sso_settings: Settings) -> None:
+    """非 Bearer 形态（含只有 `Bearer` 没有分隔空格的写法）仍 20002，不被 Cookie 兜住。
+
+    这类头说明调用方用错了鉴权方式，静默兜住会掩盖问题。
+    """
+    token = make_token(settings=sso_settings)
+    request = _request(
+        {"Authorization": header, "Cookie": _cookie_header(token), "Sec-Fetch-Site": "same-origin"}
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        extract_credential(request, sso_settings)
+    assert exc_info.value.code == ErrorCode.UNAUTHORIZED

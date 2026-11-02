@@ -533,6 +533,7 @@ class ApiError(Exception):
         message: str | None = None,
         data: Any = None,
         internal_detail: str | None = None,
+        headers: list[tuple[str, str]] | None = None,
     ) -> None:
         """初始化业务异常。
 
@@ -541,6 +542,11 @@ class ApiError(Exception):
             message: 覆盖默认业务文案（仅用于同码不同场景的细分文案）。
             data: 附加业务数据。
             internal_detail: 内部诊断信息，**只进日志**。
+            headers: 需要附加在**错误响应**上的原始响应头。存在的理由：
+                失败路径上也要能下发 `Set-Cookie`（例如刷新令牌已被身份平台判死，
+                必须在 401 的同时清掉浏览器里的死令牌）。而 FastAPI 在异常路径上会
+                丢弃注入的 `Response` 对象及其头——只往那个对象 append 是**不会**
+                生效的（P0-5 / QA-02 实测：看着写对了，浏览器什么都没收到）。
 
         Raises:
             KeyError: 错误码未在注册表中登记（注册制约束）。
@@ -554,6 +560,7 @@ class ApiError(Exception):
         self.internal: str = spec.internal
         self.data: Any = data
         self.internal_detail: str | None = internal_detail
+        self.headers: list[tuple[str, str]] = list(headers or [])
         super().__init__(f"[{int(spec.code)}] {self.message}")
 
     def to_response(self) -> ApiResponse[Any]:

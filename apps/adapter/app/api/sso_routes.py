@@ -34,10 +34,23 @@
 ============================  ==============================================
 ``POST /sso/start``           生成 PKCE → 下发 `oa_oidc_pending` → 回授权地址
 ``POST /sso/complete``        `{code, state}` → 换令牌 → 下发两个会话 Cookie
-``GET  /sso/session``         回答"当前是否已登录"（**不回显任何令牌**）
+``GET  /sso/session``         `{authenticated, expires_in, refreshable, expired}`（不回显令牌）
 ``POST /sso/refresh``         用 `oa_refresh` 换新 → 覆写两个 Cookie
 ``POST /sso/logout``          删两个 Cookie + 尽力撤销刷新令牌
 ============================  ==============================================
+
+**清理边界（容易写错，且错了就是"每 5 分钟被踢一次"）**：
+
+====================  ==========================================================
+路径                    清理什么 / 为什么
+====================  ==========================================================
+`GET /sso/session`     只清 `oa_session`。access TTL 300 s 而会话 8 h，
+                       "access 过期、refresh 有效"是正常态；顺手删 refresh
+                       会把 8 小时会话压成 300 秒（QA-01）
+`POST /sso/refresh`    仅当身份平台判 20002（令牌已死）才清 `oa_refresh`；
+                       30001/30002 是网络抖动，**不清**（QA-02）
+`POST /sso/logout`     两个都清——登出就是不要这个会话了
+====================  ==========================================================
 
 硬约束 1：**任何响应体都不得包含 `access_token` / `refresh_token` / `id_token`**。
 这是本方案的**全部意义**——令牌只走 `Set-Cookie`（httpOnly），绝不进 JSON。
@@ -82,6 +95,7 @@ from app.core.session_cookie import (
     decode_pending,
     encode_pending,
     is_secure_from_base_url,
+    parse_cookie_header,
     read_cookie,
 )
 from app.schemas.common import ApiResponse
@@ -139,13 +153,23 @@ class SsoCompleteData(BaseModel):
 class SsoSessionData(BaseModel):
     """`GET /sso/session` 的业务数据（**不含任何令牌**）。
 
+    **为什么是三个布尔而不是一个 `authenticated`**（QA-03）：前端要区分两件完全不同
+    的事——「令牌过期了，去刷新（还能救）」和「没登录 / 刷新令牌也没了，去重新登录」。
+    只有一个 `authenticated` 时两者的响应体**逐字相同**，而唯一能区分的信息
+    （浏览器里还有没有 `oa_refresh`）在 httpOnly Cookie 里，前端读不到。
+
     Attributes:
-        authenticated: 是否已登录（Cookie 存在且令牌验签通过）。
+        authenticated: 访问令牌有效（Cookie 存在且验签通过）。
         expires_in: 访问令牌剩余有效期（秒）；未登录时为 None。
+        refreshable: 浏览器是否还持有刷新令牌（能否续期）。前端据此决定"刷新"还是"重登"。
+        expired: **曾带着会话 Cookie 来，但它不可用**（过期 / 签名不符 / 无法解析）。
+            与"从未登录"区分：`expired=true` 说明用户确实登录过，只是令牌失效了。
     """
 
     authenticated: bool = False
     expires_in: int | None = None
+    refreshable: bool = False
+    expired: bool = False
 
 
 class SsoRefreshData(BaseModel):
@@ -405,6 +429,9 @@ def _issue_session_cookies(response: Response, conf: Settings, tokens: TokenSet)
 def _clear_session_cookies(response: Response, conf: Settings) -> None:
     """删除两个会话 Cookie（**属性必须与下发时一致**，否则删不掉）。
 
+    只用于**登出**与"确定要放弃整个会话"的场景。`GET /sso/session` 的探测路径
+    **不能**用它：那里 `oa_refresh` 往往仍然有效（QA-01，见 `_clear_session_only`）。
+
     Args:
         response: FastAPI 注入的响应对象。
         conf: 配置实例。
@@ -418,6 +445,43 @@ def _clear_session_cookies(response: Response, conf: Settings) -> None:
         response,
         build_clear_cookie(REFRESH_COOKIE_NAME, path=SSO_COOKIE_PATH, secure=secure),
     )
+
+
+def _clear_session_only(response: Response, conf: Settings) -> None:
+    """只删除访问令牌 Cookie，**保留 `oa_refresh`**（QA-01）。
+
+    为什么这个区分是必须的：`oa_session`（300 秒）比 `oa_refresh`（8 小时）短得多，
+    "访问令牌过期、刷新令牌仍然有效"是**会话期内的正常状态**。若探测会话时把两个
+    一起删掉，就等于把"刷新即可续期"降级成"重新登录"——用户每 5 分钟被踢一次，
+    8 小时的会话实际只活 300 秒。
+
+    Args:
+        response: FastAPI 注入的响应对象。
+        conf: 配置实例。
+    """
+    _append_cookie(
+        response,
+        build_clear_cookie(
+            SESSION_COOKIE_NAME, path=SESSION_COOKIE_PATH, secure=_secure_flag(conf)
+        ),
+    )
+
+
+def _clear_refresh_header(conf: Settings) -> str:
+    """构造"清掉刷新令牌"的 `Set-Cookie` 头值（QA-02）。
+
+    **返回头值而不是往注入的 `Response` 上 append**：这条清除必须发生在 401 响应上，
+    而 FastAPI 在异常路径会**丢弃**注入 `Response` 的头（异常处理器新建响应）。
+    把它挂到 `ApiError(headers=...)` 上才会真的发出去——只 append 到 Response 的话，
+    代码看起来完全正确，浏览器却什么都收不到（P0-5 / QA-02 实测踩到）。
+
+    Args:
+        conf: 配置实例。
+
+    Returns:
+        str: `oa_refresh=; Path=/sso; Max-Age=0; ...`。
+    """
+    return build_clear_cookie(REFRESH_COOKIE_NAME, path=SSO_COOKIE_PATH, secure=_secure_flag(conf))
 
 
 def _clear_pending_cookie(response: Response, conf: Settings) -> None:
@@ -555,41 +619,73 @@ async def complete_login(
 @router.get(
     "/session",
     summary="查询登录状态",
-    description="回答当前请求是否已登录，响应体不含任何令牌。",
+    description=(
+        "回答当前请求是否已登录、能否刷新、以及令牌是否曾经失效，响应体不含任何令牌。"
+        "这是前端启动时的唯一判据：authenticated=true 直接用；"
+        "authenticated=false 且 refreshable=true 去调 /sso/refresh；"
+        "两者皆 false 才跳登录页。"
+    ),
     response_model=ApiResponse[SsoSessionData],
 )
 async def session_state(request: Request, response: Response) -> ApiResponse[SsoSessionData]:
     """查询当前会话状态。
 
-    **不通告身份**：返回 `authenticated` 与剩余秒数即可，不回显用户 ID、租户或角色
+    **不通告身份**：返回三个布尔与剩余秒数即可，不回显用户 ID、租户或角色
     （那些由 `/api/v1/*` 的业务端点按各自契约给出）。
+
+    **这个端点只清 `oa_session`，绝不清 `oa_refresh`**（QA-01）：
+    access TTL 是 300 秒而会话上限是 8 小时，"access 已过期、refresh 仍有效"是
+    会话期内的**正常状态**。前端每次启动都会问一次"我还登录着吗"；若这一问顺手
+    删掉刷新令牌，8 小时的会话就退化成 300 秒，用户每 5 分钟被踢一次。
 
     Args:
         request: 请求对象。
         response: 响应对象（令牌失效时追加清除 Cookie）。
 
     Returns:
-        ApiResponse[SsoSessionData]: 登录状态。
+        ApiResponse[SsoSessionData]: 登录状态（见 `SsoSessionData`）。
 
     Raises:
         ApiError: 会话端点不可用（30001）。
     """
     conf = _require_sso_available(request)
-    token = read_cookie(request.headers.get("cookie"), SESSION_COOKIE_NAME)
+    header = request.headers.get("cookie")
+    refreshable = bool(read_cookie(header, REFRESH_COOKIE_NAME))
+    # 「有 Cookie」与「Cookie 可用」是两件事（QA-05）：`read_cookie` 对**不可用**的值
+    # 返回假值——空值（`oa_session=`）、以及若将来把 `oa_session` 放回编码路径时的
+    # 非法 base64。这与"根本没有这条 Cookie"无法区分，而两者的正确处置不同：
+    # 前者该被清掉（否则是一条永久挂在每个请求上的僵尸 Cookie），后者什么都不用做。
+    present = SESSION_COOKIE_NAME in parse_cookie_header(header)
+    token = read_cookie(header, SESSION_COOKIE_NAME)
+
     if not token:
-        return ApiResponse[SsoSessionData].ok(SsoSessionData(authenticated=False))
+        if present:
+            logger.warning("sso_session_cookie_unusable")
+            _clear_session_only(response, conf)
+            return ApiResponse[SsoSessionData].ok(
+                SsoSessionData(authenticated=False, refreshable=refreshable, expired=True)
+            )
+        return ApiResponse[SsoSessionData].ok(
+            SsoSessionData(authenticated=False, refreshable=refreshable)
+        )
 
     try:
         auth = AuthContext.resolve(token, conf)
     except ApiError:
-        # 过期/签名不符/身份平台不可达：一律按"未登录"回答，并顺手清掉废 Cookie。
-        # 这里**不**区分 401 与其他失败——前端只关心"要不要跳登录页"。
+        # 过期/签名不符/身份平台不可达：一律按"未登录"回答，并清掉废的访问令牌。
+        # 这里**不**区分 401 与其他失败——前端只关心"要不要刷新/跳登录页"。
         logger.info("sso_session_invalid")
-        _clear_session_cookies(response, conf)
-        return ApiResponse[SsoSessionData].ok(SsoSessionData(authenticated=False))
+        _clear_session_only(response, conf)
+        return ApiResponse[SsoSessionData].ok(
+            SsoSessionData(authenticated=False, refreshable=refreshable, expired=True)
+        )
 
     return ApiResponse[SsoSessionData].ok(
-        SsoSessionData(authenticated=True, expires_in=_remaining_seconds(auth.claims))
+        SsoSessionData(
+            authenticated=True,
+            expires_in=_remaining_seconds(auth.claims),
+            refreshable=refreshable,
+        )
     )
 
 
@@ -614,6 +710,7 @@ def _remaining_seconds(claims: dict[str, Any]) -> int | None:
     description=(
         "用 httpOnly 的刷新令牌换发新的访问令牌，并覆写两个会话 Cookie。"
         "响应体不含任何令牌。刷新令牌是轮换的，旧值随即失效。"
+        "刷新令牌被身份平台判失效（20002）时同时清掉它；网络类失败（30001/30002）不清。"
     ),
     response_model=ApiResponse[SsoRefreshData],
 )
@@ -646,10 +743,60 @@ async def refresh(
             internal_detail="refresh cookie missing",
         )
 
-    tokens = await refresh_tokens(conf, current)
+    tokens = await _refresh_or_clear_dead_token(request, conf, current)
     _issue_session_cookies(response, conf, tokens)
     logger.info("sso_refreshed", expires_in=tokens.expires_in)
     return ApiResponse[SsoRefreshData].ok(SsoRefreshData(ok=True, expires_in=tokens.expires_in))
+
+
+async def _refresh_or_clear_dead_token(
+    request: Request,
+    conf: Settings,
+    current: str,
+) -> TokenSet:
+    """换发令牌；**只有身份平台明确判失效时才清 `oa_refresh`**（QA-02）。
+
+    区分两类失败的判据是错误码，不是"有没有抛异常"：
+
+    - `20002`（`invalid_grant` / 刷新令牌过期/被撤销）：令牌**已死**。不清掉的话
+      浏览器会一直带着它，前端每次重试都白打一次身份平台，而用户看不到"刷新已死"；
+      此时清 `oa_refresh`，下一次 `/sso/session` 就会答 `refreshable=false`，
+      前端立刻走"重新登录"这条正确路径。`oa_session` 不动（可能仍然有效）。
+    - `30001` / `30002`（连不上、超时）与其余错误：**临时故障**，绝不清。
+      清掉等于把一次网络抖动升级成"强制重新登录"。
+
+    清除头挂在**新抛出的** `ApiError(headers=...)` 上而不是注入的 `Response` 上，
+    理由见 `_clear_refresh_header`。
+
+    Args:
+        request: 请求对象（仅用于日志）。
+        conf: 配置实例。
+        current: 当前刷新令牌。
+
+    Returns:
+        TokenSet: 新的令牌集合。
+
+    Raises:
+        ApiError: 原样抛出下游错误（20002 时附带清 `oa_refresh` 的响应头）。
+    """
+    try:
+        return await refresh_tokens(conf, current)
+    except ApiError as exc:
+        if exc.code != ErrorCode.UNAUTHORIZED:
+            logger.warning(
+                "sso_refresh_transient_failure",
+                path=request.url.path,
+                error_code=int(exc.code),
+            )
+            raise
+        logger.info("sso_refresh_token_dead", path=request.url.path)
+        raise ApiError(
+            exc.code,
+            message=exc.message,
+            data=exc.data,
+            internal_detail=exc.internal_detail,
+            headers=[("set-cookie", _clear_refresh_header(conf))],
+        ) from exc
 
 
 @router.post(
