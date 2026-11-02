@@ -23,6 +23,22 @@
 - `deploy/.env*` 文件（`VAR=value` 直接赋值行）
 - `deploy/**/*.sh`（shell 脚本中的 `VAR=value` 赋值）
 
+第二条判据（P1-09 残留，批次 3 新增）：**模板占位值的生成路径一致性**。
+
+背景：`.env.example` / `.env.lite.example` 里刻意保留 `CHANGE_ME_*` 占位值（模板本该如此），
+但「留了占位值」与「告诉部署者填什么」是两件事。批次 1 修 `OA_JWT_SECRET` 时发现：
+`OA_OBJECT_STORE_SECRET_KEY` / `OA_DIFY_SANDBOX_KEY` / `OA_DB_APP_PASSWORD` 三处占位值
+既没被 `install.sh` 自动生成、模板里也没写生成命令——部署者照抄模板只会看到
+「请填强口令」加一行 `CHANGE_ME_STRONG_PASSWORD`，无从知道该填多长、怎么生成。
+`validate_lite_up.sh` 只拦「CHANGE_ME 残留」，拦不到「填了但形态不对」。
+
+故第二条判据：**模板里带 `CHANGE_ME` 的密钥/口令类变量，必须存在可复制的生成路径**——
+- `install.sh` 里有 `env_set <VAR>`（安装脚本管理的栈，这是唯一权威来源，模板注释不算数）；
+- 或 `.env.example`（标准栈：无安装脚本、手工 `cp` 路径）在变量上方 6 行内给出
+  `# 生成：<命令>` 注释。
+
+注意这**不是**要求模板里没有占位值，而是要求「占位值 + 生成路径」成对出现。
+
 用法::
 
     python deploy/validate_secrets.py                 # 扫描（CI 默认）
@@ -226,6 +242,185 @@ def scan_dir(target: Path) -> list[dict[str, str]]:
 
 
 # ===========================================================================
+# 第二条判据：模板占位值的生成路径一致性（P1-09 残留）
+# ===========================================================================
+
+#: 安装脚本（自动生成路径的唯一权威来源）
+INSTALL_SCRIPT: Final[Path] = DEPLOY_DIR / "install.sh"
+
+#: 模板文件后缀（`.env.example` / `.env.lite.example`）
+TEMPLATE_SUFFIX: Final[str] = ".example"
+
+#: 安装脚本里的 `env_set <VAR> ...`（生成逻辑）
+ENV_SET_PATTERN: Final[re.Pattern[str]] = re.compile(r"\benv_set\s+([A-Za-z_][A-Za-z0-9_]*)")
+
+#: 模板里的手工生成命令注释：`# 生成：openssl rand -hex 24`
+GEN_HINT_PATTERN: Final[re.Pattern[str]] = re.compile(r"#\s*生成[:：]\s*\S")
+
+#: 手工生成命令允许出现在变量行上方多少行内
+GEN_HINT_LOOKBACK: Final[int] = 6
+
+#: 安装脚本管理的模板（installer 会覆写其中的占位值，因此注释不能替代 `env_set`）
+INSTALLER_MANAGED_TEMPLATES: Final[frozenset[str]] = frozenset({".env.lite.example"})
+
+
+def collect_generated_vars(install_sh: Path) -> set[str]:
+    """收集 `install.sh` 会随机生成并写入的变量名。
+
+    **必须跳过注释行**：`env_set OA_XXX` 被注释掉就表示「不再生成」，
+    而注释里仍留着这行文本。正则直接扫全文会把注释也算成生成路径，
+    于是「把 env_set 注释掉」这种最常见的破坏方式恰好躲过门禁
+    （自证时实测踩到：注释掉 `env_set OA_VALKEY_PASSWORD` 后门禁仍是绿的）。
+
+    Args:
+        install_sh: 安装脚本路径（不存在时返回空集）。
+
+    Returns:
+        set[str]: 非注释行里 `env_set <VAR>` 出现过的变量名集合。
+    """
+    if not install_sh.is_file():
+        return set()
+    try:
+        text = install_sh.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return set()
+    names: set[str] = set()
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        names.update(ENV_SET_PATTERN.findall(line))
+    return names
+
+
+def _is_secret_name(name: str) -> bool:
+    """判断变量名是否属于密钥/口令类。
+
+    Args:
+        name: 变量名。
+
+    Returns:
+        bool: 命中 `SECRET_WORDS` 返回 True。
+    """
+    upper = name.upper()
+    return any(word in upper for word in SECRET_WORDS)
+
+
+def collect_template_placeholders(deploy_dir: Path) -> list[dict[str, object]]:
+    """收集 `*.example` 模板里仍带 `CHANGE_ME` 的赋值行。
+
+    Args:
+        deploy_dir: 部署目录。
+
+    Returns:
+        list[dict[str, object]]: 每项含 `file` / `line` / `var` / `value` /
+        `secret`（是否密钥类）/ `hint`（该行上方是否有 `# 生成：` 注释）。
+    """
+    items: list[dict[str, object]] = []
+    if not deploy_dir.is_dir():
+        return items
+
+    for path in sorted(deploy_dir.rglob(f"*{TEMPLATE_SUFFIX}")):
+        if path.is_dir() or ".venv" in path.parts or "node_modules" in path.parts:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith("#"):
+                continue
+            match = DIRECT_ASSIGN_PATTERN.match(line)
+            if not match:
+                continue
+            name, raw_value = match.group(1), match.group(2).strip()
+            if "CHANGE_ME" not in raw_value:
+                continue
+            window_start = max(0, index - GEN_HINT_LOOKBACK)
+            has_hint = any(
+                GEN_HINT_PATTERN.search(candidate) for candidate in lines[window_start:index]
+            )
+            items.append(
+                {
+                    "file": _rel_to_repo(path),
+                    "line": str(index + 1),
+                    "var": name,
+                    "value": raw_value.strip("'\""),
+                    "secret": _is_secret_name(name),
+                    "hint": has_hint,
+                }
+            )
+    return items
+
+
+def check_template_generation_paths(
+    deploy_dir: Path, install_sh: Path | None = None
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """校验模板占位值是否都有生成路径。
+
+    判据见模块文档「第二条判据」。刻意做成「一致性校验」而非「占位值清零校验」：
+    模板本来就该有占位值，缺的是「填什么、怎么生成」。
+
+    Args:
+        deploy_dir: 部署目录。
+        install_sh: 安装脚本路径；缺省用 `deploy_dir/install.sh`。
+
+    Returns:
+        tuple: `(placeholders, offenders)`。前者是完整清单（含是否已覆盖），
+        后者只含「密钥类 + 无生成路径」的条目（`var` / `file` / `line` / `reason`）。
+    """
+    script = install_sh if install_sh is not None else deploy_dir / "install.sh"
+    generated = collect_generated_vars(script)
+
+    placeholders: list[dict[str, str]] = []
+    offenders: list[dict[str, str]] = []
+
+    for item in collect_template_placeholders(deploy_dir):
+        name = str(item["var"])
+        file_name = str(item["file"])
+        is_secret = bool(item["secret"])
+        has_hint = bool(item["hint"])
+        managed = Path(file_name).name in INSTALLER_MANAGED_TEMPLATES
+        # 安装脚本管理的栈：只认 env_set；手工栈（.env.example）：env_set 或生成命令
+        covered = name in generated or (has_hint and not managed)
+
+        if not is_secret:
+            cover_kind = "非密钥类（无需生成）"
+        elif name in generated:
+            cover_kind = "install.sh 自动生成"
+        elif covered:
+            cover_kind = "模板给出生成命令"
+        else:
+            cover_kind = "无自动生成路径"
+
+        placeholders.append(
+            {
+                "file": file_name,
+                "line": str(item["line"]),
+                "var": name,
+                "cover": cover_kind,
+            }
+        )
+
+        if is_secret and not covered:
+            reason = (
+                f"{Path(file_name).name} 受 install.sh 管理，但 install.sh 里没有 `env_set {name}`"
+                if managed
+                else "install.sh 无 `env_set` 且模板未给出 `# 生成：` 命令"
+            )
+            offenders.append(
+                {
+                    "file": file_name,
+                    "line": str(item["line"]),
+                    "var": name,
+                    "reason": reason,
+                }
+            )
+
+    return placeholders, offenders
+
+
+# ===========================================================================
 # 负样本自检（证明门禁「能红」）
 # ===========================================================================
 
@@ -299,11 +494,58 @@ def self_test() -> int:
             else missed.append("C 良性兜底放行")
         )
 
+        # 负样本 D：应被拦截 —— 模板里的密钥类占位值没有生成路径
+        # （install.sh 里没有 env_set，模板上方也没有 `# 生成：` 命令）
+        orphan_dir = target / "orphan"
+        orphan_dir.mkdir()
+        (orphan_dir / ".env.lite.example").write_text(
+            "# 安装脚本管理的栈\nOA_TEST_ORPHAN_SECRET=CHANGE_ME_STRONG_PASSWORD\n",
+            encoding="utf-8",
+        )
+        (orphan_dir / "install.sh").write_text(
+            '#!/bin/bash\nenv_set OA_OTHER_PASSWORD "$(openssl rand -hex 24)"\n',
+            encoding="utf-8",
+        )
+        _placeholders, orphan_offenders = check_template_generation_paths(orphan_dir)
+        (
+            caught.append("D 占位值无生成路径")
+            if any(o["var"] == "OA_TEST_ORPHAN_SECRET" for o in orphan_offenders)
+            else missed.append("D 占位值无生成路径")
+        )
+
+        # 负样本 E：应被放行 —— 覆盖的两条合法路径都命中
+        covered_dir = target / "covered"
+        covered_dir.mkdir()
+        (covered_dir / "install.sh").write_text(
+            '#!/bin/bash\nenv_set OA_TEST_MANAGED_PASSWORD "$(openssl rand -hex 24)"\n',
+            encoding="utf-8",
+        )
+        (covered_dir / ".env.lite.example").write_text(
+            "OA_TEST_MANAGED_PASSWORD=CHANGE_ME_STRONG_PASSWORD\n",
+            encoding="utf-8",
+        )
+        (covered_dir / ".env.example").write_text(
+            "# 口令类：openssl rand -hex 24\n"
+            "# 生成：openssl rand -hex 24\n"
+            "OA_TEST_HANDWRITTEN_PASSWORD=CHANGE_ME_STRONG_PASSWORD\n"
+            "# 非密钥配置，不要求生成路径\n"
+            "OA_TEST_PLAIN_NAME=CHANGE_ME_NOT_A_SECRET\n",
+            encoding="utf-8",
+        )
+        _placeholders, covered_offenders = check_template_generation_paths(covered_dir)
+        (
+            caught.append("E 生成路径齐全放行")
+            if not covered_offenders
+            else missed.append("E 生成路径齐全放行")
+        )
+
     print("负样本自检结果：")
     checks = [
         ("A yml 密钥明文兜底", "A yml 密钥明文兜底（须拦截）"),
         ("B .env 密钥明文兜底", "B .env 密钥明文兜底（须拦截）"),
         ("C 良性兜底放行", "C 良性兜底（须放行）"),
+        ("D 占位值无生成路径", "D 占位值无生成路径（须拦截）"),
+        ("E 生成路径齐全放行", "E 生成路径齐全（须放行）"),
     ]
     all_ok = True
     for key, label in checks:
@@ -355,6 +597,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[INFO] 扫描目录 {DEPLOY_DIR}（{', '.join(sorted(SCAN_SUFFIXES))}）")
     print()
 
+    placeholders, path_offenders = check_template_generation_paths(DEPLOY_DIR, INSTALL_SCRIPT)
+
+    print("[INFO] 模板占位值清单（密钥类 + 非密钥类，逐项标注生成路径）：")
+    if not placeholders:
+        print("       （模板里没有 CHANGE_ME 占位值）")
+    for item in placeholders:
+        print(f"  - {item['file']}:{item['line']}  {item['var']}  → {item['cover']}")
+    print()
+
     if offenders:
         print("[FAIL] 发现密钥类变量带明文兜底值（缺失须拒绝启动，改用 `:?`）：")
         for item in offenders:
@@ -364,9 +615,32 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "offenders": offenders}, ensure_ascii=False))
         return 1
 
+    if path_offenders:
+        print("[FAIL] 以下模板占位值没有生成路径（部署者不知道填什么）：")
+        for item in path_offenders:
+            print(f"  - {item['file']}:{item['line']}  {item['var']}")
+            print(f"      {item['reason']}")
+        print()
+        print("  修法：在 install.sh 的 generate_env_file() 里加 `env_set <VAR>`，")
+        print("        或在模板该变量上方补一行 `# 生成：openssl rand -hex 24`。")
+        if args.json:
+            print(
+                json.dumps(
+                    {"ok": False, "offenders": [], "uncovered": path_offenders},
+                    ensure_ascii=False,
+                )
+            )
+        return 1
+
     print("[OK]   密钥兜底扫描通过：无密钥类变量带明文兜底")
+    print(f"[OK]   模板占位值一致性通过：{len(placeholders)} 项占位值均有生成路径")
     if args.json:
-        print(json.dumps({"ok": True, "offenders": []}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {"ok": True, "offenders": [], "uncovered": [], "placeholders": placeholders},
+                ensure_ascii=False,
+            )
+        )
     return 0
 
 
