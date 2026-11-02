@@ -1,0 +1,124 @@
+# ---------------------------------------------------------------------------
+# ConfigMap officeai-config —— 非敏感配置（键集合受门禁约束）
+#
+# 为什么需要它：Deployment 用 envFrom 挂 secretRef(officeai-secrets) +
+# configMapRef(officeai-config) 两份（规格 §3.3.5「必须」）。敏感值只进
+# Secret；这里只放**非敏感**配置，让「哪些是非敏感项」可被人和门禁直接审计。
+#
+# 键与值的单一真源 = deploy/.env.example（逐字取值，不另立一套默认值）：
+#   - 键集合 ⊆ .env.example 的键集合（§3.3.6 门禁断言，防 k8s 手写出
+#     compose 里没有的键）；
+#   - 命名含 PASSWORD / SECRET / _KEY / TOKEN 的一律**不进本文件**（走
+#     Secret），包括名字命中但语义非密钥的 OA_KEYCLOAK_REALM /
+#     OA_KEYCLOAK_CLIENT_ID / OA_KEYCLOAK_DB / OA_KEYCLOAK_ADMIN（含
+#     "_KEY" 字面命中判据，保守归 Secret）；OA_DATABASE_URL 名字不命中但
+#     值里嵌口令，同样只走 Secret。
+#
+# ⚠️ envFrom 的覆盖顺序：同名键「后源覆盖前源」，本文件排在 secretRef 之后，
+#    因此这 72 个非敏感键以本文件的值为准。改非敏感配置 = 改这里 +
+#    `kubectl -n officeai rollout restart deploy/adapter deploy/web`；
+#    不要只改 deploy/.env 就以为生效了（会被本文件覆盖）。
+#
+# ⚠️ 站点相关键（部署时必须改，空值/占位值会 fail loud 或登录不可用）：
+#    OA_PUBLIC_BASE_URL（空 = 启动拒绝 30004，刻意设计）、
+#    OA_JWT_ISSUER / OA_WEB_OIDC_ISSUER（必须 = <OA_PUBLIC_BASE_URL>/realms/<realm>，
+#    与 Keycloak 的 KC_HOSTNAME 同源）、OA_WEB_ADAPTER_BASE_URL。
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: officeai-config
+  namespace: officeai
+  labels:
+    app.kubernetes.io/part-of: officeai
+data:
+  # ---- 部署模式与对外基址 ----
+  OA_DEPLOY_MODE: "private"
+  OA_PUBLIC_BASE_URL: ""
+  OA_AUTH_COOKIE_ENABLED: "true"
+  # ---- 镜像来源与版本（宿主机侧消费，注入容器无害；口径与 .env.example 一致）----
+  OA_OFFLINE_MODE: "true"
+  OA_IMAGE_TAG: "1.0.0"
+  # ---- 基础设施：PostgreSQL / 缓存 / 对象存储（非敏感项）----
+  OA_POSTGRES_USER: "officeai"
+  OA_POSTGRES_DB: "officeai"
+  OA_DIFY_DB: "dify"
+  OA_VALKEY_MAXMEMORY: "2gb"
+  OA_OBJECT_STORE_BUCKET: "officeai"
+  OA_DIFY_S3_BUCKET: "dify"
+  OA_OBJECT_STORE_REGION: "us-east-1"
+  OA_OBJECT_STORE_API_PORT: "8333"
+  OA_OBJECT_STORE_ADMIN_PORT: "23646"
+  # ---- 基础设施：Milvus（适配层当前无使用方，保留占位，见 config.py 注释）----
+  OA_MILVUS_URI: "http://milvus:19530"
+  OA_MILVUS_PORT: "19530"
+  OA_MILVUS_METRICS_PORT: "9091"
+  # ---- 底座（Dify）运行开关（密钥类不在此）----
+  OA_DIFY_MODE: "api"
+  OA_SSRF_PROXY_URL: "http://ssrf_proxy:3128"
+  # ---- 适配层运行配置 ----
+  OA_ENV: "production"
+  OA_API_PREFIX: "/api/v1"
+  OA_HOST: "0.0.0.0"
+  OA_ADAPTER_PORT: "8000"
+  OA_LOG_LEVEL: "INFO"
+  OA_LOG_FORMAT: "json"
+  OA_AUTH_MODE: "oidc"
+  # ---- JWT 非敏感项（签名密钥 OA_JWT_SECRET 走 Secret）----
+  OA_JWT_ALGORITHM: "HS256"
+  OA_JWT_AUDIENCE: "officeai-adapter"
+  OA_JWT_ISSUER: "http://localhost/realms/officeai"
+  OA_DEFAULT_TENANT_ID: "default"
+  # ---- 下游开关 / 幂等 / 限流 ----
+  OA_DOWNSTREAM_ENABLED: "false"
+  OA_IDEMPOTENCY_BACKEND: "redis"
+  OA_IDEMPOTENCY_TTL_SECONDS: "86400"
+  OA_RATELIMIT_BACKEND: "redis"
+  OA_RATELIMIT_ENABLED: "true"
+  OA_RATELIMIT_DEFAULT_PER_MINUTE: "120"
+  # ---- 上传限制（与 ingress.yaml 的 proxy-body-size 取值同源：52428800 = 50m）----
+  OA_MAX_UPLOAD_BYTES: "52428800"
+  # ---- 业务库（OA_DATABASE_URL / OA_DB_APP_PASSWORD 走 Secret）----
+  OA_BUSINESS_STORE: "postgres"
+  OA_DB_POOL_SIZE: "10"
+  OA_DB_MAX_OVERFLOW: "5"
+  OA_DB_POOL_TIMEOUT_SECONDS: "5"
+  OA_DB_AUTO_MIGRATE: "false"
+  # ---- 凭据加密（密钥类走 Secret）----
+  OA_CREDENTIAL_MODE: "bound"
+  OA_CREDENTIAL_CACHE_TTL_SECONDS: "300"
+  # ---- 用量计量 ----
+  OA_USAGE_WRITE_ENABLED: "true"
+  OA_USAGE_CHARS_PER_UNIT: "1"
+  OA_USAGE_ESTIMATE_PROMPT_UNITS: "800"
+  # ---- 计费与支付（密钥/私钥路径走 Secret）----
+  OA_PAY_CHANNEL: "wechat_pay"
+  OA_PAY_MCH_ID: ""
+  OA_PAY_CERT_SERIAL: ""
+  OA_PAY_NOTIFY_URL: ""
+  # 对公转账收款信息是**展示给企业用户的内容**，非密钥，故按机械判据留此
+  OA_PAY_BANK_INFO: ""
+  OA_ORDER_EXPIRE_MINUTES: "30"
+  # ---- 数据保留期与记忆 ----
+  OA_RETENTION_AUDIT_DAYS: "180"
+  OA_RETENTION_USAGE_MONTHS: "13"
+  OA_RETENTION_TASK_DAYS: "180"
+  OA_RETENTION_CONVERSATION_DAYS: "365"
+  OA_CONVERSATION_SOFT_DELETE_RECOVER_DAYS: "30"
+  OA_MEMORY_MAX_PER_USER: "200"
+  OA_MEMORY_EXTRACT_EVERY_TURNS: "10"
+  # ---- 记忆向量化（API key 走 Secret）----
+  OA_MEMORY_EMBEDDING_ENABLED: "false"
+  OA_MEMORY_EMBEDDING_DIM: "1024"
+  OA_MEMORY_EMBEDDING_MODEL: ""
+  OA_MEMORY_EMBEDDING_BASE_URL: ""
+  OA_MEMORY_EMBEDDING_TIMEOUT_SECONDS: "5"
+  OA_MEMORY_EMBEDDING_BATCH_SIZE: "16"
+  # ---- 前端（apps/web；统一登录两项是公开接入信息，非密钥）----
+  OA_WEB_PORT: "3000"
+  OA_WEB_ADAPTER_BASE_URL: "http://localhost:8000"
+  OA_WEB_OIDC_ISSUER: "http://localhost/realms/officeai"
+  OA_WEB_OIDC_CLIENT_ID: "officeai-adapter"
+  # ---- 监控 / License（OA_LICENSE_KEY 走 Secret）----
+  OA_PROMETHEUS_PORT: "9090"
+  OA_LICENSE_SEAT_COUNT: "50"

@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# default-deny + web NetworkPolicy —— 默认全拒，再按需放行
+#
+# 为什么 default-deny 放在本文件：规格 §3.3.5 的清单里它与 web 策略同属一段
+# 示例（基目录只有 adapter/ 与 web/ 两份 networkpolicy），命名空间级兜底
+# 策略与 web 策略同文件登记，避免多出一个未在清单里的文件。
+#
+# default-deny 的语义：podSelector 为空 = 命名空间内**所有** Pod，未被其它
+# 策略放行的入向/出向一律拒绝。注意它只在同一 Namespace 内生效（Namespace
+# 名字见 namespace.yaml，改名 = 隔离域漂移）。
+#
+# web 的放行口径（与 deploy/nginx/edge.conf 同构）：
+#   - 入向只收 ingress-nginx 命名空间（= 边缘是唯一入口，端口 3000）；
+#   - 出向只去 adapter:8000（服务端直调）与 DNS。
+#
+# ⚠ 典型错误要记住：**漏掉 53 端口的 egress 会让 Service 名解析失败**，
+#   表现是「偶发 502 / 连接超时」，看起来像应用或适配层故障，排障成本极高。
+#   任何以服务名书写的出向依赖（含 adapter）都先经过 DNS。
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: officeai
+  labels:
+    app.kubernetes.io/part-of: officeai
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web
+  namespace: officeai
+  labels:
+    app.kubernetes.io/part-of: officeai
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: adapter
+      ports:
+        - port: 8000
+          protocol: TCP
+    # DNS（同上警告：UDP+TCP 53 必须显式放行）
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

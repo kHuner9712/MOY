@@ -1,0 +1,95 @@
+# ---------------------------------------------------------------------------
+# adapter Deployment —— 自研统一适配层（apps/adapter）
+#
+# 为什么是这些字段（规格 §3.3.5「Deployment 必备字段」，逐字段对齐）：
+#   - replicas: 1 + strategy Recreate：V1.0/V1.1 均为单副本，且迁移类任务有
+#     状态依赖——滚动发布会双活抢迁移，Recreate 保证旧 Pod 先退场。HPA/PDB
+#     明确后置（README §1.1 旧口径更正记录）。
+#   - automountServiceAccountToken: false：适配层不调 Kubernetes API，
+#     令牌不挂载（SA 上另有一份，双保险）。
+#   - terminationGracePeriodSeconds: 60：SSE 长连接要排空，给足收尾时间。
+#   - runAsUser/fsGroup = 1001：apps/adapter/Dockerfile:72-73
+#     `groupadd --system --gid 1001 adapter && useradd --system --uid 1001`
+#     —— 按镜像实际 uid 填，把镜像里的 USER 变成集群侧硬门禁（runAsNonRoot）。
+#   - readOnlyRootFilesystem: false：⚠ 规格明确「未验证运行期是否写盘」，
+#     验证（compose 上 `docker run --read-only --tmpfs /tmp` 跑主链路）通过
+#     前先关，登记为后置项；其余安全字段照开。
+#   - 探针不可互换：readiness=/readyz（含 DB 连通 + BYPASSRLS 权限自检，
+#     依赖故障只影响就绪）；liveness=/healthz（纯存活，否则依赖故障连环重启）。
+#     liveness initialDelay 60s：覆盖 baseline 实测约 86s 的就绪爬升。
+#   - image 用 name:tag@digest：digest 逐字取自 deploy/images.lock
+#     （officeai/adapter 1.0.0 条目），与 compose 侧同一真源；升级 = 先更新
+#     images.lock 再同步此处（后续 validate_deploy.py 断言两者一致）。
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adapter
+  namespace: officeai
+  labels:
+    app: adapter
+    app.kubernetes.io/part-of: officeai
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: adapter
+  template:
+    metadata:
+      labels:
+        app: adapter
+    spec:
+      serviceAccountName: officeai
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1001
+      containers:
+        - name: adapter
+          image: officeai/adapter:1.0.0@sha256:969f696da3869d28f70622eff0a7e88eb6b440c4f944026f1e04d42d98a983aa
+          envFrom:
+            - secretRef:
+                name: officeai-secrets
+            - configMapRef:
+                name: officeai-config
+          ports:
+            - name: http
+              containerPort: 8000
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            # ⚠ 后置项：运行期写盘路径未验证（规格 §3.3.5），验证通过才改 true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+      volumes:
+        - name: tmp
+          emptyDir: {}

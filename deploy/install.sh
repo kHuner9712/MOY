@@ -818,7 +818,22 @@ TIP
 
 #: 全栈起起来。复用校验脚本的 start_stack（up -d --remove-orphans，失败即 exit 1）。
 step_up_full() {
+  ensure_edge_cert
   start_stack
+}
+
+#: G1（审计 2026-11-02 P0-4）：边缘已升级为 TLS 终止（80 只做探活与 301 跳转，
+#: 443 承载全部路由），nginx 启动时**必须**能读到证书，否则 proxy/edge 容器起不来。
+#: 现场已有证书（真实证书或早前生成的自签）则原样保留；没有才生成自签。
+ensure_edge_cert() {
+  local dir="${SCRIPT_DIR}/nginx/tls"
+  if [[ -s "${dir}/fullchain.pem" && -s "${dir}/privkey.pem" ]]; then
+    ok "边缘 TLS 证书已就位（${dir}，不覆盖既有证书）"
+    return 0
+  fi
+  warn "未发现边缘 TLS 证书，生成自签一对（**仅限验证**）"
+  sh "${SCRIPT_DIR}/gen-selfsigned-cert.sh" || die 1 "生成自签证书失败（需要 openssl）"
+  warn "当前是自签证书：浏览器告警属预期；上线前请以真实证书覆盖 ${dir} 下同名两件（chmod 600 私钥）"
 }
 
 #: 等全部常驻容器 healthy。

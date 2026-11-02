@@ -1,0 +1,88 @@
+# ---------------------------------------------------------------------------
+# web Deployment —— 前端交互层（apps/web，Next.js standalone）
+#
+# 字段口径与 adapter/deployment.yaml 同源（规格 §3.3.5「web 同理」）：
+#   - replicas: 1 + Recreate：单副本拍板记录（README §1.1），无 HPA/PDB；
+#   - runAsUser/fsGroup = 1001：apps/web/Dockerfile:82-83
+#     `addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs`
+#     ——按镜像实际 uid 填（USER nextjs）；
+#   - readOnlyRootFilesystem: false：同 adapter，运行期写盘路径**未验证**，
+#     验证通过前先关并登记后置（Next standalone 会写 .next/cache 一类目录）；
+#   - resources 与 adapter 同款量级（规格「web 参照同款量级」）：
+#     requests 200m/128Mi → limits 1/512Mi，与 compose 侧限额口径同源；
+#   - 探针都打 `/`：web 没有 /healthz、/readyz 专用端点，与 lite.yml:512 的
+#     `wget http://127.0.0.1:3000/` 同口径。注意 web 的 `/` 只证明「进程能
+#     出活页」，不自检依赖（依赖自检在 adapter 的 /readyz）。
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: officeai
+  labels:
+    app: web
+    app.kubernetes.io/part-of: officeai
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      serviceAccountName: officeai
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1001
+      containers:
+        - name: web
+          image: officeai/web:1.0.0@sha256:f638b96573608c97142b78230f304e9f37195da87793e0bb4647b17b945aa130
+          envFrom:
+            - secretRef:
+                name: officeai-secrets
+            - configMapRef:
+                name: officeai-config
+          ports:
+            - name: http
+              containerPort: 3000
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            # ⚠ 后置项：运行期写盘路径未验证（规格 §3.3.5），验证通过才改 true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+      volumes:
+        - name: tmp
+          emptyDir: {}

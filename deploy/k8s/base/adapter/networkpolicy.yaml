@@ -1,0 +1,90 @@
+# ---------------------------------------------------------------------------
+# adapter NetworkPolicy —— 入向只收边缘与 web，出向只放底座与 DNS
+#
+# 前置：default-deny 在 web/networkpolicy.yaml（同一 Namespace 内默认全拒），
+# 本文件只负责把 adapter 需要的口子显式打开；没有 default-deny 时本文件无效
+# 语义（放行规则在全通网络里不构成约束）。
+#
+# ingress 两个来源：
+#   - ingress-nginx 命名空间：浏览器经边缘直转 /api/、/sso/、/files/artifacts/；
+#   - web Pod：web 服务端直调 adapter（compose 口径的 officeai-frontend 网）。
+#
+# egress 按「底座 Service 名」给（与 compose 的服务名逐字一致）：
+#   postgres:5432 / valkey:6379 / keycloak:8080 / dify-api:5001。
+#   适配层只直连 dify-api（OA_DIFY_BASE_URL），dify-worker / sandbox /
+#   plugin_daemon 均由底座内部调用，不放行。
+#   ⚠ V1.0 底座可**外部托管**：届时把对应条目的 to 换成外部地址即可
+#     （ipBlock: { cidr: <外部地址>/32 }），其余不动；规则按「服务名」组织
+#     就是为了让这个替换是局部的。
+#   ⚠ 判定依据：apps/adapter/app/core/config.py 里 object_store_endpoint /
+#     milvus_uri 均为「无使用方的保留占位」，故不放行 S3 与 Milvus；
+#     若后续代码开始直连它们，须回到本文件补规则（漏放的表现是调用挂起直到
+#     超时，不是显式拒绝）。
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: adapter
+  namespace: officeai
+  labels:
+    app.kubernetes.io/part-of: officeai
+spec:
+  podSelector:
+    matchLabels:
+      app: adapter
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app: web
+      ports:
+        - port: 8000
+          protocol: TCP
+  egress:
+    # 底座 Service 名口径（compose 同名服务）；外部托管时改 to 为 ipBlock
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app: valkey
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app: keycloak
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app: dify-api
+      ports:
+        - port: 5001
+          protocol: TCP
+    # ⚠ DNS 必须显式放行（UDP+TCP 53）：漏掉 53 的典型故障是 Service 名
+    #   解析失败，表现是「偶发 502 / 连接超时」，与应用层故障难区分，排障
+    #   成本极高——所有以服务名书目的出向连接都依赖它。
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

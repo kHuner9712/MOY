@@ -1,0 +1,156 @@
+# ---------------------------------------------------------------------------
+# Ingress —— 唯一流量入口，路径口径与 deploy/nginx/edge.conf 逐条对齐
+#
+# 为什么落 Ingress 而不是「声明由外部 LB 提供」（规格 §3.3.5 二选一）：
+#   路径分发口径（哪条路径归谁）已经沉淀在 edge.conf 里，落成 Ingress 才能
+#   与 compose 形态**同一套路由**被机械比对；外部 LB 方案要把这份口径再抄
+#   一遍到 LB 规则里，正是要防的两处漂移。若现场由外部 LB 终止 TLS/分发，
+#   删掉本文件的 tls 段与 rules 即可替换（README §5「如何用」登记）。
+#
+# 路径映射（左 = edge.conf 的 location，右 = 本文件）：
+#   =  /healthz            → adapter:8000（Exact）  ⚠ 差异登记：edge.conf 是
+#                            边缘**自答** 200 ok（不代理后端）；Ingress 没有
+#                            自答机制，这里改指 adapter 的 /healthz 作外部探活。
+#   =  /readyz  = /metrics → adapter:8000（Exact，限内网 → officeai-ops，见下）
+#   ^~ /files/artifacts/   → adapter:8000（Prefix，产物下载，**不带 /api 前缀**）
+#   ^~ /sso/               → adapter:8000（Prefix，服务端会话端点）
+#   ^~ /realms/            → keycloak:8080（Prefix，登录页/token/JWKS）
+#   ^~ /resources/         → keycloak:8080（Prefix，登录页静态资源）
+#   /api/                  → adapter:8000（Prefix，业务 + SSE 流式）
+#   /                      → web:3000（Prefix，其余全部给 Next.js）
+#
+# ⚠ /realms/ 与 /resources/ 的后端 `keycloak` 是**底座 Service 名预留**
+#   （与 NetworkPolicy 的 egress 同一口径）：base 清单不含底座（底座可外部
+#   托管）。集群内自建 Keycloak 时保持 Service 名 keycloak:8080 即通；外部
+#   托管时删掉这两条，改由外部网关承接（或建同名 ExternalName Service）。
+#
+# ⚠ 每条路径都必须齐全：/files/artifacts/ 与 /sso/ 是「根路径下的自研端点」，
+#   少一条就会落到 `/` 被 Next.js 吃成 404（2026-11-02 审计 S-03 的缺陷形态）。
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: officeai-edge
+  namespace: officeai
+  labels:
+    app.kubernetes.io/part-of: officeai
+  annotations:
+    # 上传上限与 OA_MAX_UPLOAD_BYTES 同源（52428800 = 50m），两处一起改
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    # SSE 流式 + 产物下载：对齐 edge.conf /api/ 与 /files/artifacts/ 的 300s
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    # SSE 不攒包（edge.conf 的 proxy_buffering off + X-Accel-Buffering: no）
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # edge.conf 的安全响应头三件套（X-Content-Type-Options / X-Frame-Options /
+    # Referrer-Policy）如需在边缘复刻，用 configuration-snippet add_header；
+    # 但部分托管集群禁用 snippet，故只登记不强依赖（CSP 由 Next.js 自发，
+    # 边缘不重复发，口径同 edge.conf）。
+spec:
+  ingressClassName: nginx
+  tls:
+    # TLS 落 Ingress（二选一里的这一项）。Secret officeai-edge-tls 由**外部
+    # 证书生成**（cert-manager Certificate，或部署侧
+    # `kubectl -n officeai create secret tls officeai-edge-tls --cert=... --key=...`），
+    # base 只引用不生成——证书是站点资产，不进仓库。
+    - hosts:
+        - officeai.example.com   # ⚠ 替换为 OA_PUBLIC_BASE_URL 的主机名（同源）
+      secretName: officeai-edge-tls
+  rules:
+    - host: officeai.example.com # ⚠ 同上；不固定域名可删 host（等价 edge.conf 的 server_name _）
+      http:
+        paths:
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: adapter
+                port:
+                  number: 8000
+          - path: /sso/
+            pathType: Prefix
+            backend:
+              service:
+                name: adapter
+                port:
+                  number: 8000
+          - path: /files/artifacts/
+            pathType: Prefix
+            backend:
+              service:
+                name: adapter
+                port:
+                  number: 8000
+          - path: /realms/
+            pathType: Prefix
+            backend:
+              service:
+                name: keycloak   # 底座 Service 名预留，见文件头注释
+                port:
+                  number: 8080
+          - path: /resources/
+            pathType: Prefix
+            backend:
+              service:
+                name: keycloak   # 底座 Service 名预留，见文件头注释
+                port:
+                  number: 8080
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: adapter
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000
+---
+# ---------------------------------------------------------------------------
+# officeai-ops —— /readyz 与 /metrics 单独成 Ingress，复刻 edge.conf 的
+# 「限内网」（allow 127.0.0.1 / 10/8 / 172.16/12 / 192.168/16, deny all）：
+# /readyz 会输出每项检查的名字与结果（含 db_privilege 等内部信息），/metrics
+# 暴露端点级流量画像——对私有化客户是运维必需，对公网是白送情报。
+#
+# 为什么拆两条 Ingress：whitelist-source-range 注解作用于**整条 Ingress**，
+# 混在 officeai-edge 里会把全部路径一起限死。Ingress 层没有 127.0.0.1 的
+# 概念（流量都从控制器进来），故只列三个网段，与 edge.conf 的内网放行表对齐。
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: officeai-ops
+  namespace: officeai
+  labels:
+    app.kubernetes.io/part-of: officeai
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false" # 与 edge.conf 同：ops 端点不强制跳 https
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - officeai.example.com
+      secretName: officeai-edge-tls
+  rules:
+    - host: officeai.example.com
+      http:
+        paths:
+          - path: /readyz
+            pathType: Exact
+            backend:
+              service:
+                name: adapter
+                port:
+                  number: 8000
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name: adapter
+                port:
+                  number: 8000

@@ -816,3 +816,59 @@ docker compose -f deploy/docker-compose.lite.yml --env-file deploy/.env.lite log
 3. 出问题的时间点（含时区）+ 操作步骤 + 浏览器/终端截图。
 
 > 提交日志前请自查：日志里不得包含客户真实口令、连接串中的密码、工具授权凭证。平台自身不打印这些内容；若发现打印，属安全缺陷，请立即上报。
+
+---
+
+## 16. 对外暴露面收口（G1，2026-11-02）
+
+审计 2026-11-02 P0-4 的收口口径。三套编排（full / saas / lite）统一如下：
+
+### 16.1 收敛后的对外暴露面（唯一对外通道 = edge/proxy 的 443）
+
+| 端口 | 归属 | 绑定 | 说明 |
+| --- | --- | --- | --- |
+| **443/tcp** | edge / proxy | `0.0.0.0`（对外唯一入口） | TLS 终止 + 全部路由（`/`、`/api/`、`/sso/`、`/files/artifacts/`、`/realms/`、`/resources/`） |
+| 80/tcp | edge / proxy | `0.0.0.0` | **只做两件事**：`/healthz` 探活（compose/k8s 用）+ 其余 301 跳 https |
+| adapter 8000 | 应用 | **127.0.0.1**（仅本机调试） | 不对外；绕过边缘 = 绕过限流/安全头/证书 |
+| web 3000 | 应用 | **127.0.0.1**（仅本机调试） | 同上 |
+| postgres/valkey/milvus/对象存储/etcd 等 | 基础设施 | 127.0.0.1 或不出网 | milvus 19530、对象存储 8333、无鉴权 admin 23646 均绑回环（ARC-01，审计 2026-10-31 H3） |
+| keycloak 8080 | 身份底座 | **不映射宿主端口** | 浏览器经边缘 `^~ /realms/`、`^~ /resources/` 同源访问 |
+
+### 16.2 本地 / 单机怎么起
+
+```bash
+# 1) 生成边缘 TLS 自签证书（**仅限验证**；生产以真实证书覆盖同名文件）
+sh deploy/gen-selfsigned-cert.sh           # 产物 deploy/nginx/tls/{fullchain,privkey}.pem
+
+# 2) 按既有安装流程起栈（以轻量版为例；full/saas 同理）
+cp deploy/.env.lite.example deploy/.env.lite   # 填齐必填项
+docker compose -f deploy/docker-compose.lite.yml --env-file deploy/.env.lite up -d
+
+# 3) 访问入口
+#    https://<host>/          （浏览器告警属预期：自签证书仅限验证）
+#    http://<host>/           → 301 跳 https
+```
+
+证书挂载口径与 `lite-tls.conf` 逐字一致：容器内固定读 `/etc/nginx/tls/{fullchain,privkey}.pem`，
+宿主侧由 compose 从 `deploy/nginx/tls/` 只读挂入（**不入镜像、不入库**，`.gitignore` 已含 `*.pem`）。
+
+### 16.3 如何验证（可复核断言，全部应为真）
+
+```bash
+# A. 端口收口：除 edge/proxy 的 80/443 与 127.0.0.1 绑定外，不得有裸绑全网卡的端口
+docker compose -f deploy/docker-compose.yml config | grep -E 'published|target'   # published 只应出现 80/443 与 127.0.0.1 前缀
+#   断言：grep -c '"8000:8000\|"3000:3000' deploy/docker-compose*.yml  → 0
+
+# B. 明文跳转与 TLS 终止
+curl -sk -o /dev/null -w '%{http_code} %{redirect_url}\n' http://127.0.0.1/       # 301 + https://…
+curl -sk https://127.0.0.1/healthz                                                # ok（-k 仅因自签）
+curl -skI https://127.0.0.1/ | grep -i strict-transport-security                  # HSTS 在
+
+# C. 门禁（仓库既有，全部 EXIT=0）
+python deploy/validate_deploy.py && python deploy/validate_secrets.py
+```
+
+k8s 形态（`deploy/k8s/base/`）与上述口径一致：Service 仅 ClusterIP、不对外；
+对外走 Ingress（TLS 用 Secret 引用）；密钥全部走 `officeai-secrets`（由
+`kubectl create secret --from-env-file=deploy/.env` 生成，禁止入库）。清单定位仍是
+**V1.1 准备物**（V1.0 以 compose + 边缘上线），详见 `deploy/k8s/README.md`。

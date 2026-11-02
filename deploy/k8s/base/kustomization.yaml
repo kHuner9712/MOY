@@ -1,0 +1,30 @@
+# ---------------------------------------------------------------------------
+# kustomization —— 把 base 下的清单串成一个可 apply 的整体
+#
+# 用法：kubectl apply -k deploy/k8s/base
+#
+# 为什么这样列：
+#   - resources 必须**全列**：kustomize 不递归扫描目录，漏列 = 该资源不生效
+#     （没有报错，只有静默缺件——比失败更难查）；
+#   - app.env.keys **不在** resources 里：它不是 k8s 资源，是给
+#     deploy/validate_deploy.py 做键漂移机械校验的清单（§3.3.6）；
+#   - 镜像不在此处做 images: 变换：digest 已逐字写进两个 deployment.yaml
+#     （与 deploy/images.lock 同源），单一位置单一真源，升级只改一处。
+# ---------------------------------------------------------------------------
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: officeai
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - secret.yaml
+  - configmap.yaml
+  - ingress.yaml
+  - adapter/deployment.yaml
+  - adapter/service.yaml
+  - adapter/networkpolicy.yaml
+  - web/deployment.yaml
+  - web/service.yaml
+  - web/networkpolicy.yaml

@@ -1,0 +1,18 @@
+# ---------------------------------------------------------------------------
+# Namespace officeai —— 为什么需要单独这份清单：
+#
+# kustomization.yaml 里的 `namespace:` 只做「给资源补写 metadata.namespace」，
+# **不会创建 Namespace 本身**；缺这份文件，`kubectl apply -k` 会因命名空间
+# 不存在而整体失败（且报错指向每个资源，不指向根因）。
+#
+# 命名名字固定为 `officeai` 的理由：它是隔离边界。默认全拒的 NetworkPolicy
+# （web/networkpolicy.yaml 里的 default-deny）只在**同一 Namespace 内**生效，
+# 改名字 = 隔离域漂移；同时 SA / Secret / ConfigMap / Service 名都以此为锚点，
+# 与 compose 侧工程名同口径。
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: officeai
+  labels:
+    app.kubernetes.io/part-of: officeai

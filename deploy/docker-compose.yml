@@ -599,9 +599,15 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/edge.conf:/etc/nginx/conf.d/default.conf:ro
+      # G1：TLS 证书**外部挂载**（不入镜像、不入库）。生产放真证书，
+      # 本地验证用 deploy/gen-selfsigned-cert.sh 生成自签（仅限验证）。
+      - ./nginx/tls/fullchain.pem:/etc/nginx/tls/fullchain.pem:ro
+      - ./nginx/tls/privkey.pem:/etc/nginx/tls/privkey.pem:ro
     ports:
-      # 宿主端口：默认 80；多栈并存或宿主 80 被占时用 OA_EDGE_HTTP_PORT 覆盖
+      # G1：80 只做探活与 301 跳转，443 终止 TLS。多栈并存或宿主端口被占时
+      # 用 OA_EDGE_HTTP_PORT / OA_EDGE_HTTPS_PORT 覆盖
       - "${OA_EDGE_HTTP_PORT:-80}:80"
+      - "${OA_EDGE_HTTPS_PORT:-443}:443"
     depends_on:
       adapter:
         condition: service_healthy
@@ -686,7 +692,9 @@ services:
       # Agent 任务专用工作流应用密钥（与对话应用分离；缺省回退默认密钥）
       OA_DIFY_AGENT_APP_KEY: ${OA_DIFY_AGENT_APP_KEY:-}
     ports:
-      - "${OA_ADAPTER_PORT:-8000}:8000"
+      # G1（审计 2026-11-02 P0-4）：绑回环，仅本机调试可达——对外只走 edge（TLS）。
+      # 明文 8000/3000 不得裸绑全网卡：那会绕过边缘限流/安全头/证书。
+      - "127.0.0.1:${OA_ADAPTER_PORT:-8000}:8000"
     depends_on:
       # ARC-03（审计 2026-10-28）：启动依赖补全——数据库/向量库/对象存储就绪前
       # 不启动 adapter，不再靠运气
@@ -738,7 +746,8 @@ services:
     container_name: oa-web
     restart: unless-stopped
     ports:
-      - "${OA_WEB_PORT:-3000}:3000"
+      # G1（审计 2026-11-02 P0-4）：绑回环，仅本机调试可达——对外只走 edge（TLS）
+      - "127.0.0.1:${OA_WEB_PORT:-3000}:3000"
     depends_on:
       - adapter
     # ARC-01：web 只挂 frontend——服务端调用 adapter 走 frontend 网；

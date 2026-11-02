@@ -82,6 +82,18 @@ NAMED_CONTEXT_COMPOSE_FILES: Final[tuple[str, ...]] = (
     "docker-compose.saas.yml",
 )
 
+#: R5：唯一允许对外（可不绑回环）的服务——边缘/反代（对外入口本身）
+EDGE_SERVICES: Final[frozenset[str]] = frozenset({"edge", "proxy"})
+
+#: R5：边缘允许对外的容器端口（80 = 探活 + 301 跳转，443 = TLS 终止）
+PUBLIC_TARGETS: Final[frozenset[str]] = frozenset({"80", "443"})
+
+#: R6：k8s 清单目录（相对部署目录；不存在时跳过——清单是 V1.1 准备物）
+K8S_BASE_DIR: Final[str] = "k8s/base"
+
+#: R6：env 键唯一真源（相对部署目录）
+ENV_EXAMPLE_NAME: Final[str] = ".env.example"
+
 
 def _dockerfile_named_context_refs(dockerfile: Path) -> set[str]:
     """返回 Dockerfile 中被 `COPY --from=<name>` 引用的**外部命名上下文**。
@@ -323,6 +335,150 @@ def check_dir(target: Path) -> list[dict[str, str]]:
     # R4：Dockerfile 的 `COPY --from=<name>` ↔ 各编排 `build.additional_contexts` 键集合
     # （R2-ARC-01：三套编排的 web 镜像全靠这条才能被静态拦住）
     violations.extend(_check_named_contexts(target))
+
+    # R5：端口收口（G1，审计 2026-11-02 P0-4）——除边缘 80/443 外，一切宿主端口
+    # 必须绑 `127.0.0.1`（明文业务端口裸绑全网卡 = 绕过边缘限流/安全头/证书）
+    violations.extend(_check_port_bindings(target))
+
+    # R6：k8s 清单的 env 键 ⊆ `.env.example`（设计 §3.3.6：防 k8s 与 compose 键漂移）
+    violations.extend(_check_k8s_env_keys(target))
+    return violations
+
+
+def _check_port_bindings(target: Path) -> list[dict[str, str]]:
+    """R5：宿主端口绑定收口检查。
+
+    判据：`ports` 里带宿主口的条目，要么绑 `127.0.0.1`（仅本机调试），
+    要么属于边缘服务（edge/proxy）的 80/443（对外入口本身）。
+
+    Args:
+        target: 部署目录。
+
+    Returns:
+        list[dict[str, str]]: 违规项。
+    """
+    violations: list[dict[str, str]] = []
+    for name in NAMED_CONTEXT_COMPOSE_FILES:
+        path = target / name
+        if not path.is_file():
+            continue
+        for service_name, service in _services(_load(path)).items():
+            if not isinstance(service, dict):
+                continue
+            ports = service.get("ports")
+            if not isinstance(ports, list):
+                continue
+            for entry in ports:
+                text = str(entry).strip().strip('"').strip("'")
+                # `${VAR:-80}` 里带冒号，先把占位符归一化再按冒号切分，
+                # 否则 `"${OA_EDGE_HTTP_PORT:-80}:80"` 会被切成 3 段误判
+                normalized = re.sub(r"\$\{[^}]*\}", "VAR", text)
+                parts = normalized.split(":")
+                if len(parts) == 3:
+                    host_ip, target_port = parts[0], parts[2]
+                elif len(parts) == 2:
+                    host_ip, target_port = None, parts[1]
+                else:
+                    continue  # 仅容器端口（不映射宿主），不对外
+                target_port = target_port.split("/")[0]
+                if host_ip == "127.0.0.1":
+                    continue
+                if (
+                    service_name in EDGE_SERVICES
+                    and host_ip is None
+                    and target_port in PUBLIC_TARGETS
+                ):
+                    continue
+                violations.append(
+                    {
+                        "rule": "R5",
+                        "file": f"{name}#{service_name}",
+                        "detail": (
+                            f"端口 `{text}` 裸绑定宿主网卡（G1：除边缘 80/443 外必须绑 "
+                            f"`127.0.0.1:`，否则明文绕过边缘限流/安全头/TLS）"
+                        ),
+                    }
+                )
+    return violations
+
+
+def _collect_k8s_env_keys(node: Any) -> list[str]:
+    """递归收集 k8s 清单里的 env 键名（`env[].name` 与 ConfigMap `data` 键）。
+
+    Args:
+        node: YAML 解析结果（任意层级）。
+
+    Returns:
+        list[str]: 键名列表。
+    """
+    found: list[str] = []
+    if isinstance(node, dict):
+        env_list = node.get("env")
+        if isinstance(env_list, list):
+            for item in env_list:
+                if isinstance(item, dict) and isinstance(item.get("name"), str):
+                    found.append(item["name"])
+        if node.get("kind") == "ConfigMap" and isinstance(node.get("data"), dict):
+            found.extend(str(key) for key in node["data"])
+        for value in node.values():
+            found.extend(_collect_k8s_env_keys(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_collect_k8s_env_keys(item))
+    return found
+
+
+def _check_k8s_env_keys(target: Path) -> list[dict[str, str]]:
+    """R6：k8s 清单用到的 env 键必须是 `.env.example` 的子集（设计 §3.3.6）。
+
+    防的是「k8s 手写了 compose 里没有的键」：键集合唯一真源是
+    `deploy/.env.example`（compose `env_file` 与 k8s Secret 都从它生成），
+    清单里冒出新键 = 两处配置悄然分叉。
+
+    Args:
+        target: 部署目录。
+
+    Returns:
+        list[dict[str, str]]: 违规项。
+    """
+    k8s_base = target / K8S_BASE_DIR
+    env_example = target / ENV_EXAMPLE_NAME
+    if not k8s_base.is_dir() or not env_example.is_file():
+        return []  # 无 k8s 清单或模板时跳过（清单是 V1.1 准备物，不强绑）
+    allowed = {
+        line.split("=", 1)[0].strip()
+        for line in env_example.read_text(encoding="utf-8").splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+    violations: list[dict[str, str]] = []
+
+    keys_file = k8s_base / "app.env.keys"
+    if keys_file.is_file():
+        declared = {
+            line.strip()
+            for line in keys_file.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        for key in sorted(declared - allowed):
+            violations.append(
+                {
+                    "rule": "R6",
+                    "file": f"{K8S_BASE_DIR}/app.env.keys",
+                    "detail": f"键 `{key}` 不在 {ENV_EXAMPLE_NAME}（键集合唯一真源）里",
+                }
+            )
+
+    for yaml_path in sorted(k8s_base.rglob("*.yaml")):
+        for doc in yaml.safe_load_all(yaml_path.read_text(encoding="utf-8")):
+            for key in _collect_k8s_env_keys(doc):
+                if key not in allowed:
+                    violations.append(
+                        {
+                            "rule": "R6",
+                            "file": f"{K8S_BASE_DIR}/{yaml_path.relative_to(k8s_base).as_posix()}",
+                            "detail": f"env 键 `{key}` 不在 {ENV_EXAMPLE_NAME}（键集合唯一真源）里",
+                        }
+                    )
     return violations
 
 
@@ -343,6 +499,9 @@ def run_self_test() -> int:
                     "      OA_ENV: production",
                     "      OA_AUTH_MODE: oidc",
                     "      OA_DATABASE_URL: ${OA_DATABASE_URL:?must-set}",
+                    # R5 负样本：业务端口裸绑全网卡（G1 红线）
+                    "    ports:",
+                    '      - "8000:8000"',
                     "  postgres:",
                     "    volumes:",
                     "      - ./init-databases.sql:"
@@ -376,10 +535,17 @@ def run_self_test() -> int:
         with (root / "docker-compose.yml").open("a", encoding="utf-8") as fh:
             fh.write("  web:\n    build:\n      context: ./web\n      dockerfile: Dockerfile\n")
 
+        # R6 负样本：k8s 清单手写了 `.env.example` 里没有的键（键漂移）
+        (root / ".env.example").write_text("OA_ENV=test\n", encoding="utf-8")
+        (root / "k8s" / "base").mkdir(parents=True, exist_ok=True)
+        (root / "k8s" / "base" / "app.env.keys").write_text(
+            "OA_ENV\nOA_STRAY_KEY\n", encoding="utf-8"
+        )
+
         found = {item["rule"] for item in check_dir(root)}
-        expected = {"R1", "R2", "R3", "R4"}
+        expected = {"R1", "R2", "R3", "R4", "R5", "R6"}
         if found == expected:
-            print("[OK] 自检通过：R1/R2/R3/R4 四类负样本均被拦截")
+            print("[OK] 自检通过：R1-R6 六类负样本均被拦截")
             return 1
         print(f"[FAIL] 自检未命中预期负样本：期望 {sorted(expected)}，实际 {sorted(found)}")
         return 0
@@ -417,7 +583,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(
                 "[OK] 部署形态一致：应用角色 DSN / 鉴权显式声明 / initdb 挂载集合一致 / "
-                "Dockerfile 命名上下文已声明"
+                "Dockerfile 命名上下文已声明 / 端口收口（G1）/ k8s 键不漂移（R6）"
             )
     return 1 if violations else 0
 

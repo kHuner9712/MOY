@@ -599,9 +599,15 @@ services:
       # K4-min：与 full/saas 共用同一份边缘路由（多 /sso/、/realms/、/resources/ 三条）。
       # lite.conf 保留为历史参考；两套配置并存会漂移，故统一挂 edge.conf。
       - ./nginx/edge.conf:/etc/nginx/conf.d/default.conf:ro
+      # G1：edge.conf 已升级为 TLS 变体（80 探活+301 / 443 终止），三套编排同一
+      # 口径。证书外部挂载（deploy/gen-selfsigned-cert.sh 生成自签仅限验证）；
+      # 若现场由前置负载均衡终止 TLS，本容器证书仅作内网/验证用，公网仍只开 443。
+      - ./nginx/tls/fullchain.pem:/etc/nginx/tls/fullchain.pem:ro
+      - ./nginx/tls/privkey.pem:/etc/nginx/tls/privkey.pem:ro
     ports:
-      # 默认单 80 端口；TLS 由客户前置的负载均衡/证书终止（轻量版不代管证书）
+      # G1：80 只做探活与 301 跳转，443 终止 TLS（此前"轻量版单 80"的明文口径作废）
       - "${OA_LITE_PROXY_PORT:-80}:80"
+      - "${OA_LITE_PROXY_TLS_PORT:-443}:443"
     depends_on:
       adapter:
         condition: service_healthy
