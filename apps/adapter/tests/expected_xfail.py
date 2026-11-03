@@ -304,7 +304,6 @@ def current_batch() -> str:
     return os.environ.get("OA_BATCH") or _DEFAULT_BATCH
 
 
-
 __all__: list[str] = [
     "DEFECT_LEDGER",
     "EXPECTED_OPEN_CASES",
