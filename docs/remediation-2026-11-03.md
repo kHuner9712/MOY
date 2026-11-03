@@ -46,4 +46,90 @@
 
 ## 执行记录
 
-（随批次完成更新：提交 SHA、CI run 编号、门禁结果、遗留阻塞。）
+### 批次 1（流水线转绿）—— 已验收
+
+| 提交 | 内容 |
+|---|---|
+| `57f0429` | 注册表配置校验改 `safe_load_all`，逐文档解析 ingress/networkpolicy 等 k8s 清单 |
+| `ce1b14c` | 4 条 PG 用例：用例内独立 engine + 显式 dispose；usage 用例唯一 `event_id` |
+| `f37d091` | e2e `/sso/session` 路由替身（恒 401，断言口径不变） |
+| `585d35f` | 落盘 11-02 第四轮审计 + round3 归档（报告自身可溯源） |
+| `e122537` | 落盘 11-03 第五轮审计与本整改方案 |
+
+**CI 同 SHA 双绿（`e122537`）**：
+
+| workflow | run | 结论 |
+|---|---|---|
+| CI Adapter | [41609501419](https://github.com/kHuner9712/MOY/actions/runs/41609501419) | **success**（注册表校验；Lint/类型/测试 0 failed） |
+| CI Web | [41609507565](https://github.com/kHuner9712/MOY/actions/runs/41609507565) | **success**（Prettier/术语门禁/Lint/构建/E2E/产物扫描全绿） |
+
+### 批次 2（中危 QA-02~QA-06）—— 已完成
+
+| 提交 | 内容 | 证据 |
+|---|---|---|
+| `3c91218` | QA-02：ConfigMap 移除 4 个无消费方的 `OA_WEB_*` 运行期键；README §5.7 写明 build-arg 口径 | `validate_config_names` / `validate_deploy` 通过 |
+| `d616022` | QA-03：`list_queued(limit=200)` 下推 `LIMIT`；`next_queued` 取 1；内存计数独立 | 内存用例 `test_list_queued_respects_scan_limit_without_breaking_count`；PG 用例 `test_list_queued_respects_scan_limit`（`--run-pg`） |
+| `8f02a3b` | QA-04：`BillingStore/OpsStore.page_tenants`（PG `LIMIT/OFFSET` + `COUNT(*)`），OPS 服务直接下推 | `test_tenant_list_paginates_without_full_scan`；PG `test_page_tenants_pushes_down_pagination_and_count` |
+| `41b0e2b` | QA-05：`add_artifacts` 按租户分组、**同一事务**批量写入，保持入参顺序 | PG 用例 `test_artifact_add_batch_is_single_tenant_roundtrip` |
+| `0538a95` | QA-06：ZIP 构建改 `SpooledTemporaryFile`（>8MB 溢写磁盘），峰值由"两份"降到"一份" | 用例 `test_export_spools_zip_beyond_memory_cap`（把上限压到 1 字节强制 rollover） |
+
+### 批次 3（其余中/低危）—— 已完成 / 已登记
+
+| 提交 | 内容 |
+|---|---|
+| `51af723` | QA-13/14：workbench 6 组件补 19 条用例；实测 **89.78/85.06/84.93/90.98**，阈值抬到 **88.8/84.0/83.9/90.0** |
+| `9cb6140` | QA-07/19：`OA_BATCH` 默认 `B21`（与 CI 同值），裸跑 0 failed；README 运行口径表写明 `--run-pg` 四前置条件与「238 skipped ≠ 通过」 |
+| `94df114` | QA-11/18：根目录 `LICENSE`（私有保留权利，与 `UNLICENSED` 一致）；Dependency Scan 把 UNKNOWN 许可证显式列入灰名单，基线 42 / 上限 45 |
+| 本提交 | 审计报告状态列 + 本执行记录 + 分支收口附录 |
+
+**门禁结果（本地，批次 2+3 合并验收）**：
+
+| 门禁 | 结果 |
+|---|---|
+| 后端 `pytest tests`（无 PG，裸跑） | **0 failed / 2535 passed / 238 skipped**（PG 用例按设计跳过） |
+| 后端 `ruff check app tests` / `mypy app` | 通过 |
+| 前端 `vitest run --coverage` | 72 文件全绿；89.78/85.06/84.93/90.98（阈值 88.8/84/83.9/90） |
+| 前端 `tsc --noEmit` / `eslint` / `prettier --check` | 通过 |
+| `deploy/validate_*.py` 16 项 | 全部 EXIT=0（`validate_batch_clock.py` 需 `OA_BATCH=B21`，与 CI 一致） |
+
+### 未闭环/阻塞项（不假装已确认）
+
+| 编号 | 状态 | 说明 / 需要谁 |
+|---|---|---|
+| QA-12 分支保护 | **阻塞（403）** | `gh api repos/kHuner9712/MOY/branches/main/protection` 返回 403：当前令牌无 `administration` 权限，且私有仓库分支保护需 GitHub Pro/Team 套餐。需仓库所有者把令牌提权（`repo` + `admin:repo_hook`/`administration`）或由管理员在网页端开启；影响：无法强制 PR + 必需检查，只能靠流程约束 |
+| QA-15 npm moderate | **已评估，不升** | 16 个 moderate 全部来自同一条 `minimatch < 11.0.1`（GHSA-g3hv-75wg-m249），传播链只经过 eslint/`@typescript-eslint`/`eslint-config-next` 等**开发依赖**；`eslint@10.14.0`（当前最新）仍依赖 `minimatch ^10.2.6`，`npm audit fix` 给出的 `eslint@4` 是 registry 误报。风险面：仅 lint 时对仓库内固定 glob 求值，不接受用户输入。处置：不降级、不强制 override 到 11（会破坏 eslint 内部 API）；保留 `npm audit --audit-level=high` 门禁，moderate 不阻断 |
+| QA-06 残留 | **口径已写明** | `plugin_artifact.content` 是 `bytea`，最终写库仍需一份完整 `bytes`；端到端流式需把产物二进制迁到对象存储并改仓储契约，属独立存储变更 |
+| QA-16/17/20/21/22 | **部分闭环 / 登记** | 16 digest pin 已闭环；README 中与本次相关的 `72→68` 已改；`'use client'` 89/93 未动（属重构级）；`.env.example` 弱默认仍由部署门禁阻断；包体预算未做（无基线） |
+
+## 附录：分支收口取证（2026-11-03 执行时实测）
+
+```
+$ git remote -v
+origin  https://github.com/kHuner9712/MOY.git (fetch)
+origin  https://github.com/kHuner9712/MOY.git (push)
+
+$ git branch -a
+* main
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main
+
+$ git ls-remote --heads origin
+e12253789aecdd304102ebfb82588a8740d8d510  refs/heads/main
+```
+
+- **本地与远端均只有 `main`**（本轮开始时远端为 `e122537`，删除阶段前无其它本地/远端分支）。
+  审计报告 §1.1 的「无 origin」是上一轮取证口径错误，本轮以 `git remote -v` 实测为准并已修正。
+- 需删除的分支：**0 个**；未合并实质工作：**0 条**（不存在非 main 分支）。
+- `git branch --merged main` / `--no-merged main` 在仅有 main 时无输出差异，不另列 SHA。
+- `git ls-remote --heads origin` 在推送后复验仍只有 `refs/heads/main`（见最终汇报）。
+
+### 保留的 3 条 stash（不 apply、不 drop）
+
+| stash | 来源分支 | 说明 | SHA |
+|---|---|---|---|
+| `stash@{0}` | `refactor/wave3-deploy-lint` | B22-01 半成品；**SyntaxError:505 ruff errors，勿 apply** | 保留 |
+| `stash@{1}` | `develop` | s2-wip | 保留 |
+| `stash@{2}` | `develop` | pre-b20-dirty | 保留 |
+
+对应分支已不存在（历史遗留），stash 仍可从 `refs/stash` 取回；按要求**保留原样**。
+
