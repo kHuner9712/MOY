@@ -134,7 +134,7 @@ def _upload(
     """
     response = client.post(
         f"/api/v1/knowledge/bases/{base_id}/documents",
-        files={"file": (file_name, io.BytesIO(b"%PDF-1.4 test"), "application/pdf")},
+        files={"file": (file_name, io.BytesIO(b"%PDF-1.4 test\n%%EOF"), "application/pdf")},
         headers={**_headers(settings), "Idempotency-Key": _key(tag)},
     )
     assert response.json()["code"] == 0, response.text

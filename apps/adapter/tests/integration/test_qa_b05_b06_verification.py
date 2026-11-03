@@ -481,7 +481,7 @@ async def test_a6_kb4_stale_returns_200_without_error_semantics(
     base_id = _create_base(client, settings, tag="qa-a6", visibility="organization")
     upload = client.post(
         f"/api/v1/knowledge/bases/{base_id}/documents",
-        files={"file": ("制度.pdf", b"%PDF-1.4 qa", "application/pdf")},
+        files={"file": ("制度.pdf", b"%PDF-1.4 qa\n%%EOF", "application/pdf")},
         headers={**_headers(settings), "Idempotency-Key": _key("qa-a6-up")},
     )
     assert upload.json()["code"] == 0, upload.text

@@ -103,7 +103,7 @@ def _upload(
     data = {} if chunk_policy is None else {"chunk_policy": chunk_policy}
     response = client.post(
         f"/api/v1/knowledge/bases/{base_id}/documents",
-        files={"file": (file_name, io.BytesIO(b"%PDF-1.4 test"), "application/pdf")},
+        files={"file": (file_name, io.BytesIO(b"%PDF-1.4 test\n%%EOF"), "application/pdf")},
         data=data,
         headers={**_headers(settings), **make_idempotency_headers(tag)},
     )

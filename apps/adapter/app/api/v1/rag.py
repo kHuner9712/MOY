@@ -31,6 +31,7 @@ from app.core.config import get_request_settings
 from app.core.errors import ApiError, ErrorCode, error_response
 from app.core.idempotency import IdempotencyManager, get_idempotency_manager
 from app.core.security import RequestContext, get_request_context, run_idempotent
+from app.registry.loader import get_profile_routes
 from app.schemas.common import ApiResponse, DeletedData, PageResult
 from app.schemas.rag import (
     ChunkPolicy,
@@ -45,6 +46,7 @@ from app.schemas.rag import (
     UploadDocumentData,
 )
 from app.services.rag_service import get_rag_service
+from app.services.upload_content import validate_upload_content
 
 router = APIRouter(prefix="/knowledge", tags=["RAG 服务"])
 
@@ -160,7 +162,8 @@ async def upload_document(
         ApiResponse[UploadDocumentData]: 文档 ID 与处理进度初值。
 
     Raises:
-        ApiError: 文件超限（20008）、格式不支持（11002）、内容过大（11003）。
+        ApiError: 文件超限（20008）、格式不支持（11002，含扩展名与内容不符）、
+            内容过大（11003）。
     """
     settings = get_request_settings(request)
     file_name = file.filename or "unnamed"
@@ -190,6 +193,14 @@ async def upload_document(
             await asyncio.to_thread(tmp.write, chunk)
         tmp.seek(0)
         payload = await asyncio.to_thread(tmp.read)
+
+    # QA-10：大小校验（流式累计）已在上方完成，这里才做内容类型嗅探——
+    # 扩展名与真实文件头/容器结构不符直接拒收（11002），不把伪装字节送到底座。
+    validate_upload_content(
+        file_name=file_name,
+        payload=payload,
+        allowed_extensions=get_profile_routes().allowed_document_extensions,
+    )
 
     service = get_rag_service()
 

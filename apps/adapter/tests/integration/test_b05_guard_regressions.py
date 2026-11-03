@@ -247,7 +247,7 @@ async def _create_completed_document(
     """
     upload = client.post(
         f"/api/v1/knowledge/bases/{base_id}/documents",
-        files={"file": ("制度.pdf", b"%PDF-1.4 guard", "application/pdf")},
+        files={"file": ("制度.pdf", b"%PDF-1.4 guard\n%%EOF", "application/pdf")},
         headers={**_headers(settings), "Idempotency-Key": _key(tag)},
     )
     assert upload.json()["code"] == 0, upload.text
@@ -397,7 +397,7 @@ def test_kb3_lists_documents_uploaded_with_native_id(
     base_id = _create_base(client, settings, visibility="organization", tag="guard-kb3-upload")
     upload = client.post(
         f"/api/v1/knowledge/bases/{base_id.removeprefix('kb_')}/documents",
-        files={"file": ("制度.pdf", b"%PDF-1.4 guard", "application/pdf")},
+        files={"file": ("制度.pdf", b"%PDF-1.4 guard\n%%EOF", "application/pdf")},
         headers={**_headers(settings), "Idempotency-Key": _key("guard-kb3-upload-d")},
     )
     assert upload.json()["code"] == 0, upload.text

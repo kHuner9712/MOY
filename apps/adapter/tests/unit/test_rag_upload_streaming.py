@@ -134,7 +134,7 @@ def test_upload_reads_in_chunks_and_passes_bytes(
     monkeypatch.setattr(StarletteUploadFile, "read", _spy_read)
 
     settings = _settings(max_upload_bytes=52_428_800)
-    payload = b"%PDF-1.4 " + b"m" * (2 * _CHUNK_SIZE)  # >1 个分块
+    payload = b"%PDF-1.4 " + b"m" * (2 * _CHUNK_SIZE) + b"\n%%EOF"  # >1 个分块
     with _client(settings) as client:
         response = client.post(
             "/api/v1/knowledge/bases/kb_1/documents",
@@ -154,7 +154,7 @@ def test_chunked_digest_equals_full_read_digest(
 ) -> None:
     """流式增量摘要与整读 sha256 等值（幂等指纹口径不变）。"""
     settings = _settings(max_upload_bytes=52_428_800)
-    payload = b"%PDF-1.4 digest-check"
+    payload = b"%PDF-1.4 digest-check\n%%EOF"
     with _client(settings) as client:
         response = client.post(
             "/api/v1/knowledge/bases/kb_1/documents",

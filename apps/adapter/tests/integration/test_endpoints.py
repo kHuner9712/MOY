@@ -226,7 +226,9 @@ class TestRagEndpoints:
         """R3 上传文档返回 processing 初态。"""
         response = client.post(
             "/api/v1/knowledge/bases/kb_1/documents",
-            files={"file": ("员工手册.pdf", io.BytesIO(b"%PDF-1.4 test"), "application/pdf")},
+            files={
+                "file": ("员工手册.pdf", io.BytesIO(b"%PDF-1.4 test\n%%EOF"), "application/pdf")
+            },
             data={"chunk_policy": "default"},
             headers={**auth_headers, **idempotency_headers},
         )
@@ -270,7 +272,7 @@ class TestRagEndpoints:
                 )
 
         monkeypatch.setattr(rag_api, "get_rag_service", lambda: _CapturingService())
-        payload = b"%PDF-1.4 endpoint bytes"
+        payload = b"%PDF-1.4 endpoint bytes\n%%EOF"
         response = client.post(
             "/api/v1/knowledge/bases/kb_1/documents",
             files={"file": ("员工手册.pdf", io.BytesIO(payload), "application/pdf")},
