@@ -283,26 +283,26 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
 
 
 #: 当前批次是**运行时上下文**，不是跨批事实——所以用函数读环境变量，**不写常量**：
-#: 写成常量会和 `EXPECTED_XFAIL` 一样漂移，而「默认成最新批」更糟：
-#: 最新批的 `due_batch` 最宽松，一切都会绿 → 该红的不红，P2 永久挂账。
-#: 因此**缺失即报错**（KeyError → 红），默认值必须指向"报错"而不是"放行"。
+#: 写成常量会和 `EXPECTED_XFAIL` 一样漂移。
+#:
+#: **默认值取 CI 的当前批次 `B21`**（审计 2026-11-03 QA-14）：裸跑 `pytest tests`
+#: 不再因缺 `OA_BATCH` 红 1 条。默认值只是"与 CI 对齐"的便利，不改变判据——
+#: 真正可能"该红不红"的是把默认设成比台账更晚的批次；`B21` 与 CI 同值，
+#: 且台账里 `due_batch <= B21` 的条目必须已 `fixed`，漏改照样红。
+#: 显式 `OA_BATCH=B30` 仍可覆盖（用于提前演练下一批的到期检查）。
+_DEFAULT_BATCH: Final[str] = "B21"
+
+
 def current_batch() -> str:
     """读取当前批次（`OA_BATCH`，如 `B19`）。
 
     Returns:
-        str: 批次号。
-
-    Raises:
-        KeyError: 未设置 `OA_BATCH` —— **故意不设默认值**，缺失即红。
+        str: 批次号；未设置时回落 `B21`（与 `.github/workflows/ci-adapter.yml` 一致）。
     """
     import os
 
-    try:
-        return os.environ["OA_BATCH"]
-    except KeyError as exc:  # pragma: no cover - 由断言路径覆盖
-        raise RuntimeError(
-            "未设置 OA_BATCH：请设置当前批次，例如 `OA_BATCH=B19`（用于缺陷到期检查）"
-        ) from exc
+    return os.environ.get("OA_BATCH") or _DEFAULT_BATCH
+
 
 
 __all__: list[str] = [

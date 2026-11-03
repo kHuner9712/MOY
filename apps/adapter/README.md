@@ -169,19 +169,25 @@ curl -H "Authorization: Bearer <token>" -H "X-Tenant-Id: default" \
 ```bash
 ruff check . && ruff format --check .   # Lint + 格式
 mypy app                                # 类型检查
-OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing   # OA_BATCH 必设，缺失即红
+OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing   # OA_BATCH 可省略，默认 B21
 ```
 
 ### 6.1 运行口径（三套，数字**不可跨口径比较**）
 
 | 口径 | 前置条件 | 命令 | 期望 | 用途 |
 | --- | --- | --- | --- | --- |
-| **无 PG（本机默认）** | 只设 `OA_BATCH` | 上方命令（不带 `--run-pg`） | 0 failed；PG 用例按设计 skip（当前 212 条） | 快速回归 |
+| **无 PG（本机默认）** | 无（`OA_BATCH` 可省略，默认 `B21`） | 上方命令（不带 `--run-pg`） | 0 failed；PG 用例**按设计 skip（实测 238 条）** | 快速回归 |
 | **有 PG（CI 口径）** | `--run-pg` + `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 | 上方命令追加 `--run-pg` | **skipped 必须为 0**；`--cov-fail-under=85` 卡合并；另卡 `db/repositories/*/postgres.py ≥ 88%`（实测 90.66% − 2.66pp，审计 2026-11-02 M2） | **唯一权威口径** |
 | **前端** | 仓库根 `npm ci` 后 | `npm run test --workspace apps/web -- --coverage` | 四指标达 `vitest.config.mts` 阈值（只升不降棘轮） | 前端回归 |
 
-- **`OA_BATCH` 缺失即红**：`tests/expected_xfail.py::current_batch()` 故意不设默认值，
-  `deploy/validate_batch_clock.py` 同样以退出码 2 拒绝判定——不给"静默默认"。
+- **`--run-pg` 门槛（审计 2026-11-03 QA-13）**：不加该开关时，测试夹具按「没有真实 PostgreSQL」
+  跳过全部 PG 用例（本机实测 **238 skipped**）——这些用例**没有执行**，不能当作通过。
+  跑 CI 等价口径必须同时满足：① `pytest --run-pg`；② `OA_TEST_DATABASE_URL` 已导出且
+  连接可用；③ 库已完成 `alembic upgrade head`；④ 连接角色 `NOSUPERUSER NOBYPASSRLS`
+  （RLS 隔离用例靠它才有意义）。验收时以 `skipped == 0` 为准，不看 passed 数。
+- **`OA_BATCH` 有默认值（`B21`）**：`tests/expected_xfail.py::current_batch()` 在未设置时
+  回落 CI 同值，裸跑不再红 1 条；显式设置仍生效，`deploy/validate_batch_clock.py`
+  的「未设置即退出码 2」保持不变（它校验的是发布批次时钟，不是本机跑单）。
 - **批次号是同步项**：当前在 CI env、根 README（2 处）、本文件、`qa/phase4-verify.sh`（3 处）
   共 5 个同步点出现。升批时逐处改，`python deploy/validate_batch_clock.py --check-docs`
   会列出所有漏改位置（C3），并校验 `OA_BATCH` 不落后于台账 `due_batch`（C2）。
