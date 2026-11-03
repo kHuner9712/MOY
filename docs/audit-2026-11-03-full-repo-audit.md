@@ -509,7 +509,7 @@ stash@{2}: On develop: pre-b20-dirty
 | QA-09 | 中 | 未动（登记） | 超大文件拆分，重构级 |
 | QA-10 | 中 | 未动（登记） | 上传类型仅按扩展名判定，需内容嗅探，独立安全批次 |
 | QA-11 | 中 | **已闭环** | `94df114`：根目录 `LICENSE`（私有保留权利） |
-| QA-12 | 中 | **阻塞（403）** | 令牌无 administration 权限 + 私有仓库需 Pro/Team；所需权限已写入整改文档 |
+| QA-12 | 中 | **阻塞（平台套餐，非权限）** | 账号对仓库 `viewerPermission=ADMIN`、令牌含 `repo`；`GET protection` 与 `GET rulesets` 均返回 `Upgrade to GitHub Pro or make this repository public…`（403），`branches/main` 为 `protected=false`。私有 Free 仓库不支持分支保护，需用户升级 Pro/转 public，原文与端点已记入整改文档「QA-12 403 成因取证」 |
 | QA-13 | 低 | **已闭环** | `51af723`：行覆盖 90.98（目标 ≥89） |
 | QA-14 | 低 | **已闭环** | `51af723`：6 个 workbench 组件由 0% 升至 92% 行覆盖 |
 | QA-15 | 低 | **已评估，不升级** | 16 moderate 同源 `minimatch<11.0.1`，仅开发链；最新 eslint 仍未升级，理由已记录 |

@@ -108,10 +108,35 @@
 
 | 编号 | 状态 | 说明 / 需要谁 |
 |---|---|---|
-| QA-12 分支保护 | **阻塞（403）** | `gh api repos/kHuner9712/MOY/branches/main/protection` 返回 403：当前令牌无 `administration` 权限，且私有仓库分支保护需 GitHub Pro/Team 套餐。需仓库所有者把令牌提权（`repo` + `admin:repo_hook`/`administration`）或由管理员在网页端开启；影响：无法强制 PR + 必需检查，只能靠流程约束 |
+| QA-12 分支保护 | **阻塞（平台套餐，非权限）** | 见下方「QA-12 403 成因取证」。结论：当前账号对仓库是 `ADMIN`、令牌含 `repo`，**不是令牌或角色不足**；403 原文为 `Upgrade to GitHub Pro or make this repository public to enable this feature.`，私有仓库在 Free 计划不支持分支保护/rulesets。已试 `GET protection`、`GET branches/main`、`GET rulesets`，三者口径一致（前两者 403，分支 `protected=false`）。**需用户本人处置**：升级 GitHub Pro/Team，或把仓库改为 public，或在网页端开通；免费替代仅有「CI 硬失败 + 流程约束」，无法阻止直接 push |
 | QA-15 npm moderate | **已评估，不升** | 16 个 moderate 全部来自同一条 `minimatch < 11.0.1`（GHSA-g3hv-75wg-m249），传播链只经过 eslint/`@typescript-eslint`/`eslint-config-next` 等**开发依赖**；`eslint@10.14.0`（当前最新）仍依赖 `minimatch ^10.2.6`，`npm audit fix` 给出的 `eslint@4` 是 registry 误报。风险面：仅 lint 时对仓库内固定 glob 求值，不接受用户输入。处置：不降级、不强制 override 到 11（会破坏 eslint 内部 API）；保留 `npm audit --audit-level=high` 门禁，moderate 不阻断 |
 | QA-06 残留 | **口径已写明** | `plugin_artifact.content` 是 `bytea`，最终写库仍需一份完整 `bytes`；端到端流式需把产物二进制迁到对象存储并改仓储契约，属独立存储变更 |
 | QA-16/17/20/21/22 | **部分闭环 / 登记** | 16 digest pin 已闭环；README 中与本次相关的 `72→68` 已改；`'use client'` 89/93 未动（属重构级）；`.env.example` 弱默认仍由部署门禁阻断；包体预算未做（无基线） |
+
+### QA-12 403 成因取证（2026-11-03 复核）
+
+**结论：不是令牌权限问题，也不是账号角色问题；是「私有仓库 + GitHub Free 计划」不支持分支保护/rulesets。**
+
+| 取证项 | 命令 | 返回原文/要点 |
+|---|---|---|
+| 登录态与 scopes | `gh auth status` | `Logged in to github.com account kHuner9712 (keyring)`；`Token: gho_****`（gh OAuth 登录态，非 classic/fine-grained PAT）；`Token scopes: 'gist', 'read:org', 'repo'` |
+| 可见性/角色 | `gh repo view kHuner9712/MOY --json visibility,isPrivate,viewerPermission,defaultBranchRef,owner` | `"visibility":"PRIVATE"`、`"isPrivate":true`、`"viewerPermission":"ADMIN"`、`"defaultBranchRef":{"name":"main"}`、`"owner":{"login":"kHuner9712"}` |
+| 仓库 permissions | `gh api /repos/kHuner9712/MOY` | `"permissions":{"admin":true,"maintain":true,"pull":true,"push":true,"triage":true}`、`"private":true` |
+| 分支保护读 | `gh api /repos/kHuner9712/MOY/branches/main/protection` | `{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com/rest/branches/branch-protection#get-branch-protection","status":"403"}` |
+| 分支状态 | `gh api /repos/kHuner9712/MOY/branches/main` | `{"name":"main","protected":false}` |
+| rulesets 交叉验证 | `gh api /repos/kHuner9712/MOY/rulesets` | `{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com/rest/repos/rules#get-all-repository-rulesets","status":"403"}` |
+
+- 两个独立端点（branch protection / rulesets）返回**同一条**套餐提示，排除「调用方式不对（缺 PUT body）」或「token 缺 scope」的解释：本账号是该私有仓库的 `ADMIN`，`repo` scope 已具备管理写入能力，若套餐支持即可直接 `PUT`。
+- 因套餐不支持，**未尝试写入**（写入同样会被 403 拒绝），也未改动任何仓库设置/分支/stash。
+- 免费可行替代：CI 已把 16 道门禁与 `CI Adapter`/`CI Web`/`Dependency Scan` 做成硬失败，但 Free 私有仓库无法把「必需检查」绑到合并动作上，**仍不能阻止直接 push 到 `main`**；要真正强制 PR + 必需检查，只能由用户完成下方任一动作。
+
+**用户必须亲自完成的最小动作（当前可选两项，选项 3 不可用）**：
+
+1. **升级 GitHub Pro**（个人账号，私有仓库即可用分支保护/rulesets）：GitHub → Settings → Billing → Upgrade；完成后我可用 `PUT` 写保护并 `GET` 回读验证。
+2. **把仓库转为 public**（Free 计划下公开仓库支持分支保护）：`gh repo edit kHuner9712/MOY --visibility public --accept-visibility-change-consequences`（会公开全部代码与历史，需你确认后再执行）。
+3. 若已有 Team 计划（组织）：把仓库迁到该组织下，或用组织账号在 Settings → Rules 中配置 ruleset。
+
+补充：`gh api /user/orgs` 实测当前账号**不属于任何组织**（空列表），因此选项 3 目前不可用。
 
 ## 附录：分支收口取证（2026-11-03 执行时实测）
 
