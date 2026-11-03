@@ -327,11 +327,17 @@ def status_of(path: str) -> str:
 
 
 def human_size(path: str) -> str:
-    """文件大小的可读写法（逐字节现算；目录/glob 返回"大小未知"）。"""
+    """文件大小的可读写法（**按 LF 归一后**计字节；目录/glob 返回"大小未知"）。
+
+    为什么归一（M3 取证教训）：Windows 工作区是 CRLF、CI 检出是 LF，
+    `stat().st_size` 会差出每行 1 字节——清单在 Windows 生成、在 Linux
+    `--check` 就**恒定不一致**。归一成 LF 口径后任何平台算出的字节数相同。
+    """
     try:
-        n = (ROOT / path).stat().st_size
+        raw = (ROOT / path).read_bytes()
     except OSError:
         return "大小未知"
+    n = len(raw.replace(b"\r\n", b"\n"))
     return f"{n:,} B / {n / 1024:.1f} KiB"
 
 
