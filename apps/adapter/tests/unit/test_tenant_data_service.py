@@ -370,6 +370,30 @@ class TestExport:
             assert manifest["files"][name]["sha256"] == hashlib.sha256(raw).hexdigest()
             assert manifest["files"][name]["bytes"] == len(raw)
 
+    async def test_export_spools_zip_beyond_memory_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """打包缓冲超过内存上限时溢写磁盘，产物内容不变（QA-06）。
+
+        把上限压到 1 字节，确保 `SpooledTemporaryFile` 第一笔写入就 rollover；
+        若实现仍依赖 `BytesIO` 或忘记 `seek(0)`，这里会直接抛出/读到空包。
+        """
+        monkeypatch.setattr(tenant_data_service, "_ZIP_SPOOL_MAX_BYTES", 1)
+        database = install_tenant_scope(monkeypatch, tenant_data_service, FakeDatabase())
+        _seed_tenant(database)
+        for scope in EXPORT_SCOPES:
+            _seed_scope(database, scope, 1)
+        store = InMemoryArtifactStore()
+        service = TenantDataService(_settings(), artifacts=store)
+
+        result = await service.export(TENANT, actor_id=ACTOR)
+        artifact = await store.get(TENANT, result.export_id)
+        assert artifact is not None
+        archive = zipfile.ZipFile(io.BytesIO(artifact.content))
+        assert archive.testzip() is None
+        manifest = json.loads(archive.read(MANIFEST_NAME))
+        assert manifest["total_rows"] == result.rows["total"] > 0
+
     async def test_export_lines_expose_exactly_declared_columns(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

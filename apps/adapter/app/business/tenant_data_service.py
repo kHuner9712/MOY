@@ -40,8 +40,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import json
+import tempfile
 import time
 import zipfile
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
@@ -95,6 +95,13 @@ PAGE_SIZE: Final[int] = 1000
 #: 交给线程池：单次跨线程开销被摊到 500 行上（每次约几十 KB），既不让循环
 #: 每行 switch 一次，也不让循环被压缩卡住。
 _ZIP_CHUNK_ROWS: Final[int] = 500
+
+#: ZIP 打包缓冲在内存里的上限（审计 2026-11-03 QA-06）。
+#:
+#: 超过这个大小就由 `SpooledTemporaryFile` 自动溢写到磁盘，避免"压缩过程"
+#: 随导出包体积线性吃内存。最终写库仍需一份完整 `bytes`（存储契约是 `bytea`），
+#: 但峰值从"两份"降到"一份"。
+_ZIP_SPOOL_MAX_BYTES: Final[int] = 8 * 1024 * 1024
 
 #: 导出超过上限时的业务文案（架构 §4.2：复用既有码，不新造 18xxx）
 EXPORT_TOO_LARGE_MESSAGE: Final[str] = "数据量较大，请联系管理员分批导出"
@@ -673,10 +680,19 @@ class TenantDataService:
         **流式写 zip**（`ZipFile.open(name, "w")`）而不是"先把整包拼进内存"：
         200,000 行的包可能上百 MB，`writestr` 会把同一份数据在内存里存两遍。
 
+        **打包落盘而非全量 BytesIO**（审计 2026-11-03 QA-06）：写入目标是
+        `SpooledTemporaryFile`——前 `_ZIP_SPOOL_MAX_BYTES` 在内存，超过就自动
+        溢写到临时文件。这样"压缩过程"的内存峰值有上界，不会被整包大小牵着走。
+
+        **残留口径**：最终仍要把整包读成一次 `bytes` 交给产物仓储（
+        `plugin_artifact.content` 是 `bytea`，asyncpg 只接受完整 `bytes`）。
+        因此峰值约为"一份压缩包"，而不是"两份"；要做到端到端流式，需把产物
+        二进制迁到对象存储并把插入接口改成文件句柄，属独立存储契约变更。
+
         **写入不占事件循环**（审计 P2-5）：`handle.write` 是同步阻塞调用
         （deflate + 落盘），每 `_ZIP_CHUNK_ROWS` 行攒成一批后
         `await asyncio.to_thread(handle.write, b"".join(pending))`。
-        `ZipFile` 的创建与关闭仍在事件循环线程（它们要读写同一个 `BytesIO`，
+        `ZipFile` 的创建与关闭仍在事件循环线程（它们要读写同一个文件句柄，
         跨线程反而要加锁）；只有「压缩+写」这一段挪到线程池。
 
         Args:
@@ -691,80 +707,85 @@ class TenantDataService:
         Raises:
             ApiError: 生成过程中行数超过上限（并发写入导致的超限）。
         """
-        buffer = io.BytesIO()
+        buffer = tempfile.SpooledTemporaryFile(max_size=_ZIP_SPOOL_MAX_BYTES)
         files: dict[str, dict[str, Any]] = {}
         actual: dict[str, int] = {}
         written = 0
 
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for scope in scopes:
-                name = EXPORT_FILE_NAMES[scope]
-                digest = hashlib.sha256()
-                lines = 0
-                size_bytes = 0
-                with archive.open(name, "w") as handle:
-                    # 攒批写（见 `_ZIP_CHUNK_ROWS`）：`handle.write` 是同步阻塞调用，
-                    # 直接写在循环体里会卡住事件循环；攒够一批再丢线程池。
-                    pending: list[bytes] = []
-                    async for line in self._iter_scope(tenant_id, scope):
-                        encoded = (line + "\n").encode("utf-8")
-                        digest.update(encoded)
-                        pending.append(encoded)
-                        lines += 1
-                        size_bytes += len(encoded)
-                        written += 1
-                        if written > MAX_EXPORT_ROWS:
-                            raise ApiError(
-                                ErrorCode.PARAM_INVALID,
-                                message=EXPORT_TOO_LARGE_MESSAGE,
-                                internal_detail=(
-                                    "tenant export exceeded row limit while streaming: "
-                                    f"written={written} limit={MAX_EXPORT_ROWS}"
-                                ),
-                            )
-                        if len(pending) >= _ZIP_CHUNK_ROWS:
+        try:
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+                for scope in scopes:
+                    name = EXPORT_FILE_NAMES[scope]
+                    digest = hashlib.sha256()
+                    lines = 0
+                    size_bytes = 0
+                    with archive.open(name, "w") as handle:
+                        # 攒批写（见 `_ZIP_CHUNK_ROWS`）：`handle.write` 是同步阻塞调用，
+                        # 直接写在循环体里会卡住事件循环；攒够一批再丢线程池。
+                        pending: list[bytes] = []
+                        async for line in self._iter_scope(tenant_id, scope):
+                            encoded = (line + "\n").encode("utf-8")
+                            digest.update(encoded)
+                            pending.append(encoded)
+                            lines += 1
+                            size_bytes += len(encoded)
+                            written += 1
+                            if written > MAX_EXPORT_ROWS:
+                                raise ApiError(
+                                    ErrorCode.PARAM_INVALID,
+                                    message=EXPORT_TOO_LARGE_MESSAGE,
+                                    internal_detail=(
+                                        "tenant export exceeded row limit while streaming: "
+                                        f"written={written} limit={MAX_EXPORT_ROWS}"
+                                    ),
+                                )
+                            if len(pending) >= _ZIP_CHUNK_ROWS:
+                                await asyncio.to_thread(handle.write, b"".join(pending))
+                                pending.clear()
+                        if pending:
                             await asyncio.to_thread(handle.write, b"".join(pending))
                             pending.clear()
-                    if pending:
-                        await asyncio.to_thread(handle.write, b"".join(pending))
-                        pending.clear()
-                files[name] = {
-                    "scope": scope,
-                    "rows": lines,
-                    "declared_rows": int(counts.get(scope, 0)),
-                    "bytes": size_bytes,
-                    "sha256": digest.hexdigest(),
-                }
-                actual[scope] = lines
+                    files[name] = {
+                        "scope": scope,
+                        "rows": lines,
+                        "declared_rows": int(counts.get(scope, 0)),
+                        "bytes": size_bytes,
+                        "sha256": digest.hexdigest(),
+                    }
+                    actual[scope] = lines
 
-            manifest: dict[str, Any] = {
-                "export_id": export_id,
-                "tenant_id": tenant_id,
-                "generated_at": iso(),
-                "format": "jsonl",
-                "scopes": list(scopes),
-                "rows": {EXPORT_FILE_NAMES[scope]: actual.get(scope, 0) for scope in scopes},
-                "total_rows": written,
-                "files": files,
-                "notes": [
-                    "每行一条记录，UTF-8 编码，JSON 键已排序。",
-                    "会话与消息同放 chat.jsonl，行内 record 字段区分 conversation / message。",
-                    "产物只导出清单（名称、摘要、大小），不含二进制正文；二进制可按单件下载获取。",
-                    "记忆仅导出用户可见内容；派生向量与开关设置不在导出范围内。",
-                    "操作记录（audit.jsonl）按保留期由运维侧维护，导出不受其影响。",
-                ],
-            }
-            archive.writestr(
-                MANIFEST_NAME,
-                json.dumps(
-                    manifest,
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
-                    default=_json_default,
-                ),
-            )
-        return buffer.getvalue(), manifest
+                manifest: dict[str, Any] = {
+                    "export_id": export_id,
+                    "tenant_id": tenant_id,
+                    "generated_at": iso(),
+                    "format": "jsonl",
+                    "scopes": list(scopes),
+                    "rows": {EXPORT_FILE_NAMES[scope]: actual.get(scope, 0) for scope in scopes},
+                    "total_rows": written,
+                    "files": files,
+                    "notes": [
+                        "每行一条记录，UTF-8 编码，JSON 键已排序。",
+                        "会话与消息同放 chat.jsonl，行内 record 字段区分 conversation / message。",
+                        "产物只导出清单（名称、摘要、大小），不含二进制正文；二进制可按单件下载获取。",
+                        "记忆仅导出用户可见内容；派生向量与开关设置不在导出范围内。",
+                        "操作记录（audit.jsonl）按保留期由运维侧维护，导出不受其影响。",
+                    ],
+                }
+                archive.writestr(
+                    MANIFEST_NAME,
+                    json.dumps(
+                        manifest,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                        default=_json_default,
+                    ),
+                )
+            buffer.seek(0)
+            payload = buffer.read()
+        finally:
+            buffer.close()
+        return payload, manifest
 
     async def _iter_scope(self, tenant_id: str, scope: str) -> AsyncIterator[str]:
         """按类别逐页产出 JSONL 行（键集分页，逐页一个新事务）。
