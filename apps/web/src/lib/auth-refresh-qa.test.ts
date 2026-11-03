@@ -173,9 +173,10 @@ describe('验证项 2 · 三态判据四组组合', () => {
       for (const refreshable of [true, false]) {
         for (const expired of [true, false]) {
           const key = `${authenticated}|${refreshable}|${expired}`;
-          expect({ key, decision: decideSession(state({ authenticated, refreshable, expired })) }).toEqual(
-            { key, decision: expected[key] },
-          );
+          expect({
+            key,
+            decision: decideSession(state({ authenticated, refreshable, expired })),
+          }).toEqual({ key, decision: expected[key] });
         }
       }
     }
@@ -204,10 +205,13 @@ describe('验证项 3 · 四分类的动作（到点之后到底做了什么）'
     const calls = recorder();
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
-        new Response(JSON.stringify({ code: 0, message: '', data: { ok: true, expires_in: 180 } }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
+        new Response(
+          JSON.stringify({ code: 0, message: '', data: { ok: true, expires_in: 180 } }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
     );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -310,10 +314,10 @@ describe('验证项 3 · 四分类的动作（到点之后到底做了什么）'
     vi.useFakeTimers();
     const fetchMock = vi.fn(
       async () =>
-        new Response(
-          JSON.stringify({ code: 30001, message: '统一登录未启用', data: null }),
-          { status: 503, headers: { 'Content-Type': 'application/json' } },
-        ),
+        new Response(JSON.stringify({ code: 30001, message: '统一登录未启用', data: null }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        }),
     );
     vi.stubGlobal('fetch', fetchMock);
     const calls = recorder();

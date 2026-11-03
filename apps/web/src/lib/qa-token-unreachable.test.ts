@@ -299,7 +299,14 @@ function scanFile(file: SourceFile): Finding[] {
       const lowered = literal.toLowerCase();
       if (lowered === 'authorization') report(node, 'authorization-literal');
       if (lowered.includes('bearer ')) report(node, 'bearer-literal');
-      for (const token of ['access_token', 'refresh_token', 'id_token', 'accessToken', 'refreshToken', 'idToken']) {
+      for (const token of [
+        'access_token',
+        'refresh_token',
+        'id_token',
+        'accessToken',
+        'refreshToken',
+        'idToken',
+      ]) {
         if (lowered === token.toLowerCase()) report(node, 'token-field-literal');
       }
     }
@@ -453,9 +460,11 @@ describe('令牌不可达 · AST 静态探针', () => {
 
     for (const sample of samples) {
       const rules = new Set(
-        scanFile({ path: 'lib/evil-sample.ts', absolutePath: 'evil-sample.ts', text: sample.code }).map(
-          (item) => item.rule,
-        ),
+        scanFile({
+          path: 'lib/evil-sample.ts',
+          absolutePath: 'evil-sample.ts',
+          text: sample.code,
+        }).map((item) => item.rule),
       );
       for (const rule of sample.expected) {
         // 断言失败时样本名与规则名同时出现在消息里，定位不需要猜
@@ -573,7 +582,9 @@ describe('令牌不可达 · 五端点客户端的类型面', () => {
       expect(text).toContain(`${field}:`);
     }
     // 类型声明区里不得出现令牌字段（注释已由 AST 排除，此处只看明文关键词是否成对出现）
-    const interfaceBlocks = text.match(/export interface (SessionState|SessionGrant) \{[\s\S]*?\n\}/g);
+    const interfaceBlocks = text.match(
+      /export interface (SessionState|SessionGrant) \{[\s\S]*?\n\}/g,
+    );
     expect(interfaceBlocks).toHaveLength(2);
     for (const block of interfaceBlocks ?? []) {
       expect(block).not.toMatch(/access_token|refresh_token|id_token|accessToken|refreshToken/i);

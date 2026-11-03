@@ -563,6 +563,22 @@ def check(text: str, rows: list[Row]) -> int:
             problems.append(f"清单缺行（任务表有、清单没有）：{key[0]} {key[1]}")
 
     if OUT.is_file() and OUT.read_text(encoding="utf-8").replace("\r\n", "\n") != text:
+        # 打印前若干行差异（M3 取证教训：只报"1 处不一致"不给行号，
+        # 在 CI 上没法定位是哪一格过期，只能整文件盲重生成）
+        import difflib
+
+        delta = list(
+            difflib.unified_diff(
+                OUT.read_text(encoding="utf-8").replace("\r\n", "\n").splitlines(),
+                text.splitlines(),
+                fromfile="清单(磁盘)",
+                tofile="重新生成",
+                lineterm="",
+                n=1,
+            )
+        )
+        for line in delta[:24]:
+            print(f"[DIFF] {line}", file=sys.stderr)
         problems.append("清单内容与生成结果不一致（表头/汇总/备注/证据列已过期），请重跑生成器")
 
     if problems:

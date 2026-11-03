@@ -102,37 +102,40 @@ const SITES: Site[] = [
 ];
 
 /** 所有 refresh 侧抛出「临时故障」的信号 */
-const TRANSIENT_SIGNALS: Array<{ label: string; respond: () => Response; expectShortCircuit: boolean }> =
-  [
-    {
-      label: '429 / 20006（限流）',
-      respond: () => envelope(null, { status: 429, code: 20006, message: '请求过于频繁' }),
-      expectShortCircuit: false,
+const TRANSIENT_SIGNALS: Array<{
+  label: string;
+  respond: () => Response;
+  expectShortCircuit: boolean;
+}> = [
+  {
+    label: '429 / 20006（限流）',
+    respond: () => envelope(null, { status: 429, code: 20006, message: '请求过于频繁' }),
+    expectShortCircuit: false,
+  },
+  {
+    label: '503 / 30001（网关不可用）',
+    respond: () => envelope(null, { status: 503, code: 30001, message: '下游服务不可用' }),
+    expectShortCircuit: false,
+  },
+  {
+    label: '504 / 30002（上游超时）',
+    respond: () => envelope(null, { status: 504, code: 30002, message: '上游服务超时' }),
+    expectShortCircuit: false,
+  },
+  {
+    label: '断网 / status=0',
+    respond: () => {
+      throw new TypeError('Failed to fetch');
     },
-    {
-      label: '503 / 30001（网关不可用）',
-      respond: () => envelope(null, { status: 503, code: 30001, message: '下游服务不可用' }),
-      expectShortCircuit: false,
-    },
-    {
-      label: '504 / 30002（上游超时）',
-      respond: () => envelope(null, { status: 504, code: 30002, message: '上游服务超时' }),
-      expectShortCircuit: false,
-    },
-    {
-      label: '断网 / status=0',
-      respond: () => {
-        throw new TypeError('Failed to fetch');
-      },
-      expectShortCircuit: false,
-    },
-    {
-      label: '503 / 30001 且文案含「统一登录未启用」（stub）',
-      respond: () => envelope(null, { status: 503, code: 30001, message: '统一登录未启用' }),
-      // stub 是「配置决定的必然失败」→ 立即放弃，只发 1 次
-      expectShortCircuit: true,
-    },
-  ];
+    expectShortCircuit: false,
+  },
+  {
+    label: '503 / 30001 且文案含「统一登录未启用」（stub）',
+    respond: () => envelope(null, { status: 503, code: 30001, message: '统一登录未启用' }),
+    // stub 是「配置决定的必然失败」→ 立即放弃，只发 1 次
+    expectShortCircuit: true,
+  },
+];
 
 /** 一次 fetch 调用的可读快照 */
 interface Call {
@@ -201,9 +204,7 @@ afterEach(() => {
 });
 
 describe('三态分流 · unavailable 绝不广播（4 站点 × 5 信号）', () => {
-  const cases = SITES.flatMap((site) =>
-    TRANSIENT_SIGNALS.map((signal) => ({ site, signal })),
-  );
+  const cases = SITES.flatMap((site) => TRANSIENT_SIGNALS.map((signal) => ({ site, signal })));
 
   it.each(cases)(
     '$site.name + refresh $signal.label → 抛「暂时不可用」、广播 0 次、不重试业务请求',
@@ -221,9 +222,11 @@ describe('三态分流 · unavailable 绝不广播（4 站点 × 5 信号）', (
       const error = await pending;
 
       // 1) 错误类型：服务不可用，绝不是「登录失效」
-      expect({ site: site.name, signal: signal.label, isUnavailable: error instanceof api.AdapterUnavailableError }).toEqual(
-        { site: site.name, signal: signal.label, isUnavailable: true },
-      );
+      expect({
+        site: site.name,
+        signal: signal.label,
+        isUnavailable: error instanceof api.AdapterUnavailableError,
+      }).toEqual({ site: site.name, signal: signal.label, isUnavailable: true });
       expect(error).not.toBeInstanceOf(api.BusinessError);
       // 2) 文案不许把用户往「重新登录」引（此时他们根本登不上）
       expect((error as Error).message).toContain('暂时不可用');
@@ -255,7 +258,9 @@ describe('三态分流 · dead 没有被削弱（4 站点）', () => {
       });
       const fetchMock = stubFetch(site.first, refreshDead);
 
-      const error = await site.run(api, new File(['x'], 'a.txt')).catch((caught: unknown) => caught);
+      const error = await site
+        .run(api, new File(['x'], 'a.txt'))
+        .catch((caught: unknown) => caught);
 
       // `rejectUnauthorized()` 的返回类型是 `never`：它必须**恒抛** 20002。
       // 若有人删掉里面的 throw，控制流会「漏下去」执行到 `throw new AdapterUnavailableError()`，
@@ -294,30 +299,27 @@ describe('三态分流 · refreshed 仍然只重试一次（4 站点）', () => 
 });
 
 describe('三态分流 · 重试后仍 401/20002 走 dead（4 站点）', () => {
-  it.each(SITES)(
-    '$name + refresh 成功但重试又失败 → 抛 20002 且广播 1 次',
-    async (site) => {
-      const { api, events } = await loadModules();
-      let broadcast = 0;
-      events.onUnauthorized(() => {
-        broadcast += 1;
-      });
-      // 两发坏响：原请求 + 重试都是 401/20002
-      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input).includes('/sso/refresh')) return refreshOk();
-        return site.first();
-      });
-      vi.stubGlobal('fetch', fetchMock);
+  it.each(SITES)('$name + refresh 成功但重试又失败 → 抛 20002 且广播 1 次', async (site) => {
+    const { api, events } = await loadModules();
+    let broadcast = 0;
+    events.onUnauthorized(() => {
+      broadcast += 1;
+    });
+    // 两发坏响：原请求 + 重试都是 401/20002
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/sso/refresh')) return refreshOk();
+      return site.first();
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
-      const error = await site.run(api, new File(['x'], 'a.txt')).catch((caught: unknown) => caught);
+    const error = await site.run(api, new File(['x'], 'a.txt')).catch((caught: unknown) => caught);
 
-      expect(error).toBeInstanceOf(api.BusinessError);
-      expect((error as InstanceType<ApiClientModule['BusinessError']>).code).toBe(20002);
-      expect(broadcast).toBe(1);
-      const { business, refresh } = split(fetchMock);
-      // 只重试一次：两次业务请求后收口（偷偷第三次才拿到成功也算错）
-      expect(business).toHaveLength(2);
-      expect(refresh).toHaveLength(1);
-    },
-  );
+    expect(error).toBeInstanceOf(api.BusinessError);
+    expect((error as InstanceType<ApiClientModule['BusinessError']>).code).toBe(20002);
+    expect(broadcast).toBe(1);
+    const { business, refresh } = split(fetchMock);
+    // 只重试一次：两次业务请求后收口（偷偷第三次才拿到成功也算错）
+    expect(business).toHaveLength(2);
+    expect(refresh).toHaveLength(1);
+  });
 });

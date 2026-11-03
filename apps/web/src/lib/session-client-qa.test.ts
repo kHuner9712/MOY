@@ -45,7 +45,11 @@ function findTokenLeaks(value: unknown, path = '$'): string[] {
   const leaks: string[] = [];
 
   if (typeof value === 'string') {
-    if (JWT_SHAPE.test(value) || value.includes(FAKE_REFRESH_TOKEN) || value.includes(FAKE_ID_TOKEN)) {
+    if (
+      JWT_SHAPE.test(value) ||
+      value.includes(FAKE_REFRESH_TOKEN) ||
+      value.includes(FAKE_ID_TOKEN)
+    ) {
       leaks.push(`${path} = 疑似令牌字符串`);
     }
     return leaks;
@@ -280,7 +284,10 @@ describe('五个端点的传输选项与错误形状', () => {
   });
 
   it('无信封的 503 保留 HTTP 状态（上层四分类才能判「临时故障」）', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>503</html>', { status: 503 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<html>503</html>', { status: 503 })),
+    );
 
     const error = await refreshSession().catch((caught: unknown) => caught);
 

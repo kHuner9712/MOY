@@ -449,7 +449,9 @@ describe('团队管理页', () => {
     const keys = mocks.withIdempotencyKey.mock.calls.map((call) => call[0] as string);
     expect(keys).toHaveLength(3);
     // 同一邮箱三次点击 = 一次用户动作 → 同一把键，后端才能去重
-    expect(keys[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(keys[0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
     expect(keys[1]).toBe(keys[0]);
     expect(keys[2]).toBe(keys[0]);
 
