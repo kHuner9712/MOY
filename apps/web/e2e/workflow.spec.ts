@@ -63,47 +63,70 @@ test.describe('贯穿旅程（需真实测试账号）', () => {
     });
   } else if (HAS_E2E_CREDS) {
     test('统一登录 → 兑换会话 → 进入工作台 → 安装插件', async ({ page }) => {
-    // ① 登录页：统一登录入口存在且诚实展示
-    await page.goto('/login');
-    await expect(page.getByRole('button', { name: '统一登录' })).toBeVisible();
+      // ① 登录页：统一登录入口存在且诚实展示
+      await page.goto('/login');
+      await expect(page.getByRole('button', { name: '统一登录' })).toBeVisible();
 
-    // ② 点击统一登录 → 跳出应用到身份服务授权页
-    await page.getByRole('button', { name: '统一登录' }).click();
-    await expect(page).toHaveURL(/protocol\/openid-connect\/auth/);
+      // ② 点击统一登录 → 跳出应用到身份服务授权页
+      await page.getByRole('button', { name: '统一登录' }).click();
+      await expect(page).toHaveURL(/protocol\/openid-connect\/auth/);
 
-    // ③ 在身份服务完成登录（realm 页面由 Keycloak 渲染，锚定表单而非文案）
-    await page.locator('#username').fill(E2E_USERNAME);
-    await page.locator('#password').fill(E2E_PASSWORD);
-    await page.getByRole('button', { name: /Sign In|登录/ }).click();
+      // ③ 在身份服务完成登录（realm 页面由 Keycloak 渲染，锚定表单而非文案）
+      await page.locator('#username').fill(E2E_USERNAME);
+      await page.locator('#password').fill(E2E_PASSWORD);
+      await page.getByRole('button', { name: /Sign In|登录/ }).click();
 
-    // ④ 回跳兑换：callback 页消费 code 换会话，成功后离开 /auth/callback
-    await expect(page).not.toHaveURL(/\/auth\/callback/, { timeout: 20_000 });
+      // ④ 回跳兑换：callback 页消费 code 换会话，成功后离开 /auth/callback
+      await expect(page).not.toHaveURL(/\/auth\/callback/, { timeout: 20_000 });
 
-    // ⑤ 会话生效：进入主应用（/chat 为登录默认落点）不再被弹回登录页；
-    // 「工作台」是 /workbench/[pluginId] 动态路由，裸 /workbench 本就是 404，
-    // 故主链路落点断言用 /chat（工作台经插件安装完成后进入，见 ⑥ 之后）。
-    await page.goto('/chat');
-    await expect(page).not.toHaveURL(/\/login/);
-    await expect(page.getByText('企业级办公 AI 平台').first()).toBeVisible();
+      // ⑤ 会话生效：进入主应用（/chat 为登录默认落点）不再被弹回登录页；
+      // 「工作台」是 /workbench/[pluginId] 动态路由，裸 /workbench 本就是 404，
+      // 故主链路落点断言用 /chat（工作台经插件安装完成后进入，见 ⑥ 之后）。
+      await page.goto('/chat');
+      await expect(page).not.toHaveURL(/\/login/);
+      await expect(page.getByText('企业级办公 AI 平台').first()).toBeVisible();
 
-    // ⑥ 插件旅程：进入插件页，安装第一个可安装插件
-    await page.goto('/plugins');
-    await expect(page).not.toHaveURL(/\/login/);
-    const installButton = page.getByRole('button', { name: '查看并安装' }).first();
-    await expect(installButton).toBeVisible();
-    await installButton.click();
-    // 安装抽屉打开（授权配置面板）即证明安装链路入口可达；真实提交依赖底座
-    // 插件运行时，抽屉内提交留给插件域专项用例（grant-drawer 单测已覆盖逻辑）。
-    await expect(page.getByRole('dialog').or(page.getByText('能力授权'))).toBeVisible();
+      // ⑥ 插件旅程：进入插件页，安装第一个可安装插件
+      await page.goto('/plugins');
+      await expect(page).not.toHaveURL(/\/login/);
+      const installButton = page.getByRole('button', { name: '查看并安装' }).first();
+      await expect(installButton).toBeVisible();
+      await installButton.click();
+      // 安装抽屉打开（授权配置面板）即证明安装链路入口可达；真实提交依赖底座
+      // 插件运行时，抽屉内提交留给插件域专项用例（grant-drawer 单测已覆盖逻辑）。
+      await expect(page.getByRole('dialog').or(page.getByText('能力授权'))).toBeVisible();
     }); // ← 结束 test('统一登录 → …')
-  }     // ← 结束 else if (HAS_E2E_CREDS)
+  } // ← 结束 else if (HAS_E2E_CREDS)
 });
 
 test.describe('贯穿旅程的匿名前置段（零夹具，随时可跑）', () => {
   // 刻意放在同一文件：贯穿旅程 skip 时，本段保证该 spec 在 CI/本地仍有
   // 确定性断言在跑，文件不沦为"整段 skip 的摆设"。
 
+  /**
+   * 替 `/sso/session` 探针作答「从未登录」四元组（夹具订正 2026-11-02；断言不动）。
+   *
+   * 依据与 session-redirect.spec.ts 同源：令牌链路改造后「未登录」只能由探针的
+   * 回答判定（设计 §2.4.7），而 dev 服务器无 `/sso/*` 路由、stub 形态下五个端点
+   * 恒 503「统一登录未启用」（`sso_routes.py` 硬约束 2）——探针必然失败，而探针
+   * 失败按设计停错误态、不跳登录（`session-gate.tsx` 头注释）。故在 HTTP 边界给
+   * 出设计契约的输入（与 `SsoSessionData` 逐字段对齐），被测的仍是浏览器内真实
+   * 的「会话门 → 三态判据 → buildLoginHref」链路，断言与改造前逐字相同。
+   */
+  async function answerNeverLoggedIn(page: Page): Promise<void> {
+    await page.route('**/sso/session', (route) =>
+      route.fulfill({
+        json: {
+          code: 0,
+          message: '',
+          data: { authenticated: false, expires_in: null, refreshable: false, expired: false },
+        },
+      }),
+    );
+  }
+
   async function expectLoginGate(page: Page, path: string): Promise<void> {
+    await answerNeverLoggedIn(page);
     await page.goto(path);
     await expect(page).toHaveURL(/\/login\?next=/);
   }
