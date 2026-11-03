@@ -80,7 +80,8 @@
 | `51af723` | QA-13/14：workbench 6 组件补 19 条用例；实测 **89.78/85.06/84.93/90.98**，阈值抬到 **88.8/84.0/83.9/90.0** |
 | `9cb6140` | QA-07/19：`OA_BATCH` 默认 `B21`（与 CI 同值），裸跑 0 failed；README 运行口径表写明 `--run-pg` 四前置条件与「238 skipped ≠ 通过」 |
 | `94df114` | QA-11/18：根目录 `LICENSE`（私有保留权利，与 `UNLICENSED` 一致）；Dependency Scan 把 UNKNOWN 许可证显式列入灰名单，基线 42 / 上限 45 |
-| 本提交 | 审计报告状态列 + 本执行记录 + 分支收口附录 |
+| `277c042` | 审计报告第 10 节整改状态列 + 本执行记录 + 分支收口附录 |
+| `0975a9d` | 修正 `tests/expected_xfail.py` 的多余空行（CI Adapter 在 `277c042` 上 ruff format 报红后定位修复） |
 
 **门禁结果（本地，批次 2+3 合并验收）**：
 
@@ -91,6 +92,17 @@
 | 前端 `vitest run --coverage` | 72 文件全绿；89.78/85.06/84.93/90.98（阈值 88.8/84/83.9/90） |
 | 前端 `tsc --noEmit` / `eslint` / `prettier --check` | 通过 |
 | `deploy/validate_*.py` 16 项 | 全部 EXIT=0（`validate_batch_clock.py` 需 `OA_BATCH=B21`，与 CI 一致） |
+
+**CI 同 SHA 双绿（批次 2/3 代码基线 `0975a9d`）**：
+
+| workflow | run | 触发 | 结论 |
+|---|---|---|---|
+| CI Adapter | [41617426516](https://github.com/kHuner9712/MOY/actions/runs/41617426516) | push | **success**（ruff/mypy + PG 容器全量 pytest + 覆盖率下限） |
+| CI Web | [41618757526](https://github.com/kHuner9712/MOY/actions/runs/41618757526) | workflow_dispatch（同 SHA） | **success**（Prettier/术语门禁/Lint/tsc/vitest/构建/E2E/产物扫描） |
+| Dependency Scan | 41617426595 | push | success |
+
+- 首次推送 `277c042` 时 CI Adapter 在 `ruff format --check` 报红：`tests/expected_xfail.py` 多一个空行（CI 的 ruff 退出码 1，本地此前只按目录抽查未覆盖到）。定位后由 `0975a9d` 修复并复跑，**不是以「已修复」结案，而是拿到新的同 SHA 双绿**。
+- CI Web 的 `on.push.paths` 不含 `apps/adapter/tests/**`，因此 `0975a9d` 不会自动触发；为满足「同一 SHA 双绿」，用 `gh workflow run ci-web.yml --ref main` 在 `0975a9d` 上手动触发并验收。
 
 ### 未闭环/阻塞项（不假装已确认）
 
@@ -117,11 +129,23 @@ $ git ls-remote --heads origin
 e12253789aecdd304102ebfb82588a8740d8d510  refs/heads/main
 ```
 
-- **本地与远端均只有 `main`**（本轮开始时远端为 `e122537`，删除阶段前无其它本地/远端分支）。
+推送批次 2/3 后复验（`0975a9d` 时点）：
+
+```
+$ git ls-remote --heads origin
+0975a9d0b2931c790782ab4ab07b23c155bac2af  refs/heads/main
+
+$ git branch -a
+* main
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main
+```
+
+- **本地与远端均只有 `main`**（本轮开始时远端为 `e122537`；收口阶段实测无其它本地/远端分支）。
   审计报告 §1.1 的「无 origin」是上一轮取证口径错误，本轮以 `git remote -v` 实测为准并已修正。
 - 需删除的分支：**0 个**；未合并实质工作：**0 条**（不存在非 main 分支）。
 - `git branch --merged main` / `--no-merged main` 在仅有 main 时无输出差异，不另列 SHA。
-- `git ls-remote --heads origin` 在推送后复验仍只有 `refs/heads/main`（见最终汇报）。
+- 后续只有文档/代码提交前移 `main`，不新增分支；最终以 `git ls-remote --heads origin` 复核（见最终汇报）。
 
 ### 保留的 3 条 stash（不 apply、不 drop）
 
