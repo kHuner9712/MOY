@@ -432,52 +432,61 @@ class PostgresArtifactStore:
         Returns:
             list[ArtifactRecord]: 落库后的产物行。
         """
-        created: list[ArtifactRecord] = []
-        for record in records:
-            # 落库前归一化 MIME：库里存的类型必须与真实字节的格式一致（0006）
-            content_type = resolve_content_type(
-                record.name or record.output_key, record.type, record.content_type
-            )
-            async with tenant_scope(record.tenant_id, settings=self._settings) as uow:
+        created: dict[int, ArtifactRecord] = {}
+        groups: dict[str, list[tuple[int, ArtifactRecord]]] = {}
+        for index, record in enumerate(records):
+            groups.setdefault(record.tenant_id, []).append((index, record))
+        # 审计 2026-11-03 QA-05：同一租户的产物在**一个事务**里写完。
+        # 旧实现每条产物都进出一次 `tenant_scope`（各自提交），一次工具执行产出
+        # 十几个文件就是十几个事务；中途失败还会留下"前几个已落库、后面没有"的
+        # 半批产物。租户维度分组是因为 `tenant_scope` 与 RLS 会话变量绑定到单个租户。
+        for tenant_id, entries in groups.items():
+            async with tenant_scope(tenant_id, settings=self._settings) as uow:
                 repo = _ArtifactRepository(uow)
-                row = await repo.fetch_one(
-                    f"""
-                    INSERT INTO {ARTIFACT_TABLE} (
-                        tenant_id, artifact_id, task_id, step_id, output_key, type, name,
-                        inline_text, preview_text, external_url, storage_key, size_bytes,
-                        content_sha256, content, content_type, expires_at
-                    ) VALUES (
-                        :tenant_id, :artifact_id, :task_id, :step_id, :output_key, :type, :name,
-                        :inline_text, :preview_text, NULLIF(:external_url, ''),
-                        NULLIF(:storage_key, ''), :size_bytes, NULLIF(:content_sha256, ''),
-                        :content, :content_type, :expires_at
+                for index, record in entries:
+                    # 落库前归一化 MIME：库里存的类型必须与真实字节的格式一致（0006）
+                    content_type = resolve_content_type(
+                        record.name or record.output_key, record.type, record.content_type
                     )
-                    RETURNING *
-                    """,
-                    repo.params(
-                        artifact_id=record.artifact_id,
-                        task_id=record.task_id,
-                        step_id=record.step_id,
-                        output_key=record.output_key,
-                        type=record.type,
-                        name=record.name or record.output_key,
-                        inline_text=record.inline_text,
-                        preview_text=record.preview_text,
-                        external_url=record.external_url,
-                        storage_key=record.storage_key,
-                        size_bytes=record.size_bytes,
-                        content_sha256=record.content_sha256,
-                        # 空字节写 NULL 而不是 `''::bytea`：`text` / `link` 类产物
-                        # 本来就没有二进制内容，"没有"与"零字节文件"要能区分开。
-                        content=record.content or None,
-                        content_type=content_type,
-                        expires_at=as_datetime(record.expires_at)
-                        or as_datetime(_default_expires_at()),
-                    ),
-                )
-            if row is not None:
-                created.append(_to_artifact(row))
-        return created
+                    row = await repo.fetch_one(
+                        f"""
+                        INSERT INTO {ARTIFACT_TABLE} (
+                            tenant_id, artifact_id, task_id, step_id, output_key, type, name,
+                            inline_text, preview_text, external_url, storage_key, size_bytes,
+                            content_sha256, content, content_type, expires_at
+                        ) VALUES (
+                            :tenant_id, :artifact_id, :task_id, :step_id, :output_key, :type, :name,
+                            :inline_text, :preview_text, NULLIF(:external_url, ''),
+                            NULLIF(:storage_key, ''), :size_bytes, NULLIF(:content_sha256, ''),
+                            :content, :content_type, :expires_at
+                        )
+                        RETURNING *
+                        """,
+                        repo.params(
+                            artifact_id=record.artifact_id,
+                            task_id=record.task_id,
+                            step_id=record.step_id,
+                            output_key=record.output_key,
+                            type=record.type,
+                            name=record.name or record.output_key,
+                            inline_text=record.inline_text,
+                            preview_text=record.preview_text,
+                            external_url=record.external_url,
+                            storage_key=record.storage_key,
+                            size_bytes=record.size_bytes,
+                            content_sha256=record.content_sha256,
+                            # 空字节写 NULL 而不是 `''::bytea`：`text` / `link` 类产物
+                            # 本来就没有二进制内容，"没有"与"零字节文件"要能区分开。
+                            content=record.content or None,
+                            content_type=content_type,
+                            expires_at=as_datetime(record.expires_at)
+                            or as_datetime(_default_expires_at()),
+                        ),
+                    )
+                    if row is not None:
+                        created[index] = _to_artifact(row)
+        # 按入参顺序返回（跨租户分组不改变调用方看到的顺序）
+        return [created[index] for index in sorted(created)]
 
     async def list_by_task(self, tenant_id: str, task_id: str) -> list[ArtifactRecord]:
         """列出任务全部产物。
