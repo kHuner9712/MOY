@@ -297,13 +297,16 @@ export default defineConfig({
       // 语言与两条出路/错误细节只进控制台/内联样式自洽 + 回跳页服务端壳
       // 元信息不外传完整地址）6 项后实测（global-error 100%）：
       //   % Stmts **86.75** | % Branch 80.72 | % Funcs 81.45 | % Lines 87.91
-      // 棘轮继续只升不降，各留 ~0.3pp 余量：
-      //   statements 86.4 / branches 80.4 / functions 81.1 / lines 87.6
+      // 2026-11-03 批次 3：workbench 组件群（confirm-bar / declaration-form /
+      // file-picker / help-panel / submit-bar / loading）补测后实测：
+      //   % Stmts **89.78** | % Branch 85.06 | % Funcs 84.93 | % Lines 90.98
+      // 棘轮只升不降，各留约 1pp 余量（line 门槛首次越过 89，对应审计目标）：
+      //   statements 88.8 / branches 84.0 / functions 83.9 / lines 90.0
       thresholds: {
-        statements: 86.4,
-        branches: 80.4,
-        functions: 81.1,
-        lines: 87.6,
+        statements: 88.8,
+        branches: 84.0,
+        functions: 83.9,
+        lines: 90.0,
       },
     },
   },
