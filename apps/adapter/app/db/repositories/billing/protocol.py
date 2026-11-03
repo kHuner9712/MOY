@@ -58,6 +58,16 @@ class BillingStore(Protocol):
         """列出企业（关键字模糊匹配名称；平台视图使用）。"""
         ...
 
+    async def page_tenants(
+        self, *, keyword: str = "", status: str = "", offset: int = 0, limit: int = 20
+    ) -> tuple[list[TenantRecord], int]:
+        """分页列出企业（平台视图），返回 `(当前页, 筛选后总数)`。
+
+        审计 2026-11-03 QA-04：运营企业列表不再「全量拉回 + 内存切片」，
+        分页与计数都下推到存储层。
+        """
+        ...
+
     async def get_active_subscription(self, tenant_id: str) -> SubscriptionRecord | None:
         """读取有效订阅。"""
         ...

@@ -322,3 +322,27 @@ async def test_platform_scope_cross_tenant_and_guard(
         async with tenant_scope("__platform__", settings=pg_settings):
             pass
     assert excinfo.value.code is ErrorCode.INTERNAL_ERROR
+
+
+@pytest.mark.asyncio
+async def test_page_tenants_pushes_down_pagination_and_count(
+    billing_store: PostgresBillingStore,
+) -> None:
+    """`page_tenants` 的 LIMIT/OFFSET 与 COUNT 都在 SQL 侧（审计 QA-04）。
+
+    用唯一关键字圈定本用例创建的企业，避免共享库里的其他租户影响 `total`。
+    """
+    marker = f"分页企业{uuid.uuid4().hex[:8]}"
+    tenant_ids = [f"tnt_pg_page_{uuid.uuid4().hex[:8]}_{index}" for index in range(3)]
+    for index, tenant_id in enumerate(tenant_ids):
+        await billing_store.ensure_tenant(tenant_id, f"{marker}{index}")
+
+    page, total = await billing_store.page_tenants(keyword=marker, offset=1, limit=1)
+    assert total == 3, "总数必须是筛选后的全量，不是当前页长度"
+    assert len(page) == 1
+    assert page[0].tenant_id in tenant_ids
+
+    first_page, first_total = await billing_store.page_tenants(keyword=marker, offset=0, limit=2)
+    assert first_total == 3 and len(first_page) == 2
+    assert {item.tenant_id for item in page} <= set(tenant_ids)
+    assert {item.tenant_id for item in first_page} != {item.tenant_id for item in page}

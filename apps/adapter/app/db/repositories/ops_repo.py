@@ -128,6 +128,12 @@ class OpsStore(Protocol):
         """跨租户列出企业（平台作用域）。"""
         ...
 
+    async def page_tenants(
+        self, *, keyword: str = "", status: str = "", offset: int = 0, limit: int = 20
+    ) -> tuple[list[TenantRecord], int]:
+        """跨租户分页列出企业，返回 `(当前页, 总数)`（审计 QA-04）。"""
+        ...
+
     async def get_tenant(self, tenant_id: str) -> TenantRecord | None:
         """读取单个企业。"""
         ...
@@ -221,6 +227,24 @@ class InMemoryOpsStore:
             list[TenantRecord]: 企业列表。
         """
         return await self._billing.list_tenants(keyword=keyword, status=status)
+
+    async def page_tenants(
+        self, *, keyword: str = "", status: str = "", offset: int = 0, limit: int = 20
+    ) -> tuple[list[TenantRecord], int]:
+        """跨租户分页列出企业（委托计费存储，审计 QA-04）。
+
+        Args:
+            keyword: 名称关键字。
+            status: 状态过滤。
+            offset: 偏移量。
+            limit: 每页条数。
+
+        Returns:
+            tuple[list[TenantRecord], int]: `(当前页, 总数)`。
+        """
+        return await self._billing.page_tenants(
+            keyword=keyword, status=status, offset=offset, limit=limit
+        )
 
     async def get_tenant(self, tenant_id: str) -> TenantRecord | None:
         """读取单个企业。
@@ -386,6 +410,24 @@ class PostgresOpsStore:
             list[TenantRecord]: 企业列表。
         """
         return await self._billing.list_tenants(keyword=keyword, status=status)
+
+    async def page_tenants(
+        self, *, keyword: str = "", status: str = "", offset: int = 0, limit: int = 20
+    ) -> tuple[list[TenantRecord], int]:
+        """跨租户分页列出企业（委托计费存储，审计 QA-04）。
+
+        Args:
+            keyword: 名称关键字。
+            status: 状态过滤。
+            offset: 偏移量。
+            limit: 每页条数。
+
+        Returns:
+            tuple[list[TenantRecord], int]: `(当前页, 总数)`。
+        """
+        return await self._billing.page_tenants(
+            keyword=keyword, status=status, offset=offset, limit=limit
+        )
 
     async def get_tenant(self, tenant_id: str) -> TenantRecord | None:
         """读取单个企业。

@@ -229,10 +229,13 @@ class OpsService:
         Returns:
             TenantListData: 企业列表与分页信息。
         """
-        tenants = await self._store.list_tenants(keyword=keyword, status=status)
-        total = len(tenants)
+        # 分页与计数都下推到存储层（审计 2026-11-03 QA-04）：
+        # 旧实现把全部企业拉回进程再切片，企业数一多页码越深越慢，
+        # 且 Postgres 侧还会在上限处静默截断。
         start = max(page - 1, 0) * page_size
-        slice_items = tenants[start : start + page_size]
+        slice_items, total = await self._store.page_tenants(
+            keyword=keyword, status=status, offset=start, limit=page_size
+        )
         items: list[TenantListItem] = []
         for tenant in slice_items:
             subscription = await self._billing.get_active_subscription(tenant.tenant_id)

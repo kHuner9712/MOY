@@ -179,6 +179,25 @@ class InMemoryBillingStore:
         items.sort(key=lambda item: (item.created_at, item.tenant_id), reverse=True)
         return items
 
+    async def page_tenants(
+        self, *, keyword: str = "", status: str = "", offset: int = 0, limit: int = 20
+    ) -> tuple[list[TenantRecord], int]:
+        """分页列出企业（内存后端：已在本地，切片即可）。
+
+        Args:
+            keyword: 名称关键字（大小写不敏感）。
+            status: 状态过滤。
+            offset: 偏移量。
+            limit: 每页条数。
+
+        Returns:
+            tuple[list[TenantRecord], int]: `(当前页, 筛选后总数)`。
+        """
+        items = await self.list_tenants(keyword=keyword, status=status)
+        total = len(items)
+        start = max(int(offset), 0)
+        return items[start : start + max(int(limit), 0)], total
+
     # ------------------------------------------------------------------
     # 订阅
     # ------------------------------------------------------------------

@@ -276,6 +276,26 @@ class PostgresBillingStore:
             )
         return _to_tenant(row) if row is not None else None
 
+    def _tenant_where(self, keyword: str, status: str) -> tuple[str, dict[str, Any]]:
+        """构造企业列表的 `WHERE` 子句与参数（列表/分页共用）。
+
+        Args:
+            keyword: 名称关键字。
+            status: 状态过滤。
+
+        Returns:
+            tuple[str, dict[str, Any]]: `(where 子句, 参数)`。
+        """
+        conditions = ["tenant_id <> :platform"]
+        parameters: dict[str, Any] = {"tenant_id": PLATFORM_TENANT, "platform": PLATFORM_TENANT}
+        if keyword:
+            conditions.append("name ILIKE :keyword")
+            parameters["keyword"] = f"%{keyword}%"
+        if status:
+            conditions.append("status = :status")
+            parameters["status"] = status
+        return " AND ".join(conditions), parameters
+
     async def list_tenants(self, *, keyword: str = "", status: str = "") -> list[TenantRecord]:
         """列出企业（平台视图）。
 
@@ -286,19 +306,11 @@ class PostgresBillingStore:
         Returns:
             list[TenantRecord]: 企业列表。
         """
-        conditions = ["tenant_id <> :platform"]
-        parameters: dict[str, Any] = {"tenant_id": PLATFORM_TENANT, "platform": PLATFORM_TENANT}
-        if keyword:
-            conditions.append("name ILIKE :keyword")
-            parameters["keyword"] = f"%{keyword}%"
-        if status:
-            conditions.append("status = :status")
-            parameters["status"] = status
-        where_clause = " AND ".join(conditions)
+        where_clause, parameters = self._tenant_where(keyword, status)
         # ARC-12①（审计 2026-10-28）：OPS 企业列表加安全上限——接口契约不变
         # （响应结构无总数字段），只防 `name ILIKE '%kw%'` 全表扫拖垮库。
         # 超限不报错，截断到上限并在 internal_detail 留痕；完整分页
-        # （limit/offset + COUNT + pg_trgm 索引）涉及契约变更，独立任务再做。
+        # （limit/offset + COUNT + pg_trgm 索引）见 `page_tenants()`（QA-04 已接）。
         limit = 200
         async with platform_scope(self._settings, read_only=True) as uow:
             repo = _TenantTableRepository(uow)
@@ -319,6 +331,43 @@ class PostgresBillingStore:
                 detail=f"rows={len(rows)} limit={limit}; 接分页（ARC-12②）",
             )
         return [_to_tenant(row) for row in rows]
+
+    async def page_tenants(
+        self, *, keyword: str = "", status: str = "", offset: int = 0, limit: int = 20
+    ) -> tuple[list[TenantRecord], int]:
+        """分页列出企业（平台视图，审计 2026-11-03 QA-04）。
+
+        `LIMIT/OFFSET` 与 `COUNT(*)` 都在 SQL 侧完成：旧实现把整表（截断 200 行）
+        拉回进程再切片，页码一大就返回空页且 `total` 永远是截断值。
+
+        Args:
+            keyword: 名称关键字。
+            status: 状态过滤。
+            offset: 偏移量。
+            limit: 每页条数。
+
+        Returns:
+            tuple[list[TenantRecord], int]: `(当前页, 筛选后总数)`。
+        """
+        where_clause, parameters = self._tenant_where(keyword, status)
+        page_size = max(int(limit), 0)
+        async with platform_scope(self._settings, read_only=True) as uow:
+            repo = _TenantTableRepository(uow)
+            rows = await repo.fetch_all(
+                f"""
+                SELECT tenant_id, name, status, deploy_mode, plan_code, suspended_reason,
+                       created_at, updated_at
+                FROM {TENANT_TABLE}
+                WHERE {where_clause}
+                ORDER BY created_at DESC, tenant_id
+                LIMIT :limit OFFSET :offset
+                """,
+                {**parameters, "limit": page_size, "offset": max(int(offset), 0)},
+            )
+            total = await repo.fetch_scalar(
+                f"SELECT COUNT(*) FROM {TENANT_TABLE} WHERE {where_clause}", parameters
+            )
+        return [_to_tenant(row) for row in rows], int(total or 0)
 
     # ------------------------------------------------------------------
     # 订阅

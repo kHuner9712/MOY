@@ -182,6 +182,38 @@ async def test_tenant_list_and_detail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tenant_list_paginates_without_full_scan() -> None:
+    """OPS1 的分页下推到存储层：深页码仍有数据、total 是全量（QA-04）。
+
+    旧实现 `list_tenants` 全量返回 + `len()` 计数 + 内存切片：企业数一多，
+    越深的页码越慢；若存储侧还有隐藏上限，`total` 会变成截断值。
+    """
+    settings = _settings()
+    billing = InMemoryBillingStore()
+    tenant_ids = [f"tnt_page_{index}" for index in range(5)]
+    for index, tenant_id in enumerate(tenant_ids):
+        await billing.ensure_tenant(tenant_id, f"分页企业{index}")
+    service = OpsService(
+        settings=settings,
+        store=InMemoryOpsStore(billing, settings),
+        audit=AuditService(settings),
+        usage=UsageService(settings),
+    )
+
+    first = await service.list_tenants(page=1, page_size=2)
+    assert first.total == 5 and first.total_pages == 3
+    assert len(first.items) == 2
+    assert {item.tenant_id for item in first.items} <= set(tenant_ids)
+
+    third = await service.list_tenants(page=3, page_size=2)
+    assert third.total == 5 and len(third.items) == 1
+    assert {item.tenant_id for item in third.items} <= set(tenant_ids)
+    assert {item.tenant_id for item in first.items} != {item.tenant_id for item in third.items}, (
+        "不同页不得返回同一条企业"
+    )
+
+
+@pytest.mark.asyncio
 async def test_tenant_detail_unknown_returns_20004() -> None:
     """OPS2 企业不存在 → 20004。"""
     settings = _settings()
