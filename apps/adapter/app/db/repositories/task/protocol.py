@@ -12,7 +12,12 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any, Protocol
 
-from app.db.repositories.task.records import StepRecord, TaskRecord, TaskStats
+from app.db.repositories.task.records import (
+    QUEUE_SCAN_LIMIT,
+    StepRecord,
+    TaskRecord,
+    TaskStats,
+)
 
 
 class TaskStore(Protocol):
@@ -87,8 +92,10 @@ class TaskStore(Protocol):
         """取最早排队的任务（FIFO）。"""
         ...
 
-    async def list_queued(self, tenant_id: str, plugin_id: str) -> list[TaskRecord]:
-        """列出排队任务（按位次）。"""
+    async def list_queued(
+        self, tenant_id: str, plugin_id: str, *, limit: int = QUEUE_SCAN_LIMIT
+    ) -> list[TaskRecord]:
+        """列出排队任务（按位次，最多 `limit` 条）。"""
         ...
 
     async def create_steps(self, records: Iterable[StepRecord]) -> list[StepRecord]:

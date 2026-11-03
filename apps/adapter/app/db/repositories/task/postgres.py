@@ -32,6 +32,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.db.repositories.base import BaseRepository, as_datetime
 from app.db.repositories.task.records import (
     OCCUPYING_STATUSES,
+    QUEUE_SCAN_LIMIT,
     STATUS_QUEUED,
     STEP_MUTABLE_FIELDS,
     TASK_MUTABLE_FIELDS,
@@ -435,7 +436,9 @@ class PostgresTaskStore:
         record.queue_position = 1
         return record
 
-    async def list_queued(self, tenant_id: str, plugin_id: str) -> list[TaskRecord]:
+    async def list_queued(
+        self, tenant_id: str, plugin_id: str, *, limit: int = QUEUE_SCAN_LIMIT
+    ) -> list[TaskRecord]:
         """列出排队任务（位次**派生**，不读存储列）。
 
         `queue_position` 不是 `plugin_task` 的列：排队语义是
@@ -446,6 +449,7 @@ class PostgresTaskStore:
         Args:
             tenant_id: 企业 ID。
             plugin_id: 插件标识。
+            limit: 单次读取上限（`LIMIT :limit` 下推，审计 2026-11-03 QA-03）。
 
         Returns:
             list[TaskRecord]: 排队任务（按位次，`queue_position` 已回填）。
@@ -458,8 +462,9 @@ class PostgresTaskStore:
                  WHERE tenant_id = :tenant_id AND plugin_id = :plugin_id
                    AND status = '{STATUS_QUEUED}'
                  ORDER BY started_at, task_id
+                 LIMIT :limit
                 """,
-                repo.params(plugin_id=plugin_id),
+                repo.params(plugin_id=plugin_id, limit=max(1, int(limit))),
             )
         queued = [_to_task(row) for row in rows]
         for index, record in enumerate(queued, start=1):

@@ -272,6 +272,26 @@ async def test_queued_tasks_get_derived_positions(task_store: PostgresTaskStore)
     assert created_position.queue_position == 3, "建任务时就要回填位次（A1 要返回给前端）"
 
 
+async def test_list_queued_respects_scan_limit(task_store: PostgresTaskStore) -> None:
+    """`list_queued` 的 `LIMIT` 真正下推到 SQL（审计 QA-03）。
+
+    积压上千条时，额度释放只需要队首几条；这里用 5 条 + `limit=2` 断言
+    「只回前两条」且「`count_queued` 仍是全量」，防止把截断带进计数。
+    """
+    base = datetime.now(UTC)
+    records = [
+        _task_record(status=STATUS_QUEUED, started_at=(base + timedelta(seconds=i)).isoformat())
+        for i in range(5)
+    ]
+    for record in records:
+        await task_store.create_task(record)
+
+    queued = await task_store.list_queued(TENANT_ID, PLUGIN_ID, limit=2)
+    assert [item.task_id for item in queued] == [records[0].task_id, records[1].task_id]
+    assert [item.queue_position for item in queued] == [1, 2]
+    assert await task_store.count_queued(TENANT_ID, PLUGIN_ID) == 5, "计数不得受 list 上限影响"
+
+
 async def test_next_queued_returns_fifo_head(task_store: PostgresTaskStore) -> None:
     """`next_queued` 取最早排队的那个（额度释放后拉起的就是它）。"""
     base = datetime.now(UTC)
@@ -621,6 +641,22 @@ async def test_artifact_add_and_get(
     assert fetched.inline_text == "方案正文"
     assert fetched.version >= 1
     assert await artifact_store.get(OTHER_TENANT, record.artifact_id) is None
+
+
+async def test_artifact_add_batch_is_single_tenant_roundtrip(
+    artifact_store: PostgresArtifactStore, pg_settings: Settings
+) -> None:
+    """同一租户的多条产物一次写入并全部读回，顺序与入参一致（QA-05）。
+
+    旧实现每条产物进出一次事务；这里至少钉住批量入口的返回值完整性与顺序，
+    再由实现层保证整个批次在同一事务内提交。
+    """
+    task_id = await _seed_task(pg_settings)
+    records = [_artifact_record(task_id=task_id, output_key=f"plan_{index}") for index in range(3)]
+    created = await artifact_store.add_artifacts(records)
+    assert [item.artifact_id for item in created] == [item.artifact_id for item in records]
+    listed = await artifact_store.list_by_task(TENANT_ID, task_id)
+    assert {item.artifact_id for item in records} <= {item.artifact_id for item in listed}
 
 
 async def test_artifact_save_version_keeps_history(

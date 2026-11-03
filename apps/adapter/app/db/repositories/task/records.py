@@ -39,6 +39,14 @@ TERMINAL_STATUSES: Final[tuple[str, ...]] = ("completed", "failed", "cancelled")
 STATUS_QUEUED: Final[str] = "queued"
 
 
+#: `list_queued()` 单次读取的队列上限（审计 2026-11-03 QA-03）。
+#:
+#: 排队位次是派生值，只有「拉起队首」和「剩余位次前移」两条路径需要读队列；
+#: 两者都只关心前若干条。旧实现无条件 `SELECT` 整条队列，积压上千条时
+#: 每次额度释放都要把全部行拉回进程内存。上限同时是 `promote_queued` 的重排范围。
+QUEUE_SCAN_LIMIT: Final[int] = 200
+
+
 #: 任务**模型层**可变字段白名单（防动态列名注入）。
 #:
 #: `queue_position` 在这里，但**不是** `plugin_task` 的存储列——它是派生值
@@ -289,6 +297,7 @@ def _expires_at() -> str:
 
 __all__: list[str] = [
     "OCCUPYING_STATUSES",
+    "QUEUE_SCAN_LIMIT",
     "STATUS_QUEUED",
     "STEP_MUTABLE_FIELDS",
     "TASK_MUTABLE_FIELDS",

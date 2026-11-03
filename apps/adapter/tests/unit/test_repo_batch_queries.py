@@ -145,3 +145,46 @@ async def test_counts_occupying_equals_per_plugin_counts() -> None:
     for plugin_id in (first, second, "plg_nosuchplugin"):
         assert counts.get(plugin_id, 0) == await tasks.count_occupying(TENANT, plugin_id)
     assert await tasks.counts_occupying(TENANT, []) == {}
+
+
+async def test_list_queued_respects_scan_limit_without_breaking_count() -> None:
+    """`list_queued(limit=)` 截断读取，但 `count_queued` 仍是全量（QA-03）。
+
+    内存后端此前用 `len(list_queued())` 计数；一旦给 `list_queued` 加上限，
+    计数会跟着被截断（队列 5 条、limit 2 时返回 2），前端排队位次就会错。
+    这里钉住「读是截断的、数是全量的」这条双口径。
+    """
+    tasks = InMemoryTaskStore()
+    plugin_id = "plg_queue_limit"
+    for index in range(5):
+        await tasks.create_task(
+            TaskRecord(
+                tenant_id=TENANT,
+                task_id=f"task_queue_{index}",
+                plugin_id=plugin_id,
+                conversation_id="conv_queue",
+                initiator_id="usr_owner",
+                status="queued",
+                started_at=f"2026-11-03T00:00:0{index}Z",
+                queue_position=index + 1,
+            )
+        )
+    # 别的插件不得混入
+    await tasks.create_task(
+        TaskRecord(
+            tenant_id=TENANT,
+            task_id="task_queue_other",
+            plugin_id="plg_queue_other",
+            conversation_id="conv_queue",
+            initiator_id="usr_owner",
+            status="queued",
+        )
+    )
+
+    queued = await tasks.list_queued(TENANT, plugin_id, limit=2)
+    assert [item.task_id for item in queued] == ["task_queue_0", "task_queue_1"]
+    assert [item.queue_position for item in queued] == [1, 2]
+    assert await tasks.count_queued(TENANT, plugin_id) == 5
+    head = await tasks.next_queued(TENANT, plugin_id)
+    assert head is not None and head.task_id == "task_queue_0"
+    assert len(await tasks.list_queued(TENANT, plugin_id)) == 5

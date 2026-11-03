@@ -880,6 +880,8 @@ class TaskRunner:
         Returns:
             TaskRecord | None: 被拉起的任务行；没有可拉起的（或无空槽）返回 None。
         """
+        # 只需队首 + 有限条用于重排（`QUEUE_SCAN_LIMIT` 默认上限，审计 QA-03）：
+        # 旧实现无条件拉整条队列，积压越多每次释放额度越慢。
         queued = await self._deps.tasks.list_queued(tenant_id, plugin_id)
         if not queued:
             return None

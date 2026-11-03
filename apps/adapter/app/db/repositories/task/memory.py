@@ -19,6 +19,7 @@ from typing import Any
 from app.core.errors import ApiError, ErrorCode
 from app.db.repositories.base import as_datetime
 from app.db.repositories.task.records import (
+    QUEUE_SCAN_LIMIT,
     STEP_MUTABLE_FIELDS,
     TASK_MUTABLE_FIELDS,
     StepRecord,
@@ -241,7 +242,13 @@ class InMemoryTaskStore:
         Returns:
             int: 任务数。
         """
-        return len(await self.list_queued(tenant_id, plugin_id))
+        return sum(
+            1
+            for record in self._tasks.values()
+            if record.tenant_id == tenant_id
+            and record.plugin_id == plugin_id
+            and record.status == "queued"
+        )
 
     async def next_queued(self, tenant_id: str, plugin_id: str) -> TaskRecord | None:
         """取最早排队的任务。
@@ -253,18 +260,21 @@ class InMemoryTaskStore:
         Returns:
             TaskRecord | None: 任务行。
         """
-        queued = await self.list_queued(tenant_id, plugin_id)
+        queued = await self.list_queued(tenant_id, plugin_id, limit=1)
         return queued[0] if queued else None
 
-    async def list_queued(self, tenant_id: str, plugin_id: str) -> list[TaskRecord]:
+    async def list_queued(
+        self, tenant_id: str, plugin_id: str, *, limit: int = QUEUE_SCAN_LIMIT
+    ) -> list[TaskRecord]:
         """列出排队任务（按位次升序）。
 
         Args:
             tenant_id: 企业 ID。
             plugin_id: 插件标识。
+            limit: 单次读取上限（与 PG 侧 `LIMIT` 同口径，审计 2026-11-03 QA-03）。
 
         Returns:
-            list[TaskRecord]: 排队任务。
+            list[TaskRecord]: 排队任务（最多 `limit` 条）。
         """
         queued = [
             record
@@ -274,7 +284,7 @@ class InMemoryTaskStore:
             and record.status == "queued"
         ]
         queued.sort(key=lambda item: (item.queue_position or 1_000, item.started_at))
-        return queued
+        return queued[: max(1, int(limit))]
 
     async def create_steps(self, records: Iterable[StepRecord]) -> list[StepRecord]:
         """批量插入步骤骨架。
