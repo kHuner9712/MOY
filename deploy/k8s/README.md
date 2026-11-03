@@ -52,7 +52,7 @@ deploy/k8s/
     ├── namespace.yaml            # ✅ Namespace officeai（隔离域锚点）
     ├── serviceaccount.yaml       # ✅ SA officeai + automountServiceAccountToken: false
     ├── secret.yaml               # ✅ 只写形状与生成命令，**零密钥值**（见 §5.2）
-    ├── configmap.yaml            # ✅ 72 个非敏感键，值逐字取自 deploy/.env.example
+    ├── configmap.yaml            # ✅ 68 个非敏感键，值逐字取自 deploy/.env.example
     ├── app.env.keys              # ✅ 102 个键名（.env.example 全量），供机械校验防漂移
     ├── ingress.yaml              # ✅ 落 Ingress（二选一里的这一项，可替换为外部 LB）
     ├── adapter/
@@ -138,7 +138,7 @@ kubectl -n officeai create secret generic officeai-secrets \
 `OA_KEYCLOAK_DB`/`OA_KEYCLOAK_ADMIN`，以及值里嵌口令的 `OA_DATABASE_URL`。
 
 ⚠️ envFrom 覆盖顺序：`configmapRef` 排在 `secretRef` 之后，同名键以 ConfigMap
-为准（72 个非敏感键）。**改非敏感配置要改 `configmap.yaml`（或按站点出 overlay），
+为准（68 个非敏感键）。**改非敏感配置要改 `configmap.yaml`（或按站点出 overlay），
 只改 `deploy/.env` 不生效**；改完 `kubectl -n officeai rollout restart deploy/adapter deploy/web`。
 
 ### 5.3 镜像 tag / digest 注入方式
@@ -200,6 +200,26 @@ officeai-edge-tls` 只引用不生成，证书由外部产出（cert-manager 或
 4. **`/realms/` `/resources/` 后端 `keycloak` 是 Service 名预留**：base 不含底座，
    外部托管时删这两条或建同名 ExternalName Service。
 
+### 5.7 前端配置是**构建期**的（审计 2026-11-03 QA-02）
+
+web 只读 Next.js 构建期内联的 `NEXT_PUBLIC_*`（`apps/web/Dockerfile:58-65` 的
+`ARG` + `ENV`），**运行期注入同名环境变量没有任何消费方**。因此
+`configmap.yaml` 不再包含 `OA_WEB_ADAPTER_BASE_URL` / `OA_WEB_OIDC_ISSUER` /
+`OA_WEB_OIDC_CLIENT_ID`（以及固定端口的 `OA_WEB_PORT`），这些值改为构建镜像时传入：
+
+```bash
+docker build \
+  --build-arg NEXT_PUBLIC_ADAPTER_BASE_URL="" \
+  --build-arg NEXT_PUBLIC_OIDC_ISSUER="https://<对外域名>/realms/officeai" \
+  --build-arg NEXT_PUBLIC_OIDC_CLIENT_ID="officeai-adapter" \
+  -t officeai/web:1.0.0 apps/web
+```
+
+- `NEXT_PUBLIC_ADAPTER_BASE_URL` 在边缘收口形态下应**置空**（浏览器走同源
+  `/api`、`/sso`，由 Ingress/edge 转发），置成 `http://localhost:8000` 会绕过边缘；
+- 改这三个值必须**重新构建镜像并更新 `deploy/images.lock`**，`rollout restart`
+  不会生效——这正是旧 ConfigMap 三个键「配了等于没配」的原因。
+
 ---
 
-*最后更新：2026-11-02（G1 部署形态收口）· 依据 `docs/design-2026-11-02-security-deploy.md` §3.3.5 / §3.3.6 / §4.1 R6*
+*最后更新：2026-11-03（QA-02：前端键从运行期 ConfigMap 移出，改为构建期 build-arg）· 依据 `docs/audit-2026-11-03-full-repo-audit.md`*

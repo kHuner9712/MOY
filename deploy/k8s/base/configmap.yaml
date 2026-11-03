@@ -15,14 +15,17 @@
 #     值里嵌口令，同样只走 Secret。
 #
 # ⚠️ envFrom 的覆盖顺序：同名键「后源覆盖前源」，本文件排在 secretRef 之后，
-#    因此这 72 个非敏感键以本文件的值为准。改非敏感配置 = 改这里 +
+#    因此这 68 个非敏感键以本文件的值为准。改非敏感配置 = 改这里 +
 #    `kubectl -n officeai rollout restart deploy/adapter deploy/web`；
 #    不要只改 deploy/.env 就以为生效了（会被本文件覆盖）。
 #
 # ⚠️ 站点相关键（部署时必须改，空值/占位值会 fail loud 或登录不可用）：
 #    OA_PUBLIC_BASE_URL（空 = 启动拒绝 30004，刻意设计）、
-#    OA_JWT_ISSUER / OA_WEB_OIDC_ISSUER（必须 = <OA_PUBLIC_BASE_URL>/realms/<realm>，
-#    与 Keycloak 的 KC_HOSTNAME 同源）、OA_WEB_ADAPTER_BASE_URL。
+#    OA_JWT_ISSUER（必须 = <OA_PUBLIC_BASE_URL>/realms/<realm>，
+#    与 Keycloak 的 KC_HOSTNAME 同源）。
+#    前端不含任何运行期键：`NEXT_PUBLIC_ADAPTER_BASE_URL` / `NEXT_PUBLIC_OIDC_ISSUER`
+#    / `NEXT_PUBLIC_OIDC_CLIENT_ID` 必须在**构建 web 镜像时**用 build-arg 传入
+#    （见 `deploy/k8s/README.md` §5.7），运行期改环境变量无效。
 # ---------------------------------------------------------------------------
 apiVersion: v1
 kind: ConfigMap
@@ -114,11 +117,13 @@ data:
   OA_MEMORY_EMBEDDING_BASE_URL: ""
   OA_MEMORY_EMBEDDING_TIMEOUT_SECONDS: "5"
   OA_MEMORY_EMBEDDING_BATCH_SIZE: "16"
-  # ---- 前端（apps/web；统一登录两项是公开接入信息，非密钥）----
-  OA_WEB_PORT: "3000"
-  OA_WEB_ADAPTER_BASE_URL: "http://localhost:8000"
-  OA_WEB_OIDC_ISSUER: "http://localhost/realms/officeai"
-  OA_WEB_OIDC_CLIENT_ID: "officeai-adapter"
+  # ---- 前端（apps/web）----
+  # 审计 2026-11-03 QA-02：`OA_WEB_ADAPTER_BASE_URL` / `OA_WEB_OIDC_ISSUER` /
+  # `OA_WEB_OIDC_CLIENT_ID` **不是运行期配置**。web 只读构建期内联的
+  # `NEXT_PUBLIC_*`（`apps/web/Dockerfile` 的 ARG，`:58-65`），运行期注入
+  # 同义键没有任何消费方，属于「配了等于没配」。三个键已从本 ConfigMap 移除，
+  # 改由**构建镜像时传 build-arg**（见 `deploy/k8s/README.md` §5.7）。
+  # `OA_WEB_PORT` 同理：镜像内 `PORT=3000` 固定，Deployment/Service 端口也是字面量。
   # ---- 监控 / License（OA_LICENSE_KEY 走 Secret）----
   OA_PROMETHEUS_PORT: "9090"
   OA_LICENSE_SEAT_COUNT: "50"
