@@ -107,10 +107,10 @@ PRD 与架构存在 5 处判定口径差异，架构第 12.2 章已逐条裁决�
 | G-12 | RLS fail-closed | `pytest tests/unit/test_db_session.py tests/integration/test_tenant_isolation.py -q -m pg` | 全通过；未设置 `app.tenant_id` 时业务表 `count(*)==0` | 新增 | B01 |
 | G-13 | 错误码三处一致 | `python apps/adapter/scripts/check_error_catalog.py` | `errors.py` 码集合 == 架构 §7 表码集合；`business-errors.ts` 键集合 ⊇ `errors.py` 码集合 | 新增 | B03 |
 | G-14 | 禁词（源码） | `cd apps/web && npm run scan:banned`（= `node scripts/check-banned-terms.mjs`） | 退出码 0，命中 0 | 新增（**生效批次按裁决 2 提前到 B11**） | **B11** |
-| G-15 | 禁词自检 + 词表防漂移 | `node scripts/check-banned-terms.mjs --self-test` 与 `--check-words` | `--self-test` **退出码 1**（12 负样本全命中 + 8 正样本 0 误报 + 5 标识符 0 误报 + 5 模板样本符合预期）；`--check-words` **退出码 0**（词表与 PRD 一致，漂移即红） | 新增（**生效批次按裁决 2 提前到 B11**） | **B11** |
-| G-16 | 禁词（DOM/产物）+ 错误码正则 | `node scripts/check-banned-terms.mjs --built` | 10 个路由产物可见文本 0 命中；`\b[1-3]\d{4}\b` 0 命中 | 新增 | B15 |
-| G-17 | 占位词 | `node scripts/check-no-placeholders.mjs` | 「暂不支持」「敬请期待」「敬请期待后续版本」共 0 命中 | 新增（PRD G2-5 一票否决） | B14 |
-| G-18 | 前端三态静态断言 | `node scripts/check-page-states.mjs` | 10/10 页面同时引用 `LoadingState`/`EmptyState`/`ErrorState` 且 `ErrorState` 传入 `onRetry` | 新增 | B15 |
+| G-15 | 禁词自检 + 词表防漂移 | `cd apps/web && node scripts/check-banned-terms.mjs --self-test` 与 `--check-words` | `--self-test` **退出码 1**（12 负样本全命中 + 8 正样本 0 误报 + 5 标识符 0 误报 + 5 模板样本符合预期）；`--check-words` **退出码 0**（词表与 PRD 一致，漂移即红） | 新增（**生效批次按裁决 2 提前到 B11**） | **B11** |
+| G-16 | 禁词（DOM/产物）+ 错误码正则 | `cd apps/web && node scripts/check-banned-terms.mjs --built` | 10 个路由产物可见文本 0 命中；`\b[1-3]\d{4}\b` 0 命中 | 新增 | B15 |
+| G-17 | 占位词 | `cd apps/web && node scripts/check-no-placeholders.mjs` | 「暂不支持」「敬请期待」「敬请期待后续版本」共 0 命中 | 新增（PRD G2-5 一票否决） | B14 |
+| G-18 | 前端三态静态断言 | `cd apps/web && node scripts/check-page-states.mjs` | 10/10 页面同时引用 `LoadingState`/`EmptyState`/`ErrorState` 且 `ErrorState` 传入 `onRetry` | 新增 | B15 |
 | G-19 | tsc | `cd apps/web && npm run typecheck` | 退出码 0 | 阶段一沿用 | B11 |
 | G-20 | eslint | `cd apps/web && npm run lint` | 0 error / 0 warning（`--max-warnings=0`） | 阶段一沿用 | B11 |
 | G-21 | build | `cd apps/web && npm run build` | 成功；路由数 10（业务页）+ `/login` + `/` | 阶段一沿用 | B12 |
@@ -1409,7 +1409,7 @@ deploy/
 | **R-2** | **真实第三方与真实支付不可自动化**：企微/飞书/公众号需企业租户与管理员授权，微信支付需商户号与证书 | 可能出现"协议字段写对了、真实接口仍不通"（如公众号 `media_id` 类型、飞书时区字段格式） | 无测试账号与资质，非技术问题 | ①录制式 `httpx.MockTransport` + 官方文档字段对齐，覆盖协议层；②按裁决 5 **本阶段只交付模板** `docs/qa-phase2-manual-signoff.md`（字段：工具/操作/期望/实际/凭证截图/执行人/日期/结论，**不预填结论**）；③资质到位后按模板执行，缺资质时在验收报告标注「未验证项」，**不得写「通过」** |
 | **R-3** | **前端无测试框架（裁决 2 明确不放行），运行期文案与性能无法自动断言**：禁词扫描只能覆盖源码字面量与构建产物字符串常量，动态拼接（如 `第 ${page} 页` 中 `page` 来自错误码映射）可能漏检；首屏 ≤2s / 首字 ≤1s 无稳定环境 | 可能出现"扫描 0 命中但页面仍显示技术词"；性能不达标无法自动拦住 | 引入 Vitest/Playwright 会新增依赖，且**本仓库 CI 额度已用尽、无法自动验证**，风险大于收益 | ①40 格走查按 §3.6.4 的 **6 字段 + 截图** 留证（`实际` 列写「正常」或缺失截图即判未执行）；②性能用 Lighthouse 3 次取中位数记录归档，仅作阶段门附件（不作硬断言）；③第三阶段把 40 格直接翻译成 40 条 e2e |
 | **R-4** | **RLS 双保险的最后一公里在运维**：自检已升级为硬要求（裁决 3），但探针配置仍由运维决定 | 若编排层只探 `/healthz`（存活）而不探 `/readyz`（就绪），`db_privilege` 失败不会阻断流量 | QA 能证明"自检逻辑正确"，无法证明"编排层真的用了它" | ①G-25 已列入不可豁免门禁；②交付物中 `deploy/docker-compose*.yml` 的 healthcheck 必须指向 `/readyz`（QA 用 `grep -c "readyz" deploy/docker-compose*.yml` ≥1 断言）；③交付前由运维在真实环境跑一次 `select current_user, rolbypassrls ...` 并截图归档 |
-| **R-5** | **对账与"真实流量"耦合**：对账脚本比对 Valkey 诊断计数与 `usage_monthly`；若 Valkey 不可用、或测试环境流量太少（<100 事件），偏差率没有统计意义 | 可能出现"对账通过"但实际口径错；或对账本身跑不起来被跳过 | 无法在单测环境模拟生产流量分布 | ①`reconcile_usage.py` 增加最小样本量门槛（事件数 <100 时输出 `INSUFFICIENT_SAMPLE` 并**不算通过**，记为「未验证」）；②阶段末用 `seed_qa_data.py` 造 ≥1000 条真实路径事件后实跑一次并归档输出；③把对账结果写入 `docs/qa-phase2-acceptance-report.md` 的必填章节 |
+| **R-5** | **对账与"真实流量"耦合**：对账脚本比对 Valkey 诊断计数与 `usage_monthly`；若 Valkey 不可用、或测试环境流量太少（<100 事件），偏差率没有统计意义 | 可能出现"对账通过"但实际口径错；或对账本身跑不起来被跳过 | 无法在单测环境模拟生产流量分布 | ①`reconcile_usage.py` 增加最小样本量门槛（事件数 <100 时输出 `INSUFFICIENT_SAMPLE` 并**不算通过**，记为「未验证」）；②阶段末用 `seed_qa_data.py` 造 ≥1000 条真实路径事件后实跑一次并归档输出；③把对账结果写入 `docs/phase2-acceptance-report.md` 的必填章节 |
 
 ### 10.1 关于「24 条 P0 覆盖缺口」的说明
 

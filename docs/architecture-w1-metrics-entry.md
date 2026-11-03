@@ -90,7 +90,7 @@ class TaskStatsData(BaseModel):
     units_per_success: float = 0.0         # M5：completed 任务 usage_units 均值，两位小数
 ```
 
-#### 1.4.3 仓储方法（`app/db/repositories/task_repo.py`，修改——三处同步）
+#### 1.4.3 仓储方法（`app/db/repositories/task/`，修改——三处同步）
 
 新增内部数据类（模块级，不进响应契约）：
 
@@ -365,7 +365,7 @@ async def recommend_capabilities(
 | # | 路径 | 新建/修改 | 职责 |
 | --- | --- | --- | --- |
 | A1 | `apps/adapter/app/schemas/stats.py` | 新建 | `TaskStatsData` 响应契约（M1/M3/M4/M5 + 6 辅助字段 + range 回显） |
-| A2 | `apps/adapter/app/db/repositories/task_repo.py` | 修改 | `TaskStats` 数据类 + `TaskStore.task_stats` 协议 + 内存/PG 双实现（三处同步）+ `_percentile` 私有助手 + `__all__` 导出 |
+| A2 | `apps/adapter/app/db/repositories/task/` | 修改 | `TaskStats` 数据类 + `TaskStore.task_stats` 协议 + 内存/PG 双实现（三处同步）+ `_percentile` 私有助手 + `__all__` 导出 |
 | A3 | `apps/adapter/app/api/v1/stats.py` | 新建 | `GET /stats/tasks`：参数装配、窗口计算、唯一取整点、日志 |
 | A4 | `apps/adapter/app/api/v1/router.py` | 修改 | `include_all_routers()` 内追加 `stats.router` 挂载（一行） |
 | A5 | `apps/adapter/tests/integration/test_stats_tasks.py` | 新建 | 造数复算（用户主动取消/`waiting_confirm` 跨期/`retry_of` 各 1 条）、空租户全 0、`range` 非法 20001；PG 用例（`pytest.mark.pg`，`--run-pg`）断言双后端一致 |
@@ -784,7 +784,7 @@ next / react / @tanstack/react-query / lucide-react：页面与状态（既有�
 ### T02 · 切片 A 后端：任务统计聚合与端点
 
 - **Source Files**：
-  - `apps/adapter/app/db/repositories/task_repo.py`（修改：`TaskStats` + 协议 + 内存 + PG 三处同步）
+  - `apps/adapter/app/db/repositories/task/`（修改：`TaskStats` + 协议 + 内存 + PG 三处同步）
   - `apps/adapter/app/api/v1/stats.py`（新建）
   - `apps/adapter/app/api/v1/router.py`（修改：追加 stats 挂载一行）
   - `apps/adapter/tests/integration/test_stats_tasks.py`（新建）
@@ -882,7 +882,7 @@ next / react / @tanstack/react-query / lucide-react：页面与状态（既有�
 
 ```
 # 切片 A
-apps/adapter/app/db/repositories/task_repo.py（TaskStore 协议 :245-312；内存 :314-585；PG :606-1039；get_task_store :1256）
+apps/adapter/app/db/repositories/task/（实现期已拆为 protocol.py / memory.py / postgres.py；设计稿行号 :245-312 / :314-585 / :606-1039 已失效，定位请按符号名 `TaskStore` / `get_task_store`）
 apps/adapter/app/api/v1/router.py（include_all_routers :282-340；business_dependencies :300）
 apps/adapter/app/schemas/agent.py（goal :80；空 goal 校验 :105-111）
 apps/adapter/app/core/errors.py（PARAM_INVALID=20001 :33；422→20001 映射 :617）

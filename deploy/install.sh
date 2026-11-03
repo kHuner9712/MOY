@@ -380,12 +380,9 @@ generate_env_file() {
     env_set OA_DATABASE_URL "postgresql+asyncpg://officeai_app:${app_pw}@postgres:5432/officeai"
   fi
 
-  # 安装模式与运行期"是否允许出站"是同一件事，写进环境文件免得两处不一致
-  case "${MODE}" in
-    offline) env_set OA_OFFLINE_MODE true ;;
-    online) env_set OA_OFFLINE_MODE false ;;
-  esac
-
+  # OA_OFFLINE_MODE 已于 2026-11-04 审计删除：它只被写进 .env，适配层无对应字段、
+  # 三套 compose 也不注入——写进去等于给「可离线运行」盖一个不生效的章。
+  # MODE 现在只用于选择镜像来源（见 §三 镜像）。
   apply_proxy_port_on_new_file
 
   chmod 600 "${ENV_FILE}" 2>/dev/null || warn "无法把 ${ENV_FILE} 权限设为 600（Windows 上属正常），请确认目录权限"

@@ -162,7 +162,7 @@
 **额外核实（前轮未列但值得记录）：**
 
 - `validate_auth_startup` 对 `auth_mode=stub` / `jwt_secret` 空 / `tenant_membership_check=off` 的三重生产拦截**确实生效**（`security.py:896-951`），含 QA-07 的「降级必须带 deadline 且过期即启动失败」——这部分质量高于一般项目。
-- 前轮 `docs/audit-2026-10-31-full-repo-audit.md:50` 提到的「conversation/agent/memory 等端点无端点级权限点」仍成立，但**不是漏洞**：这些资源靠「令牌租户 + user_id 过滤 + RLS」做对象级隔离（本轮复核 `conversation/postgres.py:186-195,245-275`、`memory/postgres.py:255-290` 均带 `tenant_clause()`），符合架构 §2.5.2 的口径。**建议补显式安全断言用例**（当前缺），但不必改代码。
+- 前轮 `docs/archive/audit-2026-10-31-full-repo-audit.md:50` 提到的「conversation/agent/memory 等端点无端点级权限点」仍成立，但**不是漏洞**：这些资源靠「令牌租户 + user_id 过滤 + RLS」做对象级隔离（本轮复核 `conversation/postgres.py:186-195,245-275`、`memory/postgres.py:255-290` 均带 `tenant_clause()`），符合架构 §2.5.2 的口径。**建议补显式安全断言用例**（当前缺），但不必改代码。
 
 ---
 

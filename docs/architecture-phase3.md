@@ -11,6 +11,10 @@
 | 状态 | 待评审（评审通过即为阶段三契约基线） |
 | 配套交付 | 本文件内嵌组件图（§3.1）、时序图（§3.3）、类图（§3.4）；DDL 落点 `deploy/init-schema-phase3.sql` |
 
+> **阅读提醒（2026-11-04 审计补充）**：本文中的代码/测试文件名为**设计期命名**，实现期按 PL 域
+> 合并或改名。落点偏差**统一登记在文末《路径偏差登记表》**，验收以实际代码为准；直接拿文中
+> 文件名核对仓库会看到约 26 处「不存在」，均属已登记偏差，不是交付缺失。
+
 ### 修订记录
 
 | 版本 | 日期 | 修订说明 |
@@ -355,8 +359,8 @@ graph TB
         B3["business/plugin_review_service.py 评价"]
         B4["business/task_service.py 任务生命周期与事务"]
         B5["services/action_gateway.py 原语→平台能力映射"]
-        D1["db/repositories/plugin_repo.py"]
-        D2["db/repositories/task_repo.py"]
+        D1["db/repositories/plugin/"]
+        D2["db/repositories/task/"]
         D3["db/repositories/artifact_repo.py"]
     end
     subgraph BASE["既有平台能力（零改动）"]
@@ -1072,7 +1076,7 @@ export const pluginApi = {
 2. `deploy/migrations/0003_phase3_plugin_tables.sql`
 3. `deploy/docker-compose.yml` `[改]`（挂 `22-init-schema-phase3.sql`）
 4. `deploy/docker-compose.saas.yml` `[改]`（同上）
-5. `apps/adapter/app/db/repositories/plugin_repo.py`
+5. `apps/adapter/app/db/repositories/plugin/`
 6. `apps/adapter/app/business/plugin_service.py`（目录/详情/已安装/能力清单/安装/总开关）
 7. `apps/adapter/app/business/plugin_grant_service.py`
 8. `apps/adapter/app/schemas/plugin.py`（PL1-PL5, PL13 模型）
@@ -1093,7 +1097,7 @@ export const pluginApi = {
 4. `apps/adapter/app/schemas/plugin.py` `[改]`（PL6-PL12 + **PL14** 模型）
 5. `apps/adapter/app/api/v1/plugins.py` `[改]`（追加 PL6-PL12 + **PL14**；PL5 增 `already_installed` 分支）
 6. `apps/adapter/app/business/audit_service.py` `[改]`（6 个 `plugin.*` action + 显示名，含 `plugin.capability_grant`）
-7. `apps/adapter/app/db/repositories/plugin_repo.py` `[改]`（review/policy/grant 读写）
+7. `apps/adapter/app/db/repositories/plugin/` `[改]`（review/policy/grant 读写）
 8. `apps/adapter/tests/unit/test_plugin_lifecycle.py`（状态机逐条，含"停用不打断在跑任务"）
 9. `apps/adapter/tests/unit/test_plugin_version.py`（只保留 2 版 + 回退 1 次 + 16008）
 10. `apps/adapter/tests/unit/test_plugin_grants.py`（**PL14**：撤销即时生效 / `required` 拒撤且 `required_capabilities[]` 正确 / 企业开关 16006 / 同键重放只生效一次 / 只改本人）
@@ -1111,7 +1115,7 @@ export const pluginApi = {
 2. `apps/adapter/app/plugins/sanitizer.py`（`mask_pii` / `assert_no_secret` / `render_file`：csv/md/zip）
 3. `apps/adapter/app/services/action_gateway.py`（6 原语 → M1/R7/T5 + 错误码翻译）
 4. `apps/adapter/app/business/task_service.py`（`create_plugin_task` / `retry` / `cancel` / `_advance` / `_preflight`）
-5. `apps/adapter/app/db/repositories/task_repo.py`
+5. `apps/adapter/app/db/repositories/task/`
 6. `apps/adapter/app/db/repositories/artifact_repo.py`（**含 WF2 的版本化写入**：`version` 单调 +1、`version_history` 读取、`content_sha256` 重算）
 7. `apps/adapter/app/schemas/agent.py` `[改]`（`TaskStatus` 加 `waiting_confirm`；`ArtifactType` 加 `table`；`CreateTaskRequest.plugin_id`；`TaskResult.checklist/warnings`；`StepItem.artifacts/failure`）
 8. `apps/adapter/app/api/v1/agent.py` `[改]`（A1-A4 加性扩展 + WF1 retry + **WF2 产物编辑**）
@@ -1277,7 +1281,7 @@ export const pluginApi = {
 
 ## 10. 门禁扩展（G-13 扩展 + G-26 ~ G-31）
 
-> **与 team-lead 裁决对齐**：错误码相关的断言**不新建脚本**，一律扩既有 `scripts/check_error_catalog.py`（G-13）；G-30 与 G-13 **不是同一件事**（G-30 = 能力使用一致性），两者互不替代。
+> **与 team-lead 裁决对齐**：错误码相关的断言**不新建脚本**，一律扩既有 `apps/adapter/scripts/check_error_catalog.py`（G-13）；G-30 与 G-13 **不是同一件事**（G-30 = 能力使用一致性），两者互不替代。
 
 | 门禁 | 判据 | 命令 | 归属批 |
 | --- | --- | --- | --- |

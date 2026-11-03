@@ -9,7 +9,7 @@
 
 ## 一、项目简介
 
-平台以成熟开源底座（Dify，Apache-2.0）提供 AI 原子能力，通过**自研统一适配层**屏蔽底座差异，
+平台以成熟开源底座（Dify，**修改版 Apache-2.0**；多租户运营须书面授权、前端 LOGO/版权不可移除等附加约束见 `docs/adr/0002-infrastructure-license-compliance.md` §9.2）提供 AI 原子能力，通过**自研统一适配层**屏蔽底座差异，
 向上层（前端交互层、场景插件层、业务能力层）输出自研标准接口，实现「替换底座仅改适配层，上层零改动」。
 
 **当前进度**：第一至第四阶段主体已交付，W1（总纲对齐）切片 A/B 已完成。
@@ -18,22 +18,19 @@
 > **测试数字口径（务必连同数字一起读）**
 > 测试与覆盖率存在**两套口径**，脱离前置条件单独引用数字会误导：
 >
-> | 口径 | 前置条件 | 实测结果 |
+> | 口径 | 前置条件 | 结果 |
 > | --- | --- | --- |
-> | **全量（含 PG）** | 设 `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + `--run-pg` + 设 `OA_BATCH` | **2343 passed / 0 skipped / 0 failed**（收集 2343），合并覆盖 **91.94%**（`cedd3e9` 树，待 CI 复跑校准） |
-> | **本机（无 PG）** | 不设上述变量，`OA_BATCH=B21` | **2211 passed / 212 skipped / 0 failed**（收集 2423），合并覆盖 **85.87%**（2026-10-30 实测） |
+> | **本机（无 PG）** | 不设 `OA_TEST_DATABASE_URL`，`OA_BATCH=B21` | **2559 passed / 238 skipped / 0 failed**（收集 2797，2026-11-04 实测） |
+> | **全量（含 PG）** | 设 DSN 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + `--run-pg` + 设 `OA_BATCH` | **以 CI `ci-adapter` 的 junit.xml 工件为准**（最近一次 success：2026-11-03 run `41641650690`）；本地复跑需真库 |
 >
 > 未设 `OA_BATCH` 时 `tests/expected_xfail.py::current_batch()` **故意抛错**（缺失即红，
-> 不给静默默认）。无库口径下 212 条 PG 用例按设计 skip，不计入断言有效性。
+> 不给静默默认）。无库口径下 238 条 PG 用例按设计 skip，不计入断言有效性。
 >
-> **以上两组数字的口径（引用时必须连口径一起引）**：含 PG 行为 **`cedd3e9`** 树、
-> 本机无 PG 行为 **2026-10-30 整改后**树的实测。
-> 含 PG = `pytest tests -q --run-pg --cov=app --cov-report=term-missing`
-> （`OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + 真库）；
-> 无 PG = 同一命令去掉 `--run-pg` 与 DSN。
-> 实测分项（含 PG）：行 93.72% / 分支 83.34%。
-> **这两组数会随批次推进而变化**——引用时请连同 SHA 与命令一起引，
-> 不要把它当常量（PRD §7.5 同款要求）。
+> **数字的唯一权威来源 = CI 工件**（`.github/workflows/ci-adapter.yml` 的 junit.xml /
+> coverage 报告）。本机复跑命令：`pytest tests -q --cov=app --cov-report=term-missing`
+> （无 PG 口径去掉 `--run-pg` 与 DSN）。**历史快照仅供追溯，勿当现值**：含 PG
+> 2343 passed / 合并覆盖 91.94%（`cedd3e9`）；无 PG 2211 passed / 212 skipped /
+> 85.87%（2026-10-30）。数字随批次变化，引用必须带 SHA 与命令（PRD §7.5 同款要求）。
 
 ## 二、目录结构
 
@@ -75,6 +72,7 @@ officeai/                              # Monorepo 根目录
 │   ├── migrations/                    # 0002-0012 迁移（11 个，0001 为 RESERVED 基线别名；幂等 + 自足 + 双路径门禁）
 │   └── validate_*.py                  # 门禁脚本 16 个（端点/迁移/依赖/镜像/插件/Schema 保留/批量时钟/配置名/部署/门禁接线/导入方向/离线包/打包/PG 标记/仓库对称/密钥）
 ├── docs/
+│   ├── README.md                      # 文档索引（唯一入口：规范 / 验收 / 审计 / 决策 + 工具脚本登记）
 │   ├── plan-v1.0.md                   # 开发执行总方案
 │   ├── prd-v1.0.md                    # 产品需求文档
 │   ├── prd-phase{2,3,4}-increment.md  # 阶段二/三/四增量 PRD
@@ -83,8 +81,12 @@ officeai/                              # Monorepo 根目录
 │   ├── architecture-w1-metrics-entry.md  # W1 增量架构（任务统计 + 能力推荐切片）
 │   ├── phase{1,2,3,4}-acceptance-report.md  # 各阶段验收报告
 │   ├── plugin-dev-guide.md            # 插件开发规范与样例（P0-P3-05）
-│   ├── api/                           # 接口规范（OpenAPI，从适配层生成）
-│   └── adr/                           # 架构决策记录
+│   ├── api/                           # 接口规范与端点冻结基线（openapi.json 由适配层生成）
+│   ├── adr/                           # 架构决策记录（ADR-0001~0003）
+│   ├── decisions/                     # 决策确认单（拍板附件，0003~0008）
+│   ├── compliance/                    # 隐私政策 / DPA / 安全白皮书
+│   ├── security/                      # 安全评估与权限白名单锁
+│   └── archive/                       # 历史审计与 QA 报告（只读快照）
 ├── .github/workflows/                 # CI 门禁
 ├── .editorconfig
 ├── .gitignore
@@ -232,11 +234,11 @@ OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing
 | 项 | 值 |
 | --- | --- |
 | 端点契约 | `core=30 / phase2=38/38 / phase3=16/16 / phase4=10/10 / w1=2/2`，合计 **96**，`--strict` EXIT 0 |
-| 本机测试（无 PG） | **2211 passed / 212 skipped / 0 failed**（收集 2423）——**2026-10-30 整改后树实测（最新）**；历史 W3 收口口径为 2133 passed / 210 skipped（收集 2343）；含 PG 需 `--run-pg` + 真库（**2343 passed / 0 skipped**，`cedd3e9` 树） |
-| 覆盖率 | 总 `app/*` **合并**覆盖 **91.94%**（含 PG，`cedd3e9`）/ **85.87%**（无 PG，2026-10-30），门槛 85%；余量判断一律看绝对单位差（`cedd3e9` 实测余 **+1556 / +123 单位**，行 93.72% / 87.36%，分支 83.34% / 76.78%，最新余量随批次重算，口径与 §一表格一致） |
-| 静态门禁 | `ruff check` / `ruff format` / `mypy`（205 文件）全绿 |
+| 本机测试（无 PG） | **2559 passed / 238 skipped / 0 failed**（收集 2797，2026-11-04 实测，命令见 §一）；含 PG 口径**以 CI junit.xml 工件为准**（最近 success：2026-11-03 run `41641650690`） |
+| 覆盖率 | 门槛 **85%**（CI 硬地板 `--cov-fail-under=85`，卡合并覆盖率）；现值以 CI 工件为准。历史快照：91.94%（含 PG，`cedd3e9`）/ 85.87%（无 PG，2026-10-30）。余量判断一律看**绝对单位差**，不看百分比（见 §6.3 第 5 条） |
+| 静态门禁 | `ruff check` / `ruff format` / `mypy` 全绿 |
 | 部署门禁 | 端点基线 / 迁移双路径 / 依赖白名单 / 镜像锁定 / 插件声明 / 错误码三处一致 均 EXIT 0 |
-| 前端门禁 | 禁词 / 占位词 / 页面三态 / 契约快照 / 能力一致性 / 工作台宿主唯一 均 0 命中 |
+| 前端门禁 | 禁词 / 占位词 / 页面三态 / 契约快照 / 能力一致性 / 工作台宿主唯一 均 0 命中；`vitest` 72 文件 / 1112 用例全过（2026-11-04 实测） |
 
 ### 6.3 已知限制与未验证项
 
@@ -253,15 +255,19 @@ OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing
    两个问题：① 数字早已失真；② **全仓并不存在分支覆盖率门槛**——CI（`ci-adapter.yml`）
    命令行硬地板 `--cov-fail-under=85`（卡合并覆盖率），pyproject 不设，grep 不到任何分支阈值配置。
    "余量为 0"是在跟一个不存在的门槛比，故整句删除。）
-6. **CI 未实际运行**：GitHub Actions 额度已用尽，上述门禁均为本机实跑（QA 独立复核 + 主理人抽验）；
-   CI 配置已就绪，额度恢复后需复跑一次。
+6. **CI 已实跑通过，日常仍以本机门禁复核**：2026-11-03 两个 workflow 均 success
+   （CI Adapter run `41641650690` / 18m58s，CI Web run `41641657153` / 3m17s）；
+   此前“额度用尽、从未运行”的历史状态已结束。提交前仍建议先跑 §五的本地命令，
+   避免把 CI 当唯一反馈环。
 7. **历史遗留错误码**：已于 B27 收口——`11005`（RETRIEVAL_FAILED）与 `15006`（QUOTA_EXHAUSTED）
    已接线（R7 检索失败 / 额度用尽软提示走 `data.notice_code`），`12002`/`12005` 已按「注销值不复用」
    删除，`12004` 转预留（`[RESERVED]` 放行）；处置口径见 `apps/adapter/scripts/check_error_catalog.py`。
 
 ## 七、许可证与开源声明
 
-平台为企业级商业交付物，内部依赖清单与协议合规审计结果见 `docs/api/README.md` 与 CI 扫描报告。
+平台为企业级商业交付物，内部依赖清单与协议合规审计结果见 `docs/adr/0002-infrastructure-license-compliance.md`
+与 CI 扫描报告（`dependency-scan.yml`）。底座 Dify 为**修改版 Apache-2.0**，三条规避约束
+（SaaS 不使用多租户特性 / 不修改源码 / 不展示品牌）见 ADR-0002 §9.2 与 `docs/decisions/0004` §三。
 依赖协议实测口径（2026-10-30 审计 M4/M10）：白名单 MIT / Apache-2.0 / BSD-2/3-Clause / ISC 为主，
 传递链含 MPL-2.0（certifi，灰名单：随交付保留许可证文本）/ PSF-2.0 / MIT-0 等宽松协议；
 **无 GPL/AGPL/SSPL**；LGPL 成分（sharp 平台二进制）已从生产镜像排除（`--omit=optional`，

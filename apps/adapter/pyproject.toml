@@ -51,6 +51,8 @@ dependencies = [
     # H-2 双载体口径）。
     "cryptography==50.0.2",
     "structlog==26.1.0",
+    # 无直接 import，但**不可删**：FastAPI 解析 multipart/form-data（文件上传、
+    # 表单端点）依赖它；移除后 R3 文档上传等端点会在运行期直接 500。
     "python-multipart==0.0.32",
     "pyyaml==6.0.3",
     # 指标 exposition（阶段四 T4-05.1）：`/metrics` 的标准文本格式。

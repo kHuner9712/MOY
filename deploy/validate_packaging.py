@@ -8,7 +8,7 @@
 `app.plugins`（7 文件）。实测 `pip wheel` 产物中这三个包 **0 个文件**。
 
 问题在于：`apps/adapter/Dockerfile` 用 `pip install .`（**非 editable**），
-所以容器一启动 `import app.business` 直接 ImportError，84 个端点绝大多数起不来；
+所以容器一启动 `import app.business` 直接 ImportError，96 个端点绝大多数起不来；
 而本地是 editable 安装（`.pth` finder 指向源码树），全量测试照常全绿——
 **缺陷被安装方式完全掩盖**，只有真构建产物才暴露。
 

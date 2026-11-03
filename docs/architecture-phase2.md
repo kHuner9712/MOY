@@ -1653,7 +1653,7 @@ curl localhost:8000/api/v1/tools/registry -H "Authorization: Bearer $T" | grep -
 #### B07 计量落库与 M4 同源（13 文件）
 
 **涉及文件**
-1. `apps/adapter/app/db/repositories/usage_repo.py`
+1. `apps/adapter/app/db/repositories/usage/`（实现期拆为 protocol/memory/postgres 三文件）
 2. `apps/adapter/app/business/usage_service.py`
 3. `apps/adapter/app/schemas/billing.py`（BL5 模型；后续批次复用）
 4. `apps/adapter/app/api/v1/billing.py`（新建，本批只含 BL5）
@@ -1680,7 +1680,7 @@ curl "localhost:8000/api/v1/billing/usage?period=2026-11" -H "Authorization: Bea
 
 **涉及文件**
 1. `apps/adapter/app/schemas/identity_ext.py`
-2. `apps/adapter/app/db/repositories/org_repo.py`
+2. `apps/adapter/app/db/repositories/org/`（实现期拆为 directory/memory/postgres 三文件）
 3. `apps/adapter/app/db/repositories/role/`（切片 2A：原 `role_repo.py` 三拆为
    `records.py` / `protocol.py` / `memory.py` / `postgres.py`；`role_repo.py` 保留为纯 re-export 兼容层）
 4. `apps/adapter/app/db/repositories/audit_repo.py`
@@ -1710,7 +1710,7 @@ curl "localhost:8000/api/v1/identity/organizations/org_x/departments?flat=true" 
 
 **涉及文件**
 1. `apps/adapter/app/schemas/billing.py` `[改]`（BL1-BL4、BL6-BL10 模型）
-2. `apps/adapter/app/db/repositories/billing_repo.py`
+2. `apps/adapter/app/db/repositories/billing/`（实现期拆为 protocol/memory/postgres 三文件）
 3. `apps/adapter/app/business/plan_service.py`
 4. `apps/adapter/app/business/subscription_service.py`
 5. `apps/adapter/app/business/order_service.py`
@@ -1854,13 +1854,13 @@ grep -rn "暂不支持\|敬请期待" apps/web/src || echo "OK: 0 命中"
 3. `apps/web/src/lib/error-guard.ts`（新：全局未捕获 / 5xx / 流式中断 → toast 去重 3s）
 4. `apps/web/src/app/global-error.tsx`（新）
 5. `apps/web/src/app/(main)/layout.tsx` `[改]`（离线提示条「网络连接已断开，请检查网络后重试」）
-6. `apps/web/scripts/scan-forbidden-words.mjs`（新：扫 `src/**` 字符串字面量 + `business-errors.ts` 全部 message + 错误码正则 `\b[1-3]\d{4}\b`）
+6. `apps/web/scripts/check-banned-terms.mjs`（新：扫 `src/**` 字符串字面量 + `business-errors.ts` 全部 message + 错误码正则 `\b[1-3]\d{4}\b`）
 7. `.github/workflows/ci-web.yml` `[改]`（接入禁词门禁 + 错误码正则扫描）
 
 **验收命令**
 ```bash
-cd apps/web && node scripts/scan-forbidden-words.mjs        # 期望 exit 0
-cd apps/web && node scripts/scan-forbidden-words.mjs --self-test   # 负样本必须命中
+cd apps/web && node scripts/check-banned-terms.mjs        # 期望 exit 0
+cd apps/web && node scripts/check-banned-terms.mjs --self-test   # 负样本必须命中
 ```
 **完成后可验证**：① 10 个页面断网/注入 500/注入 20003 均展示 `ErrorState` 且可重试；② UI 文案中错误码正则 0 命中、技术词 0 命中；③ 连续 3 次失败提示「多次尝试未成功，请稍后再试或联系管理员」；④ 同一错误 3s 内只提示一次。
 

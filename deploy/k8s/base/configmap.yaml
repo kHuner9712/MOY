@@ -39,8 +39,7 @@ data:
   OA_DEPLOY_MODE: "private"
   OA_PUBLIC_BASE_URL: ""
   OA_AUTH_COOKIE_ENABLED: "true"
-  # ---- 镜像来源与版本（宿主机侧消费，注入容器无害；口径与 .env.example 一致）----
-  OA_OFFLINE_MODE: "true"
+  # ---- 镜像版本（宿主机侧消费，注入容器无害；口径与 .env.example 一致）----
   OA_IMAGE_TAG: "1.0.0"
   # ---- 基础设施：PostgreSQL / 缓存 / 对象存储（非敏感项）----
   OA_POSTGRES_USER: "officeai"

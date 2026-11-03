@@ -4,7 +4,7 @@
 > 审计角色：架构师（Architect）　|　维度：①架构与目录结构 ②性能隐患 ③依赖版本与许可 ④部署与配置安全
 > 方法：**全部结论来自实跑命令或源码行号实证**，无一条凭印象；命令失败如实记录失败原因与原样输出。
 > 只读约束：本报告是本次审计唯一写入的文件，未修改任何源码 / 配置 / 依赖 / 锁文件；临时脚本一律落 `/tmp`。
-> 前序基线：`docs/audit-2026-10-30-full-repo-audit.md`、`docs/audit-2026-10-31-full-repo-audit.md`（本报告含逐条闭环核实）。
+> 前序基线：`docs/archive/audit-2026-10-30-full-repo-audit.md`、`docs/archive/audit-2026-10-31-full-repo-audit.md`（本报告含逐条闭环核实）。
 
 ---
 

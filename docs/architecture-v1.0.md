@@ -73,7 +73,7 @@ graph TB
         AD4[工具服务接口]
         AD5[用户权限服务接口]
     end
-    subgraph L5["底座能力层（Dify Apache-2.0，仅必要补全）"]
+    subgraph L5["底座能力层（Dify 修改版 Apache-2.0，仅必要补全）"]
         DF1[LiteLLM 多模型调度]
         DF2[RAG 引擎 + Milvus]
         DF3[Agent / Workflow 编排]
@@ -170,9 +170,9 @@ graph TB
 
 | 层 | 组件 | 选型 | 开源协议 | 选择理由 |
 | --- | --- | --- | --- | --- |
-| 底座 | AI 平台底座 | Dify（锁定版本，最小补丁策略） | Apache-2.0 | 总方案指定；RAG/Agent/多模型调度开箱即用；社区活跃；协议宽松可商用 |
+| 底座 | AI 平台底座 | Dify（锁定版本，最小补丁策略） | **修改版 Apache-2.0**（附加条款见 ADR-0002 §9.2） | 总方案指定；RAG/Agent/多模型调度开箱即用；社区活跃；附加条款已通过三条规避约束落地（SaaS 不用多租户 / 不改源码 / 不展示品牌） |
 | 底座 | 模型路由 | LiteLLM（随 Dify 内置） | MIT | 统一 100+ 模型 API 协议，新增模型仅配置不改代码 |
-| 底座 | 向量库 | Milvus 2.x | Apache-2.0 | Dify 官方支持；支持单机/集群双形态，匹配私有化单节点需求 |
+| 底座 | 向量库 | Milvus 3.0.3 | Apache-2.0 | Dify 官方支持；支持单机/集群双形态，匹配私有化单节点需求。版本以 `deploy/images.lock`（`milvusdb/milvus:v3.0.3`）为唯一事实来源 |
 | 底座 | 文档解析 | Unstructured（随 Dify 可选） | Apache-2.0 | PDF/Word/Excel 解析事实标准 |
 | 适配层 | 运行时 | Python 3.11+ | PSF（BSD 式） | 与 Dify 生态同栈，团队技能复用最大化；异步生态成熟 |
 | 适配层 | Web 框架 | FastAPI | MIT | 原生异步、Pydantic 强校验、自动 OpenAPI、SSE 支持完善 |
@@ -1420,7 +1420,8 @@ graph LR
 > 已升级为**消除**——JWT 库整体迁移 PyJWT 2.15.1（MIT，活跃维护），python-jose / ecdsa /
 > rsa / pyasn1 / six 随 uv.lock 重生成一并移除，两项无修复版 CVE 从依赖树消失。
 > 迁移实测发现 PyJWT 语义差异一处（`verify_signature=False` 时默认放行 `exp`），
-> 已在 `app/core/security.py` 显式置回校验，回归 2211 过 / 0 败。
+> 已在 `app/core/security.py` 显式置回校验，回归全绿（数字以 CI junit.xml 工件为准，
+> 不在此处固化）。
 
 **初扫结果：3 个包 17 个已知漏洞**（`starlette 0.46.2` 14 项、`python-jose 3.5.0` 1 项、`ecdsa 0.19.2` 2 项）。
 
