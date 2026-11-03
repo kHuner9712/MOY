@@ -27,9 +27,17 @@ OTHER_TENANT = f"tnt_pg_org_other_{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture(autouse=True)
-async def _dispose_engine_after_test() -> AsyncIterator[None]:
+async def _release_engine() -> AsyncIterator[None]:
+    """用例**前后**都释放进程内引擎（对齐 `test_budget_pg.py` 的既有约定）。
+
+    `get_engine()` 是进程级缓存，而 pytest-asyncio 每个用例一个新事件循环：
+    旧循环里建的 asyncpg 连接留在池里，下一个用例取到就是
+    `RuntimeError: ... got Future ... attached to a different loop`。
+    前置也释放，避免被排在"建了引擎但没释放"的文件之后（本文件首例即如此变红）。
+    """
     from app.db.engine import dispose_engine
 
+    await dispose_engine()
     yield
     await dispose_engine()
 

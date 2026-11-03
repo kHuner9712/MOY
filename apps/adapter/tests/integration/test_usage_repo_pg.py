@@ -27,9 +27,17 @@ OTHER_TENANT = f"tnt_pg_usage_other_{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture(autouse=True)
-async def _dispose_engine_after_test() -> AsyncIterator[None]:
+async def _release_engine() -> AsyncIterator[None]:
+    """用例**前后**都释放进程内引擎（对齐 `test_budget_pg.py` 的既有约定）。
+
+    `get_engine()` 是进程级缓存，而 pytest-asyncio 每个用例一个新事件循环：
+    旧循环里建的 asyncpg 连接留在池里，下一个用例取到就是
+    `RuntimeError: ... got Future ... attached to a different loop`。
+    前置也释放，避免被排在"建了引擎但没释放"的文件之后（本文件首例即如此变红）。
+    """
     from app.db.engine import dispose_engine
 
+    await dispose_engine()
     yield
     await dispose_engine()
 
@@ -71,10 +79,18 @@ async def _cleanup(settings: Settings) -> None:
 
 
 def _event(tenant: str, user: str = "usr_u1", **overrides: object) -> UsageEventRecord:
+    """构造用量事件（`event_id` / `idem_key` 每条唯一）。
+
+    `usage_event` 主键是 `(tenant_id, event_id)`，而 `ON CONFLICT` 只覆盖
+    `(tenant_id, capability, idem_key)` 幂等键——`event_id` 共用空串/固定值时，
+    同租户第二条写入直接撞 `usage_event_pkey`（IntegrityError），
+    幂等子句拦不住主键冲突。
+    """
     defaults: dict[str, object] = {
         "tenant_id": tenant,
         "user_id": user,
         "capability": "chat",
+        "event_id": f"use_{uuid.uuid4().hex}",
         "idem_key": f"idem_{uuid.uuid4().hex[:8]}",
         "units": 100,
         "period": "2026-10",
@@ -93,7 +109,7 @@ class TestUsageEvents:
         await store.append(_event(TENANT_ID, user="usr_a", units=50))
         await store.append(_event(TENANT_ID, user="usr_b", units=30))
         rows = await store.monthly_rows(TENANT_ID, "2026-10")
-        total = sum(r.total_units for r in rows)
+        total = sum(r.units for r in rows)
         assert total >= 80
 
     async def test_event_counts(self, store: PostgresUsageStore) -> None:

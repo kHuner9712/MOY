@@ -337,10 +337,18 @@ async def test_postgres_usage_store_smoke(pg_dsn: str) -> None:
         # 无订阅时额度总量为 0（不伪造额度）
         assert (await store.quota(tenant)).total_units == 0
     finally:
-        async with tenant_scope(tenant, settings=conf) as uow:
-            await uow.execute(
-                "DELETE FROM usage_event WHERE tenant_id = :tenant_id", {"tenant_id": tenant}
-            )
-            await uow.execute(
-                "DELETE FROM usage_monthly WHERE tenant_id = :tenant_id", {"tenant_id": tenant}
-            )
+        # 数据清理后**必须**释放进程内引擎：本用例经 `tenant_scope` 建过
+        # `get_engine()` 单例，不释放会把旧事件循环的连接留给下一个用例
+        # （紧随其后的 `test_usage_repo_pg.py` 首例曾因此报跨循环复用而变红）。
+        try:
+            async with tenant_scope(tenant, settings=conf) as uow:
+                await uow.execute(
+                    "DELETE FROM usage_event WHERE tenant_id = :tenant_id", {"tenant_id": tenant}
+                )
+                await uow.execute(
+                    "DELETE FROM usage_monthly WHERE tenant_id = :tenant_id", {"tenant_id": tenant}
+                )
+        finally:
+            from app.db.engine import dispose_engine
+
+            await dispose_engine()

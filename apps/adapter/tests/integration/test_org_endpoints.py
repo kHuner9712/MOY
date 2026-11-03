@@ -744,4 +744,12 @@ async def test_postgres_org_role_audit_outbox_smoke(pg_dsn: str) -> None:
         await outbox.mark_failed(tenant, "obx_pg_1", error="boom")
         await outbox.mark_sent(tenant, "obx_pg_1")
     finally:
-        await purge()
+        # 数据清理后**必须**释放进程内引擎：本用例经 `tenant_scope` 建过
+        # `get_engine()` 单例，不释放会把旧事件循环的连接留给下一个用例
+        # （紧随其后的 `test_org_repo_pg.py` 首例曾因此报跨循环复用而变红）。
+        try:
+            await purge()
+        finally:
+            from app.db.engine import dispose_engine
+
+            await dispose_engine()
