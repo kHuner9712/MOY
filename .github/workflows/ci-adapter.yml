@@ -649,7 +649,11 @@ jobs:
               if 'node_modules' in path.parts:
                   continue
               try:
-                  yaml.safe_load(path.read_text(encoding='utf-8'))
+                  # multi-doc（k8s 清单常用 `---` 一分隔多资源）必须按 safe_load_all
+                  # 逐文档校验：safe_load 遇多文档会报 "expected a single document"
+                  #（M3 取证发现：k8s/base/ingress.yaml 双 Ingress 被误判语法错）
+                  for _doc in yaml.safe_load_all(path.read_text(encoding='utf-8')):
+                      pass
                   print(f'[OK]   yaml  {path}')
               except yaml.YAMLError as exc:
                   print(f'[FAIL] yaml  {path}: {exc}')
