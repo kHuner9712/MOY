@@ -334,14 +334,38 @@ jobs:
           # 全文里的 "GPL-compatible" 等叙述会让黑名单正则误伤 MIT/PSF
           # （M3 取证发现）。markdown 全文版仅供合规留档。
           report = pathlib.Path('python-licenses.json')
+          unknown_licenses: list[str] = []
           if report.is_file():
-              for entry in json.loads(report.read_text(encoding='utf-8')):
+              entries = json.loads(report.read_text(encoding='utf-8'))
+              for entry in entries:
                   name = str(entry.get('Name', ''))
                   licenses = str(entry.get('License', ''))
+                  if licenses.strip().upper() in ('', 'UNKNOWN', 'NONE'):
+                      # 审计 2026-11-03 QA-18：42/53 个后端包在 METADATA 里没有
+                      # `License` 字段（pip-licenses 显示 UNKNOWN）。旧实现把它当
+                      # 空串静默放行——"没有证据"被当成"没有风险"。
+                      # 口径：UNKNOWN **按灰名单可见**（人工确认），不按黑名单；
+                      # 同时记录条数作为基线，新增 UNKNOWN 包会在日志里一眼看到。
+                      unknown_licenses.append(name)
+                      continue
                   if BLACKLIST.search(licenses):
                       findings['black'].append(f'[python] {name}: {licenses}')
                   elif GREYLIST.search(licenses):
                       findings['grey'].append(f'[python] {name}: {licenses}')
+              if unknown_licenses:
+                  findings['grey'].append(
+                      f'[python] {len(unknown_licenses)}/{len(entries)} 个包 License '
+                      f'元数据缺失（pip-licenses=UNKNOWN，需人工确认）：'
+                      + ', '.join(sorted(unknown_licenses))
+                  )
+                  # 门禁口径：元数据缺失只允许"持平或下降"。2026-11-03 实测 42 个
+                  # （53 包里），留 3 个的采集噪声余量（不同 pip 版本对 extras 的
+                  # 归属可能多/少一条）；超过 45 即视为采集退化，直接红。
+                  if len(unknown_licenses) > 45:
+                      findings['black'].append(
+                          f'[python] License 元数据缺失 {len(unknown_licenses)} 个，'
+                          '超过基线 42（上限 45）：新增依赖必须在 METADATA 声明 License'
+                      )
 
           # ---- Node 依赖 ----
           node_report = pathlib.Path('apps/web/node-licenses.json')
