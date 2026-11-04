@@ -253,7 +253,13 @@ class TestAppendOnly:
         dsn = pg_settings.database_url
         connection = await asyncpg.connect(dsn)
         try:
-            await connection.execute("SELECT set_config('app.tenant_id', $1, TRUE)", marker)
+            # **`FALSE` 不是笔误**：`set_config(..., TRUE)` 是**事务级**（is_local），
+            # 而裸连接上每条 `execute` 各自是一个隐式事务——TRUE 只活在自己那条
+            # 语句里，下一条语句开始就失效。于是最后那条读回没有租户上下文，
+            # RLS 谓词为 NULL → 一行都看不见 → `None`（CI 实测 `assert None == {'n': 1}`）。
+            # 这里要的是"整条连接上都有租户上下文"，所以用会话级 `FALSE`。
+            # （权限检查发生在 RLS 之前，故两条 DML 的拒绝与租户变量无关，仍为 42501。）
+            await connection.execute("SELECT set_config('app.tenant_id', $1, FALSE)", marker)
             with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
                 await connection.execute(
                     "UPDATE event_log SET payload = '{\"tampered\": true}'::jsonb "
