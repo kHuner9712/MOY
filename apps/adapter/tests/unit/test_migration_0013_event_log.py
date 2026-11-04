@@ -214,6 +214,20 @@ class TestZeroDdlGuardsAreStrict:
         assert "ready = partition_count + 1" in sql
         assert "补齐剩余部分" in sql
 
+    def test_partition_and_index_guards_check_existence_explicitly(self) -> None:
+        """分区/索引守卫**显式查存在性**，不依赖 `IF NOT EXISTS` 的跳过语义。
+
+        路径 B 上应用角色不是表属主，而 `CREATE INDEX` 在解析目标表时就校验属主
+        （`RangeVarCallbackOwnsTable`）——把"已存在就跳过"交给实现细节，等于拿
+        迁移的可重复执行性赌运气。0012 已为同一件事立过规矩，这里照抄。
+        """
+        sql = MIGRATION_0013.read_text(encoding="utf-8")
+        assert "FROM pg_indexes" in sql
+        assert "existing = 2 THEN" in sql
+        assert "existing = partition_count THEN" in sql
+        # 分区守卫按命名模式数，而不是假设"表存在 ⇒ 分区齐"
+        assert "c.relname ~ '^event_log_p[0-9]{2}$'" in sql
+
     def test_grant_guard_checks_every_partition_and_forbids_update_delete(self) -> None:
         """授权守卫逐张验：SELECT+INSERT 有、UPDATE/DELETE **无**。"""
         sql = MIGRATION_0013.read_text(encoding="utf-8")

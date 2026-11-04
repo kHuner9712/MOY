@@ -69,7 +69,22 @@ DECLARE
     partition_count CONSTANT integer := 16;
     idx             integer;
     part_name       text;
+    existing        integer;
 BEGIN
+    -- **零 DDL 守卫**（路径 B）：16 个分区全在就整段跳过。为什么不能只靠
+    -- `CREATE TABLE IF NOT EXISTS`——"已存在时是否仍校验属主"属实现细节，
+    -- 0012 已经为同一件事写过警告（`pg_indexes` 显式判存在性）；路径 B 上
+    -- 应用角色不是表属主，把"跳过"交给实现细节就是拿迁移的可重复执行性赌运气。
+    SELECT count(*) INTO existing
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public'
+       AND c.relname ~ '^event_log_p[0-9]{2}$';
+    IF existing = partition_count THEN
+        RAISE NOTICE '0013: % 个 HASH 分区已存在（前次已执行 / 新装库直建），零 DDL',
+            partition_count;
+        RETURN;
+    END IF;
+
     FOR idx IN 0..(partition_count - 1) LOOP
         part_name := 'event_log_p' || lpad(idx::text, 2, '0');
         EXECUTE format(
@@ -78,13 +93,16 @@ BEGIN
             part_name, partition_count, idx
         );
     END LOOP;
-    RAISE NOTICE '0013: event_log 的 % 个 HASH 分区就绪', partition_count;
+    RAISE NOTICE '0013: event_log 的 % 个 HASH 分区就绪（已有 % 个）',
+        partition_count, coalesce(existing, 0);
 EXCEPTION
     WHEN insufficient_privilege THEN
         RAISE EXCEPTION
-            '0013 需要 CREATE TABLE（event_log 及其分区），但当前角色在 public 上无 '
-            'CREATE 权限。请以表属主身份执行本迁移；以只读/受限角色执行不会成功——'
-            '这是 RLS 隔离的既定设计，不是缺陷。';
+            '0013 需要 CREATE TABLE（event_log 的 16 个分区），但当前角色不是表属主/'
+            '在 public 上无 CREATE 权限，且已有分区不齐（缺 % 个）。请由 DBA 执行：'
+            'CREATE TABLE event_log_pNN PARTITION OF event_log '
+            'FOR VALUES WITH (MODULUS 16, REMAINDER NN);（NN = 00…15）',
+            partition_count - coalesce(existing, 0);
 END $ddl$;
 
 -- ---------------------------------------------------------------------------
@@ -99,9 +117,26 @@ END $ddl$;
 --
 --    在分区父表上 `CREATE INDEX` 会自动为每个分区建同名索引（PG 11+），
 --    因此这里只写两条，不要"顺手"给每个分区再手写一遍（会变成 32 条索引）。
+--
+--    **先查 `pg_indexes` 再建，不依赖 `CREATE INDEX IF NOT EXISTS` 的跳过行为**：
+--    `CREATE INDEX` 在解析目标表时就会校验属主（`RangeVarCallbackOwnsTable`），
+--    路径 B 上应用角色不是属主 → 即使索引已存在也可能直接 `permission denied`。
+--    0012 已为同一件事立过规矩，这里照抄。
 -- ---------------------------------------------------------------------------
 DO $idx$
+DECLARE
+    existing integer;
 BEGIN
+    SELECT count(*) INTO existing
+      FROM pg_indexes
+     WHERE schemaname = 'public'
+       AND tablename = 'event_log'
+       AND indexname IN ('idx_event_log_session_seq', 'idx_event_log_tenant_created');
+    IF existing = 2 THEN
+        RAISE NOTICE '0013: event_log 两条索引已存在（前次已执行 / 新装库直建），零 DDL';
+        RETURN;
+    END IF;
+
     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_event_log_session_seq '
             'ON event_log (tenant_id, session_id, seq)';
     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_event_log_tenant_created '
@@ -110,7 +145,11 @@ BEGIN
 EXCEPTION
     WHEN insufficient_privilege THEN
         RAISE EXCEPTION
-            '0013 建索引需要 event_log 的属主权限，请由表属主执行。';
+            '0013 建索引需要 event_log 的属主权限（当前索引不齐：% 条存在）。'
+            '请由 DBA 执行：CREATE INDEX idx_event_log_session_seq '
+            'ON event_log (tenant_id, session_id, seq); CREATE INDEX '
+            'idx_event_log_tenant_created ON event_log (tenant_id, created_at);',
+            coalesce(existing, 0);
 END $idx$;
 
 -- ---------------------------------------------------------------------------
