@@ -899,20 +899,40 @@ class AgentService:
 
         # 取消是**状态迁移**，必须进事件流（缺陷 D8）：只改 `_tasks` 的话，
         # 取消这件事回放不出来、审计查不到、重启即丢——而"任务为什么停在这里"
-        # 恰恰是审计最常问的问题。事件先写、状态后改（与 create_task 同序）：
-        # append 失败时状态不变，用户会看到"取消失败"而不是"界面说取消了、
-        # 事实没记下来"。用已有类型 `turn.finished` 承载，不新增枚举（V1.0 封闭 14 类）。
-        await self._append_event(
-            auth,
-            task_id,
-            EVENT_TURN_FINISHED,
-            {
-                "task_id": task_id,
-                "outcome": "cancelled",
-                "reason": str(ErrorCode.TASK_CANCELLED.value),
-                "status": TaskStatus.CANCELLED.value,
-            },
-        )
+        # 恰恰是审计最常问的问题。
+        #
+        # **但写入点在下游 `/stop` 之后，所以这里必须降级而不是抛错**（缺陷 N2）：
+        # 上面那句 `POST /stop` 已经把运行停掉了，若此后 append 失败还返回错误，
+        # 用户看到的是"取消失败"→ 重试 → 再打一次 `/stop`（对已停的 run 可能 404）
+        # → 于是"取消一直失败，但任务其实早就停了"，而事件流里一条记录都没有
+        # ——这是最坏的一种不一致：状态、界面、事实三者互相矛盾。
+        # 取舍：**用户感知"已取消"优先于"事件一定写得下"**，写失败降级为 WARN
+        # （由对账脚本按 WARN 发现偏差）。用已有类型 `turn.finished` 承载，
+        # 不新增枚举（V1.0 封闭 14 类）。
+        #
+        # ⚠ V1.0 的临时妥协：`_tasks` 与事件流仍是两份状态，才需要这种"容忍一半
+        # 成功"的写法。T03/T04 把 `_tasks` 改为事件投影之后，取消只需写事件
+        # （无第二份状态要同步），这个 try/except 即可删除。
+        try:
+            await self._append_event(
+                auth,
+                task_id,
+                EVENT_TURN_FINISHED,
+                {
+                    "task_id": task_id,
+                    "outcome": "cancelled",
+                    "reason": str(ErrorCode.TASK_CANCELLED.value),
+                    "status": TaskStatus.CANCELLED.value,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "agent_task_cancel_event_write_failed",
+                task_id=task_id,
+                tenant_id=auth.tenant_id,
+                error=type(exc).__name__,
+                detail=str(exc)[:200],
+            )
         detail.status = TaskStatus.CANCELLED
         detail.updated_at = _now_iso()
         logger.info("agent_task_cancelled", task_id=task_id)

@@ -370,7 +370,9 @@ async def cancel_task(
         "订阅任务进度推送，响应 Content-Type 为 text/event-stream。"
         "自研事件类型：step_started / step_finished / task_completed。"
         "每帧携带 `id:`（回放游标）；断线后带 `Last-Event-ID` 请求头重连，"
-        "服务端只补该游标之后的增量事件（零丢失、零重复）。"
+        "服务端只补该游标之后的增量事件（正常路径零丢失、零重复）。"
+        "**游标超出当前末端时按从头回放处理**（响应可能是全量重放）："
+        "客户端必须按 `id` 幂等去重，不能假设两次请求之间不会重复下发已见事件。"
     ),
     response_class=StreamingResponse,
 )

@@ -23,7 +23,7 @@ from app.clients.dify_client import DifyClient
 from app.core.config import Settings
 from app.db.repositories.event_log.memory import InMemoryEventStore
 from app.kernel.events import build_session_id
-from app.schemas.agent import CreateTaskRequest, StepItem, StepStatus
+from app.schemas.agent import CreateTaskRequest, StepItem, StepStatus, TaskStatus
 from app.services.agent_service import AgentService
 
 pytestmark = pytest.mark.unit
@@ -370,6 +370,32 @@ class TestEventLogSwitchAndProjection:
         assert [event.type for event in events] == ["session.created", "turn.finished"]
         assert events[-1].payload["outcome"] == "cancelled"
         assert events[-1].payload["status"] == "cancelled"
+
+    async def test_cancel_survives_event_write_failure(self) -> None:
+        """**N2 验收**：事件写失败时取消仍然成功（降级为 WARN），状态是 cancelled。
+
+        写入点在底座 `/stop` **之后**：那时下游已经停了，再抛错只会让用户重试、
+        再打一次 `/stop`（可能 404），于是"取消一直失败但任务其实停了"，
+        而事件流里没有任何记录——状态、界面、事实三者互相矛盾。
+        取舍是"用户感知已取消"优先：接口返回成功 + 状态 cancelled + WARN 记账失败。
+        """
+        store = InMemoryEventStore()
+        service = _service(store=store)
+        created = await service.create_task(
+            CreateTaskRequest(conversation_id="conv_1", goal="目标"), _auth()
+        )
+
+        # 建任务之后再把存储打坏：取消路径的 `POST /stop` 已成功，只剩记账会失败
+        async def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("event store down")
+
+        store.append = _boom  # type: ignore[method-assign]
+
+        cancelled = await service.cancel_task(created.task_id, _auth())
+        assert cancelled.status == TaskStatus.CANCELLED
+
+        detail = await service.get_task(created.task_id, _auth())
+        assert detail.status == TaskStatus.CANCELLED
 
     async def test_events_are_tenant_scoped(self) -> None:
         """事件流按租户隔离：另一个租户读同一个 task_id 读不到任何事件。"""
