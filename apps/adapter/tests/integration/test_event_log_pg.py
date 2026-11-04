@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 
 import asyncpg
 import pytest
@@ -280,7 +281,10 @@ class TestAppendOnly:
             )
         finally:
             await connection.close()
-        assert payload == {"n": 1}, "权限被拒之后行内容必须原样"
+        # asyncpg 的 `jsonb` 默认解码成 **str**（不返回 dict），所以先 `json.loads`
+        # 再比：直接比 `== {"n": 1}` 会得到 `assert '{"n": 1}' == {'n': 1}`
+        # （CI 实测）。不写死字符串是为了不依赖 jsonb 的空白格式。
+        assert json.loads(payload) == {"n": 1}, "权限被拒之后行内容必须原样"
 
 
 class TestStoreBehaviour:
