@@ -10,8 +10,16 @@
 --
 -- 三条硬约束（设计文档 §5.1，缺一条本迁移就不算落地）：
 --   1. **append-only**：应用角色只授 INSERT + SELECT。GRANT 单独做还不够——见下方
---      「附录 A」的 RLS 兜底，因为本迁移由应用角色执行时它是表属主，属主权限不受
---      GRANT 约束（属主永远能改自己的表）。
+--      「附录 A」的 RLS 兜底：若某个库里 event_log 恰好由应用角色建过（表属主 =
+--      应用角色），属主权限不受 GRANT 约束（属主永远能改自己的表）。
+--
+-- **执行身份（勿改）**：本迁移以**属主/迁移角色** DSN 执行（DBA 或
+-- `POSTGRES_USER`），应用角色 `officeai_app` 只拿到 SELECT + INSERT。
+-- 迁移角色与运行角色必须分离：应用角色是 NOSUPERUSER + NOBYPASSRLS，且对
+-- `schema public` **没有 CREATE**——用它跑 DDL 只会在"全新库"上侥幸通过
+-- （表已由 initdb 建好），一遇到"已装版本升级"就被拒（CI 路径 B 实测：
+-- `permission denied for schema public`）。**不要**通过"给应用角色授 CREATE"
+-- 来绕过：那会把 DDL 权限永久留给运行角色，RLS 隔离的前提当场失效。
 --   2. **RLS 按 tenant_id**：策略体例照抄 `init-schema-phase2.sql` 第 15 节
 --      （含 `__platform__` 例外），不用 `init-rls.sql` 的旧体例。
 --   3. **hash 链**：`hash = sha256(prev_hash || event_id || type || payload_canonical)`
@@ -157,8 +165,8 @@ END $idx$;
 --
 --    要点逐条：
 --    a. `ENABLE` + **`FORCE`**：`FORCE` 让策略对**表属主**也生效。这不是多余的
---       一行——本迁移在生产上由应用角色执行，应用角色因此是属主，不开 FORCE 时
---       属主可以绕过策略，租户隔离就退化成"靠代码自觉"。
+--       一行——本迁移以属主/迁移角色执行，属主（DBA 或曾用应用角色自建的库）
+--       会绕过策略；不开 FORCE 时租户隔离就退化成"靠代码自觉"。
 --    b. 分区**逐个**建策略：PG 的分区不继承父表的策略（直查分区时只认分区自己的
 --       策略），只给父表建等于留了一条直查分区的绕行路径。
 --    c. 只有 SELECT / INSERT 两条策略，**没有 UPDATE / DELETE 策略**：
@@ -357,15 +365,18 @@ END $grant$;
 -- ---------------------------------------------------------------------------
 -- 附录 A：为什么 GRANT 之后还要 RLS 兜底（评审必读，勿删）
 --
--- 生产上 0013 由迁移 Job 以**应用角色** DSN 执行（与 0008–0012 同一口径），
--- 于是应用角色是 event_log 的属主。SQL 语义里属主天然拥有全部权限，REVOKE 对
--- 属主**不生效**——只看 GRANT 的话，"不可 UPDATE/DELETE"就只是一句注释。
+-- 0013 由迁移 Job 以**属主/迁移角色** DSN 执行（不是应用角色——见文件头
+-- 「执行身份」）。于是 event_log 的属主是**另一个角色**，`REVOKE`/`GRANT` 对它
+-- 才真正生效；但"应用角色在某些库里恰好是属主"仍然是可能的（例如从未做过角色
+-- 分离的旧库），而 SQL 语义里属主天然拥有全部权限、REVOKE 对属主**不生效**——
+-- 只看 GRANT 的话，"不可 UPDATE/DELETE"就只是一句注释。
 --
 -- 因此第 4 节的 `FORCE ROW LEVEL SECURITY` + 只建 SELECT/INSERT 策略承担真正的
 -- append-only 保证：FORCE 让策略对属主也生效，缺 UPDATE/DELETE 策略即恒假。
 -- 实测口径（`tests/integration/test_event_log_append_only_pg.py`）：
 -- `UPDATE event_log SET payload = '{}'::jsonb` 影响 0 行、原行不变。
 --
--- 若将来把本迁移改为由 DBA（超级用户）执行，则属主是 DBA，GRANT 侧的限制才
--- 真正对应用角色生效，两道保证同时成立——两种执行方式都安全，这是刻意的。
+-- 因此在**属主分离**的库里（标准形态）是两道保证同时成立：GRANT 只给
+-- SELECT/INSERT，RLS 让 UPDATE/DELETE 恒 0 行；在"应用角色恰好是属主"的库里，
+-- GRANT 侧退化，但 FORCE RLS 仍然兜住——两种形态都安全，这是刻意的。
 -- ---------------------------------------------------------------------------

@@ -187,6 +187,44 @@ class TestTableStructure:
         assert select_insert is True, "应用角色必须有 SELECT+INSERT（否则事件写不进去）"
 
 
+class TestRoleSeparation:
+    """**负样本**：运行角色不得具备 DDL 能力（防"顺手授权把门禁变绿"）。
+
+    CI 路径 B 第一次红（`permission denied for schema public`）暴露的是**升级路径
+    缺陷**：迁移被当成运行角色的活儿。最省事的错误修法是
+    `GRANT CREATE ON SCHEMA public TO officeai_app` —— 门禁会立刻变绿，代价是
+    运行角色获得 DDL 能力，而"应用角色 NOSUPERUSER + NOBYPASSRLS + 无 DDL"正是
+    RLS 隔离成立的前提。这条用例把那个"省事修法"钉死：谁授了 CREATE/NOT 权限，
+    这里立刻红。
+    """
+
+    async def test_app_role_has_no_create_on_public_schema(self, pg_dsn: str) -> None:
+        """应用角色对 `schema public` **没有** CREATE（迁移必须由属主执行）。"""
+        granted = await _fetch_one(
+            pg_dsn, "SELECT has_schema_privilege('officeai_app', 'public', 'CREATE')"
+        )
+        assert granted is False, (
+            "officeai_app 对 schema public 有 CREATE —— 这会让运行角色具备 DDL 能力。"
+            "迁移应由属主/迁移角色执行（见 deploy/docker-compose.lite.yml 的 migrate 服务），"
+            "不要用授权来让门禁变绿"
+        )
+
+    async def test_app_role_cannot_mutate_event_log(self, pg_dsn: str) -> None:
+        """应用角色对 `event_log` **没有** UPDATE/DELETE（append-only 的第一道）。"""
+        mutate = await _fetch_one(
+            pg_dsn,
+            "SELECT has_table_privilege('officeai_app', 'event_log', 'UPDATE') "
+            "    OR has_table_privilege('officeai_app', 'event_log', 'DELETE')",
+        )
+        assert mutate is False, "应用角色不应拥有事件表的 UPDATE/DELETE 权限"
+        read_write = await _fetch_one(
+            pg_dsn,
+            "SELECT has_table_privilege('officeai_app', 'event_log', 'SELECT') "
+            "   AND has_table_privilege('officeai_app', 'event_log', 'INSERT')",
+        )
+        assert read_write is True, "应用角色必须有 SELECT+INSERT（否则事件写不进去）"
+
+
 class TestAppendOnly:
     """append-only 是**库内事实**，不是文档承诺。"""
 

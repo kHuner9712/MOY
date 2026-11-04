@@ -500,7 +500,14 @@ services:
       # 业务库必须用**应用角色**（NOSUPERUSER + NOBYPASSRLS）：
       # 用库属主会绕过行级安全，/readyz 的 db_privilege 自检随即判 not_ready，
       # 容器永远不 healthy——而 RLS 对超级用户根本不生效。
-      OA_DATABASE_URL: ${OA_DATABASE_URL:?必须提供应用角色 DSN（officeai_app）}
+      # **迁移用属主/迁移角色 DSN，不是应用角色**（2026-11-04 修正）：
+      # `CREATE TABLE` 需要 `public` 上的 CREATE 权限，而应用角色 officeai_app 是
+      # NOSUPERUSER + NOBYPASSRLS 且无该权限（这是 RLS 隔离的前提）。用它跑 DDL
+      # 只在"全新库"上侥幸通过（表已由 initdb 建好），一遇到"已装版本升级"就报
+      # `permission denied for schema public` —— CI 路径 B（模拟真实升级）实测命中。
+      # 运行期（adapter）仍用应用角色 DSN，两个角色分离是硬要求：
+      # 不能靠"给应用角色授 CREATE"让迁移跑通，那会把 DDL 权限永久留给运行角色。
+      OA_DATABASE_URL: postgresql://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD:?必须在 .env.lite 中设置}@postgres:5432/${OA_POSTGRES_DB:-officeai}
       # 私有化部署面向本机 Dify，必须真实联调
       OA_DOWNSTREAM_ENABLED: "true"
       OA_DIFY_DEFAULT_APP_KEY: ${OA_DIFY_DEFAULT_APP_KEY:-}
@@ -691,7 +698,14 @@ services:
       OA_ENV: production
       OA_AUTH_MODE: oidc
       OA_DEPLOY_MODE: private
-      OA_DATABASE_URL: ${OA_DATABASE_URL:?必须提供应用角色 DSN（officeai_app）}
+      # **迁移用属主/迁移角色 DSN，不是应用角色**（2026-11-04 修正）：
+      # `CREATE TABLE` 需要 `public` 上的 CREATE 权限，而应用角色 officeai_app 是
+      # NOSUPERUSER + NOBYPASSRLS 且无该权限（这是 RLS 隔离的前提）。用它跑 DDL
+      # 只在"全新库"上侥幸通过（表已由 initdb 建好），一遇到"已装版本升级"就报
+      # `permission denied for schema public` —— CI 路径 B（模拟真实升级）实测命中。
+      # 运行期（adapter）仍用应用角色 DSN，两个角色分离是硬要求：
+      # 不能靠"给应用角色授 CREATE"让迁移跑通，那会把 DDL 权限永久留给运行角色。
+      OA_DATABASE_URL: postgresql://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD:?必须在 .env.lite 中设置}@postgres:5432/${OA_POSTGRES_DB:-officeai}
       # 迁移 CLI 硬性要求业务库模式为 postgres，否则直接 30004 退出。
       # 这里显式给：env_file 是 required:false，缺文件时也得能起。
       OA_BUSINESS_STORE: postgres
