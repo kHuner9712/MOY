@@ -6,7 +6,7 @@
 **四条与契约绑定的口径**
 
 1. **取号在同一事务内**：`SELECT COALESCE(MAX(seq), 0)` 与 `INSERT` 处于同一个
-   `tenant_scope()` 事务；并发写同会话时后到者撞主键 `(session_id, seq)`，
+   `tenant_scope()` 事务；并发写同会话时后到者撞主键 `(tenant_id, session_id, seq)`，
    `append` 捕获冲突后**重开事务**重试（最多 `MAX_SEQ_ATTEMPTS` 次）。
    重试必须重开事务：冲突已让当前事务进入 aborted 状态，原地重试必定再次失败。
 2. **hash 链**：`prev_hash` 取上一条的 `hash`（首条 `GENESIS_HASH`），

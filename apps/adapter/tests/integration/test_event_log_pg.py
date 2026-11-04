@@ -96,9 +96,12 @@ class TestTableStructure:
         assert len(names) == PARTITION_COUNT
         assert list(names) == [f"event_log_p{index:02d}" for index in range(PARTITION_COUNT)]
 
+        # `partstrat` 是 PG 的 `"char"` 类型：asyncpg 按单字节 `bytes` 返回（实测
+        # `b'h'`），不是 `str`。查询侧显式 `::text` 转换，避免"类型口径"变成断言噪声。
         strategy = await _fetch_one(
             pg_dsn,
-            "SELECT partstrat FROM pg_partitioned_table WHERE partrelid = 'event_log'::regclass",
+            "SELECT partstrat::text FROM pg_partitioned_table "
+            " WHERE partrelid = 'event_log'::regclass",
         )
         assert strategy == "h"
 
@@ -228,8 +231,20 @@ class TestRoleSeparation:
 class TestAppendOnly:
     """append-only 是**库内事实**，不是文档承诺。"""
 
-    async def test_update_and_delete_affect_zero_rows(self, pg_settings: Settings) -> None:
-        """`UPDATE` / `DELETE` 对 `event_log` 恒 0 行，且原行不变。"""
+    async def test_app_role_cannot_update_or_delete(self, pg_settings: Settings) -> None:
+        """应用角色 `UPDATE` / `DELETE` 事件表 → **权限拒绝**，且原行不变。
+
+        **口径升级（2026-11-04，迁移角色分离之后）**：以前表由应用角色自建，
+        属主权限盖过 `GRANT`，于是"语句能跑、但被 RLS 挡住 → 影响 0 行"；
+        现在表属主是迁移角色（`officeai`）、应用角色只有 SELECT/INSERT，
+        所以语句**根本不会执行**，直接 `permission denied for table event_log`。
+
+        为什么这是**更强**的保证，不是放宽：
+        - "影响 0 行"意味着语句被解析、执行、逐行过滤——策略一旦写错（例如
+          有人把 `USING` 改成恒真），它会变成"影响 N 行"，而用例仍可能因为
+          过滤条件没命中而通过；
+        - "权限拒绝"意味着连执行入口都没有，与策略内容无关，不可绕过。
+        """
         store = PostgresEventStore(pg_settings)
         marker = f"append-only-{TENANT}"
         event = await store.append(marker, SESSION, "turn.started", {"n": 1})
@@ -239,19 +254,19 @@ class TestAppendOnly:
         connection = await asyncpg.connect(dsn)
         try:
             await connection.execute("SELECT set_config('app.tenant_id', $1, TRUE)", marker)
-            updated = await connection.execute(
-                "UPDATE event_log SET payload = '{\"tampered\": true}'::jsonb "
-                " WHERE tenant_id = $1 AND session_id = $2",
-                marker,
-                SESSION,
-            )
-            deleted = await connection.execute(
-                "DELETE FROM event_log WHERE tenant_id = $1 AND session_id = $2",
-                marker,
-                SESSION,
-            )
-            assert updated.endswith(" 0") or updated == "UPDATE 0"
-            assert deleted == "DELETE 0"
+            with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+                await connection.execute(
+                    "UPDATE event_log SET payload = '{\"tampered\": true}'::jsonb "
+                    " WHERE tenant_id = $1 AND session_id = $2",
+                    marker,
+                    SESSION,
+                )
+            with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+                await connection.execute(
+                    "DELETE FROM event_log WHERE tenant_id = $1 AND session_id = $2",
+                    marker,
+                    SESSION,
+                )
             payload = await connection.fetchval(
                 "SELECT payload FROM event_log WHERE tenant_id = $1 AND session_id = $2",
                 marker,
@@ -259,7 +274,7 @@ class TestAppendOnly:
             )
         finally:
             await connection.close()
-        assert payload == {"n": 1}
+        assert payload == {"n": 1}, "权限被拒之后行内容必须原样"
 
 
 class TestStoreBehaviour:
@@ -351,6 +366,39 @@ class TestStoreBehaviour:
         assert blocks[0] == blocks[1] == blocks[2]
         assert blocks[0]["artifact_keys"] == ["art_pg"]
         assert blocks[0]["completed_steps"] == ["s1"]
+
+    async def test_same_session_id_in_two_tenants_does_not_collide(
+        self, pg_settings: Settings
+    ) -> None:
+        """**缺陷复现（2026-11-04 真库）**：两个租户用同一 `session_id` 都能写入。
+
+        缺陷形态（CI run 41779364118 实测，5 条红里唯一一条**源码缺陷**）：
+        `event_log` 的主键原本是 `(session_id, seq)`，而取号 SQL 是
+        `WHERE tenant_id = ? AND session_id = ?`、RLS 也按租户过滤 ——
+        唯一性范围（按会话）与取号范围（按租户）**不一致**。于是：
+        租户 B 的 `MAX(seq)` 看不到租户 A 的同名会话行 → 取到 `seq=1` →
+        撞 A 的主键 → `IntegrityError` → 重试 16 次仍冲突 → 对外只报
+        30003「系统繁忙」（真实原因完全不可见）。
+
+        修复：主键改为 `(tenant_id, session_id, seq)`，让唯一性与取号同范围，
+        与内存实现 `dict[(tenant_id, session_id)]` 的语义对齐。
+
+        这条用例在修复前**必然红**（第二次 append 抛 30003），修复后两个租户
+        各自从 `seq=1` 开始、互相读不到对方的行。
+        """
+        store = PostgresEventStore(pg_settings)
+        session = build_session_id(TENANT, "task_shared_session_id")
+        other_tenant = f"other-{TENANT}"
+
+        first = await store.append(TENANT, session, "turn.started", {"n": 1})
+        second = await store.append(other_tenant, session, "turn.started", {"n": 2})
+
+        assert (first.seq, second.seq) == (1, 1), "两个租户的 seq 空间必须互不干扰"
+        assert first.hash != second.hash, "hash 链按会话+租户各自成链"
+        assert [event.seq for event in await store.read_after(TENANT, session)] == [1]
+        assert [event.seq for event in await store.read_after(other_tenant, session)] == [1]
+        assert await store.verify_chain(TENANT, session) is True
+        assert await store.verify_chain(other_tenant, session) is True
 
     async def test_tenant_isolation(self, pg_settings: Settings) -> None:
         """RLS：另一个租户读同一个 session 读不到任何事件。"""

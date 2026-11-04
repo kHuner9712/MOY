@@ -138,7 +138,9 @@ class TestTableDefinition:
             "created_at  timestamptz NOT NULL DEFAULT now()",
         ):
             assert column in body, f"缺列定义：{column}"
-        assert "PRIMARY KEY (session_id, seq)" in body
+        # 主键必须**租户范围**（2026-11-04 真库缺陷：只按 (session_id, seq) 时，
+        # 另一租户占用同一 session_id 会变成被 RLS 藏起来的主键冲突 → 取号永远失败）
+        assert "PRIMARY KEY (tenant_id, session_id, seq)" in body
 
     def test_partition_count_is_a_script_constant(self) -> None:
         """分区数写成脚本内常量（不是散落字面量），且为 16。"""

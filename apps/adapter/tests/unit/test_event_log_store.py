@@ -159,7 +159,7 @@ class TestAppendSemantics:
     """append 的三条硬约束：seq 从 1 连续、首条 prev_hash 全 0、hash 可复算。"""
 
     async def test_seq_starts_at_one_and_is_contiguous(self) -> None:
-        """`seq` 从 1 开始且连续递增（主键 `(session_id, seq)` 的取号前提）。"""
+        """`seq` 从 1 开始且连续递增（主键 `(tenant_id, session_id, seq)` 的取号前提）。"""
         store = _store()
         events = [
             await store.append(TENANT, "s1", EVENT_TURN_STARTED, {"n": index}) for index in range(3)

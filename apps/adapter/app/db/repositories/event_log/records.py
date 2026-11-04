@@ -402,7 +402,8 @@ def build_session_id(tenant_id: str, task_id: str) -> str:
     **HASH 分区键**与 SSE 的对外游标维度。两个租户用同一个 `task_id`
     （ULID 理论上可能重复，更现实的是导入数据）时，若只按 `task_id` 分区，
     两张不同租户的流会落在同一分区、共享 `seq` 空间——取号互相干扰，而且
-    `PRIMARY KEY (session_id, seq)` 会让第二个租户**写不进去**。编码租户后，
+    `PRIMARY KEY` 若不含 `tenant_id`，第二个租户会**写不进去**（且冲突被 RLS 藏起来，
+    对外只报 30003「系统繁忙」）。主键已含 `tenant_id`，编码租户后是双保险，
     会话标识本身就是全局唯一的，与 `tenant_id` 列构成双保险。
 
     Args:

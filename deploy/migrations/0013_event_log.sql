@@ -50,9 +50,13 @@
 -- ---------------------------------------------------------------------------
 -- 1. 主表（分区父表；列与设计文档 §5.1 逐字一致，未增删任何字段）
 --
---    `PRIMARY KEY (session_id, seq)` 是**取号正确性的唯一机械保证**：
+--    `PRIMARY KEY (tenant_id, session_id, seq)` 是**取号正确性的唯一机械保证**：
 --    并发写同会话时后到者撞主键冲突，`PostgresEventStore.append` 据此重试
---    （最多 3 次）。没有它，`SELECT COALESCE(MAX(seq),0)+1` 在并发下会静默重复。
+--    （最多 `MAX_SEQ_ATTEMPTS` 次）。没有它，`SELECT COALESCE(MAX(seq),0)+1`
+--    在并发下会静默重复。
+--    **为什么主键要带 tenant_id**：取号 SQL 与 RLS 都按租户过滤，唯一性必须
+--    同范围——否则"另一租户占用了同一个 session_id"会变成一次看不见的主键
+--    冲突（详见下方建表语句内的注释）。
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS event_log (
   tenant_id   text        NOT NULL,
@@ -64,7 +68,16 @@ CREATE TABLE IF NOT EXISTS event_log (
   prev_hash   text        NOT NULL,
   hash        text        NOT NULL,
   created_at  timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (session_id, seq)
+  -- **唯一性范围必须与取号范围一致**（2026-11-04 真库缺陷修复）：
+  -- 取号是 `WHERE tenant_id = ? AND session_id = ?`（RLS 也按租户过滤），
+  -- 所以"seq 在谁的范围里唯一"必须同样是租户范围。写成 `(session_id, seq)`
+  -- 会让"租户 A 与租户 B 用同一个 session_id"变成**不可见的**主键冲突：
+  -- B 的 `MAX(seq)` 看不到 A 的行（RLS）→ 取到 1 → 撞 A 的主键 → 重试 16 次
+  -- 仍失败 → 对外只报 30003「系统繁忙」（CI 实测：`tnt_event_log_pg` 与
+  -- `append-only-tnt_event_log_pg` 共用同一 session_id 触发）。
+  -- 加上 tenant_id 后，同一 session_id 在不同租户下各有独立 seq 空间，
+  -- 与内存实现（`dict[(tenant_id, session_id)]`）的语义一致。
+  PRIMARY KEY (tenant_id, session_id, seq)
 ) PARTITION BY HASH (session_id);
 
 -- ---------------------------------------------------------------------------
