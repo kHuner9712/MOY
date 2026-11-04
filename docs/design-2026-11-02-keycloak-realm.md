@@ -49,6 +49,11 @@
 
 ## 1. R4：Keycloak issuer 可达性核查
 
+> **状态（2026-11-04 审计更正）**：本节为 **2026-11-02 的快照**；其中「三套都没有 `KC_HOSTNAME`」
+> 与「均未设置 `KC_PROXY_HEADERS`」已被后续改动推翻（`docker-compose.yml:498,501`、
+> `docker-compose.saas.yml:349,352`、`docker-compose.lite.yml:176,179` 均已设置）。
+> 当前拓扑与端口口径以 `docs/deployment-guide.md` §12.5 为准。
+
 ### 1.1 配置现状（逐项实测）
 
 | 配置项 | 实际取值 | 位置 |

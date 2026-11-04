@@ -69,7 +69,7 @@
 | **C1** | `docs/audit-2026-10-30-full-repo-audit.md`、`docs/audit-2026-10-31-full-repo-audit.md` | 两轮历史审计，**无任何入链引用**（除自身） | 移入 `docs/archive/`（与既有 18 份归档同规格） | **P2** |
 | **C2** | 4 份无入链文档：`gap-matrix-2026-11-03.md`、`project-brief-2026-11-03.md`、`remediation-plan-2026-10-29.md`、`research-2026-10-25-evoflow-workbench-comparison.md` | 内容有效但无人引用，新人不可发现 | **新建 `docs/README.md` 文档索引**（按「现行规范 / 阶段验收 / 审计与整改 / 研究与决策」四类登记）。比逐个补链接更可持续 | **P2** |
 | **C3** | `README.md` 目录树 | 只列到 `docs/adr/`，未列 `docs/decisions`、`docs/archive`、`docs/compliance`、`docs/security`、`docs/api` | 补全，或改为「文档全貌见 `docs/README.md`」 | **P3** |
-| **C4** | `docs/audit-2026-11-02-*.md`（1 份总报告 + 3 份分册） | 同批次、互有引用，非冗余 | **保留**，仅在索引中标注「总报告 + 三份维度分册」 | — |
+| **C4** | `docs/archive/audit-2026-11-02-*.md`（1 份总报告 + 3 份分册） | 同批次、互有引用，非冗余 | **保留**（已于 2026-11-04 随同批审计一并移入 `docs/archive/`） | — |
 
 ---
 

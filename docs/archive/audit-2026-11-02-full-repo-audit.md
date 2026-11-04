@@ -2,7 +2,7 @@
 
 > **审计范围**：架构与目录结构、代码质量与规范一致性、安全漏洞、性能隐患、依赖版本与许可、测试覆盖。
 > **审计对象**：`main` 分支 HEAD `5e8ff2b`（2026-11-02 22:46），工作区仅含本报告归档/新增两个文档改动。
-> **基线**：`docs/audit-2026-10-31-full-repo-audit.md`（10-31 全仓审计）+ `docs/archive/audit-2026-11-02-full-repo-audit-round3.md`（11-02 第三轮 46 条，原路径本报告接管、原文已归档，git `880df56` 可回溯）+ `docs/remediation-ledger-2026-11-02.md`（整改台账）+ `docs/verify-2026-11-02-fix-batch1.md`（批次 1 独立验证）。
+> **基线**：`docs/archive/audit-2026-10-31-full-repo-audit.md`（10-31 全仓审计）+ `docs/archive/audit-2026-11-02-full-repo-audit-round3.md`（11-02 第三轮 46 条，原路径本报告接管、原文已归档，git `880df56` 可回溯）+ `docs/remediation-ledger-2026-11-02.md`（整改台账）+ `docs/verify-2026-11-02-fix-batch1.md`（批次 1 独立验证）。
 > **方法**：全部实测命令本轮重跑（不复读旧结论）；差分口径为「已修复（对应提交）/ 仍存在 / 新增」三态，已修复项不重复计为问题；密钥类发现只记位置与类型，不复述值。
 > **本报告只审计、不含任何代码修复改动。**
 

@@ -103,6 +103,7 @@ PREFIX_HINTS: dict[str, str] = {
     "privacy-policy.md": "docs/compliance/privacy-policy.md",
     "dpa-template.md": "docs/compliance/dpa-template.md",
     "security-whitepaper.md": "docs/compliance/security-whitepaper.md",
+    "NOTICE": "docs/compliance/NOTICE",
 }
 
 #: 交付审计备注（D-28 / LED-043）：键 = 仓库根相对路径，值 = (已建时的备注, 待建时的备注)。

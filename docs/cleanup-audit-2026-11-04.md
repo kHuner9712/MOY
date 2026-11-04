@@ -46,8 +46,8 @@
 
 | 编号 | 类型 | 位置 | 证据 | 建议 | 风险 | 影响面 / 回归 |
 | --- | --- | --- | --- | --- | --- | --- |
-| S01 | 结论被推翻·静态 | `docs/audit-2026-11-02-full-repo-audit.md:21,60,118,253` | 仍写 P0-4「待做·轮 2」、TLS 未交付、端口裸绑、k8s 只有 README；现状：`docker-compose.yml:595-610` 有 `edge` 443 + 证书挂载，`:697,750` 与 `docker-compose.saas.yml:501,533` 已绑 `127.0.0.1`，`deploy/k8s/` 有 12 个 manifest | **更新**：文首加「历史快照（2026-11-02），P0-4 已于后续批次修复」状态横幅；或移入 `docs/archive/` | 中 | 读者会把已修问题当遗留。回归：无 |
-| S02 | 结论被推翻·静态 | `docs/audit-2026-11-02-arch-perf-deps.md:94,166` | 同上，写「无 TLS/反代」「仅 README」 | **更新**：同 S01 横幅 | 中 | 同上 |
+| S01 | 结论被推翻·静态 | `docs/archive/audit-2026-11-02-full-repo-audit.md:21,60,118,253` | 仍写 P0-4「待做·轮 2」、TLS 未交付、端口裸绑、k8s 只有 README；现状：`docker-compose.yml:595-610` 有 `edge` 443 + 证书挂载，`:697,750` 与 `docker-compose.saas.yml:501,533` 已绑 `127.0.0.1`，`deploy/k8s/` 有 12 个 manifest | **更新**：文首加「历史快照（2026-11-02），P0-4 已于后续批次修复」状态横幅；或移入 `docs/archive/` | 中 | 读者会把已修问题当遗留。回归：无 |
+| S02 | 结论被推翻·静态 | `docs/archive/audit-2026-11-02-arch-perf-deps.md:94,166` | 同上，写「无 TLS/反代」「仅 README」 | **更新**：同 S01 横幅 | 中 | 同上 |
 | S03 | 状态过期·静态 | `docs/remediation-ledger-2026-11-02.md:68` | P0-4「待做·轮 2」；`edge` 已实现，应改为「已完成（G1）」 | **更新**：状态列改完成并补证据 | 中 | 整改台账失真 |
 | S04 | 结论被推翻·静态 | `docs/design-2026-11-02-security-deploy.md:377-391` | 写「两套 compose 无任何反代」「端口省略 host IP」「k8s manifests 全缺」「19/16/11 服务」；实测有 edge、loopback 绑定、13 个 yaml，服务数 21/18/9 | **更新**：§3.1.1 逐条改现状，或整节标「已被 G1 推翻」 | 中 | 安全设计评审依据过期 |
 | S05 | 结论被推翻·静态 | `docs/design-2026-11-02-keycloak-realm.md:56,59` | 写「`KC_HOSTNAME` 未设置，grep 0 命中」「`KC_PROXY`/`KC_PROXY_HEADERS` 未设置」；`docker-compose.yml:498,501` 与 `docker-compose.saas.yml:349,352` 均已设置 | **更新**：改「现状」表为已设置，或加修复日期 | 中 | Host 注入防护被误判为缺失 |
@@ -98,7 +98,10 @@
 | §2 过期表述 | 10 | 9 | 0 | 1（S10） |
 | §3 测试 | 7 | 1（T02） | 1（T03，含 6 个 fixture） | 5 |
 | §4 依赖 | 10 | 6 | 0 | 4 |
-| **合计** | **50** | **38** | **2** | **10** |
+| **合计（拍板前建议）** | **50** | **38** | **2** | **10** |
+
+**执行后处置统计（2026-11-04）**：已执行·更新 **37**；已执行·删除 **2**；部分执行 **1**（P09）；
+未执行 **10**（S10、T01、T04–T07、P01、P03、P04、P10：均属「保留/无需动作」或用户明确另起一轮）。
 
 风险分布：高 **8** 条（D01、D02、D06、D07、D08、D15、T02、P08）；中 **23** 条（P09 按「中-高」计入）；低 **19** 条。
 
@@ -152,4 +155,92 @@ foreach($p in @('apps/adapter/scripts/validate_plugins.py','deploy/validate_plug
 & apps/adapter/.venv/Scripts/python.exe -c "import json,tomllib; p=tomllib.load(open('apps/adapter/pyproject.toml','rb')); w=json.load(open('apps/web/package.json',encoding='utf-8')); print(len(p['project']['dependencies']), len(w['dependencies']), len(w['devDependencies']))"
 ```
 
-口径声明：`collect-only` 只证明「可被发现」，不代表全部通过；本轮未复跑 2559/238 的通过数与覆盖率，也未启动 Docker 或执行前端构建。
+口径声明：`collect-only` 只证明「可被发现」，不代表全部通过；审计阶段未启动 Docker 或执行前端构建。
+
+---
+
+## 八、处置回填（执行记录，2026-11-04）
+
+按用户拍板分四批执行，每批单独提交并跑全量门禁。
+
+### 8.1 逐条结果
+
+| 编号 | 结果 | 处置说明 |
+| --- | --- | --- |
+| D01 | ✅ 已执行 | README 改为实测收集 2933 / PG 258（2675 passed / 258 skipped），注明「以 CI junit.xml 为准」 |
+| D02 | ✅ 已执行 | README 与 `ci-adapter.yml` 注释改为「默认回落 B21」；`validate_batch_clock.py` 仍显式要求 OA_BATCH |
+| D03 | ✅ 已执行 | `README.md` 与 `deploy/migrations/README.md` 统一为 0002–0013（12 个） |
+| D04 | ✅ 已执行 | README decisions 目录 0003~0008 → 0003~0009 |
+| D05 | ✅ 已执行 | `ci-web.yml` 阈值注释同步 `vitest.config.mts`：88.8/84.0/83.9/90.0 |
+| D06 | ✅ 已执行 | adapter README 删除 Alembic，改 `python -m app.db.migrate --apply` |
+| D07 | ✅ 已执行 | 部署指南 B 形态改为「已并入主 compose 的 `edge`」，删除 `docker-compose.tls.yml` 命令，修正 A 形态端口口径 |
+| D08 | ✅ 已执行 | `docs/api/README.md` 鉴权豁免补 `/metrics`、`/sso/*`、支付回调 |
+| D09 | ✅ 已执行 | lite 基线与 PRD：nginx 1.28 + digest、pgvector 精确标签 |
+| D10 | ✅ 已执行 | lite 基线端点数 84 → 96 |
+| D11 | ✅ 已执行 | lite 基线标准栈 18/17 → 21/20；perf-disclosure 两处 17 → 21 |
+| D12 | ✅ 已执行 | 删除原偏差①（agent schema 已声明）与原偏差②（RFC 5987 已实现），保留「工具入参映射」偏差并重编号为① |
+| D13 | ✅ 已执行 | `app/main.py` 注释 99 → 104 操作 |
+| D14 | ✅ 已执行 | dependency-scan 依赖计数 17+36 → 16+29 |
+| D15 | ✅ 已执行（删除） | 删除 `deploy/.env.lite.example` 的 `OA_OFFLINE_MODE`（含注释行） |
+| D16 | ✅ 已执行 | architecture-v1.0 删除未生效的 License 节点，标注 V1.1 规划 |
+| D17 | ✅ 已执行 | validate_plugins 路径改为 `deploy/validate_plugins.py` |
+| D18 | ✅ 已执行 | phase2 对账口径改为 `usage_event` vs `usage_daily`（不读 Valkey） |
+| D19 | ✅ 已执行 | QA 计划删除 3 个不存在的脚本行，reconcile 标「已实现」 |
+| D20 | ✅ 已执行 | waivers 两处补 `apps/adapter/` 前缀 |
+| D21 | ✅ 已执行 | lite 基线补 dify-web digest |
+| D22 | ✅ 已执行 | metrics 迁移编号 0013 → 0014（0013 已被 event_log 占用） |
+| D23 | ✅ 已执行 | architecture-v1.0：Redis→Valkey、minio→SeaweedFS（object-store），部署图同步 |
+| S01 | ✅ 已执行 | 归档至 `docs/archive/`（按拍板不加横幅） |
+| S02 | ✅ 已执行 | 归档至 `docs/archive/`（按拍板不加横幅） |
+| S03 | ✅ 已执行 | 整改台账 P0-4 改「已完成（G1）」，补 edge/loopback/k8s 证据 |
+| S04 | ✅ 已执行 | design-security-deploy §3.1 加「已被 G1 推翻」状态行 |
+| S05 | ✅ 已执行 | design-keycloak-realm §1 加 2026-11-02 快照状态行并给出当前配置位置 |
+| S06 | ✅ 已执行 | 项目简报删除 README 旧口径断言 |
+| S07 | ✅ 已执行 | 平台战略：死配置改「已清理」，A3/决策 3 关闭 |
+| S08 | ✅ 已执行 | 升级观察表测试数字标快照日期/SHA，并注明以 CI 为准 |
+| S09 | ✅ 已执行 | 并发入口注释改为 `tests/integration/pg_fixture.py::b01_concurrent_engine` |
+| S10 | ⬜ 未执行 | 保留：设计文档的时间标注，非问题 |
+| T01 | ⬜ 未执行 | 保留：skip 均为条件性 |
+| T02 | ✅ 已执行 | 空组织 ID 用例去掉 401 假绿，收紧为 404 + 20004 |
+| T03 | ✅ 已执行（删除） | 删除 6 个零注入 fixture（AST 复核注入 0 / getfixturevalue 0） |
+| T04 | ⬜ 未执行 | 仅建议改名，本轮不删不改（避免破坏 19 组同名分层语义） |
+| T05 | ⬜ 未执行 | 保留：接口分层有意为之 |
+| T06 | ⬜ 未执行 | 无需动作：e2e 环境限制属已知缺口 |
+| T07 | ⬜ 未执行 | 保留：selftest 脚本按设计不被收集 |
+| P01 | ⬜ 未执行 | 保留：无高置信未用包 |
+| P02 | ✅ 已执行（删除） | 隔离构建验证：移除 `wheel` 前后 `pip wheel . --no-deps` 均成功（setuptools 自带 bdist_wheel），故删除 |
+| P03 | ⬜ 未执行 | 保留：`tailwindcss-animate` 为 `animate-in` 类隐式必需；仅建议移入 dependencies |
+| P04 | ⬜ 未执行 | 用户拍板另起独立一轮（@types/node 20/26、eslint 10/9），本轮不动 |
+| P05 | ✅ 已执行 | web `vitest` 由 `^5.0.5` 收敛为 `5.0.5`，与 `@vitest/coverage-v8` 精确版本一致；lock 同步 |
+| P06 | ✅ 已执行 | SBOM 两 job 保持 `continue-on-error: true`，补拍板口径注释（告警不阻断） |
+| P07 | ✅ 已执行 | SBOM 文档数据源改为 uv.lock/venv/pyproject + package-lock + images.lock + difypkg |
+| P08 | ✅ 已执行 | 新增 `docs/compliance/NOTICE`，纳入交付清单映射并重新生成 manifest |
+| P09 | 🟡 部分执行 | LGPL 实跑判定完成（见 8.2）；许可证工具版本锁定未做（避免本轮扩大 CI 变更） |
+| P10 | ⬜ 未执行 | 保留：`python-multipart` 为框架上传必需 |
+
+### 8.2 wheel 与 LGPL 实跑结论
+
+- **wheel**：`pip wheel . --no-deps` 隔离构建在「含 wheel」与「仅 setuptools」两种 build-system 下均成功产出 wheel 包；`wheel` 无任何 import、uv.lock 无条目。结论：**可删，已删**（`apps/adapter/pyproject.toml` build-system）。
+- **LGPL（sharp optional）**：实跑解析 `package-lock.json` → 命中 14 个 `@img/sharp-libvips-*`，`license=LGPL-3.0-or-later`、`optional=True`、`dev=False`；`npm ls @img/sharp-libvips-linux-x64` 为空（未安装）。前端生产镜像 `apps/web/Dockerfile:36-40` 使用 `npm ci --omit=optional`，**镜像不含这些包**；`dependency-scan.yml` 未加 omit，仅扫描侧列出。结论：**镜像侧已排除，扫描侧按告警处理，不判黑；无需标「待评估」**。
+
+### 8.3 门禁与覆盖率（每批实跑）
+
+| 批次 | 后端 | 前端 | 覆盖率（前端 stmt/branch/func/line；后端） | 16 道 deploy 门禁 |
+| --- | --- | --- | --- | --- |
+| 第 1 批（文档） | 2675 passed / 258 skipped / 0 failed | 72 文件 / 1112 用例 | 89.78/85.06/84.93/90.98；86.42% | 16/16 EXIT 0 |
+| 第 2 批（删除） | 2675 passed / 258 skipped / 0 failed | 72 文件 / 1112 用例 | 89.78/85.06/84.93/90.98；86.42% | 16/16 EXIT 0 |
+| 第 3 批（README/CI） | 2675 passed / 258 skipped / 0 failed | 72 文件 / 1112 用例 | 89.78/85.06/84.93/90.98；86.42% | 16/16 EXIT 0 |
+| 第 4 批（结构/合规） | 2675 passed / 258 skipped / 0 failed | 72 文件 / 1112 用例 | 89.78/85.06/84.93/90.98；86.42% | 16/16 EXIT 0 |
+
+> PG 口径：本机无 Docker 与 `OA_TEST_DATABASE_URL`，`--run-pg` 未执行；PG 用例 258 条按设计 skip。CI 侧有真库，以 CI 结果为准。
+
+### 8.4 提交与 CI
+
+| 批次 | 提交 | 改动文件数 |
+| --- | --- | --- |
+| 第 1 批 | `0d616a6` | 13 |
+| 第 2 批 | `a928230` | 3 |
+| 第 3 批 | `03adc8c` | 10 |
+| 第 4 批 | 本提交（含归档、NOTICE、SBOM 注释、wheel 删除） | 20 |
+
+CI 验收（同一 SHA 的 CI Adapter + CI Web）run 编号与结论见最终汇报。

@@ -654,17 +654,15 @@ GET /files/artifacts/{token}
    即可全绿；**只按声明的 4 项输入执行时，第 2 步按业务文案
    「请求内容不完整，请检查后重试」失败**，`on_failure=continue` 使任务仍以
    `completed` 收尾（`warnings` 多一条「第 2 步「确认并发送」没有完成，结果里会缺少这部分」，
-   核查清单 `receipt=missing`）。这条差异已作为待明确项上报（见下方偏差 ③）。
+   核查清单 `receipt=missing`）。这条差异已作为待明确项上报（见下方偏差 ①）。
 2. **产物正文**：邮箱连接器（桩）只回执发送结果、不回文本摘要，因此 `receipt` 产物
    下载得到 0 字节；草稿产物正文由平台生成能力产出，内容非空。
 
-**实跑中发现的三处实现偏差（均已上报，不影响本文档的字段/端点口径）**：
+**实跑中发现的一处实现偏差（已上报，不影响本文档的字段/端点口径）**：
 
 | # | 偏差 | 影响 | 位置 |
 | --- | --- | --- | --- |
-| ① | A4 响应未下发 `steps[].artifacts[]` 与 `steps[].failure`：服务层已构造，但端点响应模型（`app/schemas/agent.py` 的步骤条目）未声明这两个字段，被序列化过滤 | 「每步产物」只能经 A3 `result.artifacts[]` / `checklist[].download_url` 获取；`app/schemas/task.py` 已有可复用的产物/失败结构 | `app/api/v1/agent.py` A4 + `app/schemas/agent.py` |
-| ② | 产物下载对名称含非拉丁字符的产物返回 500：产物名直接写入 `Content-Disposition` 头，头值按 latin-1 编码，中文名（`compose`/`render_file` 产物必然以步骤标题命名）即崩 | 中文名产物暂不可下载；该端点无测试覆盖 | `app/api/v1/artifact_files.py` |
-| ③ | 工具入参原样透传：6 份声明的输入键与各连接器契约键（`email.to` / `feishu.title` / `github.owner,repo,head,base` / `wechat_mp.draft_id+confirmed`）均不一致 | 仅按声明输入执行时，`tool` 步骤在离线环境必然失败；"输入 → 工具入参"的映射职责（平台适配 or 连接器）需要产品侧明确 | `app/services/action_gateway.py` 入参装配 |
+| ① | 工具入参原样透传：6 份声明的输入键与各连接器契约键（`email.to` / `feishu.title` / `github.owner,repo,head,base` / `wechat_mp.draft_id+confirmed`）均不一致 | 仅按声明输入执行时，`tool` 步骤在离线环境必然失败；"输入 → 工具入参"的映射职责（平台适配 or 连接器）需要产品侧明确 | `app/services/action_gateway.py` 入参装配 |
 
 > 复跑方式：按 7.3 的 HTTP 顺序执行即可；适配层集成测试（`tests/integration/`）中的
 > 插件用例给出了同构的夹具写法（TestClient + 内存后端）。

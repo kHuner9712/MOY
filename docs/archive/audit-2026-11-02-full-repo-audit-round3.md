@@ -4,10 +4,10 @@
 > **审计对象**：`main` 分支 HEAD `e3734a0`，工作区干净（`git status --porcelain` 为空）。
 > **方法**：三线并行独立审计 + 主理人抽验复核。三线各自实跑命令、各自落册，本报告只做合并、去重、重新分级与裁决，不改写成员的实测数据。
 > **分册**（含完整证据链与逐条行号）：
-> - `docs/audit-2026-11-02-arch-perf-deps.md`（架构 / 性能 / 依赖许可 / 部署安全，A-01…A-18）
-> - `docs/audit-2026-11-02-quality-security.md`（代码质量 / 安全漏洞，Q-01…Q-12、S-01…S-15）
-> - `docs/audit-2026-11-02-test-coverage.md`（测试覆盖 / 有效性 / 门禁实跑，T-01…T-11）
-> **前序基线**：`docs/audit-2026-10-30-full-repo-audit.md`、`docs/audit-2026-10-31-full-repo-audit.md`。
+> - `docs/archive/audit-2026-11-02-arch-perf-deps.md`（架构 / 性能 / 依赖许可 / 部署安全，A-01…A-18）
+> - `docs/archive/audit-2026-11-02-quality-security.md`（代码质量 / 安全漏洞，Q-01…Q-12、S-01…S-15）
+> - `docs/archive/audit-2026-11-02-test-coverage.md`（测试覆盖 / 有效性 / 门禁实跑，T-01…T-11）
+> **前序基线**：`docs/archive/audit-2026-10-30-full-repo-audit.md`、`docs/archive/audit-2026-10-31-full-repo-audit.md`。
 > **数据纪律**：所有数字来自 2026-11-02 本机实跑（Git Bash + `apps/adapter/.venv` Python 3.13.14 + 本机 PostgreSQL）；无法实测的一律进 §六 盲区，不臆断。密钥类发现只记位置与类型，不复述值。
 
 ---

@@ -1015,10 +1015,10 @@ officeai-offline-<version>/
 │   ├── keycloak-26.8.1.tar
 │   ├── dify-api-1.17.1.tar
 │   ├── dify-plugin-daemon-0.6.10-local.tar
-│   └── nginx-1.29-alpine.tar
+│   └── nginx-1.28-alpine.tar
 ├── compose/  docker-compose.lite.yml, docker-compose.yml, nginx/, prometheus/, alert.rules.yml
 ├── db/       init-databases.sql, init-schema-phase2.sql, init-schema-phase3.sql,
-│             init-app-role.sql, migrations/(0002..0011 + rollback/)
+│             init-app-role.sql, migrations/(0002..0013 + rollback/)
 ├── dify/     apps/*.difypkg（4 个档位 + 记忆抽取应用）, plugins/deepseek-0.0.25.difypkg
 ├── compliance/ privacy-policy.md, dpa-template.md, security-whitepaper.md, sbom.cdx.json, NOTICE
 ├── docs/     deployment-guide.md, user-guide.md, key-rotation-checklist.md, perf-disclosure.md, known-limits.md
@@ -1143,9 +1143,9 @@ docker compose start proxy web
 
 | 交付物 | 生成方式 | 校验 |
 | --- | --- | --- |
-| CycloneDX SBOM（4 层） | `deploy/sbom/generate.py`：① `pip-licenses --format=json` → `bom-ref: pypi:`；② `npm ls --all --json` → `npm:`；③ `images.lock` 的 `name:tag` + **新增 `digest`** → `docker:`；④ `validate_offline_pkgs.py --sbom` 解包 `.difypkg` → `difypkg:` | `jq '.components|length' > 0`，4 个 `bom-ref` 前缀各 ≥1 |
+| CycloneDX SBOM（4 层） | `deploy/sbom/generate.py`：① 读 `uv.lock` → venv 解析 → `pyproject.toml` 提取版本与许可证 → `bom-ref: pypi:`；② 读根 `package-lock.json`（含 `apps/web` workspace）→ `npm:`；③ 读 `deploy/images.lock` 的 `name:tag` + `digest` → `docker:`；④ `validate_offline_pkgs.py --sbom` 解包 `.difypkg` → `difypkg:` | `jq '.components|length' > 0`，4 个 `bom-ref` 前缀各 ≥1 |
 | `.difypkg` 扫描 | `deploy/validate_offline_pkgs.py`：解 zip → 找 `requirements.txt`/`pyproject.toml` → 与离线 license 库 + CVE 快照比对 | `--self-test` 正样本 0 退出、负样本（塞 1 个 GPL）非 0 |
-| 三件套 | 手工撰写，**逐条对应表**（每句事实性陈述 → 配置项/代码行） | 抽查 10 条；记忆能力与 MM1-MM4 一一对应 |
+| 合规文档（三件套 + `NOTICE`） | 手工撰写，**逐条对应表**（每句事实性陈述 → 配置项/代码行）；`NOTICE` 的组件与许可证逐项对齐 `images.lock` 与 SBOM | 抽查 10 条；记忆能力与 MM1-MM4 一一对应；`NOTICE` 组件数与 `images.lock` 一致 |
 | About 页 | 读 `sbom.cdx.json` 的 `metadata.component.dependencies` | 条目数相等（`validate_packaging.py` 增加断言） |
 
 ### 9.6 性能基线口径（`docs/perf-disclosure.md`）
@@ -1318,7 +1318,7 @@ async def apply_one(self, m: Migration) -> None:
 | **T4-05.3** | 数据保留 + 清理任务 + 租户导出/删除 + DBA 审计 SQL；**TD1 同步导出（`status=ready` + `rows`，上限 20 万行）+ TD2 停用式删除（`status=suspended`）**。**2026-10-29：TD1 改为同步生成（`tenant_data_service.py`），任务处理器按 `tasks/__init__.py` 既有裁决「`tenant_export` 刻意没有处理器」不建**（原 `app/workers/tasks/tenant_export.py` 属过时设计，已从本行移除） | `app/workers/tasks/retention_cleanup.py`、`app/business/tenant_data_service.py`、`app/api/v1/tenant_data.py`、`app/api/v1/router.py`、`sql/retention-audit.sql`、`apps/adapter/tests/integration/test_retention_export_delete.py` | T4-03.2 | `pytest tests/integration/test_retention_export_delete.py -q`；保留期 1 天 → 目标表 `count=0` + 日志有行数；导出包 `manifest.json` 行数一致；**TD1**：造 20 万零 1 行 → `20001` + 「数据量较大，请联系管理员分批导出」；正常量 → `status="ready"` 且 `rows.total` 与包内一致、`download_url` 可直接下载（复用 `/files/artifacts/{token}`）；**TD2**：删除后逐表 0，但 `plugin_task`/`plugin_artifact` **各留 1 行**且其业务字段为空；响应含 `retained_tables`（四张知识库表）与 `audit_pending_dba`；`tenant.status=suspended` 且 `suspended_reason` 非空；**TTL 分开**：查 `plugin_artifact` 的 `expires_at - created_at`，`purpose=proof_of_deletion` **>1 天**、导出包 **<1 天**（现状实现 15 分钟）；并验证证明在 `retention_cleanup` 跑过一轮后**仍可下载** | L |
 | **T4-05.4** | 轻量版编排（9 容器）+ nginx + 资源限制 + healthcheck + `validate_lite_up.sh` | `deploy/docker-compose.lite.yml`、`deploy/nginx/nginx.conf`、`deploy/nginx/lite.conf`、`deploy/validate_lite_up.sh`、`deploy/.env.lite.example` | T4-05.2、T4-03.1 | `bash deploy/validate_lite_up.sh` → `ready in <180s` + `status=ok`；`docker stats` 总内存 < 6GB；`grep -c healthcheck deploy/docker-compose.lite.yml` ≥ 有状态服务数 | L |
 | **T4-05.5** | 离线包 + 升级/回滚脚本 + `images.lock` 增 `digest`；**升级预检含 `vector` 扩展**（§9.3.1） | `deploy/install.sh`、`upgrade.sh`、`rollback.sh`、`backup.sh`、`restore.sh`、**`sql/enable-vector-extension.sql`（新建）**、`deploy/images.lock`、`deploy/validate_packaging.py` | T4-05.4、T4-01.4 | 断网全新环境 `bash install.sh` 一次成功；`sha256sum -c checksums.txt` 全通过；`upgrade→rollback→upgrade` 三轮数据一致；**`vector` 预检**：① 全新装库（initdb 超级用户建过扩展）→ `upgrade.sh` 预检通过、不进中止分支；② 手工 `DROP EXTENSION vector` 后跑 `upgrade.sh` → **退出码 4、未执行任何迁移**、打印 §9.3.1 的逐字文案、`sql/enable-vector-extension.sql` 内容随之输出；**回滚范围**：`bash rollback.sh 0005` → **`exit 7`** + 打印「该版本无自动回滚脚本，请 DBA 按 runbook 手工处理」且**未执行任何 down SQL**；`bash rollback.sh 0008` → 调 `migrate.py --rollback 0008` 成功、`schema_migration` 少一行、`plugin_artifact` 的 `content_type` 列仍在（0008 与 0006 不互相关联，只退 0008）；**薄封装**：`grep -cE "psql|DROP TABLE" deploy/rollback.sh` = 0（脚本内不得出现 DDL，全部走 CLI）；**维护闸门**：不设 `OA_MAINTENANCE=1` → `exit 3`；设了之后 `docker ps` 中 `oal-proxy`/`oal-web` 已停止，结束后恢复 | L |
-| **T4-05.6** | SBOM + `.difypkg` 扫描 + 合规三件套 + About 页；**DBA runbook 顶部单列 `vector` 扩展步骤**（§9.3.1） | `deploy/sbom/generate.py`、`deploy/validate_offline_pkgs.py`、`.github/workflows/sbom.yml`、`docs/compliance/privacy-policy.md`、`dpa-template.md`、`security-whitepaper.md`、`apps/web/src/app/(main)/about/page.tsx` | T4-05.5 | `jq '.components\|length' sbom.cdx.json` >0 且 4 前缀各 ≥1；`python deploy/validate_offline_pkgs.py --self-test` 正样本 0 / 负样本非 0；CI `license-scan` success | L |
+| **T4-05.6** | SBOM + `.difypkg` 扫描 + 合规三件套 + About 页；**DBA runbook 顶部单列 `vector` 扩展步骤**（§9.3.1） | `deploy/sbom/generate.py`、`deploy/validate_offline_pkgs.py`、`.github/workflows/sbom.yml`、`docs/compliance/privacy-policy.md`、`dpa-template.md`、`security-whitepaper.md`、`NOTICE`、`apps/web/src/app/(main)/about/page.tsx` | T4-05.5 | `jq '.components\|length' sbom.cdx.json` >0 且 4 前缀各 ≥1；`python deploy/validate_offline_pkgs.py --self-test` 正样本 0 / 负样本非 0；CI `license-scan` success | L |
 | **T4-05.7** | 性能基线 + 金标集执行 + 交付文档；**部署手册单列「postgres 需安装 vector 扩展（超级用户执行）」** | `scripts/bench/*.py`、`docs/perf-disclosure.md`、`qa/goldset/*`、`docs/deployment-guide.md`、`docs/user-guide.md`、`docs/key-rotation-checklist.md` | T4-05.4 | 文档反引号路径全部 `ls` 到（脚本断言）；`docs/perf-disclosure.md` 每个数字可回溯到 `results/`；**`grep -c "CREATE EXTENSION IF NOT EXISTS vector" docs/deployment-guide.md` ≥1** 且该段落在**「升级已有环境」章节之内**（不是附录）；runbook 中出现「镜像换了不等于扩展装了」这句原话 | L |
 
 ### 11.1 与四周排期的映射

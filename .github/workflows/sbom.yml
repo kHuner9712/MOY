@@ -61,7 +61,8 @@ jobs:
   generate:
     name: sbom / generate
     runs-on: ubuntu-latest
-    # 额度未恢复期：失败不阻断主流程（见文件头 ⚠️）
+    # 2026-11-04 拍板：SBOM 生成先「告警不阻断」（continue-on-error），
+    # 待生成稳定性与基线确认后，再改为硬门禁。
     continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -117,7 +118,8 @@ jobs:
   license-scan:
     name: sbom / license-scan
     runs-on: ubuntu-latest
-    # 额度未恢复期：失败不阻断主流程（见文件头 ⚠️）
+    # 2026-11-04 拍板：许可证扫描先「告警不阻断」（continue-on-error）；
+    # LGPL（sharp optional）已实跑判定：镜像侧 --omit=optional 排除，扫描侧仅列出。
     continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

@@ -222,4 +222,4 @@ docker build \
 
 ---
 
-*最后更新：2026-11-03（QA-02：前端键从运行期 ConfigMap 移出，改为构建期 build-arg）· 依据 `docs/audit-2026-11-03-full-repo-audit.md`*
+*最后更新：2026-11-03（QA-02：前端键从运行期 ConfigMap 移出，改为构建期 build-arg）· 依据 `docs/archive/audit-2026-11-03-full-repo-audit.md`*

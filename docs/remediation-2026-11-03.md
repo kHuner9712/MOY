@@ -1,6 +1,6 @@
 # 整改方案（2026-11-03 审计）
 
-依据：`docs/audit-2026-11-03-full-repo-audit.md`（QA-01~QA-22）。
+依据：`docs/archive/audit-2026-11-03-full-repo-audit.md`（QA-01~QA-22）。
 原则：先方案后动手；每批独立提交、全量门禁通过；CI 以同一 SHA 双绿为准；不静默跳过阻塞项。
 
 ## 批次与优先级

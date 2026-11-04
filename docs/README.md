@@ -50,14 +50,12 @@
 | 文档 | 说明 |
 | --- | --- |
 | `audit-2026-11-04-cleanup-audit.md` | **本轮**：文档/代码一致性、失效引用、冗余依赖清单 |
-| `audit-2026-11-03-full-repo-audit.md` | 第五轮全仓审计（发布条件判定） |
-| `audit-2026-11-02-*.md` | 第四轮：总报告 + 架构性能依赖 / 质量安全 / 测试覆盖三份分册 |
 | `remediation-ledger-2026-11-02.md` / `remediation-2026-11-03.md` | 整改台账与执行记录 |
 | `verify-2026-11-02-fix-batch1.md` | 整改独立验证 |
 | `gap-analysis-2026-10-25-commercial-readiness.md` | 商业化就绪度差距 |
 | `gap-matrix-2026-11-03.md` | 能力差距矩阵与分阶段路线 |
 | `improvement-plan-2026-10-25.md` / `feature-parity-plan-2026-10-25.md` | 改进计划与对标补齐 |
-| `archive/` | 更早的审计与 QA 报告（含 2026-10-30、10-31 两轮全仓审计） |
+| `archive/` | 更早的审计与 QA 报告（含 2026-10-30、10-31、11-02、11-03 各轮全仓审计及其分册） |
 
 ## 四、研究与决策
 

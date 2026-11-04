@@ -3,7 +3,7 @@
 # pyproject 在不同时间可能用不同版本的 setuptools 打包，产物（尤其是
 # wheel 内的元数据与 package discovery 行为）不可复现。上界取宽松值即可——
 # 目的是"可复现 + 不被破坏性大版本突袭"，不是追逐最新。
-requires = ["setuptools>=68,<85", "wheel>=0.44,<1.0"]
+requires = ["setuptools>=68,<85"]
 build-backend = "setuptools.build_meta"
 
 [project]

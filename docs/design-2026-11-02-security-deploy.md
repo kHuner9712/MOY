@@ -6,7 +6,7 @@
 | 版本 | v1.2（2026-11-02）· 变更：v1.1 追加 §4 拍板结果/阻断项/已知残留；v1.2 追加 §3.4.1 K4-min 交接面，并同步 R4/R8 的两处修正（JWKS 走内网、环境变量 4→2） |
 | 作者 | 高见远（架构师） |
 | 配套文档 | **`docs/design-2026-11-02-keycloak-realm.md`**（R4/R5/R8 阻断项核查与 realm 配置，含实测证据）<br/>**`docs/remediation-ledger-2026-11-02.md`**（46 条审计项 + R1-R8 整改台账，轮 2 对账用） |
-| 输入 | `docs/audit-2026-11-02-full-repo-audit.md`（P0-4 / P0-5）、`docs/audit-2026-11-02-quality-security.md`（S-01） |
+| 输入 | `docs/archive/audit-2026-11-02-full-repo-audit.md`（P0-4 / P0-5）、`docs/archive/audit-2026-11-02-quality-security.md`（S-01） |
 | 基线 | `main @ e074372`。开工时工作区干净；定稿时工作区已有**并行成员**的改动（幂等性/订单抽屉等，非本文作者所为），本文未触碰任何代码 |
 | 性质 | **设计决策文档**。本文不改任何代码；落地另立任务。所有"现状"均为本次实际读码/实跑所得，行号以 `e074372` 为准 |
 | 一句话结论 | **P0-5 走 httpOnly Cookie（BFF 形态，会话端点由适配层承担），本期不做 CSP 路线；P0-4 自建 nginx 作为三套形态共用边缘，端口只留边缘一个出入口。** |
@@ -369,6 +369,10 @@ cd apps/adapter && ruff check . && mypy app && pytest -q tests/unit tests/securi
 ## 3. P0-4：部署形态（TLS 终止 + 端口收口 + k8s 实体）
 
 ### 3.1 现状复核（含事实勘误）
+
+> **状态（2026-11-04 审计更正）**：本节是 **2026-11-02 的历史快照**，其「成立」判定已被 G1 推翻——
+> 主 compose 已有 `edge`（80/443 终止 TLS）、`adapter`/`web` 端口已绑 `127.0.0.1`、
+> `deploy/k8s/` 已有 12 个 manifest。下表保留原文仅作追溯，**当前现状以 `docs/deployment-guide.md` §12.5 与 `deploy/docker-compose.yml` 为准**。
 
 #### 3.1.1 核对结论
 

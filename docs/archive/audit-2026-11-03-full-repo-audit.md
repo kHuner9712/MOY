@@ -44,7 +44,7 @@ HEAD 01b53cd fix(ci): 交付清单尺寸改 LF 归一口径（M3 取证，CI 恒
 | `apps/adapter/tests/integration/test_usage_repo_pg.py` | +18/-2 | M3（CI 红） | 修复已写、未提交 | 同上 |
 | `apps/web/e2e/session-redirect.spec.ts` | +33/-3 | M3（e2e 红） | 修复已写、未提交 | 新增 `/sso/session` 路由替身，断言未放松 |
 | `apps/web/e2e/workflow.spec.ts` | +56/-33 | M3（e2e 红） | 修复已写、未提交 | 同上，覆盖两条匿名段用例 |
-| `docs/audit-2026-11-02-full-repo-audit.md` | +212/-201 | 上一轮报告落盘 | **未提交** | 工作区内容是 round4 报告，HEAD 里仍是 round3 文本 |
+| `docs/archive/audit-2026-11-02-full-repo-audit.md` | +212/-201 | 上一轮报告落盘 | **未提交** | 工作区内容是 round4 报告，HEAD 里仍是 round3 文本 |
 | `docs/archive/audit-2026-11-02-full-repo-audit-round3.md` | 未跟踪 | 归档 | **未提交** | 41,385 字节；与 1.1 的 `880df56` 归档动作重复/冲突 |
 
 **归属结论**：

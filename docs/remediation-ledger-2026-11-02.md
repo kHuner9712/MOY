@@ -7,7 +7,7 @@
 | 作者 | 高见远（架构师） |
 | 基线 | `main @ ad4cba4` |
 | 用途 | **轮 2 开工前的对账工具**。防止重复劳动（把已修的再做一遍）与漏项（以为做了其实没做） |
-| 上游 | `docs/audit-2026-11-02-full-repo-audit.md`（46 条）、`docs/design-2026-11-02-security-deploy.md`、`docs/design-2026-11-02-keycloak-realm.md`（R1-R8） |
+| 上游 | `docs/archive/audit-2026-11-02-full-repo-audit.md`（46 条）、`docs/design-2026-11-02-security-deploy.md`、`docs/design-2026-11-02-keycloak-realm.md`（R1-R8） |
 
 ---
 

@@ -1,0 +1,76 @@
+Moy（麦子）· 第三方组件与许可证声明
+==================================
+
+本文件随交付包分发，声明 Moy 使用的第三方组件及其许可证。
+许可证事实的唯一权威来源是：
+  - 交付包内 `compliance/sbom.cdx.json`（CycloneDX SBOM，四层组件：pypi / npm / docker / dify-pkg）
+  - CI 工件 `sbom`（`.github/workflows/sbom.yml`）与 `dependency-scan`（许可证与 CVE 扫描）
+  - 镜像层清单 `deploy/images.lock`（版本、digest、许可证逐项登记）
+
+一、自研部分
+------------
+
+Moy 自研代码（apps/adapter、apps/web 及其构建产物）为专有软件，
+许可证标识 UNLICENSED（见仓库根 `LICENSE` 与交付包内 `LICENSE`）。
+未经书面授权，不得复制、分发、修改或用于商业运营。
+
+二、容器镜像（随交付包分发，均为上游原样镜像）
+--------------------------------------------
+
+| 组件 | 版本 | 许可证 | 用途 |
+| --- | --- | --- | --- |
+| python | 3.13-slim | Python-2.0-or-later / PSF-2.0 | 适配层基础镜像 |
+| node | 22-alpine | MIT（Node.js）/ BSD-2-Clause（依赖） | 前端基础镜像 |
+| langgenius/dify-api | 1.17.1 | Apache-2.0（修改版，见第三节） | 底座 API / Worker / Beat |
+| langgenius/dify-web | 1.17.1 | Apache-2.0（修改版，见第三节） | 底座控制台 |
+| langgenius/dify-sandbox | 0.2.15 | Apache-2.0（修改版，见第三节） | 代码沙箱 |
+| langgenius/dify-plugin-daemon | 0.6.10-local | Apache-2.0（修改版，见第三节） | 插件守护进程 |
+| quay.io/keycloak/keycloak | 26.8.1 | Apache-2.0 | 身份与权限 |
+| pgvector/pgvector | 0.8.7-pg18-bookworm | PostgreSQL License | 关系库与向量扩展 |
+| valkey/valkey | 9.2-alpine | BSD-3-Clause | 缓存与幂等键 |
+| milvusdb/milvus | v3.0.3 | Apache-2.0 | 向量库 |
+| quay.io/coreos/etcd | v3.7.2 | Apache-2.0 | 分布式 KV（Milvus 依赖） |
+| chrislusf/seaweedfs | 4.48 | Apache-2.0 | S3 兼容对象存储 |
+| nginx | 1.28-alpine | BSD-2-Clause | 反向代理 / TLS 终止 |
+| ubuntu/squid | 6.13-25.04_beta | GPL-2.0 | 出站代理（SSRF 防护） |
+| prometheuscommunity/postgres-exporter | v0.17.1 | Apache-2.0 | PostgreSQL 指标采集 |
+| oliver006/redis_exporter | v1.67.0 | MIT | Valkey 指标采集 |
+| prom/prometheus | v3.15.0 | Apache-2.0 | 指标采集 |
+
+GPL-2.0 说明（ubuntu/squid）：该组件以独立容器进程运行，
+Moy 未修改其代码、未与其静态链接，属于独立进程的聚合分发。
+上游源码可从 `https://github.com/ubuntu/squid` 获取；交付包保留其原始许可证文本。
+
+三、Dify 修改版 Apache-2.0 的附加限制
+-----------------------------------
+
+Dify 的许可证是 Apache-2.0 的修改版，附带「多租户特性限制」与「商标/LOGO 限制」。
+Moy 已按 `docs/decisions/0004` 第三章执行三条规避约束：
+  1. 不使用 Dify 的多租户特性（租户隔离由适配层与 PostgreSQL RLS 实现）；
+  2. 不修改 Dify 代码；
+  3. 不展示 Dify 品牌标识，并在本文件中如实列明其来源与许可证。
+本声明不构成对 Dify 许可证条款的改写；如与上游原文冲突，以上游原文为准。
+
+四、Python 与 Node 依赖
+-----------------------
+
+后端（Python）与前端（Node.js）的全部直接/传递依赖、版本与许可证，
+以 SBOM 的 `pypi:` 与 `npm:` 组件为准。当前口径：
+  - 后端直接依赖为 MIT / Apache-2.0 / BSD-3-Clause；
+    传递链含 MPL-2.0（certifi，灰名单：随交付保留许可证文本）、PSF-2.0、MIT-0、BSD-2-Clause。
+  - 前端依赖为 MIT / Apache-2.0 / BSD / ISC 等宽松协议。
+  - 未引入 GPL / AGPL / SSPL 运行时依赖。
+
+LGPL 说明（@img/sharp-libvips-* 系列）：这些是 sharp 的平台相关**可选**二进制，
+许可证为 LGPL-3.0-or-later。前端生产镜像通过 `npm ci --omit=optional` 构建，
+不包含这些可选包；许可证扫描侧仍可能列出，仅作告警、不阻断发布。
+
+五、获取方式
+------------
+
+上述组件的完整许可证文本随各容器镜像分发；Python/Node 依赖的许可证文本
+随 SBOM 与依赖安装目录分发。需要上游源码的组件（GPL/LGPL），
+可按上表组件名在 Docker Hub / GitHub 对应仓库获取。
+
+如发现本声明与 SBOM 或 `deploy/images.lock` 不一致，以 SBOM 与 `images.lock` 为准，
+并请通过交付渠道反馈，以便修正本文件。
