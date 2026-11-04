@@ -792,14 +792,17 @@ step_migrate() {
   fi
 
   if grep -qEi "must be owner|permission denied|insufficient_privilege|42501|not owner of" <<<"${out}"; then
-    err "迁移被数据库拒绝：应用角色没有 DDL 权限（这正是设计意图，不是配置错误）"
+    err "迁移被数据库拒绝：当前 DSN 没有 DDL 权限"
     cat >&2 <<'TIP'
-       含义：业务库的表由超级用户（POSTGRES_USER）创建，应用角色 officeai_app 只有
-             DML 权限，且带 NOBYPASSRLS —— 多租户隔离能生效的前提就是它不能绕过策略。
+       含义：migrate Job 用的 DSN 不是**属主/迁移角色**。迁移要建表建索引，
+             需要 `schema public` 上的 CREATE 权限；应用角色 officeai_app 是
+             NOSUPERUSER + NOBYPASSRLS 且没有该权限——这是 RLS 隔离的前提，不是缺陷。
+       **角色分工（硬要求）**：迁移角色 = 属主（POSTGRES_USER，如 officeai），
+             运行角色 = officeai_app。两者必须分离；不要给应用角色授 CREATE。
        怎么做（二选一）：
-         A. 把上面日志里被拒的语句交给 DBA，用超级用户执行后重跑本脚本；
-         B. 仅限"全新库、无数据"：删卷重来（docker compose down -v），
-            让 initdb 用 init-schema-*.sql 建出完整结构。
+         A. 确认 migrate 服务的 OA_DATABASE_URL 用的是属主 DSN
+            （compose 里已按 ${OA_POSTGRES_USER}/${OA_POSTGRES_PASSWORD} 组装）；
+         B. 把上面日志里被拒的语句交给 DBA，用超级用户执行后重跑本脚本。
        退出码 5：明确区别于"脚本/环境有问题"的 1，便于运维直接转给 DBA。
 TIP
     exit 5
@@ -809,7 +812,7 @@ TIP
   echo "       排查顺序：" >&2
   echo "         1) compose ps（看 postgres 是否 healthy）" >&2
   echo "         2) compose logs --tail 40 postgres" >&2
-  echo "         3) 确认 OA_DATABASE_URL 与库里 officeai_app 的口令一致（本脚本已自动对齐）" >&2
+  echo "         3) 确认 migrate 的属主 DSN 口令正确（OA_POSTGRES_PASSWORD；运行角色口令另由 OA_DATABASE_URL 提供）" >&2
   exit 1
 }
 
@@ -1084,8 +1087,9 @@ main() {
   echo
   echo "--- 四、基础设施与数据库 ---"
   step_start_infra
-  # 库里 officeai_app 的口令与 DSN 对齐（幂等）。不做这一步 migrate 必然 28P01，
-  # 而且报错只出现在 migrate 日志里，现场极易误判成编排问题。
+  # 库里 officeai_app 的口令与**运行角色** DSN 对齐（幂等）。不做这一步 adapter
+  # 启动必然 28P01，而且报错只出现在 adapter 日志里，现场极易误判成编排问题。
+  # 迁移用的是属主 DSN（OA_POSTGRES_USER/OA_POSTGRES_PASSWORD），与这一步无关。
   align_app_role_password
 
   echo

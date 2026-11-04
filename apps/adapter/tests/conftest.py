@@ -52,6 +52,7 @@ from app.db.repositories.billing import reset_billing_store
 from app.db.repositories.conversation import reset_conversation_stores
 from app.db.repositories.credential_repo import reset_credential_stores
 from app.db.repositories.document_repo import reset_document_store
+from app.db.repositories.event_log import reset_event_store
 from app.db.repositories.grant_repo import reset_grant_store
 from app.db.repositories.job_repo import reset_job_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
@@ -195,6 +196,10 @@ def _reset_all() -> None:
     configure_logging()
     reset_model_service()
     reset_rag_service()
+    # T02：事件存储是**状态真源**，跨用例残留会让「回放 3 次结果一致」这类判据
+    # 读到上一个用例的事件（表现为单独跑绿、连着跑红）。必须先清存储再清服务：
+    # `AgentService.__init__` 会在构造时把当前存储单例绑成自己的 `_events`。
+    reset_event_store()
     reset_agent_service()
     reset_tool_service()
     reset_identity_service()

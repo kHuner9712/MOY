@@ -31,8 +31,9 @@
 
 ## 规则
 
-层 = `app/` 的二级包（12 个）：`api` / `services` / `business` / `db` / `core` /
-`schemas` / `plugins` / `registry` / `tools` / `clients` / `middleware` / `workers`。
+层 = `app/` 的二级包（13 个）：`api` / `services` / `business` / `db` / `core` /
+`schemas` / `plugins` / `registry` / `tools` / `clients` / `middleware` / `workers` /
+`kernel`。
 同层自引用恒允许。允许矩阵见 `ALLOWED`，**违规 = 矩阵的补集**，
 rule_id 形如 `R-<源层缩写>-<目标层缩写>`（如 `R-DB-BIZ` = `db → business`）。
 
@@ -105,7 +106,7 @@ R2 审计指出：24 条豁免**全部**在基线内，门禁对存量**零约�
 
 - 0：无违规，或全部违规/环都已在基线登记且未到期；
 - 1：存在基线外违规、stale 条目、基线外的环，或豁免已到期；
-- 2：矩阵未完整登记（12×12 有缺口）/ 出现未登记顶层包 / 基线（方向或环）格式错误 / 自检失败。
+- 2：矩阵未完整登记（矩阵有缺口）/ 出现未登记顶层包 / 基线（方向或环）格式错误 / 自检失败。
 
 ## 已知盲区：动态导入
 
@@ -161,6 +162,12 @@ LAYERS: Final[tuple[str, ...]] = (
     "clients",
     "middleware",
     "workers",
+    # 底座 L0 运行时内核（设计文档 §7.1 的 `app/kernel/**`）。
+    # 加入矩阵的依据是设计文档 §3 第 144 行原文：「新内核层沿用同一体例：
+    # `app/kernel/**` 不得 import `app.api.*` 与 `app.business.*`」——既然它
+    # 已经是被写进设计的层，就必须进矩阵，否则"未登记顶层包"会让本门禁 exit 2
+    # （盲区没有消失，只是从"判错"变成"拒跑"）。
+    "kernel",
 )
 
 #: 层 → rule_id 用的缩写（`R-DB-BIZ` 里的 `DB` / `BIZ`）
@@ -177,13 +184,14 @@ LAYER_ABBREV: Final[dict[str, str]] = {
     "clients": "CLI",
     "middleware": "MW",
     "workers": "WRK",
+    "kernel": "KEN",
 }
 
 #: 允许矩阵：键 = 源层，值 = **允许**依赖的目标层（同层自引用恒允许，不在此列）
 ALLOWED: Final[dict[str, frozenset[str]]] = {
     "api": frozenset({"services", "business", "schemas", "core", "plugins", "registry"}),
     "services": frozenset(
-        {"business", "clients", "core", "schemas", "plugins", "registry", "tools"}
+        {"business", "clients", "core", "schemas", "plugins", "registry", "tools", "kernel"}
     ),
     "business": frozenset({"db", "core", "schemas", "plugins"}),
     "db": frozenset({"core"}),
@@ -195,6 +203,11 @@ ALLOWED: Final[dict[str, frozenset[str]]] = {
     "middleware": frozenset({"core", "schemas"}),
     "tools": frozenset({"core"}),
     "workers": frozenset({"business", "db", "core"}),
+    # L0 内核**最内层**：只能依赖 `core`（配置/错误/ID）与 `db`（仓储实现）。
+    # 不得依赖 `api` / `business` / `services`（设计文档 §3 第 144 行）——
+    # 那会让"内核可在无 HTTP、无业务层的环境下独立跑"这条承诺当场失效，
+    # 而 App Server / CLI / 定时任务三种宿主都需要它独立跑。
+    "kernel": frozenset({"core", "db"}),
 }
 
 #: 导入形态
@@ -245,7 +258,7 @@ DYNAMIC_IMPORT_MARKERS: Final[tuple[str, ...]] = ("importlib.import_module(", "_
 
 
 class MatrixError(RuntimeError):
-    """允许矩阵未完整登记（12×12 有缺口）。"""
+    """允许矩阵未完整登记（矩阵有缺口）。"""
 
 
 class UnregisteredPackageError(RuntimeError):
@@ -394,7 +407,7 @@ class ScanResult:
     Attributes:
         violations: 判红口径的违规（`module` + `deferred`），键为 `(file, module, mode)`。
         type_checking_edges: 仅统计的 `TYPE_CHECKING` 边（`(rule_id, file, module)`）。
-        edges: 12×12 实边计数，键为 `(源层, 目标层)`，值为去重后的边数。
+        edges: 矩阵实边计数，键为 `(源层, 目标层)`，值为去重后的边数。
         file_graph: 文件级 import 图（`module` + `deferred` 边），键/值均为相对路径。
         cycles: Tarjan 检出的强连通分量（成员数 >= 2），成员为升序元组。
         dynamic_imports: 动态导入盲区提示（`(file, lineno, 摘要)`）。
@@ -424,17 +437,17 @@ def rule_id(source_layer: str, target_layer: str) -> str:
 
 
 def build_decision_matrix() -> dict[tuple[str, str], bool]:
-    """物化 12×12 的完整判定矩阵（启动期自检）。
+    """物化 完整判定矩阵（启动期自检）。
 
     允许矩阵用「白名单」表达，补集即违规。但白名单表达**必须**证明自己覆盖了
-    全部 144 对：漏登记一个层、或矩阵里拼错一个层名，都会让对应方向静默放行。
-    因此这里显式物化 144 条判定，任何缺口直接抛错（调用方转成 exit 2）。
+    全部 N×N 对（N = LAYERS 层数）：漏登记一个层、或矩阵里拼错一个层名，都会让对应方向静默放行。
+    因此这里显式物化 N×N 条判定，任何缺口直接抛错（调用方转成 exit 2）。
 
     Returns:
-        dict[tuple[str, str], bool]: `(源层, 目标层) -> 是否允许`，恰好 144 条。
+        dict[tuple[str, str], bool]: `(源层, 目标层) -> 是否允许`，恰好 N×N 条。
 
     Raises:
-        MatrixError: 矩阵未完整登记（缺层 / 层名拼错 / 对数不足 144）。
+        MatrixError: 矩阵未完整登记（缺层 / 层名拼错 / 对数不足 N×N）。
     """
     missing_rows = [layer for layer in LAYERS if layer not in ALLOWED]
     if missing_rows:
@@ -1105,7 +1118,7 @@ def find_expired(entries: list[tuple[str, str, str, int]], batch: str | None) ->
 
 
 def print_edges(result: ScanResult) -> None:
-    """打印 12×12 实边计数矩阵（不参与判定）。
+    """打印 矩阵实边计数矩阵（不参与判定）。
 
     Args:
         result: 扫描结果。
@@ -1172,7 +1185,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="当前批次号（默认读 OA_BATCH；两者都没有则跳过到期判定）",
     )
-    parser.add_argument("--show-edges", action="store_true", help="打印 12×12 实边计数矩阵")
+    parser.add_argument("--show-edges", action="store_true", help="打印 矩阵实边计数矩阵")
     parser.add_argument(
         "--min-files",
         type=int,
@@ -1286,7 +1299,7 @@ def main(argv: list[str] | None = None) -> int:
     for members in cycle_new:
         print(
             f"[FAIL] 新增文件级循环依赖 {' + '.join(members)}"
-            "（同层环不在 12×12 矩阵里；必须修，或评审后登记进环基线）"
+            "（同层环不在跨层矩阵里；必须修，或评审后登记进环基线）"
         )
     for entry in cycle_stale:
         print(
@@ -1628,7 +1641,7 @@ def _self_test() -> int:
             return 2
 
         # 用例 10：**人为新增一处同层环 → 必须检出**（R2-ARC-07 负样本）
-        # 两个同层文件互相 import（一个 module、一个 deferred），12×12 矩阵对此完全
+        # 两个同层文件互相 import（一个 module、一个 deferred），矩阵对此完全
         # 无感（同层自引用恒允许），只有 SCC 检测能抓到。
         cycle_root = root / "cycle_case"
         cycle_app = cycle_root / "app"

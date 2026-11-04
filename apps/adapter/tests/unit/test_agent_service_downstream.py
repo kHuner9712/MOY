@@ -451,10 +451,15 @@ class TestCreateTaskWithDownstream:
         # ① 内存里只剩按底座运行 ID 建的那一条（旧占位记录已被清掉）
         assert len(service._tasks) == 1  # noqa: SLF001
         assert list(service._tasks) == [(TENANT, "task_run_777")]  # noqa: SLF001
-        # ② 旧 ULID 键在任务表与步骤表里都不存在；新键的步骤表已建
+        # ② 旧 ULID 键在任务表里不存在；新键的任务在
         assert (TENANT, local_id) not in service._tasks  # noqa: SLF001
-        assert (TENANT, local_id) not in service._steps  # noqa: SLF001
-        assert (TENANT, "task_run_777") in service._steps  # noqa: SLF001
+        # ②' T02 起步骤不再有独立存储：占位会话里只有 `session.created` 一条事件，
+        #     没有任何步骤事件（"幽灵步骤"在事件流里无处可藏）。
+        local_events = await service._events.read_after(  # noqa: SLF001
+            TENANT,
+            service._session_id(_auth(), local_id),  # noqa: SLF001
+        )
+        assert [event.type for event in local_events] == ["session.created"]
         # ③ 列表只有 1 条，且状态不是永不结束的 running
         result = service.list_tasks(ListTasksQuery(page=1, page_size=50), _auth())
         assert result.meta.total == 1
@@ -763,7 +768,7 @@ class TestStreamEvents:
         created = await service.create_task(
             CreateTaskRequest(conversation_id="conv_1", goal="目标"), _auth()
         )
-        service.append_steps(
+        await service.append_steps(
             created.task_id,
             [
                 StepItem(step_id="step_1", sequence=1, title="理解需求", status=StepStatus.RUNNING),
@@ -809,8 +814,8 @@ class TestStreamEvents:
         first = StepItem(step_id="step_1", sequence=1, title="理解需求")
         second = StepItem(step_id="step_2", sequence=2, title="生成方案")
 
-        service.append_steps(created.task_id, [first], _auth())
-        service.append_steps(created.task_id, [second], _auth())
+        await service.append_steps(created.task_id, [first], _auth())
+        await service.append_steps(created.task_id, [second], _auth())
 
         steps = await service.list_steps(created.task_id, _auth())
         assert [item.step_id for item in steps.steps] == ["step_1", "step_2"]

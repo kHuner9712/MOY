@@ -205,7 +205,7 @@ async def test_append_steps_populates_steps() -> None:
     created = await service.create_task(
         CreateTaskRequest(conversation_id="conv_1", goal="目标"), _AUTH
     )
-    service.append_steps(
+    await service.append_steps(
         created.task_id,
         [StepItem(step_id="step_1", sequence=1, title="理解需求", status=StepStatus.COMPLETED)],
         _AUTH,

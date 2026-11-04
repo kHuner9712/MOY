@@ -13,8 +13,11 @@
 
 - **路径 A（空库）**：应用角色自建、无任何表 ——
   暴露 **语法崩**、旧版 init 脚本漏列。
-- **路径 B（已初始化库）**：initdb 跑过 `init-schema-*.sql`，表属主是超级用户 ——
-  暴露 **属主崩**、守卫缺失。
+- **路径 B（已初始化库 → 模拟真实升级）**：initdb 跑过 `init-schema-*.sql`，
+  表属主是超级用户。`--check` 用**应用角色**（验"运行角色能读台账判版本"）、
+  `--apply` 用**属主/迁移角色**（DDL 需要 public 上的 CREATE）——暴露
+  **属主崩**、守卫缺失，以及"应用角色被当成迁移角色"这类升级路径缺陷
+  （`0013` 是第一个真实要在已初始化库上建对象的迁移，它把这个缺陷第一次打出来）。
 - **路径 C（回滚往返）**：在 B 的库上 `--rollback 0007 0006` → `--apply` ——
   暴露 **down 脚本空转**、回滚后升不回去。
 
@@ -522,23 +525,47 @@ def _run_path_a_empty_database(superuser_dsn: str) -> list[Violation]:
     return violations
 
 
-def _run_path_b_initialized(app_dsn: str) -> list[Violation]:
-    """路径 B：**已初始化库**（initdb 跑过基线，表属主是超级用户）跑 `--check` + `--apply`。
+def _run_path_b_initialized(app_dsn: str, owner_dsn: str) -> list[Violation]:
+    """路径 B：**模拟一次真实升级**——在已初始化库上跑 `--check` + `--apply`。
+
+    语义要说准（此前写成"已初始化库跑 --check + --apply"，容易让人以为只是
+    "再跑一遍"）：基线由 initdb 的 `init-schema-*.sql` 建好，属主是超级用户，
+    因此 `0008`–`0012` 在这条路径上一直是**空转**；**`0013` 是第一个真要在
+    已初始化库上新建对象的迁移**，于是它第一次暴露了真实的升级路径问题。
+
+    **两个 DSN，两个角色**（`0013` 在 CI step 31 实测暴露后修正）：
+
+    - `--check` 用**应用角色**（`officeai_app`）：验收"运行角色能读台账、
+      能判定当前版本"，这是进程启动时的真实行为；
+    - `--apply` 用**属主/迁移角色**（超级用户）：`CREATE TABLE` 需要 `public`
+      上的 CREATE 权限，而应用角色是 NOSUPERUSER + NOBYPASSRLS 且无该权限——
+      用应用角色跑 DDL 只会在"全新库"上侥幸通过（表已由 initdb 建好），
+      一遇到"已装版本升级"就报 `permission denied for schema public`。
+
+    这也是**部署侧的既定分工**（`deploy/install.sh` 把 `must be owner /
+    permission denied` 归为 exit 5「转 DBA」）：迁移角色与运行角色必须分离，
+    不能靠"给应用角色授 CREATE"来让门禁变绿——那会把 DDL 权限永久留给
+    运行角色，RLS 隔离的前提（NOSUPERUSER/NOBYPASSRLS + 无 DDL）当场失效。
 
     Args:
         app_dsn: 应用角色连接串（指向已初始化的库）。
+        owner_dsn: 属主/迁移角色连接串（同一台库，超级用户）。
 
     Returns:
         list[Violation]: 违规清单。
     """
     violations: list[Violation] = []
-    for command in ("--check", "--apply"):
-        result = _run_cli(app_dsn, command)
+    steps = (
+        ("--check", app_dsn, "应用角色"),
+        ("--apply", owner_dsn, "属主/迁移角色"),
+    )
+    for command, dsn, role in steps:
+        result = _run_cli(dsn, command)
         if result.returncode != 0:
             violations.append(
                 Violation(
-                    "路径B(已初始化库)",
-                    f"{command} 失败（退出码 {result.returncode}）："
+                    "路径B(已初始化库升级)",
+                    f"{command}（{role} DSN）失败（退出码 {result.returncode}）："
                     f"{(result.stderr or result.stdout).strip()[:400]}",
                 )
             )
@@ -742,7 +769,7 @@ def run_pg_paths() -> tuple[int, list[Violation]]:
             Violation("环境", f"未设置 {SUPERUSER_DSN_ENV} 且无法从 {APP_DSN_ENV} 派生超级用户 DSN")
         ]
     violations = _run_path_a_empty_database(superuser_dsn)
-    violations.extend(_run_path_b_initialized(app_dsn))
+    violations.extend(_run_path_b_initialized(app_dsn, superuser_dsn))
     # 路径 C 依赖路径 B 的前置状态（已初始化库 + 0006/0007 可应用），放在最后跑；
     # 它需要表属主权限（DROP COLUMN），故用超级用户 DSN
     violations.extend(_run_path_c_round_trip(superuser_dsn))

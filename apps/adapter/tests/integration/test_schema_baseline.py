@@ -71,6 +71,27 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
         "plugin_artifact",
         # 阶段四 0011（T4-04.3）：租户月度预算
         "tenant_budget",
+        # 底座 0013（T02）：会话事件日志——1 张 HASH 分区父表 + 16 个分区。
+        # 分区是**真实的 relation**（`information_schema.tables` 里看得见），
+        # 所以必须逐张登记；`event_log` 的分区数是迁移脚本内的常量
+        # （`partition_count := 16`），改分区数属结构变更，必须同步这里。
+        "event_log",
+        "event_log_p00",
+        "event_log_p01",
+        "event_log_p02",
+        "event_log_p03",
+        "event_log_p04",
+        "event_log_p05",
+        "event_log_p06",
+        "event_log_p07",
+        "event_log_p08",
+        "event_log_p09",
+        "event_log_p10",
+        "event_log_p11",
+        "event_log_p12",
+        "event_log_p13",
+        "event_log_p14",
+        "event_log_p15",
     }
 )
 

@@ -26,6 +26,16 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
 from app.core.security import AuthContext
+from app.kernel.events import (
+    EVENT_SESSION_CREATED,
+    EVENT_TOOL_COMPLETED,
+    EVENT_TOOL_REQUESTED,
+    EVENT_TURN_FINISHED,
+    Event,
+    EventStore,
+    build_session_id,
+    event_store,
+)
 from app.schemas.agent import (
     Artifact,
     ArtifactType,
@@ -40,7 +50,7 @@ from app.schemas.agent import (
     TaskResult,
     TaskStatus,
 )
-from app.schemas.common import build_page, sse_frame
+from app.schemas.common import build_page, sse_frame_with_id
 from app.schemas.model import Usage
 from app.schemas.task import ArtifactVersionItem, StepArtifact, StepFailure
 
@@ -69,6 +79,60 @@ _STEP_STATUS_MAP: Final[dict[str, StepStatus]] = {
     "failed": StepStatus.FAILED,
     "stopped": StepStatus.SKIPPED,
 }
+
+#: 事件类型 → 自研 SSE 事件名（A6 契约的**向后兼容映射**）
+#:
+#: T02 迁移后事件流用的是底座 14 类封闭枚举（`model.delta` / `tool.requested` …），
+#: 而 A6 的对外事件名是自研的 `step_started` / `step_finished` / `task_completed`
+#: （架构文档 3.3.5：绝不复用底座原生事件名）。两者不是同一套词汇，映射表因此是
+#: 契约的一部分：
+#:
+#: - 工作流节点在底座词汇里就是一次**动作**（`tool.requested` 派发 / `tool.completed` 收结果），
+#:   映射到 `step_started` / `step_finished`；
+#: - 未登记的类型**透传自身类型名**（加性变更：新增事件不会让老客户端解析失败，
+#:   也不会被静默吞掉）；
+#: - `_SSE_SILENT_TYPES` 里的类型不产帧——它们进事件流，但不是"任务进度"。
+_SSE_EVENT_BY_TYPE: Final[dict[str, str]] = {
+    EVENT_TOOL_REQUESTED: "step_started",
+    EVENT_TOOL_COMPLETED: "step_finished",
+}
+
+#: 不产出 SSE 帧的事件类型
+_SSE_SILENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        # 会话建立：任务页此刻还没有任何可渲染的进度
+        EVENT_SESSION_CREATED,
+        # 上下文装配明细（含完整 TaskStateBlock）：体积大、属内部投影，
+        # 走 `A4 步骤详情` 与回放接口读取，不推给浏览器
+        "context.assembled",
+    }
+)
+
+#: SSE 单次从事件流取回的批量（增量续传按批读，不假设会话长度）
+_STREAM_BATCH: Final[int] = 500
+
+#: 步骤投影使用的事件类型（步骤详情 = 事件流的投影，不是第二份状态）
+_STEP_EVENT_TYPES: Final[frozenset[str]] = frozenset({EVENT_TOOL_REQUESTED, EVENT_TOOL_COMPLETED})
+
+
+def _sse_legacy_fields(event: Event) -> dict[str, Any]:
+    """旧帧字段兼容：把老客户端读的字段提到帧数据顶层。
+
+    迁移前的帧数据是 `{"task_id": ..., "step": {...}}`；迁移后帧数据多了
+    `seq` / `type` / `payload`（加性），但 `step` 仍必须留在顶层——否则前端
+    "步骤列表就地更新"的逻辑要跟着改，那就不是向后兼容的增量了。
+
+    Args:
+        event: 事件记录。
+
+    Returns:
+        dict[str, Any]: 需要并入帧数据顶层的字段（无则空字典）。
+    """
+    if event.type in _STEP_EVENT_TYPES:
+        raw_step = event.payload.get("step")
+        if isinstance(raw_step, dict):
+            return {"step": raw_step}
+    return {}
 
 
 def new_task_id() -> str:
@@ -123,23 +187,30 @@ def _as_int(value: Any, default: int) -> int:
 class AgentService:
     """Agent 服务。
 
-    T01 为无状态桩实现：任务与步骤保存在进程内存字典中，
-    仅用于验证接口契约；T02 起接入底座 + Redis，适配层仍保持无状态。
+    T02 起**步骤状态不再存进程内存**：任务步骤、SSE 增量全部来自会话事件日志
+    （`EventStore`，规格 §3.1 原则 E1「事件是状态真源」）。迁移前的 `self._steps`
+    已被**整体删除**，不允许保留双写——"既写事件、又写一份可独立更新的状态表"
+    正是 E1 的违反判据，评审直接拒。
 
-    **租户化（SEC-01）**：`_tasks` / `_steps` 的键是 `(tenant_id, task_id)` 复合键，
+    仍留在进程内的是 `_tasks`（任务详情桩）：它是 T01/T02 期间的**降级来源**，
+    由 T03/T04 的 loop 用 `replay_state_block` 投影替换。**注意**：`_tasks` 里
+    不保存任何步骤，`A4 步骤详情`（`list_steps`）已完全改为读事件流，
+    因此"步骤"这条数据只有一个可写副本。
+
+    **租户化（SEC-01）**：`_tasks` 的键是 `(tenant_id, task_id)` 复合键，
     不是裸 `task_id`。进程内存字典是全进程共享的，若按裸 ID 索引，
     持 B 租户合法令牌的人只要知道（或枚举到）A 的任务 ID 就能读到 A 的目标、
-    产物与步骤——这正是实测到的越权形态。复合键让「按 ID 直取」在数据结构层
-    就不可能命中别人的记录，而不是依赖每个调用点自觉记得判断租户。
+    产物与步骤——这正是实测到的越权形态。事件流的租户维度由
+    `EventStore` 的 `tenant_id` 入参与库内 RLS 双重保证。
 
     Attributes:
         _settings: 配置实例。
         _dify: 底座客户端。
         _tasks: 桩任务表（键 `(tenant_id, task_id)`）。
-        _steps: 桩步骤表（键 `(tenant_id, task_id)`）。
+        _events: 会话事件存储（唯一状态真源）。
     """
 
-    #: 桩任务/步骤表上限（防长跑进程无界增长；优先淘汰最旧的终态记录）
+    #: 桩任务表上限（防长跑进程无界增长；优先淘汰最旧的终态记录）
     _STUB_CAPACITY: Final[int] = 1000
 
     def __init__(
@@ -147,6 +218,7 @@ class AgentService:
         settings: Settings | None = None,
         dify: DifyClient | None = None,
         usage: UsageService | None = None,
+        events: EventStore | None = None,
     ) -> None:
         """初始化服务。
 
@@ -154,6 +226,7 @@ class AgentService:
             settings: 可选配置实例。
             dify: 可选底座客户端。
             usage: 可选计量服务（测试注入；D-12 唯一写入口）。
+            events: 可选事件存储（测试注入；缺省按 `business_store` 选后端）。
         """
         self._settings = settings or get_settings()
         self._usage: UsageService = usage or get_usage_service(self._settings)
@@ -170,7 +243,7 @@ class AgentService:
         else:
             self._dify = get_dify_client()
         self._tasks: dict[tuple[str, str], TaskDetailData] = {}
-        self._steps: dict[tuple[str, str], StepsData] = {}
+        self._events: EventStore = events or event_store(self._settings)
 
     # ------------------------------------------------------------------
     # 租户化索引（SEC-01 的唯一键构造出口）
@@ -191,12 +264,62 @@ class AgentService:
         """
         return (auth.tenant_id, task_id)
 
-    def _prune_stub_tasks(self) -> None:
-        """桩表达到上限时淘汰最旧的终态任务（运行中的任务不淘汰）。
+    @staticmethod
+    def _session_id(auth: AuthContext, task_id: str) -> str:
+        """构造任务的会话 ID（事件流的取数维度）。
 
-        任务与步骤必须用同一个复合键一起删，否则 `list_steps` 会读到孤立步骤。
+        与 `_key` 同源：都把租户编进去，保证"同一个 task_id 在两个租户下"
+        是两条互不干扰的流（详见 `event_log/records.py::build_session_id`）。
+
+        Args:
+            auth: 鉴权上下文（取生效租户）。
+            task_id: 任务 ID。
+
+        Returns:
+            str: 形如 `tnt_x:task_y` 的会话 ID。
+        """
+        return build_session_id(auth.tenant_id, task_id)
+
+    async def _append_event(
+        self,
+        auth: AuthContext,
+        task_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> Event | None:
+        """向任务会话追加一条事件（灰度开关关闭时不动存储）。
+
+        开关语义（规格 §3.1 E1 的灰度口径）：`event_log_enabled=false` 时**不写**，
+        但**绝不**回落到"内存 dict 第二副本"——那等于把刚拆掉的设计缺陷装回去。
+        关闭后 SSE 只剩终态帧（见 `stream_events`），这是**可见的降级**，
+        不是静默的双写。
+
+        Args:
+            auth: 鉴权上下文。
+            task_id: 任务 ID。
+            event_type: 事件类型（14 类封闭枚举之一）。
+            payload: 事件载荷。
+
+        Returns:
+            Event | None: 落库事件；开关关闭时返回 None。
+        """
+        if not self._settings.event_log_enabled:
+            return None
+        return await self._events.append(
+            auth.tenant_id,
+            self._session_id(auth, task_id),
+            event_type,
+            payload,
+        )
+
+    def _prune_stub_tasks(self) -> None:
+        """桩任务表达到上限时淘汰最旧的终态任务（运行中的任务不淘汰）。
+
         终态集合与 `TaskStatus` 的语义一致：pending/running/queued/waiting_confirm
         都视为活跃，不能淘汰（否则用户会看到任务凭空消失）。
+
+        **不再联动步骤表**：步骤已迁到事件流，事件流按 `(session_id, seq)` 追加、
+        不随任务淘汰——审计要求"已发生的历史不可因进程内缓存淘汰而消失"。
         """
         if len(self._tasks) < self._STUB_CAPACITY:
             return
@@ -206,7 +329,6 @@ class AgentService:
                 return
             if task.status in terminal:
                 self._tasks.pop(key, None)
-                self._steps.pop(key, None)
 
     def _require(self, task_id: str, auth: AuthContext) -> TaskDetailData:
         """取本租户的任务记录，未命中一律 12001。
@@ -240,6 +362,14 @@ class AgentService:
         此时必须把按本地 ULID 先落下的占位记录一并删除：旧键不清会在进程内存里
         留下一条永远 `running`、进度 0 的"幽灵任务"，`list_tasks` 会把它返回给
         前端（"我的任务"里出现永不结束的项），用户因看不到真实进度还可能重复提交。
+
+        **两条与事件流相关的顺序约定（缺陷 D2 / D18）**：
+
+        1. 事件先写、任务后登记：append 失败时不能留下"有任务、无事件"的幽灵任务
+           （E1 之下，没有事件支撑的状态就是不存在）；
+        2. 换 ID 后要在**新会话**补写 `session.created`：占位会话由本地 ULID 派生，
+           真实会话由 `task_{run_id}` 派生，两者不是同一个会话。不补写则真实任务的
+           会话里一条事件都没有——回放重建不出 `goal`、A4 恒空、A6 只有终态帧。
 
         Args:
             request: 创建请求。
@@ -276,6 +406,17 @@ class AgentService:
         estimated = min(request.options.max_steps * 10, request.options.timeout_seconds)
         self._prune_stub_tasks()
 
+        # **顺序：先写事件、再登记任务**（缺陷 D18）。反过来一旦 append 失败，
+        # 就会留下"有任务、无事件"的幽灵任务：前端看到一条永远 running 的任务，
+        # 而事件流里没有任何事实支撑它——E1 之下，**没有事件的状态就是不存在**。
+        # 会话第一条事件（设计文档 §5.1 状态机：`[*] --> open: session.created`）。
+        # `goal` 进 payload 是必要的：回放要能重建任务目标，而目标只在这条事件里出现。
+        await self._append_event(
+            auth,
+            task_id,
+            EVENT_SESSION_CREATED,
+            self._session_created_payload(task_id, request),
+        )
         self._tasks[self._key(auth, task_id)] = TaskDetailData(
             task_id=task_id,
             status=TaskStatus.RUNNING,
@@ -285,7 +426,6 @@ class AgentService:
             usage=Usage(),
             updated_at=created_at,
         )
-        self._steps[self._key(auth, task_id)] = StepsData(task_id=task_id, steps=[])
 
         if not self._settings.mock_mode:
             response = await self._dify.post(
@@ -299,13 +439,33 @@ class AgentService:
             )
             native_run_id = str(response.payload.get("workflow_run_id", ""))
             if native_run_id:
-                # 切换 ID 前先清掉按本地 ULID 落下的占位记录（任务 + 步骤必须用同一个
-                # auth 算复合键一起删，租户维度不能丢）：否则内存里会留下一条永远
+                run_task_id = f"{_TASK_PREFIX}{native_run_id}"
+                # **换 ID 后必须在新会话里补写 `session.created`**（缺陷 D2）。
+                # 切换前的占位会话是本地 ULID 派生的，真实任务的会话由
+                # `_session_id(auth, new_task_id)` 决定——两句话不是同一个会话。
+                # 不补写的后果：`session.created` 是唯一承载 `goal` 的事件，
+                # 真实任务的会话里空无一物 → 回放重建不出目标、A4 步骤详情恒空、
+                # A6 只有终态帧。保留 `origin_*` 三个字段是为了让"占位会话 →
+                # 真实会话"的搬迁可追溯（否则两条 session.created 看起来像重复写入）。
+                await self._append_event(
+                    auth,
+                    run_task_id,
+                    EVENT_SESSION_CREATED,
+                    self._session_created_payload(
+                        run_task_id,
+                        request,
+                        origin_task_id=task_id,
+                        origin_session_id=self._session_id(auth, task_id),
+                        run_id=native_run_id,
+                        reissued=True,
+                    ),
+                )
+                # 换 ID 前先清掉按本地 ULID 落下的占位任务：否则内存里会留下一条永远
                 # `running`、进度 0 的"幽灵任务"，`list_tasks` 会把它返回给前端。
-                stale_key = self._key(auth, task_id)
-                self._tasks.pop(stale_key, None)
-                self._steps.pop(stale_key, None)
-                task_id = f"{_TASK_PREFIX}{native_run_id}"
+                # 占位会话的事件**不删**——事件流 append-only，且它记录的是
+                # "任务确实被发起过"这一事实（`origin_session_id` 指回来）。
+                self._tasks.pop(self._key(auth, task_id), None)
+                task_id = run_task_id
                 # blocking 模式下底座已同步返回终态（data.status），
                 # 直接映射为自研任务状态，而非停留 running（T02 实联调修复）
                 native_data = response.payload.get("data") or {}
@@ -316,7 +476,6 @@ class AgentService:
                     progress=100 if native_status == "succeeded" else 0,
                     updated_at=created_at,
                 )
-                self._steps[self._key(auth, task_id)] = StepsData(task_id=task_id, steps=[])
                 if native_status == "succeeded":
                     await self._record_automation(
                         task_id=task_id, units=_total_units_of(native_data), auth=auth
@@ -328,6 +487,37 @@ class AgentService:
             created_at=created_at,
             estimated_seconds=estimated,
         )
+
+    @staticmethod
+    def _session_created_payload(
+        task_id: str,
+        request: CreateTaskRequest,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        """构造 `session.created` 的载荷（两处写入共用，避免字段漂移）。
+
+        为什么共用：`session.created` 会在"占位会话"与"换 ID 后的真实会话"各写一次
+        （缺陷 D2），两处若各写一份字面量，`goal`/`profile` 迟早只在一处被改到，
+        而回放只认其中一条。
+
+        Args:
+            task_id: 该事件所属会话对应的任务 ID。
+            request: 创建请求（提供 goal / conversation_id / profile / tool_grants）。
+            **extra: 追加字段（换 ID 时带 `origin_task_id` / `origin_session_id` /
+                `run_id` / `reissued`）。
+
+        Returns:
+            dict[str, Any]: 事件载荷。
+        """
+        payload: dict[str, Any] = {
+            "task_id": task_id,
+            "conversation_id": request.conversation_id,
+            "profile": request.profile.value,
+            "goal": request.goal,
+            "tool_grants": list(request.tool_grants or []),
+        }
+        payload.update(extra)
+        return payload
 
     async def _record_automation(self, *, task_id: str, units: int, auth: AuthContext) -> None:
         """任务成功完成时写一条 `automation` 用量事件（D-12 第 2 条幂等键 = task_id）。
@@ -460,6 +650,11 @@ class AgentService:
         先确认归属再取步骤：步骤里有每一环的产出摘要与产物下载地址，
         越权读取的信息量比任务详情更大。
 
+        **T02 起步骤是事件流的投影**（规格 §3.1 E1）：步骤不再有独立存储，
+        每次查询都按序重放本会话的 `tool.requested` / `tool.completed` 事件，
+        同一 `step_id` 以**最后一条**事件为准（后到的事件覆盖状态）。
+        因此"当前步骤"不存在第二个可写副本。
+
         Args:
             task_id: 任务 ID。
             auth: 鉴权上下文。
@@ -471,7 +666,48 @@ class AgentService:
             ApiError: 任务不存在、已过期或不属于当前租户（12001）。
         """
         self._require(task_id, auth)  # 归属校验：未命中即 12001
-        return self._steps.get(self._key(auth, task_id), StepsData(task_id=task_id, steps=[]))
+        return await self._project_steps(task_id, auth)
+
+    async def _project_steps(self, task_id: str, auth: AuthContext) -> StepsData:
+        """把事件流投影成步骤列表（A4 的唯一数据来源）。
+
+        Args:
+            task_id: 任务 ID。
+            auth: 鉴权上下文。
+
+        Returns:
+            StepsData: 步骤列表（按首次出现顺序，同 `step_id` 取最后一条事件）。
+        """
+        session_id = self._session_id(auth, task_id)
+        ordered: dict[str, StepItem] = {}
+        cursor = 0
+        while True:
+            batch = await self._events.read_after(
+                auth.tenant_id, session_id, cursor, limit=_STREAM_BATCH
+            )
+            if not batch:
+                break
+            for event in batch:
+                cursor = event.cursor
+                if event.type not in _STEP_EVENT_TYPES:
+                    continue
+                raw_step = event.payload.get("step")
+                if not isinstance(raw_step, dict):
+                    continue
+                try:
+                    step = StepItem.model_validate(raw_step)
+                except ValueError:  # pragma: no cover - 历史脏数据不应让整页 500
+                    logger.warning(
+                        "agent_step_payload_invalid",
+                        task_id=task_id,
+                        session_id=session_id,
+                        seq=event.seq,
+                    )
+                    continue
+                ordered[step.step_id] = step
+            if len(batch) < _STREAM_BATCH:
+                break
+        return StepsData(task_id=task_id, steps=list(ordered.values()))
 
     @staticmethod
     def _map_native_artifact(item: dict[str, Any]) -> Artifact:
@@ -661,6 +897,42 @@ class AgentService:
                 f"{_DIFY_WORKFLOWS_PATH}/runs/{task_id.removeprefix(_TASK_PREFIX)}/stop", {}
             )
 
+        # 取消是**状态迁移**，必须进事件流（缺陷 D8）：只改 `_tasks` 的话，
+        # 取消这件事回放不出来、审计查不到、重启即丢——而"任务为什么停在这里"
+        # 恰恰是审计最常问的问题。
+        #
+        # **但写入点在下游 `/stop` 之后，所以这里必须降级而不是抛错**（缺陷 N2）：
+        # 上面那句 `POST /stop` 已经把运行停掉了，若此后 append 失败还返回错误，
+        # 用户看到的是"取消失败"→ 重试 → 再打一次 `/stop`（对已停的 run 可能 404）
+        # → 于是"取消一直失败，但任务其实早就停了"，而事件流里一条记录都没有
+        # ——这是最坏的一种不一致：状态、界面、事实三者互相矛盾。
+        # 取舍：**用户感知"已取消"优先于"事件一定写得下"**，写失败降级为 WARN
+        # （由对账脚本按 WARN 发现偏差）。用已有类型 `turn.finished` 承载，
+        # 不新增枚举（V1.0 封闭 14 类）。
+        #
+        # ⚠ V1.0 的临时妥协：`_tasks` 与事件流仍是两份状态，才需要这种"容忍一半
+        # 成功"的写法。T03/T04 把 `_tasks` 改为事件投影之后，取消只需写事件
+        # （无第二份状态要同步），这个 try/except 即可删除。
+        try:
+            await self._append_event(
+                auth,
+                task_id,
+                EVENT_TURN_FINISHED,
+                {
+                    "task_id": task_id,
+                    "outcome": "cancelled",
+                    "reason": str(ErrorCode.TASK_CANCELLED.value),
+                    "status": TaskStatus.CANCELLED.value,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "agent_task_cancel_event_write_failed",
+                task_id=task_id,
+                tenant_id=auth.tenant_id,
+                error=type(exc).__name__,
+                detail=str(exc)[:200],
+            )
         detail.status = TaskStatus.CANCELLED
         detail.updated_at = _now_iso()
         logger.info("agent_task_cancelled", task_id=task_id)
@@ -685,38 +957,113 @@ class AgentService:
         """
         self._require(task_id, auth)
 
-    async def stream_events(self, task_id: str, auth: AuthContext) -> AsyncIterator[str]:
+    async def stream_events(
+        self,
+        task_id: str,
+        auth: AuthContext,
+        *,
+        after_id: int = 0,
+    ) -> AsyncIterator[str]:
         """订阅任务进度事件（SSE）。
 
         自研事件集：`step_started` / `step_finished` / `task_completed`，
         绝不复用底座原生事件名（架构文档 3.3.5）。
 
+        **T02 迁移的核心**：迁移前这里读的是进程内 `self._steps`（刷新即丢、
+        多副本不可用、断线不续）；现在读的是 `EventStore.read_after` 的增量
+        （`cursor > after_id`），于是：
+
+        - 每一帧带 `id: <cursor>`，客户端断线后用 `Last-Event-ID` 重连，
+          服务端只补增量 → **零丢失、零重复**；
+        - 多副本部署与刷新页面都能读到同一份历史（历史在库里，不在进程里）。
+
+        帧格式说明：`id:` 行放在 `event:` 行**之后**。SSE 规范对同一帧内的字段顺序
+        没有要求，这样做是为了保持既有解析方式（客户端与用例都按"第一行是
+        `event:`"读取）不变——这是一次**向后兼容的增量**，不是新协议。
+
         Args:
             task_id: 任务 ID。
             auth: 鉴权上下文。
+            after_id: 续传游标（来自 `Last-Event-ID` 请求头；0 表示从头）。
 
         Yields:
             str: SSE 文本帧。
+
+        Raises:
+            ApiError: 任务不存在、已过期或不属于当前租户（12001）。
         """
-        steps = self._steps.get(self._key(auth, task_id), StepsData(task_id=task_id, steps=[]))
-        for step in steps.steps:
-            event = "step_started" if step.status == StepStatus.RUNNING else "step_finished"
-            yield sse_frame(event, {"task_id": task_id, "step": step.model_dump()})
+        self._require(task_id, auth)  # 归属校验必须在产出第一帧之前
+        session_id = self._session_id(auth, task_id)
+        # 游标必须**钳在 [0, tail]**（缺陷 D3）。不钳的后果不是"多推几条"，而是
+        # 客户端永久静默：越界值（时间戳 / 别的会话的 id / 人为构造）被原样回显成
+        # 终态帧的 `id:`，客户端下次仍带同一个越界值 → 永远拿不到进度帧，而服务端
+        # 一切正常、日志无异常。越界一律按"从头回放"处理：回放幂等，重复下发不会
+        # 让状态错（这正是 E1 把"续传"定义成 `cursor > after_seq` 的红利）。
+        if self._settings.event_log_enabled:
+            tail = await self._events.tail_cursor(auth.tenant_id, session_id)
+            cursor = after_id if 0 < after_id <= tail else 0
+        else:
+            # 灰度关闭时没有事件可读，也不该为一次"注定空的读"去打数据库
+            cursor = 0
+
+        if self._settings.event_log_enabled:
+            while True:
+                batch = await self._events.read_after(
+                    auth.tenant_id, session_id, cursor, limit=_STREAM_BATCH
+                )
+                if not batch:
+                    break
+                for event in batch:
+                    cursor = max(cursor, event.cursor)
+                    if event.type in _SSE_SILENT_TYPES:
+                        continue
+                    yield sse_frame_with_id(
+                        _SSE_EVENT_BY_TYPE.get(event.type, event.type),
+                        {
+                            "task_id": task_id,
+                            "seq": event.cursor,
+                            "type": event.type,
+                            "payload": event.payload,
+                            **_sse_legacy_fields(event),
+                        },
+                        cursor,
+                    )
+                if len(batch) < _STREAM_BATCH:
+                    break
 
         detail = self._require(task_id, auth)
-        yield sse_frame("task_completed", {"task_id": task_id, "status": detail.status.value})
+        yield sse_frame_with_id(
+            "task_completed",
+            {"task_id": task_id, "status": detail.status.value},
+            cursor,
+        )
 
-    def append_steps(self, task_id: str, steps: list[StepItem], auth: AuthContext) -> None:
-        """追加步骤到桩任务（供联调与测试使用）。
+    async def append_steps(self, task_id: str, steps: list[StepItem], auth: AuthContext) -> None:
+        """把步骤写入任务会话的事件流（联调与测试入口）。
+
+        **为什么是 `async`**：步骤现在落在 PostgreSQL / 内存事件存储上，写是一次
+        真实 I/O；保留同步签名只能靠"起个后台任务然后不等"，那正是规格 §3.1 E1
+        警告的静默丢失形态（调用方以为写完了，回放却读不到）。
+
+        事件类型映射：`step.status == running` → `tool.requested`，
+        其余 → `tool.completed`（与 `_SSE_EVENT_BY_TYPE` 互为逆映射，保证
+        "写进去什么、推出来什么"一致）。
 
         Args:
             task_id: 任务 ID。
             steps: 步骤列表。
-            auth: 鉴权上下文（写入落在当前租户的键上）。
+            auth: 鉴权上下文（写入落在当前租户的会话上）。
         """
-        key = self._key(auth, task_id)
-        existing = self._steps.setdefault(key, StepsData(task_id=task_id, steps=[]))
-        existing.steps.extend(steps)
+        for step in steps:
+            event_type = (
+                EVENT_TOOL_REQUESTED if step.status == StepStatus.RUNNING else EVENT_TOOL_COMPLETED
+            )
+            await self._append_event(
+                auth,
+                task_id,
+                event_type,
+                {"step": step.model_dump(mode="json")},
+            )
 
 
 _service: AgentService | None = None

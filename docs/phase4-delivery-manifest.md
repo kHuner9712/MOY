@@ -55,7 +55,7 @@
 | `T4-01.4` | `apps/adapter/app/db/migrate.py` | T4-01.4 | W1 | 代码 | 已建 | b96ba7d | — |
 | `T4-01.4` | `apps/adapter/tests/integration/test_migration_lock.py` | T4-01.4 | W1 | 测试 | 已建 | 2699897 | — |
 | `T4-01.4` | `deploy/init-schema-phase3.sql` | T4-01.4 | W1 | 代码 | 已建 | 010db32 | — |
-| `T4-01.4` | `deploy/migrations/rollback/` | T4-01.4 | W1 | 迁移 | 已建 | 9a70b39 | — |
+| `T4-01.4` | `deploy/migrations/rollback/` | T4-01.4 | W1 | 迁移 | 已建 | 709f288 | — |
 | `T4-01.5` | `apps/adapter/app/db/repositories/artifact_repo.py` | T4-01.5 | W1 | 代码 | 已建 | b6effcf | — |
 | `T4-01.5` | `apps/adapter/app/db/repositories/usage/__init__.py` | T4-01.5 | W1 | 代码 | 已建 | 6d82160 | — |
 | `T4-01.5` | `deploy/migrations/0006_*.sql` | T4-01.5 | W1 | 迁移 | 已建 | 2699897 | — |
@@ -133,12 +133,12 @@
 | `T4-05.3` | `apps/adapter/tests/integration/test_retention_export_delete.py` | T4-05.3 | W4 | 测试 | 已建 | f30c95e | — |
 | `T4-05.3` | `sql/retention-audit.sql` | T4-05.3 | W4 | 代码 | 已建 | f30c95e | — |
 | `T4-05.4` | `deploy/.env.lite.example` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（13,772 B / 13.4 KiB） |
-| `T4-05.4` | `deploy/docker-compose.lite.yml` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（36,253 B / 35.4 KiB） |
+| `T4-05.4` | `deploy/docker-compose.lite.yml` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（37,791 B / 36.9 KiB） |
 | `T4-05.4` | `deploy/nginx/lite.conf` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（9,290 B / 9.1 KiB） |
 | `T4-05.4` | `deploy/nginx/nginx.conf` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（2,588 B / 2.5 KiB） |
 | `T4-05.4` | `deploy/validate_lite_up.sh` | T4-05.4 | W4 | 代码 | 已建 | 0d40a18 | D-28 核实：已建（36,367 B / 35.5 KiB） |
 | `T4-05.5` | `deploy/backup.sh` | T4-05.5 | W4 | 代码 | 已建 | 5d1f29b | D-28 核实：已建（19,513 B / 19.1 KiB） |
-| `T4-05.5` | `deploy/install.sh` | T4-05.5 | W4 | 代码 | 已建 | e5f031a | D-28 核实：已建（51,855 B / 50.6 KiB） |
+| `T4-05.5` | `deploy/install.sh` | T4-05.5 | W4 | 代码 | 已建 | e5f031a | D-28 核实：已建（52,230 B / 51.0 KiB） |
 | `T4-05.5` | `deploy/restore.sh` | T4-05.5 | W4 | 代码 | 已建 | 5d1f29b | D-28 核实：已建（19,086 B / 18.6 KiB） |
 | `T4-05.5` | `deploy/rollback.sh` | T4-05.5 | W4 | 代码 | 已建 | 18eff2e | — |
 | `T4-05.5` | `deploy/upgrade.sh` | T4-05.5 | W4 | 代码 | 已建 | 18eff2e | — |

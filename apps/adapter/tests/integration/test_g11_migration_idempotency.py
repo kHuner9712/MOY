@@ -61,9 +61,10 @@ PROBE_TABLE = f"probe_default_priv_{uuid.uuid4().hex[:8]}"
 #: 阶段三 B17 起 0003 迁移自足建表（9 张插件域表），故总数 25 → 34；
 #: 阶段四 0008 再建 2 张（`conversation` / `message`），34 → 36；
 #: 0009/0010 再建 4 张（记忆三表 + `background_job`），36 → 40；
-#: 0011 再建 1 张（`tenant_budget`），40 → 41。
+#: 0011 再建 1 张（`tenant_budget`），40 → 41；
+#: 0013 再建 17 张（`event_log` 父表 + 16 个 HASH 分区 `event_log_p00..p15`），41 → 58。
 #: 该常量随 schema 演进是预期行为；**不要**为了让数量对上而删表或跳过迁移。
-EXPECTED_TABLES = 41
+EXPECTED_TABLES = 58
 EXPECTED_PLANS = 3
 EXPECTED_PERMISSIONS = 20
 

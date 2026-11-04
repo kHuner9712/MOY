@@ -482,6 +482,24 @@ DO UPDATE SET units = usage_monthly.units + EXCLUDED.units, updated_at = now();
 | 24 | `ops_settings` | 运营 | `(tenant_id='__platform__', setting_key)` | 20 | 阈值/试用天数/公告 |
 | 25 | `integration_outbox` | 组织 | `(tenant_id, outbox_id)` | 10⁵ | D-13 单向投影重试 |
 
+> **阶段三/四与底座新增表（本表之外，登记在此以免与测试基线分叉）**
+>
+> 上表冻结的是**阶段二**的 25 张表。后续批次在同一 schema 里继续建表，
+> 台账的权威清单是 `apps/adapter/tests/integration/test_schema_baseline.py::EXPECTED_TABLES`
+> （schema 基线用例逐张比对，多一张少一张都红）；本节负责让**文档**不落后于它：
+>
+> | 批次 | 表 | 张数 |
+> | --- | --- | --- |
+> | 阶段三 0003/0004/0005 | `plugin_catalog` / `plugin_version` / `plugin_installation` / `plugin_grant` / `plugin_capability_policy` / `plugin_review` / `plugin_task` / `plugin_task_step` / `plugin_artifact` | 9 |
+> | 阶段四 0008 | `conversation` / `message` | 2 |
+> | 阶段四 0009/0010 | `user_memory` / `memory_embedding` / `user_memory_setting` / `background_job` | 4 |
+> | 阶段四 0011 | `tenant_budget` | 1 |
+> | **底座 0013（T02）** | `event_log`（父表，`HASH(session_id)` 分区，主键 `(tenant_id, session_id, seq)`）+ `event_log_p00` … `event_log_p15`（16 个分区，**是真实 relation**，也会出现在 `information_schema.tables` 里） | **17** |
+>
+> 合计 25 + 9 + 2 + 4 + 1 + 17 = **58 张**。新增迁移建表时必须同批更新
+> ①本表 ②`test_schema_baseline.py::EXPECTED_TABLES` ③`test_g11_migration_idempotency.py::EXPECTED_TABLES`
+> ——三处任缺一处，都会在下一次全量跑时变红（这正是它们存在的意义）。
+
 ### 3.2 关系图
 
 ```mermaid
