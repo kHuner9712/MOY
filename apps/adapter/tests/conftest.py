@@ -38,16 +38,15 @@ from app.business.usage_service import reset_usage_service
 from app.clients.dify_client import reset_dify_client
 from app.clients.keycloak_client import reset_keycloak_client
 from app.core.config import Settings, get_settings, reset_settings_cache
-from app.core.errors import ApiError, ErrorCode
+from app.core.errors import ErrorCode
 from app.core.idempotency import (
     IdempotencyManager,
     InMemoryIdempotencyStore,
-    build_fingerprint,
     reset_idempotency_manager,
 )
 from app.core.logging import configure_logging, reset_logging_for_test
 from app.core.metrics import reset_counters
-from app.core.ratelimit import RateLimiter, reset_rate_limiter
+from app.core.ratelimit import reset_rate_limiter
 from app.db.repositories.billing import reset_billing_store
 from app.db.repositories.conversation import reset_conversation_stores
 from app.db.repositories.credential_repo import reset_credential_stores
@@ -339,12 +338,6 @@ def manager() -> IdempotencyManager:
 
 
 @pytest.fixture
-def limiter() -> RateLimiter:
-    """启用限流的限流器实例。"""
-    return RateLimiter(settings=Settings(ratelimit_enabled=True))
-
-
-@pytest.fixture
 async def async_client(app: FastAPI) -> AsyncIterator[Any]:
     """异步测试客户端（供需要 await 的用例使用）。"""
     from httpx import ASGITransport, AsyncClient
@@ -355,21 +348,9 @@ async def async_client(app: FastAPI) -> AsyncIterator[Any]:
 
 
 @pytest.fixture
-def api_error() -> type[ApiError]:
-    """业务异常类型（供类型标注使用）。"""
-    return ApiError
-
-
-@pytest.fixture
 def error_code() -> type[ErrorCode]:
     """错误码枚举类型。"""
     return ErrorCode
-
-
-@pytest.fixture
-def fingerprint() -> str:
-    """请求指纹样例。"""
-    return build_fingerprint("POST", "/api/v1/model/generate", TEST_TENANT_ID, TEST_USER_ID)
 
 
 # ===========================================================================
@@ -382,14 +363,11 @@ def fingerprint() -> str:
 #    超级用户（含 initdb 默认创建的 `officeai`）会绕过 FORCE ROW LEVEL SECURITY，
 #    用它跑隔离用例会"全绿但无效"——比不测更危险，故直接 pytest.fail 而非 skip。
 # 3. 连接池压到 1（pg_engine）用于"同一连接先后服务两个租户"的证明；
-#    并发用例另用 pg_pool_engine（8 连接）证明真的并发。
+#    真库并发用例的入口在 `tests/integration/pg_fixture.py` 的 `b01_concurrent_engine`。
 # ===========================================================================
 
 #: 测试库连接串环境变量（应指向 NOSUPERUSER NOBYPASSRLS 的应用角色，如 officeai_app）
 PG_DSN_ENV = "OA_TEST_DATABASE_URL"
-
-#: 隔离断言用的哨兵前缀（便于断言与清理，避免污染真实数据）
-SENTINEL_PREFIX = "QA_P2_SENTINEL"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -505,115 +483,6 @@ async def pg_engine(pg_dsn: str) -> AsyncIterator[Any]:
         yield engine
     finally:
         await engine.dispose()
-
-
-@pytest.fixture
-async def pg_pool_engine(pg_dsn: str) -> AsyncIterator[Any]:
-    """多连接池引擎（8 连接），用于并发隔离断言。
-
-    Args:
-        pg_dsn: 测试库连接串。
-
-    Yields:
-        AsyncIterator[Any]: 异步引擎；用例结束后释放。
-    """
-    from sqlalchemy.ext.asyncio import create_async_engine
-
-    from app.db.engine import normalize_database_url
-
-    engine = create_async_engine(
-        normalize_database_url(pg_dsn),
-        pool_size=8,
-        max_overflow=0,
-        pool_pre_ping=True,
-    )
-    try:
-        await assert_rls_not_bypassed(engine)
-        yield engine
-    finally:
-        await engine.dispose()
-
-
-@pytest.fixture
-async def seeded_tenants(pg_engine: Any) -> AsyncIterator[dict[str, dict[str, str]]]:
-    """造两个租户及各自的哨兵知识库（含清理）。
-
-    造数在 `set_config('app.tenant_id', ..., TRUE)` 事务内完成，
-    因此对**非超级用户**也合法（满足 RLS 的 WITH CHECK）。
-
-    Args:
-        pg_engine: 单连接池引擎。
-
-    Yields:
-        AsyncIterator[dict[str, dict[str, str]]]: `{"a": {...}, "b": {...}}`，
-        每项含 `tenant_id` / `base_id` / `name` / `user_id`。
-    """
-    import uuid
-
-    from sqlalchemy import text as sql_text
-
-    suffix = uuid.uuid4().hex[:8]
-    tenants: dict[str, dict[str, str]] = {}
-    for key in ("a", "b"):
-        tenants[key] = {
-            "tenant_id": f"tnt_qa_{suffix}_{key}",
-            "base_id": f"kb_qa_{suffix}_{key}",
-            "name": f"{SENTINEL_PREFIX}_{suffix.upper()}_{key.upper()}",
-            "user_id": f"usr_qa_{suffix}_{key}",
-        }
-
-    async def seed_one(item: dict[str, str]) -> None:
-        async with pg_engine.connect() as connection:
-            async with connection.begin():
-                await connection.execute(
-                    sql_text("SELECT set_config('app.tenant_id', :tid, TRUE)"),
-                    {"tid": item["tenant_id"]},
-                )
-                await connection.execute(
-                    sql_text(
-                        "INSERT INTO tenant (tenant_id, name, deploy_mode) "
-                        "VALUES (:tid, :name, 'saas') ON CONFLICT (tenant_id) DO NOTHING"
-                    ),
-                    {"tid": item["tenant_id"], "name": f"QA {item['tenant_id']}"},
-                )
-                await connection.execute(
-                    sql_text(
-                        "INSERT INTO knowledge_base_meta "
-                        "(tenant_id, base_id, name, owner_user_id, created_by) "
-                        "VALUES (:tid, :bid, :name, :uid, :uid) "
-                        "ON CONFLICT (tenant_id, base_id) DO NOTHING"
-                    ),
-                    {
-                        "tid": item["tenant_id"],
-                        "bid": item["base_id"],
-                        "name": item["name"],
-                        "uid": item["user_id"],
-                    },
-                )
-
-    async def purge_one(item: dict[str, str]) -> None:
-        async with pg_engine.connect() as connection:
-            async with connection.begin():
-                await connection.execute(
-                    sql_text("SELECT set_config('app.tenant_id', :tid, TRUE)"),
-                    {"tid": item["tenant_id"]},
-                )
-                await connection.execute(
-                    sql_text("DELETE FROM knowledge_base_meta WHERE tenant_id = :tid"),
-                    {"tid": item["tenant_id"]},
-                )
-                await connection.execute(
-                    sql_text("DELETE FROM tenant WHERE tenant_id = :tid"),
-                    {"tid": item["tenant_id"]},
-                )
-
-    for key in ("a", "b"):
-        await seed_one(tenants[key])
-    try:
-        yield tenants
-    finally:
-        for key in ("b", "a"):
-            await purge_one(tenants[key])
 
 
 @pytest.fixture(autouse=True)

@@ -1327,20 +1327,6 @@ def admin_headers(e2e_settings: Settings, tenant: str) -> dict[str, str]:
 
 
 @pytest.fixture
-def member_headers(e2e_settings: Settings, tenant: str) -> dict[str, str]:
-    """普通成员请求头。
-
-    Args:
-        e2e_settings: 配置实例。
-        tenant: 租户 ID。
-
-    Returns:
-        dict[str, str]: 请求头。
-    """
-    return _token(e2e_settings, tenant_id=tenant, user_id="usr_e2e_member", roles=["member"])
-
-
-@pytest.fixture
 def bare_repo(tmp_path: Path) -> BareRepo:
     """本地裸仓库（1 个初始提交 + main 分支）。
 
