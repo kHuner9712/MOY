@@ -755,9 +755,11 @@ CREATE TABLE IF NOT EXISTS event_log (
   prev_hash   text        NOT NULL,
   hash        text        NOT NULL,
   created_at  timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (session_id, seq)
+  PRIMARY KEY (tenant_id, session_id, seq)
 ) PARTITION BY HASH (session_id);
 ```
+
+> **主键为什么含 `tenant_id`（2026-11-04 真库修正）**：初版写的是 `PRIMARY KEY (session_id, seq)`，与「取号按租户」的读法自相矛盾——RLS 让租户 B 看不见租户 A 的同名会话行，`MAX(seq)` 返回 0，B 取 `seq=1` 去撞 A 的主键，冲突被 RLS 藏起来、重试永远不会成功（真库表现为 16 次 `IntegrityError` 后抛 30003）。**唯一性范围必须与取数范围一致**：键含 `tenant_id`，与内存实现 `dict[(tenant_id, session_id)]` 的语义也对齐了。CI run `41779364118` 的 `test_tenant_isolation` 是这条缺陷的 red 证据。
 
 三条硬约束：**无 UPDATE/DELETE 权限**（应用角色只授 INSERT + SELECT，与现有 `init-rls.sql` 的授权体例一致）、**RLS 按 `tenant_id`**、**`hash = sha256(prev_hash || event_id || type || payload_canonical)`** 形成链。hash 链不是安全机制（同库内可被 DBA 重写），而是**给客户的完整性证据**：导出审计时附带链头，客户可自行重算。
 
