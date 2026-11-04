@@ -628,11 +628,10 @@ class TestIdentityEndpoints:
     def test_u3_members_requires_org_id(
         self, client: TestClient, auth_headers: dict[str, str]
     ) -> None:
-        """空组织 ID 被路径参数校验拦截为 20001。"""
+        """空组织 ID 未匹配任何路由，返回 404 + 20004（不再接受 401 兜底）。"""
         response = client.get("/api/v1/identity/organizations//members", headers=auth_headers)
-        assert response.status_code in {401, 404}
-        if response.status_code == 404:
-            assert response.json()["code"] == 20004
+        assert response.status_code == 404
+        assert response.json()["code"] == 20004
 
     def test_u4_invite(
         self, client: TestClient, auth_headers: dict[str, str], idempotency_headers: dict[str, str]

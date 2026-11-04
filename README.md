@@ -20,11 +20,12 @@
 >
 > | 口径 | 前置条件 | 结果 |
 > | --- | --- | --- |
-> | **本机（无 PG）** | 不设 `OA_TEST_DATABASE_URL`，`OA_BATCH=B21` | **2559 passed / 238 skipped / 0 failed**（收集 2797，2026-11-04 实测） |
+> | **本机（无 PG）** | 不设 `OA_TEST_DATABASE_URL`，`OA_BATCH=B21` | **2675 passed / 258 skipped / 0 failed**（收集 2933，其中 PG 用例 258 条；2026-11-04 实测） |
 > | **全量（含 PG）** | 设 DSN 指向 `NOSUPERUSER NOBYPASSRLS` 角色 + `--run-pg` + 设 `OA_BATCH` | **以 CI `ci-adapter` 的 junit.xml 工件为准**（最近一次 success：2026-11-03 run `41641650690`）；本地复跑需真库 |
 >
-> 未设 `OA_BATCH` 时 `tests/expected_xfail.py::current_batch()` **故意抛错**（缺失即红，
-> 不给静默默认）。无库口径下 238 条 PG 用例按设计 skip，不计入断言有效性。
+> 未设 `OA_BATCH` 时 `tests/expected_xfail.py::current_batch()` **默认回落 `B21`**（与 CI 同值），
+> 裸跑不再报红；`deploy/validate_batch_clock.py` 仍要求显式设置（缺失即退出码 2）。无库口径下
+> 258 条 PG 用例按设计 skip，不计入断言有效性。
 >
 > **数字的唯一权威来源 = CI 工件**（`.github/workflows/ci-adapter.yml` 的 junit.xml /
 > coverage 报告）。本机复跑命令：`pytest tests -q --cov=app --cov-report=term-missing`
@@ -69,7 +70,7 @@ officeai/                              # Monorepo 根目录
 │   ├── docker-compose.saas.yml        # SaaS 本地联调
 │   ├── .env.example                   # OA_* 全量环境变量样例
 │   ├── init-schema-phase3.sql         # 阶段三 Schema 初值（9 张插件/任务表）
-│   ├── migrations/                    # 0002-0012 迁移（11 个，0001 为 RESERVED 基线别名；幂等 + 自足 + 双路径门禁）
+│   ├── migrations/                    # 0002-0013 迁移（12 个，0001 为 RESERVED 基线别名；幂等 + 自足 + 双路径门禁）
 │   └── validate_*.py                  # 门禁脚本 16 个（端点/迁移/依赖/镜像/插件/Schema 保留/批量时钟/配置名/部署/门禁接线/导入方向/离线包/打包/PG 标记/仓库对称/密钥）
 ├── docs/
 │   ├── README.md                      # 文档索引（唯一入口：规范 / 验收 / 审计 / 决策 + 工具脚本登记）
@@ -83,7 +84,7 @@ officeai/                              # Monorepo 根目录
 │   ├── plugin-dev-guide.md            # 插件开发规范与样例（P0-P3-05）
 │   ├── api/                           # 接口规范与端点冻结基线（openapi.json 由适配层生成）
 │   ├── adr/                           # 架构决策记录（ADR-0001~0003）
-│   ├── decisions/                     # 决策确认单（拍板附件，0003~0008）
+│   ├── decisions/                     # 决策确认单（拍板附件，0003~0009）
 │   ├── compliance/                    # 隐私政策 / DPA / 安全白皮书
 │   ├── security/                      # 安全评估与权限白名单锁
 │   └── archive/                       # 历史审计与 QA 报告（只读快照）

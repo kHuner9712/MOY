@@ -176,14 +176,14 @@ OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing   # OA_BATCH �
 
 | 口径 | 前置条件 | 命令 | 期望 | 用途 |
 | --- | --- | --- | --- | --- |
-| **无 PG（本机默认）** | 无（`OA_BATCH` 可省略，默认 `B21`） | 上方命令（不带 `--run-pg`） | 0 failed；PG 用例**按设计 skip（实测 238 条）** | 快速回归 |
+| **无 PG（本机默认）** | 无（`OA_BATCH` 可省略，默认 `B21`） | 上方命令（不带 `--run-pg`） | 0 failed；PG 用例**按设计 skip（实测 258 条）** | 快速回归 |
 | **有 PG（CI 口径）** | `--run-pg` + `OA_TEST_DATABASE_URL` 指向 `NOSUPERUSER NOBYPASSRLS` 角色 | 上方命令追加 `--run-pg` | **skipped 必须为 0**；`--cov-fail-under=85` 卡合并；另卡 `db/repositories/*/postgres.py ≥ 88%`（实测 90.66% − 2.66pp，审计 2026-11-02 M2） | **唯一权威口径** |
 | **前端** | 仓库根 `npm ci` 后 | `npm run test --workspace apps/web -- --coverage` | 四指标达 `vitest.config.mts` 阈值（只升不降棘轮） | 前端回归 |
 
 - **`--run-pg` 门槛（审计 2026-11-03 QA-13）**：不加该开关时，测试夹具按「没有真实 PostgreSQL」
-  跳过全部 PG 用例（本机实测 **238 skipped**）——这些用例**没有执行**，不能当作通过。
+  跳过全部 PG 用例（本机实测 **258 skipped**）——这些用例**没有执行**，不能当作通过。
   跑 CI 等价口径必须同时满足：① `pytest --run-pg`；② `OA_TEST_DATABASE_URL` 已导出且
-  连接可用；③ 库已完成 `alembic upgrade head`；④ 连接角色 `NOSUPERUSER NOBYPASSRLS`
+  连接可用；③ 库已完成迁移（`python -m app.db.migrate --apply`，本项目不使用 Alembic）；④ 连接角色 `NOSUPERUSER NOBYPASSRLS`
   （RLS 隔离用例靠它才有意义）。验收时以 `skipped == 0` 为准，不看 passed 数。
 - **`OA_BATCH` 有默认值（`B21`）**：`tests/expected_xfail.py::current_batch()` 在未设置时
   回落 CI 同值，裸跑不再红 1 条；显式设置仍生效，`deploy/validate_batch_clock.py`

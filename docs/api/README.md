@@ -133,7 +133,7 @@ push / PR 触发时自动生成并作为构件上传，命名 `openapi-spec`。
 | --- | --- |
 | 响应格式 | `{code, message, data}`，`code=0` 成功 |
 | HTTP 状态码 | 仅承载传输层语义，业务语义一律以 `body.code` 为准 |
-| 鉴权 | 除 `/healthz`、`/readyz` 外均需 `Authorization: Bearer <token>` |
+| 鉴权 | 默认需 `Authorization: Bearer <token>`；豁免清单（`app/middleware/error_handler.py` 的 `AUTH_EXEMPT_PATHS`）：`/healthz`、`/readyz`、`/metrics`、`/api/v1/billing/public/callback`、`/sso/*`（5 个 OIDC 端点） |
 | 租户 | `X-Tenant-Id` 请求头；私有化模式默认 `default` |
 | 幂等 | 所有写接口必须携带 `Idempotency-Key`（UUID v4，24h 有效）；指纹含请求体摘要，同键异体判冲突（详见架构文档 3.0.5） |
 | 链路 | 响应头回写 `X-Trace-Id`，全链路透传 |

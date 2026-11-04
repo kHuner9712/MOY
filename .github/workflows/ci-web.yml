@@ -84,8 +84,8 @@ jobs:
       # QA-04（审计 2026-10-28）：阈值 = 实测基线（vitest.config.mts thresholds），
       # 2026-10-29 起分母改算全量源码，只升不降。
       # P0（审计 2026-10-30 H2）+ P1 补测三十六批（2026-10-30 ~ 2026-11-01）后，
-      # 当前阈值为四指标全覆盖：statements 86.4 / branches 80.4 /
-      # functions 81.1 / lines 87.6（只升不降棘轮；四指标全部站上 80%）。
+      # 当前阈值为四指标全覆盖：statements 88.8 / branches 84.0 /
+      # functions 83.9 / lines 90.0（与 apps/web/vitest.config.mts 的 thresholds 一致，只升不降棘轮）。
       # 浏览器级 e2e 见下方门禁 5；本地 `npm run test:e2e`。
       # ------------------------------------------------------------------
       - name: vitest（含覆盖率门禁）

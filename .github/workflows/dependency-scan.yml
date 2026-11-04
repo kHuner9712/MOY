@@ -526,7 +526,7 @@ jobs:
       #
       # 现改为调用 `deploy/validate_deps.py`：真源是架构文档 §8.1 / §8.2 的
       # **表格本身**（脚本内不建第二份包名常量），两处白名单不可能漂移。
-      # 该脚本当前是绿的（17 运行时 + 36 前端全部已登记），因此删掉内联白名单
+      # 该脚本当前是绿的（16 运行时 + 29 前端全部已登记），因此删掉内联白名单
       # **不需要**补 starlette / prometheus-client / python-docx。
       #
       # 注意：本 job **没有** job 级 `defaults.run.working-directory`，
