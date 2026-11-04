@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, Path, Query, Request
+from fastapi import APIRouter, Body, Depends, Header, Path, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.business.task_service import TaskService, get_task_service
@@ -58,6 +58,29 @@ router = APIRouter(prefix="/agent", tags=["Agent 服务"])
 
 #: 幂等键请求头（写接口必须携带，阶段二通用规则）
 IDEMPOTENCY_HEADER = "Idempotency-Key"
+
+
+def _parse_last_event_id(raw: str | None) -> int:
+    """解析 `Last-Event-ID` 请求头为回放游标。
+
+    **宽容解析，不报 4xx**：这个头是浏览器/代理按 SSE 规范自动重发的，取值可能
+    是空串、带空格，或（代理改写后）非数字。此时唯一正确的动作是**从头发一遍**
+    （游标 0）——回放幂等，重复下发不会让状态错；而返回 400 会让"网络抖动后
+    页面永久黑屏"，这是更坏的失败方式。
+
+    Args:
+        raw: 请求头原始值（可能为 None）。
+
+    Returns:
+        int: 回放游标；无法解析或为负时返回 0。
+    """
+    if not raw:
+        return 0
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
 
 
 def _action_gateway(settings: Settings) -> ActionGateway:
@@ -346,18 +369,26 @@ async def cancel_task(
     description=(
         "订阅任务进度推送，响应 Content-Type 为 text/event-stream。"
         "自研事件类型：step_started / step_finished / task_completed。"
+        "每帧携带 `id:`（回放游标）；断线后带 `Last-Event-ID` 请求头重连，"
+        "服务端只补该游标之后的增量事件（零丢失、零重复）。"
     ),
     response_class=StreamingResponse,
 )
 async def stream_task_events(
     context: RequestContext = Depends(get_request_context),
     task_id: str = Path(..., description="任务 ID", min_length=6, max_length=128),
+    last_event_id: str | None = Header(
+        default=None,
+        alias="Last-Event-ID",
+        description="上次收到的最后一个事件 id（回放游标）；缺省表示从头推送。",
+    ),
 ) -> StreamingResponse:
     """A6 任务事件推送。
 
     Args:
         context: 请求上下文。
         task_id: 任务 ID。
+        last_event_id: `Last-Event-ID` 请求头（断线续传游标）。
 
     Returns:
         StreamingResponse: SSE 流式响应。
@@ -369,7 +400,11 @@ async def stream_task_events(
     service = get_agent_service()
     await service.ensure_task_exists(task_id, context.auth)
     return StreamingResponse(
-        service.stream_events(task_id, context.auth),
+        service.stream_events(
+            task_id,
+            context.auth,
+            after_id=_parse_last_event_id(last_event_id),
+        ),
         media_type=SSE_MEDIA_TYPE,
         headers=SSE_HEADERS,
     )

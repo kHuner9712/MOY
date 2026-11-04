@@ -240,6 +240,31 @@ def sse_frame(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+def sse_frame_with_id(event: str, data: Any, event_id: int) -> str:
+    """构造带 `id:` 的 SSE 文本帧（断线续传的唯一依据）。
+
+    `id` 是**回放游标**（`Event.cursor`），不是会话内序号：fork 会话的回放流里
+    父流与本流都有 `seq=1`，只有游标全局单调。客户端把最后一次收到的 `id`
+    通过 `Last-Event-ID` 请求头带回，服务端只补 `cursor > id` 的增量。
+
+    字段顺序：`event:` → `id:` → `data:`。SSE 规范不要求同一帧内字段的先后，
+    而现有客户端与用例都按"第一行是 `event:`"解析，因此 `id:` 排在中间——
+    这是向后兼容的增量，不是新协议。
+
+    Args:
+        event: 自研事件名。
+        data: 事件载荷，将被序列化为单行 JSON。
+        event_id: 回放游标（`Event.cursor`）。
+
+    Returns:
+        str: 符合 SSE 协议的一帧文本。
+    """
+    import json
+
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event}\nid: {event_id}\ndata: {payload}\n\n"
+
+
 #: SSE 响应媒体类型
 SSE_MEDIA_TYPE: str = "text/event-stream"
 
