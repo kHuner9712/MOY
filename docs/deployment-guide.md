@@ -664,18 +664,19 @@ du -sh deploy/backups/*
 
 | 形态 | 何时选它 | 平台开放端口 | TLS 由谁终止 | 生效时点 |
 | --- | --- | --- | --- | --- |
-| **A. 前置网关终止（默认推荐）** | 客户已有 LB / 网关 / WAF，或需要与企业既有证书体系统一 | 只开 80 | 客户前置 LB / 网关 | **现在即支持** |
-| **B. 平台自建 TLS 终止** | 私有化现场确实没有 LB，又必须对外提供 HTTPS | 80 + 443 | 平台自身（`edge-tls.conf`） | 轮 2 交付（`docker-compose.tls.yml`） |
+| **A. 前置网关终止（推荐）** | 客户已有 LB / 网关 / WAF，或需要与企业既有证书体系统一 | 由前置网关发布（平台侧可只发布 80） | 客户前置 LB / 网关 | 需自备 HTTP-only 边缘配置（V1.0 未内置，见下） |
+| **B. 平台自建 TLS 终止** | 私有化现场确实没有 LB，又必须对外提供 HTTPS | 80 + 443 | 平台自身（`edge` + `nginx/edge.conf`） | **已交付**，随主 compose 的 `edge` 默认启动 |
 
 **默认推荐 A**，理由不是省事，是**责任边界**：证书生命周期由客户既有体系管理，平台不持有私钥，轮换不需要动平台；出现证书问题时责任方一目了然。只有"现场确实没有 LB 且必须 HTTPS"时才选 B。
 
-> B 形态现在还没有交付物。**在它落地之前，不要按本节 B 的步骤操作**——`docker-compose.tls.yml` 与 `edge-tls.conf` 尚不存在。
+> 交付现状：B 形态已并入主 compose 的 `edge`（`nginx:1.28-alpine`，同时监听 80 与 443：80 只做探活与 301 跳转，443 终止 TLS 后承载全部路由）。`docker-compose.tls.yml` 与 `edge-tls.conf` **不再需要，也未创建**。
+> A 形态不在默认交付内：`edge.conf` 固定监听 443 并要求证书文件存在，若由前置网关单独终止 TLS，需自备一份 HTTP-only 边缘配置（或去掉 443 端口映射并替换 `edge.conf`）。
 
 #### 12.5.2 B 形态（平台自建 TLS）的证书约定
 
 - 证书放 `deploy/nginx/tls/fullchain.pem` 与 `deploy/nginx/tls/privkey.pem`；`chmod 600 privkey.pem`。
 - `deploy/nginx/tls/` 已在 `.gitignore` 内：**证书不入库、不进镜像**。
-- 启动：`docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tls.yml up -d`。
+- 启动：`docker compose -f deploy/docker-compose.yml up -d`（`edge` 已包含在主 compose 中，无需覆盖文件）。
 - 轮换证书后只需 `docker compose exec edge nginx -s reload`，**不要重启容器**（会掐断进行中的 SSE 流）。
 - 自签证书**仅限验证用途**，必须导入客户端信任链，否则用户看到证书告警——这一条要写进验收单，避免现场把"证书告警"当成"部署失败"。
 

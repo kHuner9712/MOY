@@ -14,7 +14,7 @@
 
 1. **插件骨架是真的，但只支撑「官方声明式插件」**：插件没有任何可执行载荷字段，平台用 6 个封闭原语按 JSON 声明编排，同进程执行（`apps/adapter/app/plugins/schema.py:3-6`、`app/plugins/actions.py:28-36`、`app/plugins/engine.py:1-23`）。这对 V1.0 的「深垂直」是好事——不需要沙箱，也不存在第三方代码风险。
 2. **生态所需的七件套基本是壳**：签名/审核、对外 SDK、弃用策略、按插件计量与分账均无实现；版本兼容只有 semver + 最低平台版本，没有弃用通道。
-3. **V1.0 的四块硬缺口是交付形态，不是功能**：离线镜像包构建脚本未实现、`OA_OFFLINE_MODE` 是死配置、客户自带模型 Key 无注入契约、许可证/节点授权不存在、审计日志无导出。
+3. **V1.0 的四块硬缺口是交付形态，不是功能**：离线镜像包构建脚本未实现、客户自带模型 Key 无注入契约、许可证/节点授权不存在、审计日志无导出。（`OA_OFFLINE_MODE` 死配置已于 2026-11-04 清理：主模板与门禁早前删除，仅剩的 `.env.lite.example` 残留也已删除。）
 4. **不建议在 V1.0 补插件市场**：现有市场页与安装链路是给「官方 6 个插件」用的，扩到第三方会同时引爆隔离、签名、分账、治理四条线；V1.1 再做更划算。
 
 ---
@@ -143,7 +143,7 @@
   - 轻量 9 容器栈与 `images.lock`（`deploy/docker-compose.lite.yml`、`deploy/images.lock`）。
 - 缺：
   1. **离线包构建侧没有实现**：`build-images.sh / load-images.sh / verify-images.sh / manifests/` 均为占位，README 明说「当前一个都不存在」（`deploy/offline/README.md:1-22`）；
-  2. **`OA_OFFLINE_MODE` 是死配置**：install.sh 只写进 `.env`，适配层无消费方，门禁把它登记为「已删除死配置回归锁」（`deploy/validate_config_names.py:145/459`）；
+  2. **`OA_OFFLINE_MODE` 死配置已清理（2026-11-04）**：`install.sh` 写入与门禁登记已于早前删除，最后残留的 `deploy/.env.lite.example` 一行也已删除；离线模式若实现需重新引入并补消费方；
   3. 无介质/容量/CPU 架构决策（README 阻塞项，`deploy/offline/README.md:62-65`）。
 - V1.0 验收口径：在一台**无外网**干净机器上，`bash deploy/install.sh --offline --images-dir <介质>` 一次装成；篡改任一 tar 后必须退出码 3；安装完成后无任何外联请求（可用客户侧防火墙证明）。
 
@@ -186,7 +186,7 @@
 | --- | --- | --- | --- | --- |
 | A1 | 选定并做深**一个**垂直工作流 | `app/plugins/manifests/plg_*.json`、`app/plugins/guards/`、`app/plugins/actions.py`（仅扩声明与护栏，不新增原语）、对应测试 | 该垂直端到端样例 ≥20 条；每步成功/接管/失败路径有断言；产物可下载且质量抽检通过；无新增原语 | 选哪条垂直：**待用户确认** |
 | A2 | 气隙一体机交付 | `deploy/offline/`（新增构建/校验脚本）、`deploy/install.sh`、`deploy/images.lock`、`deploy/sbom/generate.py`、文档 | 无外网一次装成；篡改包退出码 3；安装后台账 digest 全对；交付介质与架构已定 | 介质/架构：**待用户确认** |
-| A3 | 处置 `OA_OFFLINE_MODE` | `deploy/validate_config_names.py`、`.env` 模板、`app/core/config.py`（二选一：接消费方或删除） | 门禁不再把它当死配置；文档与清单自洽 | 保留语义 or 删除：**待用户确认** |
+| A3 | 处置 `OA_OFFLINE_MODE` | `deploy/validate_config_names.py`、`.env` 模板、`app/core/config.py`（二选一：接消费方或删除） | 门禁不再把它当死配置；文档与清单自洽 | ✅ **已删除（2026-11-04）**：主模板、`install.sh`、门禁登记与 `.env.lite.example` 残留均清理完毕 |
 | A4 | 客户自带模型 Key 契约 | `deploy/.env*.example`、`deploy/install.sh` 预检、文档；**不改** `credential_service` 的库级 Key 逻辑 | 交付物零供应商 Key；安装后真实调用成功；Key 不入日志/审计/响应 | 配置位置：**待用户确认** |
 | A5 | 离线许可证/节点授权 | 新增 `app/core/licensing.py`（或等价模块）、启动校验、`install.sh` 预检、文档 | 错节点/过期/篡改拒启；正常许可证可用；时钟回拨有容差 | 计量单位/续期方式：**待用户确认** |
 | A6 | 审计日志导出 | `app/api/v1/identity.py`、`app/business/audit_service.py`、`app/db/repositories/audit_repo.py`、导出任务 worker | 管理员可导出区间日志；导出本身写审计；大批量不阻塞 | 导出格式（CSV/JSON）：**待用户确认** |
@@ -243,7 +243,7 @@
 
 1. **垂直选择**：V1.0 做深哪一条（行政人事 / 内容运营 / 研发工作台），以及完成定义。
 2. **交付介质与架构**：离线包走物理介质/内网 FTP/对象存储？x86_64 还是也要 arm64？
-3. **`OA_OFFLINE_MODE`**：接真实消费方，还是删除并改文档？
+3. **`OA_OFFLINE_MODE`**：✅ 已拍板**删除**（2026-11-04），最后残留的 `.env.lite.example` 已清理；若未来实现离线模式再连同消费方一起引入。
 4. **BYOK 边界**：客户模型 Key 在 Dify 管理台配置，还是 Moy 提供配置向导/接口？
 5. **许可证口径**：按主机/核/席位计费？是否允许离线续期？是否绑定企业名？
 6. **审计导出格式与脱敏范围**：CSV/JSON？是否允许包含成员标识？

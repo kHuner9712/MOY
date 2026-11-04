@@ -1317,9 +1317,9 @@ flowchart LR
 | S7 配置**在工作区**（HEAD 无） | `sed -n '47,73p' .github/workflows/ci-adapter.yml` → `services.postgres` + `OA_TEST_DATABASE_URL` + `OA_BATCH: B21`；同样以 `git status` 确认为未入库 |
 | S9 **在工作区**（HEAD 无） | `grep -n "DEFAULT_TTL_SECONDS\|MAX_TTL_SECONDS" apps/adapter/app/core/artifact_token.py` → 900 / 86400；但 `git show HEAD:apps/adapter/app/core/artifact_token.py \| grep -c expires_at` → **0** |
 | **哪些改动未入库（C-3 核心证据）** | `git status --short` → `M` 11 个文件（含 `security.py`/`config.py`/`main.py`/`artifact_token.py`/`artifact_files.py`/两份 compose/`images.lock`/两个 workflow/2 个测试）＋ 2 个未跟踪新单测 |
-| **现有 PG 镜像无 vector 扩展** | `docker exec oa-postgres psql -U officeai -c "select name from pg_available_extensions where name='vector'"` → **0 行**（只有 `pg_trgm` 等）→ 必须换 `pgvector/pgvector:pg18`（Q-2） |
+| **现有 PG 镜像无 vector 扩展** | `docker exec oa-postgres psql -U officeai -c "select name from pg_available_extensions where name='vector'"` → **0 行**（只有 `pg_trgm` 等）→ 必须换 `pgvector/pgvector:0.8.7-pg18-bookworm`（Q-2；2026-10-29 已由 `pg18` 改为精确标签） |
 | **9 条镜像 RepoDigest 实测来源** | `sed -n '23,40p' docs/lite-container-baseline.md` → 9 条 digest 全列（P4-16 ① 回填依据，F-6） |
-| **proxy 镜像已核验** | 报告 §1.1 → `nginx:1.29-alpine` digest `sha256:56168782…30de`，93.5 MB，BSD-2（原「tag 待核验」已关闭） |
+| **proxy 镜像已核验** | `deploy/images.lock:197-200` → `nginx:1.28-alpine` digest `sha256:a8b39bd9…d236`，93.5 MB，BSD-2（R2-ARC-14 已于 2026-10-29 由 1.29 改为 1.28） |
 | **上下文取数模式默认值** | `grep -n "assemble_from" apps/adapter/app/` → 当前**无命中**（新功能，架构 §4.3.1 定为默认 `server`） |
 | **`milvus_uri` 是死字段** | `grep -rn "milvus" apps/adapter/app/` → 仅 `core/config.py:105` 声明，零读取（Q-2 代码零分叉实证） |
 | **不设 JVM 上限的后果** | `sed -n '149,155p' docs/lite-container-baseline.md` → Keycloak 空载 797.6 → 2166.8 MiB，整机 1.93 → 3.30 GiB |

@@ -301,8 +301,7 @@ edge、adapter、web、postgres-exporter、valkey-exporter、prometheus。
 - 前端四指标：statements `88.8` / branches `84.0` / functions `83.9` / lines `90.0` ——
   `apps/web/vitest.config.mts:306-309`（`all: true` 全量源码分母 `:32-40`）。
 - 实测值（2026-11-03 本机）：前端 89.78 / 85.06 / 84.93 / 90.98；后端裸跑 2535 passed / 238 skipped / 0 failed。
-  README 的用例数字仍是旧口径（`README.md:23` 全量 PG 2343 passed；`:235-236` 无 PG 2211 passed / 212 skipped），
-  **文档滞后**，见第 9 节。
+- README 的用例数字已于 2026-11-04 按实测更新（收集 2933 / PG 258），**唯一权威来源以 CI `junit.xml` 工件为准**。
 
 ### 7.3 CI 三个必需 workflow
 

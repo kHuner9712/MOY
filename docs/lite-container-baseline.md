@@ -22,10 +22,10 @@
 
 | # | 服务 | 镜像 : tag | RepoDigest（sha256） | 镜像大小 | 启动顺序依赖 | 存在理由（不可删的原因） |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `proxy` | `nginx:1.29-alpine` | `5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de` | 93.5 MB | adapter(healthy), web(healthy) | 统一入口 + TLS + **SSE 必须 `proxy_buffering off`**；`/metrics` 与 `/api` 分流。直连 adapter 会把 8000 暴露给客户网络 |
-| 2 | `adapter` | `officeai/adapter:1.0.0` | `969f696da3869d28f70622eff0a7e88eb6b440c4f944026f1e04d42d98a983aa` | 399 MB | postgres, valkey, dify-api(healthy) | 业务主体（84 端点 + 会话/记忆/计量/鉴权校验） |
+| 1 | `proxy` | `nginx:1.28-alpine` | `a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236` | 93.5 MB | adapter(healthy), web(healthy) | 统一入口 + TLS + **SSE 必须 `proxy_buffering off`**；`/metrics` 与 `/api` 分流。直连 adapter 会把 8000 暴露给客户网络 |
+| 2 | `adapter` | `officeai/adapter:1.0.0` | `969f696da3869d28f70622eff0a7e88eb6b440c4f944026f1e04d42d98a983aa` | 399 MB | postgres, valkey, dify-api(healthy) | 业务主体（96 端点 + 会话/记忆/计量/鉴权校验） |
 | 3 | `web` | `officeai/web:1.0.0` | `f638b96573608c97142b78230f304e9f37195da87793e0bb4647b17b945aa130` | 313 MB | adapter(healthy) | 自研前端（Next.js standalone，**不是静态站，必须有服务端进程**） |
-| 4 | `postgres` | **`pgvector/pgvector:pg18`** | `2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11` | 641 MB | —（根依赖） | 业务库 + **`vector` 扩展**（记忆向量 + 轻量版知识库向量）。实测 `PostgreSQL 18.6`，镜像内 `/usr/share/postgresql/18/extension/` 含 43 个 vector 相关文件 |
+| 4 | `postgres` | **`pgvector/pgvector:0.8.7-pg18-bookworm`** | `2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11` | 641 MB | —（根依赖） | 业务库 + **`vector` 扩展**（记忆向量 + 轻量版知识库向量）。实测 `PostgreSQL 18.6`，镜像内 `/usr/share/postgresql/18/extension/` 含 43 个 vector 相关文件 |
 | 5 | `valkey` | `valkey/valkey:9.2-alpine` | `cdcb7b1c7b6f1c9cb9442c71ac6275e78184657448407b2c1fdde7ee8024f4fb` | 70.9 MB | —（根依赖） | 幂等键、限流计数、缓存；Dify 的 celery broker（db1）也复用同实例 |
 | 6 | `keycloak` | `quay.io/keycloak/keycloak:26.8.1` | `79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244` | 752 MB | postgres(healthy) | **令牌签发方**。适配层「只做令牌校验与请求转发，不做登录与签发」（`security.py` 模块 docstring / 架构 3.0.2）。**没有它就没有人能登录**——这不是可选项 |
 | 7 | `dify-api` | `langgenius/dify-api:1.17.1` | `ceede5b903afaa20348f7ad80ebf847379dc56d886a99b9ec6a08913dacd7732` | 4.08 GB | postgres, valkey, plugin_daemon | 4 个能力档位应用（Service API `/v1/chat-messages`） |
@@ -38,7 +38,7 @@
 
 | 服务 | 镜像 | 何时需要 | 为什么不做常驻 |
 | --- | --- | --- | --- |
-| `dify-web` | `langgenius/dify-web:1.17.1`（**digest 待核验**，本轮未拉取） | ① 首次配置模型 provider（填模型 API Key）② 导入/升级 4 个档位应用 ③ 客户要自己改提示词 | 日常对话零依赖。**实测证据**：本机标准栈连续运行 29 小时**从未启动 diffy-web**，同期 `POST /api/v1/model/generate` 正常返回（`code=0`，usage 47/16/63） |
+| `dify-web` | `langgenius/dify-web:1.17.1`（digest `sha256:6353fe8e…`，见 `deploy/images.lock:69-71`；本轮未拉取整镜像） | ① 首次配置模型 provider（填模型 API Key）② 导入/升级 4 个档位应用 ③ 客户要自己改提示词 | 日常对话零依赖。**实测证据**：本机标准栈连续运行 29 小时**从未启动 diffy-web**，同期 `POST /api/v1/model/generate` 正常返回（`code=0`，usage 47/16/63） |
 
 建议编排里放 `profiles: [admin]`，运维手册写：`docker compose --profile admin up -d dify-web` → 配完 → `docker compose --profile admin down`。
 
@@ -208,7 +208,7 @@ JAVA_OPTS_APPEND: "-Xms64m -Xmx384m"
 | --- | --- |
 | 常驻容器 | **9** |
 | 可选容器（`dify-web`，profile `admin`） | 1（不常驻） |
-| 标准栈对照 | 18（编排定义）/ 实测运行 17（差 `dify-web`） |
+| 标准栈对照 | 21（编排定义）/ 常驻 20（`keycloak-import` 为一次性 `install` profile） |
 
 **对外统一写法（Q-1 拍板）**：
 

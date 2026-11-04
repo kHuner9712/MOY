@@ -104,7 +104,7 @@ graph TB
 | adapter（FastAPI） | 自研统一适配层 | 协议转换、参数校验、鉴权转发、错误统一封装、超时/重试/幂等控制；**禁止**任何业务编排逻辑 | 无（状态全部外置 Redis/PostgreSQL） |
 | dify-api / dify-worker | 底座能力层 | 多模型调度、RAG 索引与检索、Agent/Workflow 执行 | 有（依赖 PG/Redis/Milvus） |
 | keycloak | 业务能力层/基础设施 | 用户、组织、角色、令牌签发与校验 | 有 |
-| postgres / redis / milvus / minio | 基础设施层 | 数据持久化、缓存、向量检索、文件存储 | 有 |
+| postgres / valkey / milvus / SeaweedFS（compose 服务名 `object-store`） | 基础设施层 | 数据持久化、缓存、向量检索、文件存储 | 有 |
 
 **适配层边界红线（强制）**：适配层代码中禁止出现：会话归属判断、权限策略、套餐额度计算、提示词拼装、结果后处理与格式化（超出协议转换必要范围）等业务逻辑。以上能力一律放业务能力层或插件层。
 
@@ -118,7 +118,7 @@ graph TB
         ADA[adapter Pod ×N<br/>HPA 2-8]
         DFA[dify-api / worker<br/>可独立伸缩]
         PG[(PostgreSQL<br/>主从 + 行级隔离)]
-        RD[(Redis 集群)]
+        RD[(Valkey 集群)]
         ML[(Milvus 集群)]
         MIO[(SeaweedFS)]
         KC[Keycloak]
@@ -129,11 +129,10 @@ graph TB
         ADP[adapter 容器]
         DFP[dify-api / worker 容器]
         PGP[(PostgreSQL 容器)]
-        RDP[(Redis 容器)]
+        RDP[(Valkey 容器)]
         MLP[(Milvus 单机)]
         MIOP[(SeaweedFS 容器)]
         KCP[Keycloak 容器]
-        LIC[License 授权校验<br/>环境变量注入]
     end
 ```
 
@@ -141,7 +140,7 @@ graph TB
 | --- | --- | --- |
 | 编排 | K8s + HPA 弹性扩缩容 | Docker Compose 一键部署 |
 | 代码 | **同一套代码** | **同一套代码** |
-| 区分方式 | `DEPLOY_MODE=saas` 环境变量 | `DEPLOY_MODE=private` + License |
+| 区分方式 | `DEPLOY_MODE=saas` 环境变量 | `DEPLOY_MODE=private`（License 校验为 V1.1 规划，当前不生效） |
 | 租户隔离 | PostgreSQL 行级安全策略（RLS）+ 应用层 tenant_id 双保险 | 单租户天然隔离 |
 | 外网依赖 | 允许调用闭源模型 API | 全部剥离，纯本地模型 + 本地服务 |
 | 容量基线 | 核心服务可用率 ≥ 99.5% | 中小团队/部门级（并发假设见 Q3） |
@@ -1613,9 +1612,9 @@ graph LR
 
   | 门禁 | 判据 | 命令 | 归属批 |
   | --- | --- | --- | --- |
-  | **G-26 插件声明 schema** | 6 段声明通过 `extra="forbid"` 校验；`--self-test` 用负样本证明"能拦" | `python apps/adapter/scripts/validate_plugins.py --self-test` | B16 |
+  | **G-26 插件声明 schema** | 6 段声明通过 `extra="forbid"` 校验；`--self-test` 用负样本证明"能拦" | `python deploy/validate_plugins.py --self-test` | B16 |
   | **G-27 插件界面唯一宿主** | 插件目录 0 个自带 `.css`/`.jsx`；宿主页无 `pluginId ===`/`switch`/查表/集合分支 | `node apps/web/scripts/check-workbench-host.mjs` | B24 / B27 |
-  | **G-28 能力/原语白名单** | 静态枚举校验 + 运行时守卫；`plg_hr_admin` 多余能力已收敛 | `python apps/adapter/scripts/validate_plugins.py` | B18 / B27 |
+  | **G-28 能力/原语白名单** | 静态枚举校验 + 运行时守卫；`plg_hr_admin` 多余能力已收敛 | `python deploy/validate_plugins.py` | B18 / B27 |
   | **G-29 phase3 端点基线** | `core=30 / phase2=38/38 / phase3=16/16`，严格模式；删一项须先改基线 | `python deploy/validate_openapi.py` | B21 |
   | **G-30 前端契约快照** | 32 接口 / 169 字段 / 5 枚举与 `docs/api/baseline-phase3-16.json` 零差异 | `node apps/web/scripts/check-plugin-contract.mjs` | B27 |
   | **G-31 Schema 保留策略** | `plugin_task.expires_at` 列存在、默认 180 天、类型 timestamptz；改默认值即红 | `python deploy/validate_schema_retention.py` | B28 |

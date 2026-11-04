@@ -28,7 +28,7 @@
 | 约束（硬性） | ① **总覆盖率硬地板 85%**（高于总方案 5.1 的 80%），低于 85% 立即红；② 每批次允许波动 ≤0.5pp，且不得连续两批下降；③ **B15 收尾前必须 ≥90.5%**，未达则阶段二不放行。 |
 | **重新基线（2026-10-22，B08 后）** | 实测 **86.88%**（967 用例、8191 语句 / 1616 分支），较 B05 的 88.06% 下降 1.18pp，原因是新增 25 表对应的 5 个业务服务（org/role/subscription/order/ops）分母增大。**裁定：以 86.88% 为新基线**，原「波动 ≤0.5pp」约束对本批不适用。 |
 | **关闭条件（修订）** | ① 硬地板 **≥85%** 不变，跌破即红；② **B15 收尾 ≥88%**（原 90.5% 在剩余 7 个批次内不可达，强行冲抵会挤占插件阶段工期）；③ **补偿控制：安全/权限/计费三类关键模块（`policy_service`、`grant_service`、`subscription_service`、`order_service`、`usage_service`、`db/session`）单模块行覆盖率 ≥90%**，B15 由 QA 逐模块核验。 |
-| 补偿措施 | ① 每个批次必须为新代码补测试，覆盖率不达标不得提交；② `scripts/reconcile_usage.py`、`check_error_catalog.py` 等运维脚本纳入单测；③ B15 专项补测（后端错误分支 + 前端三态）。 |
+| 补偿措施 | ① 每个批次必须为新代码补测试，覆盖率不达标不得提交；② `apps/adapter/scripts/reconcile_usage.py`、`apps/adapter/scripts/check_error_catalog.py` 等运维脚本纳入单测；③ B15 专项补测（后端错误分支 + 前端三态）。 |
 | 到期批次 | **B07 复核**（复核是否仍 ≥85%）、**B15 关闭**（必须 ≥90.5%） |
 | 签字 | 齐活林 · 2026-10-22 |
 
@@ -73,7 +73,7 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 关联门禁 | G-23（`scripts/reconcile_usage.py --period <YYYY-MM> --threshold 0.01`） |
+| 关联门禁 | G-23（`apps/adapter/scripts/reconcile_usage.py --period <YYYY-MM> --threshold 0.01`） |
 | 原口径 | 架构草案要求对账优先读 Valkey 计数，与 `usage_event` 比对 |
 | 现口径 | 对账双方改为「`usage_event` 明细求和」 vs 「`usage_daily` 聚合表」 |
 | 裁定 | **批准口径变更** |

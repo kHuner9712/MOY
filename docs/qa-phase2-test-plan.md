@@ -1353,10 +1353,9 @@ deploy/
 
 | 脚本/夹具 | 作用 |
 | --- | --- |
-| `tests/factories/data.py`（新增） | `make_kb()` / `make_document()` / `make_usage()` / `make_audit()` 纯数据工厂 |
-| `apps/adapter/scripts/seed_qa_data.py`（新增） | 手工联调用的批量造数（5 层组织 + 3 库 + 5000 文档开关） |
-| `apps/adapter/scripts/cleanup_qa_schema.py`（新增） | 清理 `qa_*` schema，防测试库膨胀 |
-| `apps/adapter/scripts/reconcile_usage.py`（架构已规划） | 对账，被 TC-P2-USG-06 调用 |
+| `apps/adapter/scripts/reconcile_usage.py`（已实现） | 对账，被 TC-P2-USG-06 调用 |
+
+> 原表列的 `tests/factories/data.py`、`seed_qa_data.py`、`cleanup_qa_schema.py` 均未落地（2026-11-04 审计核实文件不存在），已从清单移除；造数改由各用例内的 fixture 就地构造。
 
 ---
 

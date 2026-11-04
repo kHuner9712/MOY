@@ -36,7 +36,7 @@
 | **状态** | ✅ **已闭环**（2026-10-30）：JWT 库整体迁移 **PyJWT 2.15.1**（MIT，活跃维护），`uv.lock` 重生成后 python-jose / ecdsa / rsa / pyasn1 / six 全部退出依赖树；`pyproject.toml` 改为 `pyjwt>=2.8,<3.0` |
 | **原现状** | `python-jose 3.5.0`；`docs/architecture-v1.0.md` 记录 **PYSEC-2026-4298 且上游无修复版本** |
 | **迁移要点** | `core/security.py` 显式 `algorithms=[conf.jwt_algorithm]` 白名单**保持不变**；另发现并修复 PyJWT 语义差异——`verify_signature=False`（stub 模式）时 PyJWT 默认连 `exp` 一并放行，已显式 `verify_exp: True` 保住「过期令牌必拒」红线 |
-| **验证** | 后端全量回归 2211 passed / 0 failed，覆盖率 85.87%；安全用例 99 过；`pip-audit` 中该 CVE 随包移除 |
+| **验证** | 快照（2026-10-30，迁移当次提交）：后端全量回归 2211 passed / 0 failed，覆盖率 85.87%；安全用例 99 过；`pip-audit` 中该 CVE 随包移除。**当前全量基线以 CI `junit.xml` 工件为准**（本机 2026-11-04 收集 2933） |
 | **到期判据** | 无（已闭环） |
 
 ---

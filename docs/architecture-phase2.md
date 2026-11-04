@@ -414,7 +414,7 @@ DO UPDATE SET units = usage_monthly.units + EXCLUDED.units, updated_at = now();
 | BL5（管理视图 `group_by=member/department`） | `usage_monthly` 分组求和 | 求和 = tenant 行 |
 
 6. **Valkey 的角色（显式降级）**：只保留 `oa:cnt:{tenant}:{yyyyMM}:{user}` 作为**实时限速与诊断计数**（TTL 40 天），**不作为用量真相源**；两者语义差异写入共享知识（11.4）。
-7. **对账**：`apps/adapter/scripts/reconcile_usage.py`（每日 02:00 由运维 cron 或 CI 手动跑）：比对 Valkey 诊断计数 vs `usage_monthly.tenant` 行，偏差 > 1% 输出告警并在 `audit_log` 记 `billing.reconcile_mismatch`。阶段验收必须实跑一次（PRD P2-BL-03 验收 5）。
+7. **对账**：`apps/adapter/scripts/reconcile_usage.py`（每日 02:00 由运维 cron 或 CI 手动跑）：比对 `usage_event` 明细求和 vs `usage_daily` 聚合（不读 Valkey，口径见 `docs/qa-phase2-waivers.md` W-04），另有「成员行求和 == 租户行」结构误差必须为 0；偏差 > 1% 输出告警并在 `audit_log` 记 `billing.reconcile_mismatch`。阶段验收必须实跑一次（PRD P2-BL-03 验收 5）。
 
 **影响**：M1/M2/R3/R5/A1 完成路径各多 1 次事务；`UsageService` 成为 M4、BL5、OPS6 三个端点的共同底座。
 

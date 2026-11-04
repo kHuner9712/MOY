@@ -286,7 +286,7 @@
 
 | 序 | 事项 | 归属 | 量 | 依赖 | 完成判据 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 迁移 `0013_artifact_adoption`（`artifact_id`、`tenant_id`、`user_id`、`action ∈ download/copy/edit_save`、`created_at`）+ RLS 策略。**编号说明（2026-10-29 审计校正）**：原写 0012 已与 `deploy/migrations/0012_quota_hold.sql` 冲突，落地时编号顺延 **0013+**。**三处同步**（参照 `tenant_budget` 体例）：`deploy/migrations/0013_*.sql` + `deploy/migrations/rollback/0013_*.down.sql` + `deploy/init-schema-phase4.sql` 基线**双写**；另需 **N-1 兼容**：老库无新表时写采纳不得 500，走 `schema_guard` 探测后降级为「不记录」并打 WARNING | 工程 | S | — | 迁移/回滚/基线三处一致；`validate_migrations.py` 通过；老库场景写入不报 500；RLS 隔离用例通过 |
+| 1 | 迁移 `0014_artifact_adoption`（`artifact_id`、`tenant_id`、`user_id`、`action ∈ download/copy/edit_save`、`created_at`）+ RLS 策略。**编号说明（2026-11-04 审计校正）**：原写 0012 已与 `deploy/migrations/0012_quota_hold.sql` 冲突，`0013` 亦已被 `0013_event_log.sql` 占用，落地时编号顺延 **0014+**。**三处同步**（参照 `tenant_budget` 体例）：`deploy/migrations/0014_*.sql` + `deploy/migrations/rollback/0014_*.down.sql` + `deploy/init-schema-phase4.sql` 基线**双写**；另需 **N-1 兼容**：老库无新表时写采纳不得 500，走 `schema_guard` 探测后降级为「不记录」并打 WARNING | 工程 | S | — | 迁移/回滚/基线三处一致；`validate_migrations.py` 通过；老库场景写入不报 500；RLS 隔离用例通过 |
 | 2 | 采纳事件写入：`download` 与 `edit_save` 在**后端**路由内直接写（`artifact_files.py` 下载、`agent.py` 产物编辑）；`copy` 新增轻量端点由前端调用。**全部幂等（同一 artifact × action 一分钟内去重）；不设 7 天补记任务** | 工程 | M | 1 | 三动作各自落事件；重复点击不重复计数；表内不存在"未采纳"类记录 |
 | 3 | 统计服务：M1/M2/M3/M4/M6 的 SQL 视图或端点（只读，不改既有契约）；M2 分母按 `finished_at <= now() - interval '7 days'` 过滤 | 工程 | M | 1,2 | 同一批数据可复算出 §2 公式结果；7 天内产物不进入分母 |
 | 4 | 看板卡片：运营看板加 M1/M2/M3/M4/M6；个人中心加「采用状态」 | 工程+产品 | M | 3 | 卡片含数据域/统计期/样本量/口径版本；空态为「样本不足」 |

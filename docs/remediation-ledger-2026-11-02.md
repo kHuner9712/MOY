@@ -65,7 +65,7 @@
 | **P0-1** | 12 条测试红灯（8 条时间炸弹） | ✅ **已修** | `8af426e`（"清零8条时间炸弹红灯"）。⚠ 另 4 条为 Windows 下 PG 夹具 `Event loop is closed`，审计自己注明"不随本次修复消失"，**属已知残留而非回归** |
 | **P0-2** | `validate_deps.py` 实红（pyjwt 未登记） | ✅ **已修** | `8af426e`；工程侧报告 `validate_deploy` / `validate_secrets` EXIT=0 |
 | **P0-3** | `validate_import_directions.py` 裸跑恒红（`DEFAULT_BASELINE` 未使用） | ✅ **已修** | `8af426e`（两处门禁假红） |
-| **P0-4** | 无 TLS 终止 + 应用端口全网卡 + k8s 空壳 | ⬜ **待做 · 轮 2**（K4-rest） | 现状复核与设计见主文档 §3。轮 1 只做 K4-min（登录打通所必需）。⚠ 审计"三套 compose 零内存限制"表述**不准确**，实际 saas=0 / full=8 / lite=10，缺口是 saas 全量 + full 缺 11（含 `web`）+ 三套零 CPU——见主文档 §3.1.2 |
+| **P0-4** | 无 TLS 终止 + 应用端口全网卡 + k8s 空壳 | ✅ **已完成（G1，2026-11-03）** | 证据：`deploy/docker-compose.yml:595-610` 的 `edge`（80 探活 + 301、443 终止 TLS、挂载证书）、`deploy/docker-compose.yml:697,750` 与 `docker-compose.saas.yml:501,533` 端口绑 `127.0.0.1`、`deploy/k8s/` 12 个 manifest。⚠ 审计"三套 compose 零内存限制"表述**不准确**，实际 saas=0 / full=8 / lite=10，缺口是 saas 全量 + full 缺 11（含 `web`）+ 三套零 CPU——见主文档 §3.1.2 |
 | **P0-5** | 令牌窃取链三件套 | ⬜ **待做 · 轮 1b** | 设计已完成（主文档 §2），方案 = httpOnly Cookie / BFF 形态 / 会话端点放适配层。轮 1a 已铺好前置：`edge.conf` 含 `^~ /sso/` 占位、`OA_PUBLIC_BASE_URL` 与派生 issuer 已注入、`Settings.public_base_url` 已加。**1b 待做**：`/sso/*` 端点 + `auth_cookie_enabled` 字段/注入 + 前端 6 文件改造 |
 | **P0-6** | 产物下载路径未路由，生产 404 | ✅ **已修** | `e074372`：`lite.conf` / `lite-tls.conf` 增 `location ^~ /files/artifacts/`。⚠ **轮 2 把 lite 配置提升为 `edge.conf` 时不得漏这一条**，否则回归 |
 | | | | |
