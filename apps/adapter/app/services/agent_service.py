@@ -30,6 +30,7 @@ from app.kernel.events import (
     EVENT_SESSION_CREATED,
     EVENT_TOOL_COMPLETED,
     EVENT_TOOL_REQUESTED,
+    EVENT_TURN_FINISHED,
     Event,
     EventStore,
     build_session_id,
@@ -362,6 +363,14 @@ class AgentService:
         留下一条永远 `running`、进度 0 的"幽灵任务"，`list_tasks` 会把它返回给
         前端（"我的任务"里出现永不结束的项），用户因看不到真实进度还可能重复提交。
 
+        **两条与事件流相关的顺序约定（缺陷 D2 / D18）**：
+
+        1. 事件先写、任务后登记：append 失败时不能留下"有任务、无事件"的幽灵任务
+           （E1 之下，没有事件支撑的状态就是不存在）；
+        2. 换 ID 后要在**新会话**补写 `session.created`：占位会话由本地 ULID 派生，
+           真实会话由 `task_{run_id}` 派生，两者不是同一个会话。不补写则真实任务的
+           会话里一条事件都没有——回放重建不出 `goal`、A4 恒空、A6 只有终态帧。
+
         Args:
             request: 创建请求。
             auth: 鉴权上下文。
@@ -397,6 +406,17 @@ class AgentService:
         estimated = min(request.options.max_steps * 10, request.options.timeout_seconds)
         self._prune_stub_tasks()
 
+        # **顺序：先写事件、再登记任务**（缺陷 D18）。反过来一旦 append 失败，
+        # 就会留下"有任务、无事件"的幽灵任务：前端看到一条永远 running 的任务，
+        # 而事件流里没有任何事实支撑它——E1 之下，**没有事件的状态就是不存在**。
+        # 会话第一条事件（设计文档 §5.1 状态机：`[*] --> open: session.created`）。
+        # `goal` 进 payload 是必要的：回放要能重建任务目标，而目标只在这条事件里出现。
+        await self._append_event(
+            auth,
+            task_id,
+            EVENT_SESSION_CREATED,
+            self._session_created_payload(task_id, request),
+        )
         self._tasks[self._key(auth, task_id)] = TaskDetailData(
             task_id=task_id,
             status=TaskStatus.RUNNING,
@@ -405,20 +425,6 @@ class AgentService:
             result=None,
             usage=Usage(),
             updated_at=created_at,
-        )
-        # 会话第一条事件（设计文档 §5.1 状态机：`[*] --> open: session.created`）。
-        # `goal` 进 payload 是必要的：回放要能重建任务目标，而目标只在这条事件里出现。
-        await self._append_event(
-            auth,
-            task_id,
-            EVENT_SESSION_CREATED,
-            {
-                "task_id": task_id,
-                "conversation_id": request.conversation_id,
-                "profile": request.profile.value,
-                "goal": request.goal,
-                "tool_grants": list(request.tool_grants or []),
-            },
         )
 
         if not self._settings.mock_mode:
@@ -433,15 +439,33 @@ class AgentService:
             )
             native_run_id = str(response.payload.get("workflow_run_id", ""))
             if native_run_id:
-                # 切换 ID 前先清掉按本地 ULID 落下的占位任务：否则内存里会留下一条永远
+                run_task_id = f"{_TASK_PREFIX}{native_run_id}"
+                # **换 ID 后必须在新会话里补写 `session.created`**（缺陷 D2）。
+                # 切换前的占位会话是本地 ULID 派生的，真实任务的会话由
+                # `_session_id(auth, new_task_id)` 决定——两句话不是同一个会话。
+                # 不补写的后果：`session.created` 是唯一承载 `goal` 的事件，
+                # 真实任务的会话里空无一物 → 回放重建不出目标、A4 步骤详情恒空、
+                # A6 只有终态帧。保留 `origin_*` 三个字段是为了让"占位会话 →
+                # 真实会话"的搬迁可追溯（否则两条 session.created 看起来像重复写入）。
+                await self._append_event(
+                    auth,
+                    run_task_id,
+                    EVENT_SESSION_CREATED,
+                    self._session_created_payload(
+                        run_task_id,
+                        request,
+                        origin_task_id=task_id,
+                        origin_session_id=self._session_id(auth, task_id),
+                        run_id=native_run_id,
+                        reissued=True,
+                    ),
+                )
+                # 换 ID 前先清掉按本地 ULID 落下的占位任务：否则内存里会留下一条永远
                 # `running`、进度 0 的"幽灵任务"，`list_tasks` 会把它返回给前端。
-                #
-                # **注意**：占位会话（本地 ULID 那条）的事件**不删**——事件流 append-only，
-                # 且它记录的是"任务确实被发起过"这一事实。真实任务的会话由
-                # `_session_id(auth, task_id)` 决定，切换 ID 后落在新会话上。
-                stale_key = self._key(auth, task_id)
-                self._tasks.pop(stale_key, None)
-                task_id = f"{_TASK_PREFIX}{native_run_id}"
+                # 占位会话的事件**不删**——事件流 append-only，且它记录的是
+                # "任务确实被发起过"这一事实（`origin_session_id` 指回来）。
+                self._tasks.pop(self._key(auth, task_id), None)
+                task_id = run_task_id
                 # blocking 模式下底座已同步返回终态（data.status），
                 # 直接映射为自研任务状态，而非停留 running（T02 实联调修复）
                 native_data = response.payload.get("data") or {}
@@ -463,6 +487,37 @@ class AgentService:
             created_at=created_at,
             estimated_seconds=estimated,
         )
+
+    @staticmethod
+    def _session_created_payload(
+        task_id: str,
+        request: CreateTaskRequest,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        """构造 `session.created` 的载荷（两处写入共用，避免字段漂移）。
+
+        为什么共用：`session.created` 会在"占位会话"与"换 ID 后的真实会话"各写一次
+        （缺陷 D2），两处若各写一份字面量，`goal`/`profile` 迟早只在一处被改到，
+        而回放只认其中一条。
+
+        Args:
+            task_id: 该事件所属会话对应的任务 ID。
+            request: 创建请求（提供 goal / conversation_id / profile / tool_grants）。
+            **extra: 追加字段（换 ID 时带 `origin_task_id` / `origin_session_id` /
+                `run_id` / `reissued`）。
+
+        Returns:
+            dict[str, Any]: 事件载荷。
+        """
+        payload: dict[str, Any] = {
+            "task_id": task_id,
+            "conversation_id": request.conversation_id,
+            "profile": request.profile.value,
+            "goal": request.goal,
+            "tool_grants": list(request.tool_grants or []),
+        }
+        payload.update(extra)
+        return payload
 
     async def _record_automation(self, *, task_id: str, units: int, auth: AuthContext) -> None:
         """任务成功完成时写一条 `automation` 用量事件（D-12 第 2 条幂等键 = task_id）。
@@ -842,6 +897,22 @@ class AgentService:
                 f"{_DIFY_WORKFLOWS_PATH}/runs/{task_id.removeprefix(_TASK_PREFIX)}/stop", {}
             )
 
+        # 取消是**状态迁移**，必须进事件流（缺陷 D8）：只改 `_tasks` 的话，
+        # 取消这件事回放不出来、审计查不到、重启即丢——而"任务为什么停在这里"
+        # 恰恰是审计最常问的问题。事件先写、状态后改（与 create_task 同序）：
+        # append 失败时状态不变，用户会看到"取消失败"而不是"界面说取消了、
+        # 事实没记下来"。用已有类型 `turn.finished` 承载，不新增枚举（V1.0 封闭 14 类）。
+        await self._append_event(
+            auth,
+            task_id,
+            EVENT_TURN_FINISHED,
+            {
+                "task_id": task_id,
+                "outcome": "cancelled",
+                "reason": str(ErrorCode.TASK_CANCELLED.value),
+                "status": TaskStatus.CANCELLED.value,
+            },
+        )
         detail.status = TaskStatus.CANCELLED
         detail.updated_at = _now_iso()
         logger.info("agent_task_cancelled", task_id=task_id)
@@ -903,7 +974,17 @@ class AgentService:
         """
         self._require(task_id, auth)  # 归属校验必须在产出第一帧之前
         session_id = self._session_id(auth, task_id)
-        cursor = max(0, after_id)
+        # 游标必须**钳在 [0, tail]**（缺陷 D3）。不钳的后果不是"多推几条"，而是
+        # 客户端永久静默：越界值（时间戳 / 别的会话的 id / 人为构造）被原样回显成
+        # 终态帧的 `id:`，客户端下次仍带同一个越界值 → 永远拿不到进度帧，而服务端
+        # 一切正常、日志无异常。越界一律按"从头回放"处理：回放幂等，重复下发不会
+        # 让状态错（这正是 E1 把"续传"定义成 `cursor > after_seq` 的红利）。
+        if self._settings.event_log_enabled:
+            tail = await self._events.tail_cursor(auth.tenant_id, session_id)
+            cursor = after_id if 0 < after_id <= tail else 0
+        else:
+            # 灰度关闭时没有事件可读，也不该为一次"注定空的读"去打数据库
+            cursor = 0
 
         if self._settings.event_log_enabled:
             while True:

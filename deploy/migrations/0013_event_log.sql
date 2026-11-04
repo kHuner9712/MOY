@@ -133,22 +133,60 @@ DECLARE
     partition_count CONSTANT integer := 16;
     idx             integer;
     t               text;
-    ready           integer;
+    ready           integer := 0;
+    forced          integer;
+    sel_ok          integer;
+    ins_ok          integer;
 BEGIN
     -- **零 DDL 守卫**（路径 B 的关键）：已初始化库上本表可能已由超级用户/初始化
     -- 脚本建好（`psql -f 0013` 与 `migrate --apply` 都可能跑过）。此时应用角色
     -- 对 `event_log` 不是属主，`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` 会抛
     -- `must be owner of table`——那是"守卫缺失"的典型症状，不是权限配置问题。
-    -- 因此先判"策略是否已经齐备"，齐备就整段跳过。
-    SELECT count(*) INTO ready
-      FROM pg_policies
-     WHERE schemaname = 'public'
-       AND tablename = 'event_log'
-       AND policyname IN ('p_tenant_isolation_select', 'p_tenant_isolation_insert');
-    IF ready >= 2 THEN
-        RAISE NOTICE '0013: RLS 策略已就绪（前次已执行 / 新装库直建），零 DDL';
+    --
+    -- **守卫必须逐项验，不能只看"策略名存在"**（缺陷 D5）：只看名字的话，
+    -- ① `relforcerowsecurity = false`（属主可绕过策略）、
+    -- ② 别人建了个同名 `USING (true)` 策略（全员可读，隔离归零）、
+    -- ③ 16 个分区里只有一个有策略（直查分区绕过父表策略），
+    -- 三种"隔离已降级"的库都会被判成"已就绪"并整段跳过——守卫反而成了
+    -- 静默放行的通道。因此逐表逐项验：FORCE 标志、SELECT 策略非恒真、
+    -- INSERT 策略非恒真、且**父表与 16 个分区一个都不能少**。
+    FOR idx IN -1..(partition_count - 1) LOOP
+        IF idx = -1 THEN
+            t := 'event_log';
+        ELSE
+            t := 'event_log_p' || lpad(idx::text, 2, '0');
+        END IF;
+
+        SELECT count(*) INTO forced
+          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND c.relname = t
+           AND c.relrowsecurity AND c.relforcerowsecurity;
+
+        SELECT count(*) INTO sel_ok
+          FROM pg_policies
+         WHERE schemaname = 'public' AND tablename = t
+           AND policyname = 'p_tenant_isolation_select'
+           AND qual IS NOT NULL
+           AND btrim(regexp_replace(qual, '\s', '', 'g')) NOT IN ('true', '(true)');
+
+        SELECT count(*) INTO ins_ok
+          FROM pg_policies
+         WHERE schemaname = 'public' AND tablename = t
+           AND policyname = 'p_tenant_isolation_insert'
+           AND with_check IS NOT NULL
+           AND btrim(regexp_replace(with_check, '\s', '', 'g')) NOT IN ('true', '(true)');
+
+        IF forced = 1 AND sel_ok = 1 AND ins_ok = 1 THEN
+            ready := ready + 1;
+        END IF;
+    END LOOP;
+
+    IF ready = partition_count + 1 THEN
+        RAISE NOTICE '0013: RLS 已就绪（% 张表：FORCE + 非恒真 SELECT/INSERT 策略齐全），零 DDL',
+            ready;
         RETURN;
     END IF;
+    RAISE NOTICE '0013: RLS 仅 %/% 张表符合口径，补齐剩余部分', ready, partition_count + 1;
 
     FOR idx IN -1..(partition_count - 1) LOOP
         IF idx = -1 THEN
@@ -180,8 +218,14 @@ BEGIN
 EXCEPTION
     WHEN insufficient_privilege THEN
         RAISE EXCEPTION
-            '0013 需要 event_log 的属主权限来启用 RLS（ENABLE/FORCE ROW LEVEL '
-            'SECURITY 与 CREATE POLICY），请由表属主执行。';
+            '0013 需要 event_log 及其 16 个分区的属主权限来启用 RLS'
+            '（ENABLE/FORCE ROW LEVEL SECURITY 与 CREATE POLICY），但当前角色不是属主。'
+            '请由 DBA 执行（对 event_log 与 event_log_p00…p15 逐张执行）：'
+            'ALTER TABLE <表> ENABLE ROW LEVEL SECURITY; '
+            'ALTER TABLE <表> FORCE ROW LEVEL SECURITY; '
+            'CREATE POLICY p_tenant_isolation_select ON <表> FOR SELECT USING (...) ; '
+            'CREATE POLICY p_tenant_isolation_insert ON <表> FOR INSERT WITH CHECK (...) ;'
+            '（完整定义见本文件第 4 节）—— 缺 RLS = 跨租户可读，属隔离降级，本迁移拒绝跳过。';
 END $rls$;
 
 -- ---------------------------------------------------------------------------
@@ -201,6 +245,7 @@ DECLARE
     partition_count CONSTANT integer := 16;
     idx             integer;
     t               text;
+    granted         integer := 0;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'officeai_app') THEN
         RAISE NOTICE '0013: 角色 officeai_app 不存在，跳过后端授权（空库自建路径）';
@@ -209,7 +254,30 @@ BEGIN
 
     -- **零 DDL 守卫**（路径 B）：当前角色不是表属主时（表由超级用户/初始化脚本
     -- 建好），`REVOKE/GRANT` 会抛 `must be owner of table`。此时授权通常已由
-    -- 建表方给过——先验证事实，够了就跳过；不够则给出可照做的 DBA SQL 并中止。
+    -- 建表方给过——先**逐项验事实**（缺陷 D5：只看父表等于给"分区没授权"和
+    -- "UPDATE/DELETE 被顺手授出"留了两条静默通道），够了就跳过；不够则给出
+    -- 可照做的 DBA SQL 并中止。
+    granted := 0;
+    FOR idx IN -1..(partition_count - 1) LOOP
+        IF idx = -1 THEN
+            t := 'event_log';
+        ELSE
+            t := 'event_log_p' || lpad(idx::text, 2, '0');
+        END IF;
+        IF has_table_privilege('officeai_app', t, 'SELECT')
+           AND has_table_privilege('officeai_app', t, 'INSERT')
+           AND NOT has_table_privilege('officeai_app', t, 'UPDATE')
+           AND NOT has_table_privilege('officeai_app', t, 'DELETE') THEN
+            granted := granted + 1;
+        END IF;
+    END LOOP;
+
+    IF granted = partition_count + 1 THEN
+        RAISE NOTICE '0013: 授权已就绪（% 张表均为 SELECT+INSERT 且无 UPDATE/DELETE），零 DDL',
+            granted;
+        RETURN;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
           FROM pg_class c
@@ -217,16 +285,14 @@ BEGIN
          WHERE c.oid = 'event_log'::regclass
            AND pg_has_role(current_user, r.oid, 'USAGE')
     ) THEN
-        IF has_table_privilege('officeai_app', 'event_log', 'SELECT')
-           AND has_table_privilege('officeai_app', 'event_log', 'INSERT') THEN
-            RAISE NOTICE '0013: 当前角色非属主，但 officeai_app 已有 SELECT/INSERT，零 DDL';
-            RETURN;
-        END IF;
         RAISE EXCEPTION
-            '0013 需要 event_log 的属主权限来授 SELECT/INSERT，但当前角色不是属主，'
-            '且 officeai_app 尚未获得该权限。请由 DBA 执行：'
-            'GRANT SELECT, INSERT ON event_log TO officeai_app;'
-            '（以及 16 个 event_log_pNN 分区）';
+            '0013 需要 event_log 及其 16 个分区的属主权限来收回 UPDATE/DELETE 并授 '
+            'SELECT/INSERT，但当前角色不是属主，且当前授权不满足口径（%/% 张表合规）。'
+            '请由 DBA 对 event_log 与 event_log_p00…p15 逐张执行：'
+            'REVOKE ALL ON <表> FROM officeai_app; '
+            'GRANT SELECT, INSERT ON <表> TO officeai_app;'
+            '—— 多授 UPDATE/DELETE 等于 append-only 只剩文档承诺，本迁移拒绝跳过。',
+            granted, partition_count + 1;
     END IF;
 
     FOR idx IN -1..(partition_count - 1) LOOP
@@ -242,7 +308,9 @@ BEGIN
 EXCEPTION
     WHEN insufficient_privilege THEN
         RAISE EXCEPTION
-            '0013 无法调整 event_log 的授权（需要属主或授权选项），请由表属主执行。'
+            '0013 无法调整 event_log 的授权（需要属主或授权选项），请由表属主执行：'
+            'REVOKE ALL ON <event_log 与 event_log_p00…p15> FROM officeai_app; '
+            'GRANT SELECT, INSERT ON <同上> TO officeai_app; '
             '授权缺失时应用会拿到 "permission denied for table event_log"，'
             '而不是静默不记录——这是有意的 fail-closed。';
 END $grant$;

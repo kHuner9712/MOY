@@ -28,7 +28,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Final
@@ -58,6 +60,14 @@ from app.db.session import tenant_scope
 
 #: 事件表名（`BaseRepository` 会跑 `assert_identifier()` 校验）
 EVENT_LOG_TABLE: Final[str] = "event_log"
+
+#: 取号冲突后的首次退避（秒）。后续按 2^attempt 指数增长，并叠 0.5~1.5 抖动。
+#:
+#: **必须封顶**：不封顶时第 15 次重试要等 5ms × 2^14 ≈ 82s，而取号冲突是
+#: "有人正好同时写"这种瞬时状况——等 80 秒不如让调用方拿到明确的失败。
+#: 封顶 200ms 后最坏总等待 ≈ 3s（16 次），与"一次请求内可接受的抖动"同量级。
+_RETRY_BASE_DELAY_SECONDS: Final[float] = 0.005
+_RETRY_MAX_DELAY_SECONDS: Final[float] = 0.2
 
 #: 一次 `verify_chain` 最多取回的事件行数（超过即视为异常链条，拒绝给出结论）
 _VERIFY_SCAN_LIMIT: Final[int] = 100_000
@@ -294,6 +304,14 @@ class PostgresEventStore:
                             f"attempts (session={session_id})"
                         ),
                     ) from None
+                # **退避**（缺陷 D4）：裸重试在 N 个并发写者上退化成
+                # "掷骰子抢同一格"，重试次数必须 ≥ N-1 才可能全部成功，且没有退避时
+                # 所有失败者会在同一时刻再次相撞（活锁）。指数退避 + 抖动把相撞概率
+                # 摊开，上限 `MAX_SEQ_ATTEMPTS = 16` 足够 16 个并发写者。
+                # 单次等待 = BASE * 2^attempt * (0.5~1.5 抖动)，最坏总等待 ≈ 1.3s。
+                delay = min(_RETRY_BASE_DELAY_SECONDS * (2**attempt), _RETRY_MAX_DELAY_SECONDS)
+                # `random` 在这里只做退避抖动，不参与任何安全判定（S311 不适用）
+                await asyncio.sleep(delay * (0.5 + random.random()))  # noqa: S311
         raise ApiError(  # pragma: no cover - 循环必然 return 或 raise
             ErrorCode.INTERNAL_ERROR,
             internal_detail="unreachable append retry state",
@@ -464,10 +482,14 @@ class PostgresEventStore:
                 ),
             )
         cut = tail if at_seq is None else at_seq
-        if cut < 1 or cut > tail:
+        # 切点下限是**父会话自身偏移 + 1**（缺陷 D7）：fork 会话自己的事件从游标
+        # `偏移 + 1` 开始；允许切到 `偏移` 或更小会把新标记插进父流中间，同一段
+        # 父流在两层回放里出现两次、游标重复（续传的"零重复"当场失效）。
+        lowest = offset + 1
+        if cut < lowest or cut > tail:
             raise ApiError(
                 ErrorCode.PARAM_INVALID,
-                internal_detail=f"fork at_seq {cut} out of range 1..{tail}",
+                internal_detail=f"fork at_seq {cut} out of range {lowest}..{tail}",
             )
         new_session_id = new_fork_session_id()
         await self.append(
@@ -477,6 +499,28 @@ class PostgresEventStore:
             {FORK_PARENT_KEY: session_id, FORK_AT_SEQ_KEY: cut},
         )
         return new_session_id
+
+    async def tail_cursor(self, tenant_id: str, session_id: str) -> int:
+        """取会话回放流的末尾游标（空会话返回 0）。
+
+        Args:
+            tenant_id: 租户 ID。
+            session_id: 会话 ID。
+
+        Returns:
+            int: 末尾游标（`cursor_offset + max(seq)`）。
+        """
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _EventLogRepository(uow)
+            head = await repo.fetch_one(_HEAD_SQL, repo.params(session_id=session_id))
+        if head is None:
+            return 0
+        max_seq = int(head["max_seq"])
+        if max_seq == 0:
+            return 0
+        raw_offset = head.get("cursor_offset")
+        offset = int(raw_offset) if raw_offset is not None else 0
+        return offset + max_seq
 
     async def verify_chain(self, tenant_id: str, session_id: str) -> bool:
         """重算并校验 hash 链（含 fork 父链，深度上限 8）。

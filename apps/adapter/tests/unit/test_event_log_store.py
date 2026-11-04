@@ -353,6 +353,36 @@ class TestFork:
             await store.fork(TENANT, session)
         assert exc_info.value.code == ErrorCode.PARAM_INVALID
 
+    async def test_fork_rejects_cut_before_parent_own_offset(self) -> None:
+        """**D7 验收**：切点下限是"父会话自身偏移 + 1"。
+
+        切到 `偏移` 或更小会把 fork 标记插进**父流中间**，同一段父流在两层回放里
+        出现两次、游标重复（三层 fork 实测可复现），续传的"零重复"当场失效。
+        """
+        store = _store()
+        for index in range(3):
+            await store.append(TENANT, "root", EVENT_TURN_STARTED, {"n": index})
+        child = await store.fork(TENANT, "root", 2)  # 子会话自身偏移 = 2
+
+        for bad in (1, 2):  # 1 = 父流首条；2 = 子会话偏移本身（都在父流中间/之前）
+            with pytest.raises(ApiError) as exc_info:
+                await store.fork(TENANT, child, bad)
+            assert exc_info.value.code == ErrorCode.PARAM_INVALID
+
+        grandchild = await store.fork(TENANT, child, 3)
+        cursors = [item.cursor for item in await store.read_after(TENANT, grandchild)]
+        assert cursors == list(range(1, len(cursors) + 1)), f"游标重复/断档：{cursors}"
+
+    async def test_tail_cursor_tracks_last_event(self) -> None:
+        """`tail_cursor` 用于 SSE 续传钳位（D3）：等于最后一条事件的游标。"""
+        store = _store()
+        assert await store.tail_cursor(TENANT, "s1") == 0
+        for index in range(3):
+            await store.append(TENANT, "s1", EVENT_TURN_STARTED, {"n": index})
+        assert await store.tail_cursor(TENANT, "s1") == 3
+        child = await store.fork(TENANT, "s1", 2)
+        assert await store.tail_cursor(TENANT, child) == 3
+
     async def test_fork_of_500_event_session_is_fast(self) -> None:
         """**A4 验收**：500 事件会话分叉 < 100ms（不复制事件 = O(1)）。"""
         store = _store()
@@ -405,6 +435,25 @@ class TestReplayDeterminism:
         assert blocks[0]["completed_steps"] == ["step_1"]
         assert blocks[0]["pending_approvals"] == ["apr_1"]
         assert blocks[0]["turns"] == 1
+
+    async def test_replay_pages_past_a_single_batch(self) -> None:
+        """**D1 验收**：1200 条事件的回放必须翻页，不能只读第一页（静默截断）。
+
+        缺陷形态：`replay_state_block` 用 `limit=_REPLAY_BATCH`（1000）但不翻页，
+        1200 条会话只投影出 1000 个步骤且**没有任何告警**——"回放确定性"在真实
+        规模上给出的是错误的正确结果。这条用例把 1000 这个坎显式钉住。
+        """
+        store = _store()
+        session = "s_long"
+        total = 1200
+        for index in range(total):
+            await store.append(
+                TENANT, session, EVENT_TOOL_COMPLETED, {"step": {"step_id": f"step_{index}"}}
+            )
+
+        block = await replay_state_block(store, TENANT, session)
+        assert len(block["completed_steps"]) == total
+        assert block["completed_steps"] == [f"step_{index}" for index in range(total)]
 
     async def test_replay_stream_digest_is_stable(self) -> None:
         """事件序列的逐字节摘要三次一致（回放不依赖任何进程内状态）。"""

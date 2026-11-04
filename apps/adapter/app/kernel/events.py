@@ -150,30 +150,42 @@ async def replay_state_block(
     artifact_keys: list[str] = []
     pending_approvals: list[str] = []
     turns = 0
-    for event in await store.read_after(tenant_id, session_id, 0, limit=_REPLAY_BATCH):
-        if event.type == EVENT_TOOL_COMPLETED:
-            step = event.payload.get(STEP_PAYLOAD_KEY)
-            step_id = step.get("step_id") if isinstance(step, Mapping) else None
-            if isinstance(step_id, str) and step_id and step_id not in completed_steps:
-                completed_steps.append(step_id)
-        elif event.type == _EVENT_ARTIFACT_CREATED:
-            key = event.payload.get(ARTIFACT_KEY_PAYLOAD_FIELD)
-            if isinstance(key, str) and key and key not in artifact_keys:
-                artifact_keys.append(key)
-        elif event.type == _EVENT_APPROVAL_REQUESTED:
-            approval_id = event.payload.get("approval_id")
-            if (
-                isinstance(approval_id, str)
-                and approval_id
-                and approval_id not in pending_approvals
-            ):
-                pending_approvals.append(approval_id)
-        elif event.type == _EVENT_APPROVAL_RESOLVED:
-            approval_id = event.payload.get("approval_id")
-            if isinstance(approval_id, str) and approval_id in pending_approvals:
-                pending_approvals.remove(approval_id)
-        elif event.type == EVENT_TURN_FINISHED:
-            turns += 1
+    # **必须翻页**（缺陷 D1）：`read_after` 按 `limit` 截断，只读一页会把长会话
+    # 静默截断成"前 1000 条"——投影少算的步骤不会报错，只会让"回放确定性"
+    # 在真实规模上给出**错误的正确结果**。翻到取不满一页为止，与
+    # `AgentService._project_steps` / `stream_events` 用同一套循环口径。
+    cursor = 0
+    while True:
+        batch = await store.read_after(tenant_id, session_id, cursor, limit=_REPLAY_BATCH)
+        if not batch:
+            break
+        for event in batch:
+            cursor = max(cursor, event.cursor)
+            if event.type == EVENT_TOOL_COMPLETED:
+                step = event.payload.get(STEP_PAYLOAD_KEY)
+                step_id = step.get("step_id") if isinstance(step, Mapping) else None
+                if isinstance(step_id, str) and step_id and step_id not in completed_steps:
+                    completed_steps.append(step_id)
+            elif event.type == _EVENT_ARTIFACT_CREATED:
+                key = event.payload.get(ARTIFACT_KEY_PAYLOAD_FIELD)
+                if isinstance(key, str) and key and key not in artifact_keys:
+                    artifact_keys.append(key)
+            elif event.type == _EVENT_APPROVAL_REQUESTED:
+                approval_id = event.payload.get("approval_id")
+                if (
+                    isinstance(approval_id, str)
+                    and approval_id
+                    and approval_id not in pending_approvals
+                ):
+                    pending_approvals.append(approval_id)
+            elif event.type == _EVENT_APPROVAL_RESOLVED:
+                approval_id = event.payload.get("approval_id")
+                if isinstance(approval_id, str) and approval_id in pending_approvals:
+                    pending_approvals.remove(approval_id)
+            elif event.type == EVENT_TURN_FINISHED:
+                turns += 1
+        if len(batch) < _REPLAY_BATCH:
+            break
     return {
         COMPLETED_STEPS_FIELD: completed_steps,
         ARTIFACT_KEYS_FIELD: artifact_keys,

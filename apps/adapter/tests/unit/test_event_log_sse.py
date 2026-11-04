@@ -241,6 +241,25 @@ class TestResumeAfterDisconnect:
         assert len(tail) == 1
         assert tail[0].startswith("event: task_completed")
 
+    async def test_after_id_beyond_tail_is_clamped_and_not_echoed(self) -> None:
+        """**D3 验收**：越界 `after_id` 不回显，按"从头回放"处理。
+
+        缺陷形态：`after_id=999999` 被原样回显成终态帧的 `id:`，客户端下次仍带
+        同一个越界值 → 永远拿不到进度帧，而服务端一切正常、日志无异常
+        （"永久黑屏"）。钳位后：越界即从头，客户端自己就恢复了。
+        """
+        service = _service()
+        task_id = await _task_with_steps(service, step_count=2)
+        full = [frame async for frame in service.stream_events(task_id, _auth())]
+        tail_id = _frame_id(full[-2])
+
+        replay = [
+            frame async for frame in service.stream_events(task_id, _auth(), after_id=tail_id + 999)
+        ]
+        ids = [_frame_id(frame) for frame in replay]
+        assert ids == [_frame_id(frame) for frame in full], "越界游标必须退化成从头回放"
+        assert max(ids) <= tail_id, f"回显了越界 id：{max(ids)} > {tail_id}"
+
     async def test_headers_parse_tolerates_garbage(self) -> None:
         """`Last-Event-ID` 宽容解析：空串 / 非数字 / 负数都回落到从头。"""
         assert _parse_last_event_id(None) == 0
@@ -254,6 +273,31 @@ class TestResumeAfterDisconnect:
 # ===========================================================================
 # 灰度开关 + 步骤投影（E1：只有一个可写副本）
 # ===========================================================================
+class TestCreateTaskOrdering:
+    """**D18 验收**：先写事件、再登记任务（失败不留幽灵任务）。"""
+
+    async def test_append_failure_leaves_no_ghost_task(self) -> None:
+        """事件写入失败时任务表里不能留下"有任务、无事件"的幽灵任务。
+
+        顺序反过来（先登记任务、后 append）时，append 一失败就留下一条永远
+        `running` 的任务：前端能看到它、事件流里却没有事实支撑它——E1 之下
+        "没有事件的状态"就是不存在。
+        """
+        store = InMemoryEventStore()
+
+        async def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("event store down")
+
+        store.append = _boom  # type: ignore[method-assign]
+        service = _service(store=store)
+
+        with pytest.raises(RuntimeError):
+            await service.create_task(
+                CreateTaskRequest(conversation_id="conv_1", goal="目标"), _auth()
+            )
+        assert service._tasks == {}, "append 失败后不应留下幽灵任务"  # noqa: SLF001
+
+
 class TestEventLogSwitchAndProjection:
     """开关只做灰度回退，不提供第二套存储路径。"""
 
@@ -306,6 +350,26 @@ class TestEventLogSwitchAndProjection:
         steps = await service.list_steps(created.task_id, _auth())
         assert len(steps.steps) == 1
         assert steps.steps[0].status == StepStatus.COMPLETED
+
+    async def test_cancel_appends_turn_finished_event(self) -> None:
+        """**D8 验收**：取消任务必须落一条 `turn.finished{cancelled}`。
+
+        只改 `_tasks.status` 的话，取消回放不出来、审计查不到、重启即丢——
+        而"任务为什么停在这里"正是审计最常问的问题。用已有 14 类之一承载，
+        不新增枚举。
+        """
+        store = InMemoryEventStore()
+        service = _service(store=store)
+        created = await service.create_task(
+            CreateTaskRequest(conversation_id="conv_1", goal="目标"), _auth()
+        )
+        await service.cancel_task(created.task_id, _auth())
+
+        session = build_session_id(TENANT, created.task_id)
+        events = await store.read_after(TENANT, session)
+        assert [event.type for event in events] == ["session.created", "turn.finished"]
+        assert events[-1].payload["outcome"] == "cancelled"
+        assert events[-1].payload["status"] == "cancelled"
 
     async def test_events_are_tenant_scoped(self) -> None:
         """事件流按租户隔离：另一个租户读同一个 task_id 读不到任何事件。"""

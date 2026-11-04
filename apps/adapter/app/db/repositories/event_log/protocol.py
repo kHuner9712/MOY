@@ -128,6 +128,25 @@ class EventStore(Protocol):
         """
         ...
 
+    async def tail_cursor(self, tenant_id: str, session_id: str) -> int:
+        """取会话回放流的**末尾游标**（空会话返回 0）。
+
+        为什么需要它（缺陷 D3）：SSE 续传要把客户端带来的 `Last-Event-ID` **钳**在
+        `[0, tail]` 区间内。不钳会怎样：客户端传一个越界值（时间戳、别的会话的 id、
+        或人为构造），服务端照抄回 `id: <越界值>` 的终态帧，客户端下次仍带同一个越界
+        值 → **永久静默无进度**，而且服务端一切正常、日志无异常。越界值一律按
+        "从头回放"处理：回放幂等，重复下发不会让状态错。
+
+        Args:
+            tenant_id: 租户 ID。
+            session_id: 会话 ID。
+
+        Returns:
+            int: 末尾游标（根会话 = 最大 `seq`；fork 会话 = 偏移 + 最大 `seq`）；
+            会话不存在或没有任何事件时返回 0。
+        """
+        ...
+
     async def verify_chain(self, tenant_id: str, session_id: str) -> bool:
         """重算并校验 hash 链（含 fork 父链）。
 

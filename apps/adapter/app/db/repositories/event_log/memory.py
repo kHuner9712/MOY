@@ -304,10 +304,15 @@ class InMemoryEventStore:
             )
         tail = self._cursor_offset(tenant_id, session_id) + stream[-1].seq
         cut = tail if at_seq is None else at_seq
-        if cut < 1 or cut > tail:
+        # 切点下限是**父会话自身偏移 + 1**（缺陷 D7），不是 1：fork 会话自己的
+        # 事件从游标 `偏移 + 1` 开始，允许切到 `偏移` 或更小会把新标记插进**父流
+        # 中间**，于是同一段父流在两层回放里出现两次、游标重复——续传的"零重复"
+        # 当场失效（三层 fork 实测可复现）。
+        lowest = self._cursor_offset(tenant_id, session_id) + 1
+        if cut < lowest or cut > tail:
             raise ApiError(
                 ErrorCode.PARAM_INVALID,
-                internal_detail=f"fork at_seq {cut} out of range 1..{tail}",
+                internal_detail=f"fork at_seq {cut} out of range {lowest}..{tail}",
             )
         new_session_id = new_fork_session_id()
         await self.append(
@@ -317,6 +322,22 @@ class InMemoryEventStore:
             {FORK_PARENT_KEY: session_id, FORK_AT_SEQ_KEY: cut},
         )
         return new_session_id
+
+    async def tail_cursor(self, tenant_id: str, session_id: str) -> int:
+        """取会话回放流的末尾游标（空会话返回 0）。
+
+        Args:
+            tenant_id: 租户 ID。
+            session_id: 会话 ID。
+
+        Returns:
+            int: 末尾游标。
+        """
+        tenant_id = self._tenant(tenant_id)
+        stream = self._streams.get(self._key(tenant_id, session_id))
+        if not stream:
+            return 0
+        return self._cursor_offset(tenant_id, session_id) + stream[-1].seq
 
     async def verify_chain(self, tenant_id: str, session_id: str) -> bool:
         """重算并校验 hash 链（含 fork 父链，深度上限 8）。

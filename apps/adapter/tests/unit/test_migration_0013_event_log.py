@@ -187,6 +187,48 @@ class TestTableDefinition:
         assert "CHECK" not in sql or "CHECK (type" not in sql
 
 
+class TestZeroDdlGuardsAreStrict:
+    """ "零 DDL 守卫"必须逐项验事实（缺陷 D5）。
+
+    守卫的失效方式不是"写错"，而是**验得太少**：只看策略名存在就 RETURN，于是
+    `relforcerowsecurity=false`、同名 `USING (true)` 策略、分区漏策略三种
+    "隔离已降级"的库都会被判成"已就绪"——守卫反而成了静默放行的通道。
+    """
+
+    def test_rls_guard_checks_force_flag_not_only_policy_name(self) -> None:
+        """守卫必须验 `relforcerowsecurity`（属主能否绕过策略）。"""
+        sql = MIGRATION_0013.read_text(encoding="utf-8")
+        assert "relforcerowsecurity" in sql
+        assert "c.relrowsecurity AND c.relforcerowsecurity" in sql
+
+    def test_rls_guard_rejects_always_true_policies(self) -> None:
+        """守卫必须验策略表达式**非恒真**（同名 `USING (true)` 等于没隔离）。"""
+        sql = MIGRATION_0013.read_text(encoding="utf-8")
+        assert "qual IS NOT NULL" in sql
+        assert "with_check IS NOT NULL" in sql
+        assert "'(true)'" in sql
+
+    def test_rls_guard_covers_all_16_partitions(self) -> None:
+        """守卫按 `partition_count + 1`（父表 + 16 分区）逐张验，一张不合格就补。"""
+        sql = MIGRATION_0013.read_text(encoding="utf-8")
+        assert "ready = partition_count + 1" in sql
+        assert "补齐剩余部分" in sql
+
+    def test_grant_guard_checks_every_partition_and_forbids_update_delete(self) -> None:
+        """授权守卫逐张验：SELECT+INSERT 有、UPDATE/DELETE **无**。"""
+        sql = MIGRATION_0013.read_text(encoding="utf-8")
+        assert "NOT has_table_privilege('officeai_app', t, 'UPDATE')" in sql
+        assert "NOT has_table_privilege('officeai_app', t, 'DELETE')" in sql
+        assert "granted = partition_count + 1" in sql
+
+    def test_guards_give_actionable_dba_sql_instead_of_skipping(self) -> None:
+        """不满足时**中止**并给出可照做的 DBA SQL，不静默跳过。"""
+        sql = MIGRATION_0013.read_text(encoding="utf-8")
+        assert "请由 DBA" in sql
+        assert "GRANT SELECT, INSERT ON <表> TO officeai_app" in sql
+        assert "本迁移拒绝跳过" in sql
+
+
 class TestBindParameterStyle:
     """绑定参数的写法（静态可判，不需要数据库）。"""
 

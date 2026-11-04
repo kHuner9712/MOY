@@ -15,6 +15,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import itertools
+
 import asyncpg
 import pytest
 
@@ -129,19 +132,59 @@ class TestTableStructure:
         assert sorted(rows) == ["INSERT", "SELECT"]
 
     async def test_app_role_has_no_update_or_delete_grant(self, pg_dsn: str) -> None:
-        """应用角色的表级权限里没有 UPDATE / DELETE（append-only 的第一道）。"""
-        rows = await _fetch_one(
+        """应用角色的表级权限里没有 UPDATE / DELETE（append-only 的第一道）。
+
+        **这条以前是恒真断言（缺陷 D10）**：写的是 `assert rows in (False, True)`，
+        无论实测值是什么都成立——等于没断言，注释里那套"属主 vs 非属主"的说明
+        只是为了解释它为什么恒真。现在按实测事实分支断言，两个分支各断言一件真事：
+
+        - 非属主（CI / 生产 psql 建表路径）：必须**没有** UPDATE/DELETE 权限；
+        - 属主（空库直建路径）：属主天然有权限，此时断言真正的保护在
+          `FORCE ROW LEVEL SECURITY` + 只有 SELECT/INSERT 策略。
+        """
+        is_owner = await _fetch_one(
             pg_dsn,
-            "SELECT has_table_privilege('officeai_app', 'event_log', 'UPDATE') "
-            "    OR has_table_privilege('officeai_app', 'event_log', 'DELETE')",
+            "SELECT pg_get_userbyid(relowner) = 'officeai_app' "
+            "  FROM pg_class WHERE oid = 'event_log'::regclass",
         )
-        # 应用角色是建表者（属主）时，GRANT 侧的限制对它不生效——此时靠 FORCE RLS +
-        # 缺 UPDATE/DELETE 策略兜底（见 test_update_affects_zero_rows）。
-        assert rows in (False, True)
-        select_ok = await _fetch_one(
-            pg_dsn, "SELECT has_table_privilege('officeai_app', 'event_log', 'SELECT,INSERT')"
+        assert is_owner is not None, "event_log 不存在——迁移 0013 没跑"
+
+        if is_owner:
+            force = await _fetch_one(
+                pg_dsn,
+                "SELECT relrowsecurity AND relforcerowsecurity "
+                "  FROM pg_class WHERE oid = 'event_log'::regclass",
+            )
+            cmds = await _fetch_one(
+                pg_dsn,
+                "SELECT array_agg(DISTINCT cmd::text ORDER BY cmd::text) FROM pg_policies "
+                " WHERE tablename = 'event_log'",
+            )
+            assert force is True, "属主路径下 FORCE RLS 是 append-only 的唯一保证，必须为真"
+            assert sorted(cmds) == ["INSERT", "SELECT"], (
+                f"event_log 上只允许 SELECT/INSERT 策略（缺 UPDATE/DELETE 策略 = 恒 0 行），"
+                f"实测 {cmds}"
+            )
+        else:
+            assert (
+                await _fetch_one(
+                    pg_dsn, "SELECT has_table_privilege('officeai_app', 'event_log', 'UPDATE')"
+                )
+                is False
+            ), "应用角色不应拥有 UPDATE 权限"
+            assert (
+                await _fetch_one(
+                    pg_dsn, "SELECT has_table_privilege('officeai_app', 'event_log', 'DELETE')"
+                )
+                is False
+            ), "应用角色不应拥有 DELETE 权限"
+
+        select_insert = await _fetch_one(
+            pg_dsn,
+            "SELECT has_table_privilege('officeai_app', 'event_log', 'SELECT') "
+            "   AND has_table_privilege('officeai_app', 'event_log', 'INSERT')",
         )
-        assert select_ok is True
+        assert select_insert is True, "应用角色必须有 SELECT+INSERT（否则事件写不进去）"
 
 
 class TestAppendOnly:
@@ -276,3 +319,80 @@ class TestStoreBehaviour:
         store = PostgresEventStore(pg_settings)
         await store.append(TENANT, SESSION, "turn.started", {"n": 1})
         assert await store.read_after(OTHER_TENANT, SESSION) == []
+
+    async def test_five_concurrent_appends_keep_seq_contiguous(self, pg_settings: Settings) -> None:
+        """**D4 验收**：5 个并发写者同时 append 同一会话，`seq` 连续、无重复、链可验。
+
+        `MAX(seq)+1` + 主键冲突重试的失败面就是并发写者数：N 个写者抢同一格时
+        最坏需要 N-1 次重试。这里并发 5 个，若重试上限仍是 3，预期至少 2 条
+        抛 30003 且**事件真丢**（丢的不是日志，是状态真源的一条事实）。
+        """
+        store = PostgresEventStore(pg_settings)
+        session = build_session_id(TENANT, "task_pg_concurrent")
+
+        events = await asyncio.gather(
+            *(store.append(TENANT, session, "turn.started", {"n": index}) for index in range(5))
+        )
+
+        seqs = sorted(event.seq for event in events)
+        assert seqs == [1, 2, 3, 4, 5], f"seq 出现空洞或重复（事件丢失）：{seqs}"
+        stored = await store.read_after(TENANT, session)
+        assert [event.seq for event in stored] == [1, 2, 3, 4, 5]
+        # 并发下**落库顺序**不确定，只能断言"五条都在且不重"——不要写按序断言，
+        # 那会让用例偶发红（真的）。
+        assert sorted(event.payload["n"] for event in stored) == [0, 1, 2, 3, 4]
+        # 链必须首尾相接：取号重号会让 prev_hash 分叉成两条链
+        for previous, current in itertools.pairwise(stored):
+            assert current.prev_hash == previous.hash
+        assert await store.verify_chain(TENANT, session) is True
+
+    async def test_tail_cursor_matches_last_event(self, pg_settings: Settings) -> None:
+        """`tail_cursor` 用于 SSE 续传钳位（D3）：等于最后一条事件的游标。"""
+        store = PostgresEventStore(pg_settings)
+        session = build_session_id(TENANT, "task_pg_tail")
+        assert await store.tail_cursor(TENANT, session) == 0
+        for index in range(3):
+            await store.append(TENANT, session, "turn.started", {"n": index})
+        assert await store.tail_cursor(TENANT, session) == 3
+        child = await store.fork(TENANT, session, 2)
+        # fork 会话的末尾游标 = 父流前缀 2 条 + 自己的标记 1 条
+        assert await store.tail_cursor(TENANT, child) == 3
+
+    async def test_fork_rejects_cut_before_parent_own_offset(self, pg_settings: Settings) -> None:
+        """**D7 验收**：切点下限是父会话自身偏移 + 1（否则三层 fork 游标重复）。"""
+        store = PostgresEventStore(pg_settings)
+        session = build_session_id(TENANT, "task_pg_fork_low")
+        for index in range(3):
+            await store.append(TENANT, session, "turn.started", {"n": index})
+        child = await store.fork(TENANT, session, 2)
+        # 子会话自身偏移 = 2，它的第一条事件在游标 3；切点必须 ≥ 3
+        with pytest.raises(ApiError) as exc_info:
+            await store.fork(TENANT, child, 2)
+        assert exc_info.value.code == ErrorCode.PARAM_INVALID
+        grandchild = await store.fork(TENANT, child, 3)
+        cursors = [event.cursor for event in await store.read_after(TENANT, grandchild)]
+        assert cursors == list(range(1, len(cursors) + 1)), f"游标重复/断档：{cursors}"
+
+    async def test_every_partition_has_its_own_policies(self, pg_dsn: str) -> None:
+        """**D5 验收**：16 个分区各自有 FORCE RLS 与非恒真策略（父表策略不继承）。"""
+        info = await _fetch_one(
+            pg_dsn,
+            "SELECT string_agg(t, ',' ORDER BY t) FROM ("
+            "  SELECT c.relname AS t FROM pg_class c"
+            "   JOIN pg_namespace n ON n.oid = c.relnamespace"
+            "   WHERE n.nspname = 'public'"
+            "     AND c.relname LIKE 'event_log_p%'"
+            "     AND c.relrowsecurity AND c.relforcerowsecurity"
+            "     AND EXISTS (SELECT 1 FROM pg_policies p"
+            "                  WHERE p.schemaname = 'public' AND p.tablename = c.relname"
+            "                    AND p.policyname = 'p_tenant_isolation_select'"
+            "                    AND p.qual IS NOT NULL)"
+            "     AND EXISTS (SELECT 1 FROM pg_policies p"
+            "                  WHERE p.schemaname = 'public' AND p.tablename = c.relname"
+            "                    AND p.policyname = 'p_tenant_isolation_insert'"
+            "                    AND p.with_check IS NOT NULL)"
+            ") s",
+        )
+        names = str(info or "").split(",") if info else []
+        expected = [f"event_log_p{index:02d}" for index in range(PARTITION_COUNT)]
+        assert names == expected, f"分区 RLS 不齐：仅 {names}"

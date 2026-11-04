@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.config import Settings
 from app.core.errors import ApiError, ErrorCode
 from app.db.repositories.event_log.postgres import PostgresEventStore
+from app.db.repositories.event_log.records import MAX_SEQ_ATTEMPTS
 from app.kernel.events import GENESIS_HASH, build_session_id, compute_hash
 
 pytestmark = pytest.mark.unit
@@ -87,6 +88,8 @@ class _FakeCluster:
         """初始化空集群。"""
         self.rows: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self.conflict_once = False
+        #: 第几次 INSERT 尝试（用于断言"重试上限确实被用满"）
+        self.attempts = 0
 
     def _session_rows(self, tenant_id: str, session_id: str) -> list[dict[str, Any]]:
         """取某会话的行（升序）。
@@ -161,6 +164,7 @@ class _FakeCluster:
         Raises:
             IntegrityError: `conflict_once` 置位时抛一次（模拟主键冲突重试）。
         """
+        self.attempts += 1
         if self.conflict_once:
             self.conflict_once = False
             raise IntegrityError("insert", {}, Exception("duplicate key"))
@@ -293,17 +297,23 @@ class TestAppendControlFlow:
         event = await store.append(TENANT, "s1", "turn.started", {"n": 1})
         assert event.seq == 1
 
-    async def test_persistent_conflict_raises(self, cluster: _FakeCluster) -> None:
+    async def test_persistent_conflict_raises(
+        self, cluster: _FakeCluster, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """连续冲突超过重试上限报 30003（不无限重试、不静默丢事件）。"""
+        # 退避清零：这条用例要的是"重试上限的判定"，不是"等 3 秒"
+        monkeypatch.setattr("app.db.repositories.event_log.postgres._RETRY_BASE_DELAY_SECONDS", 0.0)
         store = _store()
 
         def _always_conflict(tenant_id: str, params: dict[str, Any]) -> dict[str, Any]:
+            cluster.attempts += 1
             raise IntegrityError("insert", {}, Exception("duplicate key"))
 
         cluster._insert = _always_conflict  # noqa: SLF001 - 测试替身：换成"永远冲突"
         with pytest.raises(ApiError) as exc_info:
             await store.append(TENANT, "s1", "turn.started", {"n": 1})
         assert exc_info.value.code == ErrorCode.INTERNAL_ERROR
+        assert cluster.attempts == MAX_SEQ_ATTEMPTS
 
     async def test_unregistered_type_rejected_before_touching_store(
         self, cluster: _FakeCluster
