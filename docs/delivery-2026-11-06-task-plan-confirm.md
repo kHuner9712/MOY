@@ -51,13 +51,13 @@
 
 | 环节 | 验证程度 | 说明 |
 | --- | --- | --- |
-| 计划投影 / 可跳过判定 / 编辑校验 / 确认幂等 / 懒过期 | ✅ 已覆盖 | `apps/adapter/tests/unit/test_task_plan.py` |
-| HTTP 全链路（创建 → 读取 → 编辑 → 确认 → 只执行选中步骤） | ✅ 已覆盖 | `apps/adapter/tests/integration/test_task_plan_api.py`（开关开启） |
-| 确认前零副作用 | ✅ 已覆盖 | 断言替身网关 `EchoGateway.calls == []`；确认后才 >0 |
-| 超时清理路径 | ✅ 已覆盖 | sweeper 过期清理 + 重复扫描幂等；系统超时不置 `cancel_requested`，保持完成率口径 |
-| 前端计划面板交互 | ✅ 已覆盖 | `apps/web/src/components/workflow/task-plan-panel.test.tsx` |
-| **真实第三方工具副作用** | ❌ **未验证** | CI 全程使用替身网关，未真实调用飞书/邮件等外部服务；部署环境需按第 5 节验收 |
-| 多副本清理器竞争 | ⚠️ 逻辑验证 | 条件写保证只有一个副本生效；未做多副本真机压测 |
+| 计划投影 / 可跳过判定 / 编辑校验 / 确认幂等 / 懒过期 | 已覆盖 | `apps/adapter/tests/unit/test_task_plan.py` |
+| HTTP 全链路（创建 → 读取 → 编辑 → 确认 → 只执行选中步骤） | 已覆盖 | `apps/adapter/tests/integration/test_task_plan_api.py`（开关开启） |
+| 确认前零副作用 | 已覆盖 | 断言替身网关 `EchoGateway.calls == []`；确认后才 >0 |
+| 超时清理路径 | 已覆盖 | sweeper 过期清理 + 重复扫描幂等；系统超时不置 `cancel_requested`，保持完成率口径 |
+| 前端计划面板交互 | 已覆盖 | `apps/web/src/components/workflow/task-plan-panel.test.tsx` |
+| **真实第三方工具副作用** | **未验证** | CI 全程使用替身网关，未真实调用飞书/邮件等外部服务；部署环境需按第 5 节验收 |
+| 多副本清理器竞争 | 逻辑验证 | 条件写保证只有一个副本生效；未做多副本真机压测 |
 
 结论：**代码链路与状态机已由测试锁定；真实外部工具的副作用与多副本并发需按第 5 节在部署环境验收。**
 
@@ -128,10 +128,10 @@
 
 | 项 | 值 |
 | --- | --- |
-| 功能提交 | 待提交后回填 |
-| 收口 SHA | 待回填 |
-| CI Adapter | 待回填 |
-| CI Web | 待回填 |
+| 功能提交 | `d41e577` |
+| 收口 SHA | `e72d3ec`（在功能提交上追加交付清单证据回填，代码相同） |
+| CI Adapter | [run 42090485371](https://github.com/kHuner9712/MOY/actions/runs/42090485371) success |
+| CI Web | [run 42090493299](https://github.com/kHuner9712/MOY/actions/runs/42090493299) success |
 
 **CI 能证明与不能证明的**：以上 run 只证明「代码 / 契约 / 门禁一致」；CI 中的工具调用全部指向
 替身网关，**不能证明真实第三方工具副作用可用**——后者只由第 5 节部署验收判定。
