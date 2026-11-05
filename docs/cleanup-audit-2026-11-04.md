@@ -246,7 +246,14 @@ foreach($p in @('apps/adapter/scripts/validate_plugins.py','deploy/validate_plug
 | 第 5 批（P04） | `5e5c400` 锁内双版本收敛（lock 重新解析） | 3 |
 | 第 5 批（P09） | `0704642` 扫描工具精确版本锁定 | 1 |
 
-CI 验收（同一 SHA 的 CI Adapter + CI Web）run 编号与结论见最终汇报。
+CI 验收（同一 SHA `ba9bdaa`，2026-11-05）：
+
+| workflow | run 编号 | 结论 |
+| --- | --- | --- |
+| CI Adapter | `41946789714` | ✅ success：`2933 passed`（含 PG 258）/ 0 failed，覆盖率 **92.67%**（门禁 85），ruff / mypy 通过。注：`ci-adapter.yml` 的 push 路径过滤不含 `apps/web`，故用 `gh workflow run ci-adapter.yml --ref main` 在 main HEAD（=`ba9bdaa`）触发 |
+| CI Web | `41946759122` | ✅ success：eslint（0 warning）/ tsc / vitest+覆盖率门禁 / `next build` 全绿；E2E 匿名段、G-14/15/16/17/18/27/30/31、prettier 均绿 |
+| Dependency Scan | `41946759029` | ✅ success：P09 工具锁版本后 SCA 协议扫描与底座直连门禁仍绿 |
+| SBOM | `41946758969` | ✅ success（仍为告警不阻断，未改 `continue-on-error`） |
 
 ### 8.5 P04 / P09 收口实跑（2026-11-05）
 
