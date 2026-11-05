@@ -86,6 +86,19 @@ docker compose exec adapter fc-list | grep -i "Noto Sans CJK"   # 至少一行�
 2. 产物卡片点「预览」。
 3. 预期：浏览器新窗口**内嵌打开 PDF**（不是下载、不是白屏），**中文正常显示**（不是方框/乱码）。
 
+**不依赖前端的手工复核（放一个文件、看一个结果）**：把任意一个含中文的 docx 放进容器直接转一次：
+
+```bash
+docker compose cp ./sample-中文.docx adapter:/tmp/sample.docx
+docker compose exec adapter soffice --headless --norestore \
+    -env:UserInstallation=file:///tmp/lo-profile \
+    --convert-to pdf --outdir /tmp /tmp/sample.docx
+docker compose cp adapter:/tmp/sample.pdf ./sample.pdf   # 在宿主机打开 sample.pdf
+```
+
+预期：`sample.pdf` 能被阅读器打开，**中文不是方框**。若这一步失败，说明镜像/字体问题，
+与前端无关；若这一步成功但 5.3 的页面白屏，则是响应头/网关问题（按 5.4 定位）。
+
 ### 5.4 响应头核对（约 30 秒）
 
 对任意预览链接执行（把 `{token}` 换成实际令牌）：
