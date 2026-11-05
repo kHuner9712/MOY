@@ -1,7 +1,8 @@
 import nextVitals from "eslint-config-next/core-web-vitals";
 
-// Next 16 起 `next lint` 移除，改用扁平配置（2026-10-21 升级迁移；2026-10-28
-// 实测口径修正：仓库现装 ESLint ^10.13.0——扁平配置自 9 起为默认，10 延续）。
+// Next 16 起 `next lint` 移除，改用扁平配置（2026-10-21 升级迁移；2026-11-05
+// 口径修正：仓库锁定 ESLint ^9.39.5——扁平配置自 9 起为默认。不升 v10 的原因：
+// eslint-config-next 的传递插件链 hard lock v9，详见 docs/cleanup-audit-2026-11-04.md P04）。
 // eslint-config-next 16 原生导出扁平配置数组（Linter.Config[]），直接展开。
 //
 // ENG-06（审计 2026-10-28）：本文件是前端 lint 豁免的**唯一注册处**——
