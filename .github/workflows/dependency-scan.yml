@@ -145,7 +145,7 @@ jobs:
 
       - name: 校验一致性 + 精确版本线
         run: |
-          python -m pip install pyyaml
+          python -m pip install pyyaml==6.0.3
           python deploy/validate_images.py
 
       - name: 校验上游标签真实存在（杜绝合成标签）
@@ -222,7 +222,8 @@ jobs:
           # pyyaml 是下方协议判定脚本解析 images.lock / compose 的硬依赖。
           # 此前只装了 pip-licenses，脚本一执行到 `yaml.safe_load` 就 NameError，
           # 整条合规门禁恒红（S8 故障点③，2026-10-23）。
-          pip install pip-licenses pyyaml
+          # P09（2026-11-05）：扫描工具锁精确版本，保证扫描结果可复现（勿用 floating tag）。
+          pip install pip-licenses==5.5.5 pyyaml==6.0.3
           # H-2（审计 2026-10-28）：适配层依赖改走 uv.lock 精确清单——
           # `uv export --frozen` 从锁文件导出 requirements 再照单安装，
           # 与质量门禁（uv sync --frozen）同源，杜绝两处口径漂移。
@@ -265,7 +266,8 @@ jobs:
         # workspaces 全树，输出路径保持不变（下游读 `apps/web/node-licenses.json`）。
         run: |
           npm ci --no-audit --no-fund --silent
-          npm install -g license-checker --silent
+          # P09（2026-11-05）：同上，锁精确版本；升级需与扫描结果一并复核。
+          npm install -g license-checker@25.0.1 --silent
           license-checker --json --production --start . > apps/web/node-licenses.json
           echo "[OK] Node 依赖清单已生成（源自 package-lock.json 锁树）"
 
