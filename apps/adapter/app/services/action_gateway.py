@@ -322,7 +322,7 @@ class ServicesActionGateway:
     # render_file（本地）
     # ------------------------------------------------------------------
     def _run_render(self, ctx: RunContext, params: dict[str, Any]) -> ActionResult:
-        """本地渲染文件（`csv` / `md` / `docx`），**不计量、不读用户文件**。
+        """本地渲染文件（`csv` / `md` / `docx` / `xlsx`），**不计量、不读用户文件**。
 
         Args:
             ctx: 执行上下文。
@@ -353,6 +353,7 @@ class ServicesActionGateway:
                     inline_text=preview,
                     storage_key=f"{ctx.task_id}/{ctx.step_seq}/{blob.filename}",
                     content=blob.content,
+                    content_type=blob.content_type,
                     preview_text=preview[:500],
                     size_bytes=blob.size_bytes,
                 )

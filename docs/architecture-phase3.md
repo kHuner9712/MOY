@@ -145,7 +145,7 @@
 | `action` | 执行原语（§2.2），`tool` 必须带 `tool_type`+`operation`（须在 `tool_registry.yaml`） |
 | `tool_alternatives[]` | 可选：`tool_type` 的等价替代（按 `inputs` 里的渠道/平台选择）。如内容运营「发布」步：主 `wechat_mp.publish_article`，替代 `email.send_message`；人事「邀约」步：`email.send_message` / `feishu.create_calendar_event` / `wecom.send_message` 三选一。**替代项同样受 G-28 校验** |
 | `produces[]` | 该步产物 key（⊆ `outputs[].key`），已完成步骤 `artifacts.length ≥ 1`（P0-P3-12 验收②） |
-| `render_format` | `action=render_file` 时**必填**：`docx` / `md` / `csv`（PM 要求：产出类型必须声明，且与 `personal.file.read` 无耦合） |
+| `render_format` | `action=render_file` 时**必填**：`docx` / `xlsx` / `md` / `csv`（PM 要求：产出类型必须声明，且与 `personal.file.read` 无耦合） |
 | `needs[]` | 依赖的前序产物 key（用于参数装配与"路径 ⊆ 清单"这类断言） |
 | `confirm` | `{reason, summary_fields[]}`：声明**人工接管点**（PRD 3 处：方案确认、提交前确认、发布前确认、Offer 金额） |
 | `when` | `{input, in[]}`：条件跳过（HR 场景互斥） |
@@ -393,7 +393,7 @@ graph TB
 | `compose` | `POST /model/generate`（按 `produces` 决定输出形态；内部档位映射，**对外无档位名**） | — | `automation` | ✅ |
 | `retrieve` | `POST /knowledge/search`（`top_n ≤ 10`；可见库由 `policy_service` 收敛） | `personal.knowledge.read` 或 `personal.file.read` | `automation` | ✅（`11005`） |
 | `tool` | `POST /tools/execute`（T5 全流程：连接校验 → 执行 → `tool_execution` 落库） | `personal.tool.use` +（写仓库→`org.repo.write`；发布→`org.external.publish`；读通讯录→`org.directory.read`） | `automation` | ❌（写外部动作不重试，`confirm` 后更不重试） |
-| `render_file` | 本地渲染（`csv` 排期表 / `docx` 公文 / `zip` 代码包）+ 对象存储 | — | 不计量 | ❌（纯本地） |
+| `render_file` | 本地渲染（`csv` 排期表 / `docx` 公文 / `xlsx` 表格 / `zip` 代码包）+ 对象存储 | — | 不计量 | ❌（纯本地） |
 | `summarize` | 本地聚合核查清单（无下游调用） | — | 不计量 | — |
 
 **三重校验**：① CI G-28 静态（`action` 枚举 + `tool_type/operation` 必须存在于 `tool_registry.yaml` + 能力-原语映射一致）；② 加载器启动期（失败 `30004`）；③ 运行期 `ActionGateway.resolve()` 再查（防运行期篡改）。
@@ -788,7 +788,7 @@ CREATE INDEX IF NOT EXISTS idx_task_initiator ON plugin_task (tenant_id, initiat
 | **A3** `[扩展]` | GET | `/agent/tasks/{task_id}` | — | `status` 枚举新增 `queued`、`waiting_confirm`；`queue_position?`；`result.checklist[]`、`result.warnings[]`、`confirm{step_seq, reason, summary}` | 12001 20003 |
 | **A4** `[扩展]` | GET | `/agent/tasks/{task_id}/steps` | — | `steps[].artifacts[]`、`steps[].failure{reason_text,retryable,operator_action}` | 12001 20003 |
 | **WF1** | POST | `/agent/tasks/{task_id}/retry` | `decision(retry_step\|retry_all\|continue\|redo)`、`from_step?`（`retry_step` 必填） | `task_id, resumed, retry_of, status, from_step?` | 12001 16004 17001 20003 |
-| **WF2** | PUT | `/agent/tasks/{task_id}/artifacts/{artifact_id}` | `content`、`render_format?`（`docx`\|`md`\|`csv`） | `artifact_id, version`（每次保存 +1）、`download_url`、`version_history[]` | 12001 20004 20001 20003 |
+| **WF2** | PUT | `/agent/tasks/{task_id}/artifacts/{artifact_id}` | `content`、`render_format?`（`docx`\|`xlsx`\|`md`\|`csv`） | `artifact_id, version`（每次保存 +1）、`download_url`、`version_history[]` | 12001 20004 20001 20003 |
 
 **WF1 语义（任务级写端点之一，`decision` 四值）**
 

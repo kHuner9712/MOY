@@ -2,7 +2,7 @@
 
 这两组都是**纯函数**，但都是"出事才走到"的分支：
 
-- `resolve_content_type`：扩展名命中 / 表格兜底 / 调用方声明 / `octet-stream` 兜底；
+- `resolve_content_type`：扩展名命中 / 调用方声明 / 表格兜底 / `octet-stream` 兜底；
   它是 P3-B22-04 的修复本体——下载响应的 `Content-Type` 从这里出。
 - `_is_expired`：空值 / 无时区 / 无法解析 / 已过期 / 未过期；
   它是"产物 180 天后必须下不到"的唯一判定点，任何一个分支写错都会让过期产物
@@ -40,6 +40,7 @@ pytestmark = pytest.mark.unit
         ),
         ("周报.md", "text/markdown; charset=utf-8"),
         ("排期表.csv", "text/csv; charset=utf-8"),
+        ("成果物.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         ("README.TXT", "text/plain; charset=utf-8"),  # 大写扩展名同样命中
         ("export.json", "application/json"),
         ("bundle.zip", "application/zip"),
@@ -53,6 +54,15 @@ def test_extension_wins_over_declared_type(name: str, expected: str) -> None:
 def test_table_type_maps_to_csv() -> None:
     """`table` 类产物的 `inline_text` 就是 CSV 文本（无扩展名时按类型兜底）。"""
     assert resolve_content_type("排期表", "table", "") == EXTENSION_CONTENT_TYPES["csv"]
+
+
+def test_declared_xlsx_wins_over_table_type() -> None:
+    """表格重新导出为 xlsx 时，声明值必须优先于 `table` 的 CSV 兜底。
+
+    否则库里会出现「MIME 是 CSV、字节是 xlsx」的错配（2026-11-05 B2 的判据）。
+    """
+    xlsx = EXTENSION_CONTENT_TYPES["xlsx"]
+    assert resolve_content_type("排期表", "table", xlsx) == xlsx
 
 
 def test_declared_type_is_kept_when_extension_unknown() -> None:

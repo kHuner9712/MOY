@@ -449,7 +449,7 @@ class StepSpec(_StrictModel):
     tool_alternatives: list[ToolAlternative] = Field(
         default_factory=list, max_length=3, description="等价替代"
     )
-    render_format: Literal["docx", "md", "csv"] | None = Field(
+    render_format: Literal["docx", "xlsx", "md", "csv"] | None = Field(
         default=None, description="导出格式（render_file 必填）"
     )
     timeout_seconds: int = Field(default=120, ge=10, le=600, description="单步超时秒数")

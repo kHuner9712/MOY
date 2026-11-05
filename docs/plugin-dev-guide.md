@@ -130,7 +130,7 @@
 | `tool_type` | ⚠️ | string \| null | ≤32 字符 | `action="tool"` 时**必填**，且必须在工具登记表内（§6.3）；其它原语**不得**带 |
 | `operation` | ⚠️ | string \| null | ≤64 字符 | 同上，须 ∈ 该工具的 operations |
 | `tool_alternatives` | ❌ | object[] | ≤3 个，缺省 `[]` | 等价替代 `{tool_type, operation}`（按输入里的渠道选择）；同样受白名单校验；不得与主工具重复 |
-| `render_format` | ⚠️ | enum \| null | `docx` \| `md` \| `csv` | `action="render_file"` 时**必填**（格式是产物契约，不允许运行期挑）；其它原语**不得**带 |
+| `render_format` | ⚠️ | enum \| null | `docx` \| `xlsx` \| `md` \| `csv` | `action="render_file"` 时**必填**（格式是产物契约，不允许运行期挑）；其它原语**不得**带 |
 | `timeout_seconds` | ❌ | int | 10-600，缺省 120 | 单步超时 |
 
 `checklist[]`（2-5 项，**必填段**，结果物核查清单，P0-P3-14）：

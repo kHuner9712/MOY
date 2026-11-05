@@ -495,6 +495,10 @@ services:
       OA_OBJECT_STORE_ENDPOINT: http://object-store:8333
       # SaaS 模式：允许调用外部闭源模型 API（路由表见 registry/profile_routes.yaml）
       OA_DOWNSTREAM_ENABLED: "true"
+      # B2（2026-11-05）：xlsx 导出默认开；离线预览默认关，部署验收后再开
+      # （见 docs/delivery-2026-11-05-b2-xlsx-preview.md）。
+      OA_ARTIFACT_XLSX_ENABLED: ${OA_ARTIFACT_XLSX_ENABLED:-true}
+      OA_OFFICE_PREVIEW_ENABLED: ${OA_OFFICE_PREVIEW_ENABLED:-false}
     ports:
       # G1（审计 2026-11-02 P0-4）：绑回环，仅本机调试可达——对外只走 edge（TLS）。
       # 明文 8000/3000 不得裸绑全网卡：那会绕过边缘限流/安全头/证书。

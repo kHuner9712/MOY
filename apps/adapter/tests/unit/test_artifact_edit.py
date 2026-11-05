@@ -17,8 +17,9 @@ import asyncio
 import pytest
 
 from app.core.errors import ApiError, ErrorCode
-from app.db.repositories.artifact_repo import ArtifactRecord
+from app.db.repositories.artifact_repo import EXTENSION_CONTENT_TYPES, ArtifactRecord
 from app.plugins.engine import TASK_WAITING_CONFIRM
+from app.plugins.renderer import FileRenderer
 from app.schemas.agent import CreateTaskRequest
 from app.schemas.task import ArtifactEditRequest
 from tests.unit.task_helpers import TENANT, auth, build_service, load_manifest
@@ -63,6 +64,24 @@ def _prepare_task() -> tuple[object, object, object, str]:
     items = _run(artifacts.list_by_task(TENANT, data.task_id))
     assert items, "第 1 步应产出至少一个产物"
     return service, tasks, artifacts, (data.task_id, items[0].artifact_id)
+
+
+def test_edit_with_xlsx_render_format_stores_real_xlsx() -> None:
+    """WF2 选择 Excel：落库 MIME 与字节都必须是 xlsx（表格重新导出路径）。"""
+    service, _tasks, artifacts, (task_id, artifact_id) = _prepare_task()
+    edited = _run(
+        service.edit_artifact(  # type: ignore[attr-defined]
+            task_id,
+            artifact_id,
+            ArtifactEditRequest(content="姓名,得分\n张三,88\n李四,90", render_format="xlsx"),
+            auth(),
+        )
+    )
+    assert edited.version >= 2
+    stored = _run(artifacts.get(TENANT, artifact_id))
+    assert stored is not None
+    assert stored.content_type == EXTENSION_CONTENT_TYPES["xlsx"]
+    assert FileRenderer.is_openable_xlsx(stored.content) is True
 
 
 def test_edit_bumps_version_rerenders_and_resanitizes() -> None:

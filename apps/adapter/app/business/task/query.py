@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.business.artifact_export import is_xlsx_exportable
 from app.business.task.access import assert_task_visible
 from app.business.task.deps import TaskDeps
 from app.business.task.manifest import TaskManifestResolver
@@ -23,6 +24,7 @@ from app.core.security import AuthContext
 from app.db.repositories.artifact_repo import ArtifactRecord
 from app.db.repositories.task import TaskRecord
 from app.plugins.engine import STEP_FAILED, TASK_WAITING_CONFIRM
+from app.plugins.renderer import RENDER_CONTENT_TYPES
 from app.schemas.agent import (
     Artifact,
     ArtifactType,
@@ -306,6 +308,56 @@ class TaskQuery:
         )
         return f"/files/artifacts/{token}"
 
+    def export_url(self, artifact: ArtifactRecord | None) -> str | None:
+        """生成按需导出 Excel 的地址（开关关闭或类型不支持时为 None）。
+
+        Args:
+            artifact: 产物行。
+
+        Returns:
+            str | None: 导出地址。
+        """
+        if artifact is None or not self._deps.settings.artifact_xlsx_enabled:
+            return None
+        if not is_xlsx_exportable(artifact):
+            return None
+        token = make_token(
+            tenant_id=artifact.tenant_id,
+            artifact_id=artifact.artifact_id,
+            version=artifact.version,
+            settings=self._deps.settings,
+        )
+        return f"/files/artifacts/{token}/export?format=xlsx"
+
+    def preview_url(self, artifact: ArtifactRecord | None) -> str | None:
+        """生成在线预览（PDF）地址（开关关闭或类型不支持时为 None）。
+
+        `pptx` 刻意不给预览：镜像只装 writer/calc，不装 impress（矩阵默认决策
+        「pptx 可降级为下载」），给了按钮只会变成"点了报错"。
+
+        Args:
+            artifact: 产物行。
+
+        Returns:
+            str | None: 预览地址。
+        """
+        if artifact is None or not self._deps.settings.office_preview_enabled:
+            return None
+        previewable = {RENDER_CONTENT_TYPES["docx"], RENDER_CONTENT_TYPES["xlsx"]}
+        if artifact.type != "table" and artifact.content_type not in previewable:
+            return None
+        if artifact.type != "table" and not artifact.content:
+            return None
+        if artifact.type == "table" and not artifact.inline_text.strip():
+            return None
+        token = make_token(
+            tenant_id=artifact.tenant_id,
+            artifact_id=artifact.artifact_id,
+            version=artifact.version,
+            settings=self._deps.settings,
+        )
+        return f"/files/artifacts/{token}/preview"
+
     def version_history(self, artifact: ArtifactRecord) -> list[ArtifactVersionItem]:
         """把历史版本转成响应结构（旧版本同样可下载）。
 
@@ -349,8 +401,11 @@ class TaskQuery:
             type=artifact.type,
             name=artifact.name,
             version=artifact.version,
+            content_type=artifact.content_type,
             download_url=self.download_url(artifact),
             url=artifact.external_url or None,
+            xlsx_url=self.export_url(artifact),
+            preview_url=self.preview_url(artifact),
             preview_text=artifact.preview_text,
             content_sha256=artifact.content_sha256,
             editable=artifact.editable,

@@ -246,6 +246,7 @@ class ArtifactDraft:
         external_url: 外链地址（`link` 类型）。
         storage_key: 对象存储键（`file` 类型；本阶段以内存文件句柄代替）。
         content: 二进制内容（`file` 类型，落存储用）。
+        content_type: MIME 类型（渲染器给出；落库时由仓储层再归一化收口）。
         preview_text: 表格前 5 行预览。
         size_bytes: 内容大小。
     """
@@ -257,6 +258,7 @@ class ArtifactDraft:
     external_url: str = ""
     storage_key: str = ""
     content: bytes = b""
+    content_type: str = ""
     preview_text: str = ""
     size_bytes: int = 0
 

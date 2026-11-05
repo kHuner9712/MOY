@@ -846,10 +846,43 @@ async def test_render_csv_builds_file_artifact_with_storage_key(
     assert draft.name == "差旅清单"
     assert draft.storage_key == f"{ctx.task_id}/{ctx.step_seq}/差旅清单.csv"
     assert draft.content.startswith(codecs.BOM_UTF8)
+    assert draft.content_type == "text/csv; charset=utf-8"
     assert draft.size_bytes == len(draft.content)
     assert draft.preview_text == "备注文字"
     assert draft.inline_text == "备注文字"
     assert result.data == {"table_file": "差旅清单.csv"}
+
+
+@pytest.mark.parametrize(
+    ("render_format", "expected"),
+    [
+        ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        ("md", "text/markdown; charset=utf-8"),
+    ],
+)
+async def test_render_draft_carries_real_mime_not_plain_text(
+    gateway: ServicesActionGateway, render_format: str, expected: str
+) -> None:
+    """渲染产物的 `content_type` 必须是**真格式**，不能是 text/plain。
+
+    这是 MIME 透传修复的第一段判据：`ArtifactDraft` 以前没有 MIME 字段，
+    下游只能硬编码 text/plain，导致 docx 被存成文本（2026-11-05 B2）。
+    落库后的判据见 `test_artifact_mime_transmission.py`。
+    """
+    result = await gateway.invoke(
+        _ctx(),
+        "render_file",
+        {
+            "render_format": render_format,
+            "title": "成果物",
+            "produces": ["document"],
+            "prior": {"rows": [{"姓名": "张三", "得分": 88}]},
+        },
+    )
+    draft = result.artifacts[0]
+    assert draft.content_type == expected
+    assert draft.content_type != "text/plain; charset=utf-8"
 
 
 async def test_render_without_produces_is_skipped(gateway: ServicesActionGateway) -> None:

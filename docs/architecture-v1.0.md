@@ -1400,9 +1400,16 @@ graph LR
 | python-multipart | ==0.0.32 | Apache-2.0 | multipart 文件上传 |
 | pyyaml | ==6.0.3 | MIT | 注册表/路由表 YAML 解析 |
 | python-docx | ^1.1 | MIT | 公文/Offer docx 导出（D-20，平台 render_file 专用） |
+| openpyxl | >=3.1,<4.0 | MIT | xlsx 成果物渲染与按需导出（2026-11-05 B2，平台 render_file / `artifact_export` 专用；**延迟导入**，缺失时降级 CSV） |
 | prometheus-client | ^0.20（**阶段四 T4-05.1 引入**） | Apache-2.0 | `/metrics` exposition（Prometheus 官方客户端库；**不手写直方图与文本格式**） |
 | pytest / pytest-asyncio / pytest-cov | ^8.0 / ^0.23 / ^4.1 | MIT | 测试框架 |
 | ruff / mypy | ^0.5 / ^1.10 | MIT | Lint 与类型检查 |
+
+**系统级（非 Python 依赖，仅运行镜像）**：`libreoffice-writer` + `libreoffice-calc` 与 `fonts-noto-cjk`
+供离线 Office → PDF 预览（2026-11-05 B2）。LibreOffice 为 **MPL-2.0**（弱互惠，可随镜像分发、
+不传染自有代码），字体为 OFL-1.1；二者**不进 `pyproject.toml`**（不是 Python 包），由
+`apps/adapter/Dockerfile` 的 runtime 阶段安装，并在同一镜像构建期跑真实 docx/xlsx → PDF 冒烟
+（`soffice --version` 能起来不代表组件齐，故必须断言输出以 `%PDF-` 开头且 `fc-list` 命中了中文字体）。
 
 > 许可证实测口径（2026-10-30 审计 M4 复核）：直接依赖为 MIT / Apache-2.0 / BSD-3-Clause；
 > 传递链另含 **MPL-2.0**（certifi，经 httpx——**灰名单**，文件级弱互惠，随交付保留许可证文本）、

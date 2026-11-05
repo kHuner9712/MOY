@@ -512,6 +512,10 @@ services:
       OA_DOWNSTREAM_ENABLED: "true"
       OA_DIFY_DEFAULT_APP_KEY: ${OA_DIFY_DEFAULT_APP_KEY:-}
       OA_DIFY_AGENT_APP_KEY: ${OA_DIFY_AGENT_APP_KEY:-}
+      # B2（2026-11-05）：xlsx 导出默认开；离线预览默认关，部署验收后再开
+      # （见 docs/delivery-2026-11-05-b2-xlsx-preview.md）。
+      OA_ARTIFACT_XLSX_ENABLED: ${OA_ARTIFACT_XLSX_ENABLED:-true}
+      OA_OFFICE_PREVIEW_ENABLED: ${OA_OFFICE_PREVIEW_ENABLED:-false}
       # 迁移**不进 Web 启动**（架构 §9.4）：由 profiles:[migrate] 的一次性 Job 执行。
       # 这里**故意不设** OA_DB_AUTO_MIGRATE，保持 Settings 默认 false（T4-01.4）——
       # 显式写 "false" 反而会掩盖"默认值被改"的风险。

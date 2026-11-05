@@ -63,6 +63,12 @@ dependencies = [
     # 禁 `docxtpl`/`python-docx-template`（会拖入 Jinja2）。
     # docx 一律由平台渲染器生成，插件声明不支持也无法 import（G-28 拦截）。
     "python-docx>=1.1,<2.0",
+    # xlsx 成果物（2026-11-05 B2）：`render_file` 的 `xlsx` 格式必须交付**真工作簿**
+    # （可解压出 `[Content_Types].xml` + `xl/workbook.xml`），不能退成 csv。
+    # 只认 `openpyxl`（MIT）；禁 `xlsxwriter`（BSD 但写流式 API 与本模块的
+    # "先构后校验"路径不匹配）与 `pandas`（体积与依赖面都过大）。
+    # 与 docx 同体例：延迟导入，插件声明拿不到这个库。
+    "openpyxl>=3.1,<4.0",
 ]
 
 [project.optional-dependencies]

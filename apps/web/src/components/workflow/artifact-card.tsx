@@ -1,6 +1,15 @@
 'use client';
 
-import { Copy, Download, ExternalLink, FileText, History, Pencil } from 'lucide-react';
+import {
+  Copy,
+  Download,
+  ExternalLink,
+  Eye,
+  FileSpreadsheet,
+  FileText,
+  History,
+  Pencil,
+} from 'lucide-react';
 import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +44,7 @@ const TYPE_LABELS: Record<string, string> = {
 /** 导出格式选项（WF2 `render_format`） */
 const FORMAT_OPTIONS: Array<{ value: ArtifactRenderFormat; label: string }> = [
   { value: 'docx', label: 'Word 文档' },
+  { value: 'xlsx', label: 'Excel 表格' },
   { value: 'md', label: 'Markdown' },
   { value: 'csv', label: 'CSV 表格' },
 ];
@@ -146,6 +156,26 @@ export function ArtifactCard({
             <Button type="button" size="sm" variant="ghost" onClick={() => void copyTable()}>
               <Copy className="h-3.5 w-3.5" />
               复制表格
+            </Button>
+          ) : null}
+
+          {/* 按需导出 Excel：`xlsx_url` 由后端按类型+开关决定，前端不做二次判断 */}
+          {artifact.xlsx_url ? (
+            <Button asChild size="sm" variant="outline">
+              <a href={artifact.xlsx_url} target="_blank" rel="noreferrer">
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                下载 Excel
+              </a>
+            </Button>
+          ) : null}
+
+          {/* 预览是 PDF（浏览器自带阅读器），新窗口打开而非内嵌 iframe */}
+          {artifact.preview_url ? (
+            <Button asChild size="sm" variant="outline">
+              <a href={artifact.preview_url} target="_blank" rel="noreferrer">
+                <Eye className="h-3.5 w-3.5" />
+                预览
+              </a>
             </Button>
           ) : null}
 

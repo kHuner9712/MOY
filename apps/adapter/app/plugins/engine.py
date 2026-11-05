@@ -475,6 +475,7 @@ class PluginEngine:
                         external_url=draft.external_url,
                         storage_key=draft.storage_key,
                         content=draft.content,
+                        content_type=draft.content_type,
                         preview_text=self._sanitizer.mask_pii(draft.preview_text),
                         size_bytes=draft.size_bytes or len(draft.inline_text.encode("utf-8")),
                     )
@@ -489,6 +490,7 @@ class PluginEngine:
                     external_url=draft.external_url,
                     storage_key=draft.storage_key,
                     content=draft.content,
+                    content_type=draft.content_type,
                     size_bytes=draft.size_bytes,
                 )
             )

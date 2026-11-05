@@ -691,6 +691,12 @@ services:
       OA_DIFY_DEFAULT_APP_KEY: ${OA_DIFY_DEFAULT_APP_KEY:-}
       # Agent 任务专用工作流应用密钥（与对话应用分离；缺省回退默认密钥）
       OA_DIFY_AGENT_APP_KEY: ${OA_DIFY_AGENT_APP_KEY:-}
+      # B2（2026-11-05）：产物按需导出 xlsx（默认开，只读加性）与离线 Office 预览
+      # （默认关——镜像未装 LibreOffice 时端点只会 503）。开启预览前先执行
+      # `docker compose exec adapter soffice --version`，再按
+      # docs/delivery-2026-11-05-b2-xlsx-preview.md 的 5 分钟步骤验收；**CI 绿不等于预览可用**。
+      OA_ARTIFACT_XLSX_ENABLED: ${OA_ARTIFACT_XLSX_ENABLED:-true}
+      OA_OFFICE_PREVIEW_ENABLED: ${OA_OFFICE_PREVIEW_ENABLED:-false}
     ports:
       # G1（审计 2026-11-02 P0-4）：绑回环，仅本机调试可达——对外只走 edge（TLS）。
       # 明文 8000/3000 不得裸绑全网卡：那会绕过边缘限流/安全头/证书。

@@ -70,6 +70,7 @@ DOCUMENTED_PACKAGES = {
     "python-multipart",
     "pyyaml",
     "python-docx",
+    "openpyxl",
     "prometheus-client",
     "pytest",
     "pytest-asyncio",

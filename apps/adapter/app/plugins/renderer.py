@@ -21,6 +21,7 @@
 | `render_format` | 扩展名 | MIME | 典型产物 |
 | --- | --- | --- | --- |
 | `docx` | `.docx` | OOXML | 公文、Offer 导出（P0-P3-23 ③） |
+| `xlsx` | `.xlsx` | OOXML | 成果物表格（2026-11-05 B2） |
 | `csv` | `.csv` | `text/csv`（带 BOM） | 发布排期表、简历筛选评分表 |
 | `md` | `.md` | `text/markdown` | 方案、提纲、降级文本 |
 """
@@ -39,12 +40,13 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-#: 允许的渲染格式（**封闭三种**，与 `StepSpec.render_format` 的字面量一致）
-RENDER_FORMATS: Final[tuple[str, ...]] = ("docx", "md", "csv")
+#: 允许的渲染格式（**封闭四种**，与 `StepSpec.render_format` 的字面量一致）
+RENDER_FORMATS: Final[tuple[str, ...]] = ("docx", "xlsx", "md", "csv")
 
 #: 格式 → 扩展名
 RENDER_EXTENSIONS: Final[dict[str, str]] = {
     "docx": ".docx",
+    "xlsx": ".xlsx",
     "md": ".md",
     "csv": ".csv",
 }
@@ -52,12 +54,19 @@ RENDER_EXTENSIONS: Final[dict[str, str]] = {
 #: 格式 → MIME
 RENDER_CONTENT_TYPES: Final[dict[str, str]] = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "md": "text/markdown; charset=utf-8",
     "csv": "text/csv; charset=utf-8",
 }
 
 #: docx 内部必须存在的部件（P0-P3-23 ③ 可解压判定）
 DOCX_DOCUMENT_PART: Final[str] = "word/document.xml"
+
+#: xlsx 内部必须存在的部件（与 docx 同判据：能解压出工作簿才算真 xlsx）
+XLSX_REQUIRED_PARTS: Final[tuple[str, ...]] = ("[Content_Types].xml", "xl/workbook.xml")
+
+#: xlsx 工作表名上限（Excel 硬限制 31 字符）
+MAX_SHEET_TITLE: Final[int] = 31
 
 #: 文件名最大长度（含扩展名）
 MAX_FILENAME_LENGTH: Final[int] = 120
@@ -74,7 +83,7 @@ class ArtifactBlob:
         filename: 建议文件名（含扩展名）。
         content: 文件字节。
         content_type: MIME 类型（下载响应用）。
-        render_format: 渲染格式（`docx` / `md` / `csv`）。
+        render_format: 渲染格式（`docx` / `xlsx` / `md` / `csv`）。
     """
 
     filename: str = ""
@@ -164,7 +173,7 @@ class FileRenderer:
         """按给定格式渲染文件（纯本地）。
 
         Args:
-            render_format: `docx` / `md` / `csv`。
+            render_format: `docx` / `xlsx` / `md` / `csv`。
             name: 产物名称（用户可见，用作文件名主体）。
             payload: 渲染数据（`title` / `sections[{heading, body}]` / `content`）。
             rows: 表格数据（`csv` 用；也作为 `md` / `docx` 的表格段落）。
@@ -205,6 +214,18 @@ class FileRenderer:
                 content=render_markdown(payload, table),
                 content_type=RENDER_CONTENT_TYPES["md"],
                 render_format="md",
+            )
+        if normalized == "xlsx":
+            blob = render_xlsx(safe_name, payload, table)
+            if blob is not None:
+                return blob
+            # 缺依赖时**如实降级**为 CSV：表格数据用 csv 表达最忠实，Excel 也能直接打开
+            logger.warning("plugin_render_xlsx_unavailable", name=safe_name)
+            return ArtifactBlob(
+                filename=f"{safe_name}{RENDER_EXTENSIONS['csv']}",
+                content=render_csv(table, payload),
+                content_type=RENDER_CONTENT_TYPES["csv"],
+                render_format="csv",
             )
         return ArtifactBlob(
             filename=f"{safe_name}{RENDER_EXTENSIONS['md']}",
@@ -258,6 +279,33 @@ class FileRenderer:
         except (zipfile.BadZipFile, KeyError, OSError):
             return False
         return bool(body)
+
+    @staticmethod
+    def is_openable_xlsx(content: bytes) -> bool:
+        """校验字节确实是含 `[Content_Types].xml` 与 `xl/workbook.xml` 的 xlsx。
+
+        判据与 docx 同源：**扩展名谁都能改，能解压出工作簿才算真 xlsx**。
+
+        Args:
+            content: 文件字节。
+
+        Returns:
+            bool: 结构完整且含工作簿部件返回 True。
+        """
+        if not content:
+            return False
+        buffer = io.BytesIO(content)
+        if not zipfile.is_zipfile(buffer):
+            return False
+        try:
+            with zipfile.ZipFile(buffer) as archive:
+                names = set(archive.namelist())
+                if not all(part in names for part in XLSX_REQUIRED_PARTS):
+                    return False
+                workbook = archive.read("xl/workbook.xml")
+        except (zipfile.BadZipFile, KeyError, OSError):
+            return False
+        return bool(workbook)
 
 
 def normalize_render_format(value: Any) -> str:
@@ -421,13 +469,109 @@ def is_zip_with_document_part(content: bytes) -> bool:
     return FileRenderer.is_openable_docx(content)
 
 
+def render_xlsx(
+    name: str, payload: dict[str, Any], rows: list[dict[str, Any]]
+) -> ArtifactBlob | None:
+    """用 `openpyxl` 渲染 xlsx（依赖未安装时返回 None，由调用方降级）。
+
+    **延迟导入**与 docx 同体例：`openpyxl` 是**平台**依赖（MIT），插件声明既不
+    感知格式实现，也拿不到这个库。缺依赖时不伪造一个打不开的 `.xlsx`，而是由
+    `render()` 如实降级为 `.csv`。
+
+    Args:
+        name: 安全文件名（同时用作工作表名，超出 31 字符会截断）。
+        payload: 渲染数据（`title` / `content` / `sections`）。
+        rows: 表格数据（真正的表格；每列取并集作为表头）。
+
+    Returns:
+        ArtifactBlob | None: 渲染结果；依赖未安装返回 None。
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font
+    except ImportError:
+        return None
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = (name or DEFAULT_FILENAME)[:MAX_SHEET_TITLE]
+    current = 1
+    title = str(payload.get("title") or "")
+    if title:
+        sheet.cell(row=current, column=1, value=title).font = Font(bold=True, size=13)
+        current += 2
+    content = str(payload.get("content") or "")
+    if content:
+        sheet.cell(row=current, column=1, value=content)
+        current += 2
+    sections = [item for item in (payload.get("sections") or []) if isinstance(item, dict)]
+    if sections:
+        for column, header in ((1, "章节"), (2, "内容")):
+            cell = sheet.cell(row=current, column=column, value=header)
+            cell.font = Font(bold=True)
+        current += 1
+        for section in sections:
+            sheet.cell(row=current, column=1, value=str(section.get("heading") or ""))
+            sheet.cell(row=current, column=2, value=str(section.get("body") or ""))
+            current += 1
+        current += 1
+    if rows:
+        headers = _union_columns(rows)
+        for index, header in enumerate(headers, start=1):
+            cell = sheet.cell(row=current, column=index, value=header)
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center")
+        current += 1
+        for row in rows:
+            for index, header in enumerate(headers, start=1):
+                sheet.cell(row=current, column=index, value=str(row.get(header, "")))
+            current += 1
+        for index, header in enumerate(headers, start=1):
+            width = max([len(str(header))] + [len(str(row.get(header, ""))) for row in rows])
+            sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = min(
+                max(width * 1.6, 8), 60
+            )
+    elif not title and not content and not sections:
+        sheet.cell(row=1, column=1, value=name or DEFAULT_FILENAME)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    payload_bytes = buffer.getvalue()
+    if not FileRenderer.is_openable_xlsx(payload_bytes):
+        logger.error("plugin_render_xlsx_malformed", name=name)
+        return None
+    return ArtifactBlob(
+        filename=f"{name}{RENDER_EXTENSIONS['xlsx']}",
+        content=payload_bytes,
+        content_type=RENDER_CONTENT_TYPES["xlsx"],
+        render_format="xlsx",
+    )
+
+
+def _union_columns(rows: list[dict[str, Any]]) -> list[str]:
+    """取表格列并集（不同行缺列时仍保留该列）。
+
+    Args:
+        rows: 表格数据。
+
+    Returns:
+        list[str]: 列名（按首次出现顺序）。
+    """
+    columns: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in columns:
+                columns.append(str(key))
+    return columns
+
+
 __all__: list[str] = [
     "DEFAULT_FILENAME",
     "DOCX_DOCUMENT_PART",
     "MAX_FILENAME_LENGTH",
+    "MAX_SHEET_TITLE",
     "RENDER_CONTENT_TYPES",
     "RENDER_EXTENSIONS",
     "RENDER_FORMATS",
+    "XLSX_REQUIRED_PARTS",
     "ArtifactBlob",
     "FileRenderer",
     "is_zip_with_document_part",
@@ -435,5 +579,6 @@ __all__: list[str] = [
     "render_csv",
     "render_docx",
     "render_markdown",
+    "render_xlsx",
     "safe_filename",
 ]

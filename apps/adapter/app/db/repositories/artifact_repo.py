@@ -55,6 +55,7 @@ MAX_VERSION_HISTORY: Final[int] = 20
 #: 归一化，才能保证"库里存的 MIME 与下载响应声明的 MIME"永远同源（P3-B22-04）。
 EXTENSION_CONTENT_TYPES: Final[dict[str, str]] = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "md": "text/markdown; charset=utf-8",
     "csv": "text/csv; charset=utf-8",
     "txt": "text/plain; charset=utf-8",
@@ -116,12 +117,17 @@ def is_safe_declared_content_type(declared: str) -> bool:
 def resolve_content_type(name: str, artifact_type: str, declared: str) -> str:
     """归一化产物的 MIME（P3-B22-04）。
 
-    优先级：**扩展名 > 产物类型 > 调用方声明（白名单）> 兜底**。
+    优先级：**扩展名 > 调用方声明（白名单）> 产物类型 > 兜底**。
 
     为什么扩展名优先：调用方（任务服务）在"用户编辑后重新渲染"路径上会把
     上个版本的 `content_type` 带过来，而本次渲染可能换了格式（md → docx）。
     以最终文件名后缀为准，才能保证「库里的 MIME 与真实字节的格式一致」——
     这正是当初下载 docx 拿到 `text/plain` 的根因。
+
+    为什么声明值排在产物类型之前（2026-11-05 B2）：表格产物默认按 CSV 落盘，
+    但 WF2 可以把表格重新导出为 `.xlsx`；此时调用方声明的是 xlsx MIME，而
+    `type` 仍是 `table`。若类型先于声明，就会出现"库里存 CSV、字节是 xlsx"的
+    错配。声明值必须先过白名单（见下），所以提前不会放宽 MIME 决定权。
 
     为什么声明值要过白名单：见 `SAFE_DECLARED_CONTENT_TYPES` 的说明——
     MIME 由服务端收口，不能把 `text/html` / `image/svg+xml` 这类可执行类型
@@ -138,12 +144,12 @@ def resolve_content_type(name: str, artifact_type: str, declared: str) -> str:
     suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if suffix in EXTENSION_CONTENT_TYPES:
         return EXTENSION_CONTENT_TYPES[suffix]
-    if artifact_type == "table":
-        # 表格统一以 CSV 落盘（`inline_text` 就是 CSV 文本）
-        return EXTENSION_CONTENT_TYPES["csv"]
     text = (declared or "").strip()
     if is_safe_declared_content_type(text):
         return text
+    if artifact_type == "table":
+        # 表格默认以 CSV 落盘（`inline_text` 就是 CSV 文本）
+        return EXTENSION_CONTENT_TYPES["csv"]
     return DEFAULT_CONTENT_TYPE
 
 

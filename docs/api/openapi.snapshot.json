@@ -2741,6 +2741,7 @@
               {
                 "enum": [
                   "docx",
+                  "xlsx",
                   "md",
                   "csv"
                 ],
@@ -8429,7 +8430,7 @@
         "type": "object"
       },
       "StepArtifact": {
-        "description": "步骤产物（A4 `steps[].artifacts[]`）。\n\nAttributes:\n    artifact_id: 产物 ID。\n    output_key: 产物键。\n    type: 产物类型。\n    name: 产物名称。\n    version: 当前版本。\n    download_url: 下载地址（平台代理）。\n    url: 外链（`link` 类型）。\n    preview_text: 预览文本（表格前 5 行）。\n    content_sha256: 内容摘要。\n    editable: 是否可编辑（`link` / `file` 为 false）。\n    version_history: 历史版本（可回看、可下载）。",
+        "description": "步骤产物（A4 `steps[].artifacts[]`）。\n\nAttributes:\n    artifact_id: 产物 ID。\n    output_key: 产物键。\n    type: 产物类型。\n    name: 产物名称。\n    version: 当前版本。\n    content_type: 产物 MIME（下载/预览判据）。\n    download_url: 下载地址（平台代理）。\n    url: 外链（`link` 类型）。\n    xlsx_url: 按需导出 Excel 的地址（表格/CSV 产物才有）。\n    preview_url: 在线预览（PDF）地址（docx/xlsx/表格且开关开启时才有）。\n    preview_text: 预览文本（表格前 5 行）。\n    content_sha256: 内容摘要。\n    editable: 是否可编辑（`link` / `file` 为 false）。\n    version_history: 历史版本（可回看、可下载）。",
         "properties": {
           "artifact_id": {
             "default": "",
@@ -8441,6 +8442,12 @@
             "default": "",
             "description": "内容摘要",
             "title": "Content Sha256",
+            "type": "string"
+          },
+          "content_type": {
+            "default": "",
+            "description": "产物 MIME（下载/预览判据）",
+            "title": "Content Type",
             "type": "string"
           },
           "download_url": {
@@ -8479,6 +8486,18 @@
             "title": "Preview Text",
             "type": "string"
           },
+          "preview_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "在线预览（PDF）地址",
+            "title": "Preview Url"
+          },
           "type": {
             "default": "text",
             "description": "产物类型",
@@ -8511,6 +8530,18 @@
             },
             "title": "Version History",
             "type": "array"
+          },
+          "xlsx_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "按需导出 Excel 的地址",
+            "title": "Xlsx Url"
           }
         },
         "title": "StepArtifact",
@@ -17539,6 +17570,116 @@
           }
         },
         "summary": "下载产物（平台代理）",
+        "tags": [
+          "产物下载"
+        ]
+      }
+    },
+    "/files/artifacts/{token}/export": {
+      "get": {
+        "description": "把表格类产物（CSV 内容）按需转换为 xlsx，**不新增版本、不改任务状态**。令牌规则与下载一致；格式只支持 xlsx。",
+        "operationId": "export_artifact_files_artifacts__token__export_get",
+        "parameters": [
+          {
+            "description": "下载令牌",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "description": "下载令牌",
+              "maxLength": 512,
+              "minLength": 8,
+              "title": "Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "导出格式（仅 xlsx）",
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "xlsx",
+              "description": "导出格式（仅 xlsx）",
+              "title": "Format",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "按需导出产物为 Excel",
+        "tags": [
+          "产物下载"
+        ]
+      }
+    },
+    "/files/artifacts/{token}/preview": {
+      "get": {
+        "description": "用镜像内的 LibreOffice 离线把 docx/xlsx（或表格产物先转 xlsx）转成 PDF，以 `inline` 返回，供浏览器自带阅读器打开。需 `OA_OFFICE_PREVIEW_ENABLED`。",
+        "operationId": "preview_artifact_files_artifacts__token__preview_get",
+        "parameters": [
+          {
+            "description": "下载令牌",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "description": "下载令牌",
+              "maxLength": 512,
+              "minLength": 8,
+              "title": "Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "在线预览产物（Office → PDF）",
         "tags": [
           "产物下载"
         ]

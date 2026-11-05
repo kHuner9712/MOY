@@ -310,6 +310,24 @@ class Settings(BaseSettings):
     #: 让用户觉得"被明显缩水"。
     standard_mode_answer_chars: int = Field(default=300, ge=50, le=2_000)
     plugin_artifact_retention_days: int = Field(default=180, ge=1, le=3_650)
+    #: 产物按需导出为 xlsx（2026-11-05 B2）。默认开：只读、加性、依赖随镜像安装；
+    #: 关掉后 `/files/artifacts/{token}/export` 直接 404，便于出事时回退到"只给原格式"。
+    artifact_xlsx_enabled: bool = True
+    #: 离线 Office 预览（docx/xlsx → PDF，2026-11-05 B2）。默认**关**：
+    #: 镜像未装 LibreOffice 时端点只能 503，开着会让前端出现"点了报错"的按钮；
+    #: 部署环境确认 `soffice --version` 可用后再打开（见交付文档的验收步骤）。
+    office_preview_enabled: bool = False
+    #: LibreOffice 可执行文件路径（镜像内为 `soffice`；本地联调可用绝对路径）
+    office_soffice_path: str = "soffice"
+    #: 单次转换超时（秒）。LibreOffice 冷启动通常 2-5s，30s 足够且能兜住卡死
+    office_preview_timeout_seconds: int = Field(default=30, ge=5, le=120)
+    #: 预览输入上限（字节）。超过直接 413，不把大文件塞进转换进程
+    office_preview_max_bytes: int = Field(default=20 * 1024 * 1024, ge=1, le=100 * 1024 * 1024)
+    #: 同时运行的 soffice 进程上限。并发过高会打满 CPU，反而让所有预览超时
+    office_preview_concurrency: int = Field(default=2, ge=1, le=8)
+    #: 预览结果进程内缓存（秒 / 条数）：同一产物重复预览不必反复起进程
+    office_preview_cache_ttl_seconds: int = Field(default=300, ge=0, le=3_600)
+    office_preview_cache_entries: int = Field(default=32, ge=0, le=256)
     #: 产物下载令牌有效期（秒）。默认 900（15 分钟），上限 86400：
     #: 链接是短期凭证不是资源标识，泄漏后可自然失效（S9，2026-10-23）。
     artifact_token_ttl_seconds: int = Field(default=900, ge=60, le=86_400)

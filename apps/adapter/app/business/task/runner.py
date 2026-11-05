@@ -676,7 +676,7 @@ class TaskRunner:
                     preview_text=draft.preview_text or text[:500],
                     content_sha256=digest,
                     content=content,
-                    content_type="text/plain; charset=utf-8",
+                    content_type=draft.content_type,
                 )
                 if updated is not None:
                     saved.append(updated)
@@ -698,6 +698,7 @@ class TaskRunner:
                     content_sha256=digest,
                     version=1,
                     content=content or text.encode("utf-8"),
+                    content_type=draft.content_type,
                 )
             )
         created = await self._deps.artifacts.add_artifacts(fresh) if fresh else []

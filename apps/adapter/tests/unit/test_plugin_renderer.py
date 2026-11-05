@@ -131,6 +131,83 @@ def test_is_openable_docx_rejects_fake_suffix_content() -> None:
     assert FileRenderer.is_openable_docx(b"") is False
 
 
+def test_render_xlsx_is_real_workbook() -> None:
+    """xlsx 产物能解压出 `[Content_Types].xml` 与 `xl/workbook.xml`。"""
+    blob = FileRenderer().render(
+        render_format="xlsx",
+        name="简历筛选评分表",
+        payload={
+            "title": "筛选结果",
+            "sections": [{"heading": "说明", "body": "按得分降序排列"}],
+        },
+        rows=[
+            {"候选人": "张三", "得分": "88"},
+            {"候选人": "李四", "得分": "90"},
+        ],
+    )
+    assert blob.render_format == "xlsx"
+    assert blob.filename.endswith(".xlsx")
+    assert blob.content_type.endswith("spreadsheetml.sheet")
+    assert FileRenderer.is_openable_xlsx(blob.content) is True
+    with zipfile.ZipFile(BytesIO(blob.content)) as archive:
+        assert "[Content_Types].xml" in archive.namelist()
+        assert "xl/workbook.xml" in archive.namelist()
+
+
+def test_render_declared_xlsx_takes_format_from_declaration() -> None:
+    """声明 xlsx → 交 xlsx（与 docx/csv 同一套声明驱动规则）。"""
+    blob = FileRenderer().render_declared(
+        _spec("xlsx"), name="排期表", payload={"title": "排期"}, rows=[{"平台": "小红书"}]
+    )
+    assert blob.render_format == "xlsx"
+    assert FileRenderer.is_openable_xlsx(blob.content) is True
+
+
+def test_render_xlsx_degrades_honestly_when_dependency_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """缺 `openpyxl` → 交 CSV（表格数据最忠实的降级），不伪造打不开的 .xlsx。"""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _blocked(name: str, *args: object, **kwargs: object) -> object:
+        if name == "openpyxl":
+            raise ImportError("blocked in test")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", _blocked)
+    blob = FileRenderer().render(
+        render_format="xlsx", name="评分表", payload={"title": "评分"}, rows=[{"姓名": "张三"}]
+    )
+    assert blob.render_format == "csv"
+    assert blob.filename.endswith(".csv")
+    assert blob.content.startswith(b"\xef\xbb\xbf")
+    assert FileRenderer.is_openable_xlsx(blob.content) is False
+
+
+def test_render_xlsx_degrades_when_generated_workbook_fails_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """生成结果过不了结构校验 → 降级 CSV（绝不把半成品当 xlsx 交出去）。"""
+    monkeypatch.setattr(FileRenderer, "is_openable_xlsx", staticmethod(lambda content: False))
+    blob = FileRenderer().render(
+        render_format="xlsx", name="评分表", payload={"title": "评分"}, rows=[{"姓名": "张三"}]
+    )
+    assert blob.render_format == "csv"
+    assert blob.filename.endswith(".csv")
+
+
+def test_is_openable_xlsx_rejects_fake_or_incomplete_zip() -> None:
+    """扩展名/半截 zip 都骗不过判据：必须有工作簿部件。"""
+    assert FileRenderer.is_openable_xlsx(b"not a zip at all") is False
+    assert FileRenderer.is_openable_xlsx(b"") is False
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+    assert FileRenderer.is_openable_xlsx(buffer.getvalue()) is False
+
+
 def test_csv_has_bom_and_markdown_has_title() -> None:
     """CSV 带 BOM（Excel 不乱码）、md 带标题（下载内容可读）。"""
     renderer = FileRenderer()
@@ -169,7 +246,7 @@ def test_normalize_and_safe_filename() -> None:
     assert normalize_render_format(" DOCX ") == "docx"
     assert normalize_render_format("pdf") == ""
     assert normalize_render_format(None) == ""
-    assert set(RENDER_FORMATS) == {"docx", "md", "csv"}
+    assert set(RENDER_FORMATS) == {"docx", "xlsx", "md", "csv"}
     assert safe_filename("../etc/passwd") == "etc_passwd"
     assert safe_filename("报告.docx") == "报告"
     assert safe_filename("报告.docx", keep_suffix=True) == "报告.docx"

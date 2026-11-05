@@ -233,11 +233,25 @@ DEFECT_LEDGER: Final[tuple[dict[str, str], ...]] = (
         #    两份编排的 `init-schema-phase3.sql` 已直接建列，新装库无需 DDL；
         # ② 写入三处归一化真实 MIME：PG `add_artifacts` INSERT、PG `save_version` UPDATE、
         #    内存 `add_artifacts`/`save_version`，以及读取侧 `_to_artifact` 的老库回落，
-        #    统一走 `artifact_repo.resolve_content_type()`（扩展名 > 类型 > 声明 > 兜底）；
+        #    统一走 `artifact_repo.resolve_content_type()`（扩展名 > 声明（白名单）> 类型 > 兜底）；
         # ③ `docx` → application/vnd.openxmlformats-officedocument.wordprocessingml.document，
         #    `md` → text/markdown; charset=utf-8，`csv` → text/csv; charset=utf-8。
-        # 判据落点：`tests/integration/test_artifact_content_pg.py`（真库，含 MIME 断言）。
-        "pinned_by": "test_artifact_content_pg.py / 0006 迁移",
+        # ④ **2026-11-05 B2 补洞（存量 bug，提交信息单独点明）**：列与解析器都在，
+        #    但**没有任何调用方把真实 MIME 传进来**——`ArtifactDraft` 没有 `content_type`
+        #    字段，网关 `_run_render` 不传、引擎 `_sanitize_artifacts` 不透传、
+        #    `runner._save_artifacts` 还把 `save_version` 硬编码成 `text/plain; charset=utf-8`。
+        #    结果是 docx 产物落库仍是文本 MIME，下载时浏览器按文本处理（与本条登记的
+        #    原始现象一模一样，只是根因不在"缺列"而在"链路断"）。修复：`ArtifactDraft`
+        #    增字段 → 网关/引擎/runner 三处贯通真实 MIME；解析优先级改为
+        #    扩展名 > 声明 > 类型（表格类产物声明 xlsx 时不再被 `type=table` 覆盖）。
+        # 判据落点：`tests/integration/test_artifact_content_pg.py`（真库，含 MIME 断言）
+        #    + `tests/unit/test_artifact_mime_transmission.py`（网关 → 落库全链路）
+        #    + `tests/unit/test_artifact_mime.py::test_declared_xlsx_wins_over_table_type`。
+        "pinned_by": (
+            "test_artifact_content_pg.py / 0006 迁移"
+            " / unit/test_artifact_mime_transmission.py"
+            " / unit/test_artifact_mime.py::test_declared_xlsx_wins_over_table_type"
+        ),
         "due_batch": "B30",
         "due_action": "加 content_type TEXT 列并在渲染/写入三处赋值；下载端点按实际类型返回",
     },

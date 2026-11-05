@@ -73,8 +73,11 @@ class StepArtifact(BaseModel):
         type: 产物类型。
         name: 产物名称。
         version: 当前版本。
+        content_type: 产物 MIME（下载/预览判据）。
         download_url: 下载地址（平台代理）。
         url: 外链（`link` 类型）。
+        xlsx_url: 按需导出 Excel 的地址（表格/CSV 产物才有）。
+        preview_url: 在线预览（PDF）地址（docx/xlsx/表格且开关开启时才有）。
         preview_text: 预览文本（表格前 5 行）。
         content_sha256: 内容摘要。
         editable: 是否可编辑（`link` / `file` 为 false）。
@@ -86,8 +89,11 @@ class StepArtifact(BaseModel):
     type: str = Field(default="text", description="产物类型")
     name: str = Field(default="", description="产物名称")
     version: int = Field(default=1, ge=1, description="当前版本")
+    content_type: str = Field(default="", description="产物 MIME（下载/预览判据）")
     download_url: str | None = Field(default=None, description="下载地址")
     url: str | None = Field(default=None, description="外部链接")
+    xlsx_url: str | None = Field(default=None, description="按需导出 Excel 的地址")
+    preview_url: str | None = Field(default=None, description="在线预览（PDF）地址")
     preview_text: str = Field(default="", description="预览文本")
     content_sha256: str = Field(default="", description="内容摘要")
     editable: bool = Field(default=False, description="是否可编辑")
@@ -163,7 +169,7 @@ class ArtifactEditRequest(BaseModel):
     """
 
     content: str = Field(min_length=1, max_length=32_768, description="新的产物正文")
-    render_format: Literal["docx", "md", "csv"] | None = Field(
+    render_format: Literal["docx", "xlsx", "md", "csv"] | None = Field(
         default=None, description="重新导出的格式"
     )
 

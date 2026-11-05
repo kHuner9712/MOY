@@ -1492,7 +1492,7 @@ export const EDITABLE_ARTIFACT_TYPES: readonly ArtifactType[] = Object.freeze([
 ]);
 
 /** 重新导出格式（WF2 可选参数） */
-export type ArtifactRenderFormat = 'docx' | 'md' | 'csv';
+export type ArtifactRenderFormat = 'docx' | 'xlsx' | 'md' | 'csv';
 
 /**
  * 判断产物是否可编辑（WF2）。
@@ -1549,6 +1549,20 @@ export interface TaskArtifact {
    * WF2 响应给了 `download_url`，因此这里补同名可选字段，待后端在 A4 一并返回。
    */
   download_url?: string | null;
+  /** 产物 MIME（下载/预览判据；可用于区分 Word 与 Excel） */
+  content_type?: string | null;
+  /**
+   * 按需导出 Excel 的地址（表格/CSV 产物才有）。
+   *
+   * 后端不落新版本：点一次导出不会让版本号 +1（见 B2 交付文档）。
+   */
+  xlsx_url?: string | null;
+  /**
+   * 在线预览（PDF）地址（docx/xlsx/表格产物且后端开关开启时才有）。
+   *
+   * 后端用 LibreOffice 离线转 PDF；未开启时该字段为 null，界面**不渲染**预览入口。
+   */
+  preview_url?: string | null;
   size_bytes?: number | null;
   /** 过期时间（180 天），过期后提示「产物已过期，可重新发起任务」 */
   expires_at?: string | null;
