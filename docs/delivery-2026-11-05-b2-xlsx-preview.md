@@ -125,3 +125,23 @@ curl -sI "https://<站点>/files/artifacts/{token}/preview" | grep -Ei \
 | 安全头差异 | 预览**必须**无 `sandbox`，下载**必须**有 `sandbox`；两条链路语义不同，测试已双向锁定，禁止"统一" |
 | 真实排版保真度 | LibreOffice 与 Microsoft Office 存在字体替换/分页差异，属转换器固有边界；验收只保证"可读、中文正常" |
 | 超大文件 | 预览输入 >20MB 直接 413，引导下载后查看 |
+
+---
+
+## 7. CI 记录（同 SHA 双绿）
+
+| 项 | 值 |
+| --- | --- |
+| 功能提交 | `daac33e` feat(task): 支持 xlsx 成果物与离线 Office 预览（B2） |
+| 收口 SHA | `bd4153528d7544812894aaa09ee8fa9456d16875` |
+| CI Adapter | run [42068623701](https://github.com/kHuner9712/MOY/actions/runs/42068623701) — success |
+| CI Web | run [42068601520](https://github.com/kHuner9712/MOY/actions/runs/42068601520) — success |
+| Dependency Scan | run [42068607410](https://github.com/kHuner9712/MOY/actions/runs/42068607410) — success |
+
+首轮 `daac33e` 曾红两处，均已修复后重新验证：① 交付清单 `T4-05.4` 体积证据过期（门禁 4d）；
+② 前端契约快照缺 `TaskArtifact.content_type/xlsx_url/preview_url`（G-31）。**这两处红是门禁
+按设计抓到的，不是功能缺陷。**
+
+**CI 能证明与不能证明的**：以上 run 只证明「代码/契约/门禁一致」；`CI Adapter` 的 pytest
+全部在无 `soffice`、无 Docker 的环境下运行，**不能证明 LibreOffice 真机转换可用**——
+后者只由第 5 节部署验收判定。
