@@ -2196,6 +2196,58 @@
         "title": "ApiResponse[TaskDetailData]",
         "type": "object"
       },
+      "ApiResponse_TaskPlanConfirmResult_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskPlanConfirmResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[TaskPlanConfirmResult]",
+        "type": "object"
+      },
+      "ApiResponse_TaskPlan_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[TaskPlan]",
+        "type": "object"
+      },
       "ApiResponse_TaskStatsData_": {
         "properties": {
           "code": {
@@ -4424,6 +4476,18 @@
           "options": {
             "$ref": "#/components/schemas/TaskOptions",
             "description": "执行选项"
+          },
+          "plan_first": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "先产出执行计划、等用户确认后再执行（矩阵第 2 项）。null=跟随服务端开关；true=显式请求计划（开关关闭时返回 20001）",
+            "title": "Plan First"
           },
           "plugin_id": {
             "default": "",
@@ -8940,6 +9004,36 @@
             "title": "Initiator Name",
             "type": "string"
           },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskPlan"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "执行计划（加性字段）"
+          },
+          "plan_confirmed_at": {
+            "default": "",
+            "description": "计划确认时间（加性字段）",
+            "title": "Plan Confirmed At",
+            "type": "string"
+          },
+          "plan_expires_at": {
+            "default": "",
+            "description": "计划确认截止时间（加性字段）",
+            "title": "Plan Expires At",
+            "type": "string"
+          },
+          "plan_version": {
+            "default": 0,
+            "description": "计划版本（加性字段）",
+            "minimum": 0.0,
+            "title": "Plan Version",
+            "type": "integer"
+          },
           "plugin_id": {
             "default": "",
             "description": "插件标识（阶段三加性字段）",
@@ -9142,6 +9236,249 @@
         "title": "TaskOptions",
         "type": "object"
       },
+      "TaskPlan": {
+        "description": "任务执行计划（A3 的 `plan` 字段；PUT /plan 的响应）。\n\nAttributes:\n    task_id: 任务 ID。\n    plugin_id: 插件标识。\n    version: 计划版本（创建=1，每次编辑 +1）。\n    expires_at: 确认截止时间（ISO 8601）。\n    confirmed_at: 确认时间（未确认为 null）。\n    steps: 步骤列表。",
+        "properties": {
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "确认时间",
+            "title": "Confirmed At"
+          },
+          "expires_at": {
+            "default": "",
+            "description": "确认截止时间",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "plugin_id": {
+            "default": "",
+            "description": "插件标识",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "steps": {
+            "description": "步骤列表",
+            "items": {
+              "$ref": "#/components/schemas/TaskPlanStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "task_id": {
+            "description": "任务 ID",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "version": {
+            "default": 0,
+            "description": "计划版本",
+            "minimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "TaskPlan",
+        "type": "object"
+      },
+      "TaskPlanConfirmRequest": {
+        "description": "计划确认请求。\n\nAttributes:\n    plan_version: 客户端持有的计划版本（乐观并发条件）。",
+        "properties": {
+          "plan_version": {
+            "description": "客户端持有的计划版本",
+            "minimum": 0.0,
+            "title": "Plan Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "plan_version"
+        ],
+        "title": "TaskPlanConfirmRequest",
+        "type": "object"
+      },
+      "TaskPlanConfirmResult": {
+        "description": "计划确认响应（矩阵第 2 项）。\n\nAttributes:\n    task_id: 任务 ID。\n    status: 确认后的任务状态（`running` / `queued`）。\n    plan_version: 被确认的计划版本。\n    plan_confirmed_at: 确认时间（首次确认时写入；幂等重放返回原值）。\n    already_confirmed: 是否重复确认（`true` 时未再触发执行）。",
+        "properties": {
+          "already_confirmed": {
+            "default": false,
+            "description": "是否重复确认",
+            "title": "Already Confirmed",
+            "type": "boolean"
+          },
+          "plan_confirmed_at": {
+            "default": "",
+            "description": "确认时间",
+            "title": "Plan Confirmed At",
+            "type": "string"
+          },
+          "plan_version": {
+            "default": 0,
+            "description": "被确认的计划版本",
+            "minimum": 0.0,
+            "title": "Plan Version",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "default": "running",
+            "description": "任务状态"
+          },
+          "task_id": {
+            "description": "任务 ID",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "TaskPlanConfirmResult",
+        "type": "object"
+      },
+      "TaskPlanStep": {
+        "description": "计划中的一个步骤（执行前展示给用户确认）。\n\nAttributes:\n    seq: 步骤序号。\n    title: 用户可见步骤名（声明快照）。\n    action: 执行原语（内部字段，仅用于前端展示\"将要做什么\"）。\n    tool_type: 所需工具类型（非工具步骤为 null）。\n    tool_operation: 工具操作标识（非工具步骤为 null）。\n    expected_artifacts: 预计产物键（来自 `produces`）。\n    needs: 依赖的前序产物键。\n    skippable: 是否允许用户取消勾选（必做步骤为 false）。\n    selected: 当前是否纳入执行。\n    note: 说明（条件不满足 / 未纳入本次计划 / 需执行前确认）。",
+        "properties": {
+          "action": {
+            "default": "",
+            "description": "执行原语",
+            "title": "Action",
+            "type": "string"
+          },
+          "expected_artifacts": {
+            "description": "预计产物键",
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Artifacts",
+            "type": "array"
+          },
+          "needs": {
+            "description": "依赖的前序产物键",
+            "items": {
+              "type": "string"
+            },
+            "title": "Needs",
+            "type": "array"
+          },
+          "note": {
+            "default": "",
+            "description": "说明文案",
+            "title": "Note",
+            "type": "string"
+          },
+          "selected": {
+            "default": true,
+            "description": "是否纳入执行",
+            "title": "Selected",
+            "type": "boolean"
+          },
+          "seq": {
+            "description": "步骤序号",
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "skippable": {
+            "default": true,
+            "description": "是否允许取消勾选",
+            "title": "Skippable",
+            "type": "boolean"
+          },
+          "title": {
+            "default": "",
+            "description": "步骤名称",
+            "title": "Title",
+            "type": "string"
+          },
+          "tool_operation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "工具操作标识",
+            "title": "Tool Operation"
+          },
+          "tool_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "所需工具类型",
+            "title": "Tool Type"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "TaskPlanStep",
+        "type": "object"
+      },
+      "TaskPlanStepSelection": {
+        "description": "计划编辑的单步选择。\n\nAttributes:\n    seq: 步骤序号。\n    selected: 是否纳入执行。",
+        "properties": {
+          "selected": {
+            "default": true,
+            "description": "是否纳入执行",
+            "title": "Selected",
+            "type": "boolean"
+          },
+          "seq": {
+            "description": "步骤序号",
+            "maximum": 8.0,
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "TaskPlanStepSelection",
+        "type": "object"
+      },
+      "TaskPlanUpdateRequest": {
+        "description": "计划编辑请求（只支持勾选/取消勾选，不支持改顺序或新增步骤）。\n\nAttributes:\n    plan_version: 客户端持有的计划版本（乐观并发条件）。\n    steps: 每步的选择（缺省步骤保持原状）。",
+        "properties": {
+          "plan_version": {
+            "description": "客户端持有的计划版本",
+            "minimum": 0.0,
+            "title": "Plan Version",
+            "type": "integer"
+          },
+          "steps": {
+            "description": "每步的选择",
+            "items": {
+              "$ref": "#/components/schemas/TaskPlanStepSelection"
+            },
+            "maxItems": 8,
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plan_version"
+        ],
+        "title": "TaskPlanUpdateRequest",
+        "type": "object"
+      },
       "TaskResult": {
         "description": "任务结果。\n\nAttributes:\n    summary: 结果摘要（业务语言）。\n    artifacts: 产物列表。",
         "properties": {
@@ -9259,7 +9596,8 @@
           "failed",
           "cancelled",
           "queued",
-          "waiting_confirm"
+          "waiting_confirm",
+          "waiting_plan"
         ],
         "title": "TaskStatus",
         "type": "string"
@@ -11348,6 +11686,150 @@
           }
         ],
         "summary": "A6 任务事件推送（SSE）",
+        "tags": [
+          "Agent 服务"
+        ]
+      }
+    },
+    "/api/v1/agent/tasks/{task_id}/plan": {
+      "put": {
+        "description": "确认前编辑计划：只支持勾选/取消勾选步骤（不支持改顺序或新增步骤）。`plan_version` 是乐观并发条件，版本不匹配返回 20005。写接口，需携带 Idempotency-Key。",
+        "operationId": "update_task_plan_api_v1_agent_tasks__task_id__plan_put",
+        "parameters": [
+          {
+            "description": "任务 ID",
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "description": "任务 ID",
+              "maxLength": 128,
+              "minLength": 6,
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskPlanUpdateRequest",
+                "description": "计划版本与每步选择"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TaskPlan_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "A5+ 编辑执行计划（矩阵第 2 项）",
+        "tags": [
+          "Agent 服务"
+        ]
+      }
+    },
+    "/api/v1/agent/tasks/{task_id}/plan/confirm": {
+      "post": {
+        "description": "确认后任务才会真正执行（`waiting_plan` → `running|queued`）。重复确认返回 `already_confirmed=true` 且不再触发推进。写接口，需携带 Idempotency-Key。",
+        "operationId": "confirm_task_plan_api_v1_agent_tasks__task_id__plan_confirm_post",
+        "parameters": [
+          {
+            "description": "任务 ID",
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "description": "任务 ID",
+              "maxLength": 128,
+              "minLength": 6,
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskPlanConfirmRequest",
+                "description": "计划版本"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TaskPlanConfirmResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "A5+ 确认执行计划（矩阵第 2 项）",
         "tags": [
           "Agent 服务"
         ]

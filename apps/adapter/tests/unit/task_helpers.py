@@ -331,6 +331,8 @@ def build_service(
     gateway: EchoGateway | None = None,
     granted: frozenset[str] = GRANTED,
     concurrency: int = 3,
+    task_plan_enabled: bool = False,
+    task_plan_timeout_seconds: int = 900,
 ) -> tuple[TaskService, InMemoryTaskStore, InMemoryArtifactStore, FakeUsageService]:
     """构造一个只依赖内存与替身的 `TaskService`。
 
@@ -339,6 +341,8 @@ def build_service(
         gateway: 原语替身（缺省新建）。
         granted: 已授能力。
         concurrency: 同插件并发上限。
+        task_plan_enabled: 是否开启计划确认（矩阵第 2 项，默认关）。
+        task_plan_timeout_seconds: 计划确认窗口（秒）。
 
     Returns:
         tuple: `(服务, 任务仓储, 产物仓储, 计量替身)`。
@@ -348,6 +352,8 @@ def build_service(
         mock_mode=True,
         plugin_task_concurrency=concurrency,
         plugin_retry_backoff_ms=0,
+        task_plan_enabled=task_plan_enabled,
+        task_plan_timeout_seconds=task_plan_timeout_seconds,
         # S9（2026-10-23）：产物下载令牌**不再回落硬编码开发密钥**，空 `jwt_secret`
         # 直接拒绝签发。任务详情/步骤响应会为每个产物签发下载地址，因此这里必须
         # 配一个测试密钥——修夹具，不是削弱校验（生产由 `validate_auth_startup`

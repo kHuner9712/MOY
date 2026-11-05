@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "frozen_target": 2,
+  "note": "矩阵第 2 项（通用任务计划生成 → 确认）增量基线：计划编辑 + 计划确认。两个端点均在本期实现并一次性收口（G8 双向严格，无 PENDING 窗口）。",
+  "endpoints": [
+    {
+      "method": "PUT",
+      "path": "/api/v1/agent/tasks/{task_id}/plan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/tasks/{task_id}/plan/confirm"
+    }
+  ],
+  "registered_at": "2026-11-06"
+}

@@ -74,6 +74,9 @@ const STATUS_DESCRIPTORS: Readonly<Record<string, StatusDescriptor>> = Object.fr
   issued: { label: '已开具', tone: 'success' },
   pending: { label: '处理中', tone: 'warning' },
 
+  // 任务执行计划（矩阵第 2 项）
+  waiting_plan: { label: '计划待确认', tone: 'warning' },
+
   // 套餐上下架
   available: { label: '可购买', tone: 'success' },
   offline: { label: '已下架', tone: 'neutral' },

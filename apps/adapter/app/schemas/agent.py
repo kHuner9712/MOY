@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.common import PageQuery
 from app.schemas.model import ModelProfile, Usage
-from app.schemas.task import StepArtifact, StepFailure
+from app.schemas.task import StepArtifact, StepFailure, TaskPlan
 
 
 class TaskStatus(StrEnum):
@@ -39,6 +39,8 @@ class TaskStatus(StrEnum):
     CANCELLED = "cancelled"
     QUEUED = "queued"
     WAITING_CONFIRM = "waiting_confirm"
+    #: 计划确认态（矩阵第 2 项）：等待用户确认整单计划，**确认前不执行任何步骤**。
+    WAITING_PLAN = "waiting_plan"
 
 
 #: 额度挂起原因 → 用户可见文案（P4-11 ③，业务语言、零技术词）
@@ -110,6 +112,13 @@ class CreateTaskRequest(BaseModel):
         default="",
         max_length=44,
         description="插件标识（有值时按插件声明执行并校验 inputs）",
+    )
+    plan_first: bool | None = Field(
+        default=None,
+        description=(
+            "先产出执行计划、等用户确认后再执行（矩阵第 2 项）。"
+            "null=跟随服务端开关；true=显式请求计划（开关关闭时返回 20001）"
+        ),
     )
 
     @model_validator(mode="after")
@@ -298,6 +307,29 @@ class TaskDetailData(BaseModel):
     steps_total: int = Field(default=0, ge=0, description="步骤总数（加性字段）")
     retry_of: str | None = Field(default=None, description="重试来源任务 ID（加性字段）")
     confirm: dict[str, Any] | None = Field(default=None, description="人工接管信息（加性字段）")
+    #: 计划元数据（矩阵第 2 项，加性字段）。非计划任务恒为 0 / "" / null。
+    plan_version: int = Field(default=0, ge=0, description="计划版本（加性字段）")
+    plan_expires_at: str = Field(default="", description="计划确认截止时间（加性字段）")
+    plan_confirmed_at: str = Field(default="", description="计划确认时间（加性字段）")
+    plan: TaskPlan | None = Field(default=None, description="执行计划（加性字段）")
+
+
+class TaskPlanConfirmResult(BaseModel):
+    """计划确认响应（矩阵第 2 项）。
+
+    Attributes:
+        task_id: 任务 ID。
+        status: 确认后的任务状态（`running` / `queued`）。
+        plan_version: 被确认的计划版本。
+        plan_confirmed_at: 确认时间（首次确认时写入；幂等重放返回原值）。
+        already_confirmed: 是否重复确认（`true` 时未再触发执行）。
+    """
+
+    task_id: str = Field(description="任务 ID")
+    status: TaskStatus = Field(default=TaskStatus.RUNNING, description="任务状态")
+    plan_version: int = Field(default=0, ge=0, description="被确认的计划版本")
+    plan_confirmed_at: str = Field(default="", description="确认时间")
+    already_confirmed: bool = Field(default=False, description="是否重复确认")
 
 
 #: 步骤失败信息（A4 `steps[].failure` = `app.schemas.task.StepFailure`）。

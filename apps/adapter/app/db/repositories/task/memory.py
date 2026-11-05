@@ -20,6 +20,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.db.repositories.base import as_datetime
 from app.db.repositories.task.records import (
     QUEUE_SCAN_LIMIT,
+    STATUS_WAITING_PLAN,
     STEP_MUTABLE_FIELDS,
     TASK_MUTABLE_FIELDS,
     StepRecord,
@@ -140,6 +141,7 @@ class InMemoryTaskStore:
         task_id: str,
         *,
         expected_status: str | Sequence[str] | None = None,
+        expected_plan_version: int | None = None,
         **fields: Any,
     ) -> TaskRecord | None:
         """更新任务可变字段（可带乐观状态条件）。
@@ -153,6 +155,7 @@ class InMemoryTaskStore:
             tenant_id: 企业 ID。
             task_id: 任务 ID。
             expected_status: 乐观条件（期望的当前状态；`None` 表示不加条件）。
+            expected_plan_version: 计划版本乐观条件（`None` 表示不加条件）。
             **fields: 待更新字段（受白名单约束）。
 
         Returns:
@@ -170,9 +173,35 @@ class InMemoryTaskStore:
         allowed = normalize_expected_status(expected_status)
         if allowed is not None and current.status not in allowed:
             return None
+        if expected_plan_version is not None and current.plan_version != expected_plan_version:
+            return None
         for key, value in fields.items():
             setattr(current, key, value)
         return current
+
+    async def list_expired_plans(
+        self, tenant_id: str, before: str, limit: int = 200
+    ) -> list[TaskRecord]:
+        """列出已过期、仍停在 `waiting_plan` 的任务（与 PG 同语义）。
+
+        Args:
+            tenant_id: 企业 ID。
+            before: 截止时间（ISO 8601）。
+            limit: 单批上限。
+
+        Returns:
+            list[TaskRecord]: 过期计划任务行（按截止时间升序）。
+        """
+        items = [
+            record
+            for record in self._tasks.values()
+            if record.tenant_id == tenant_id
+            and record.status == STATUS_WAITING_PLAN
+            and record.plan_expires_at
+            and record.plan_expires_at < before
+        ]
+        items.sort(key=lambda item: item.plan_expires_at)
+        return items[:limit]
 
     async def count_occupying(self, tenant_id: str, plugin_id: str) -> int:
         """统计占用额度的任务数。

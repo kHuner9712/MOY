@@ -39,6 +39,10 @@ TERMINAL_STATUSES: Final[tuple[str, ...]] = ("completed", "failed", "cancelled")
 STATUS_QUEUED: Final[str] = "queued"
 
 
+#: 计划确认态（矩阵第 2 项）：只用于仓储层查询过期计划，避免字面量在两侧漂移。
+STATUS_WAITING_PLAN: Final[str] = "waiting_plan"
+
+
 #: `list_queued()` 单次读取的队列上限（审计 2026-11-03 QA-03）。
 #:
 #: 排队位次是派生值，只有「拉起队首」和「剩余位次前移」两条路径需要读队列；
@@ -72,6 +76,10 @@ TASK_MUTABLE_FIELDS: Final[frozenset[str]] = frozenset(
         # P4-11 ③：挂起/解除挂起都是"可变字段"，走既有 update_task 通道，
         # 不新增仓储方法（少一个方法 = 少一处双实现漂移面）。
         "hold_reason",
+        # 矩阵第 2 项：计划元数据，同样走既有 update_task 通道。
+        "plan_version",
+        "plan_expires_at",
+        "plan_confirmed_at",
     }
 )
 
@@ -187,6 +195,11 @@ class TaskRecord:
     #: 只在「建任务后切 queued / 懒恢复清空」的 UPDATE 里带。
     #: 挂起与状态**正交**：被挂起的任务 `status` 仍是 `queued`（不新增状态枚举值）。
     hold_reason: str = ""
+    #: 计划元数据（矩阵第 2 项）。`plan_version=0` 表示该任务从未进入计划模式；
+    #: 创建计划任务时=1，每次编辑 +1；确认时用 `expected_plan_version` 做乐观并发。
+    plan_version: int = 0
+    plan_expires_at: str = ""
+    plan_confirmed_at: str = ""
 
     @property
     def terminal(self) -> bool:

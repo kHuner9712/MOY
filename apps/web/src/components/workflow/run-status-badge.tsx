@@ -20,6 +20,8 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   pending: '等待开始',
   running: '执行中',
   waiting_confirm: '已暂停，待确认',
+  /** 矩阵第 2 项：计划已生成，等用户确认（确认前不执行任何步骤） */
+  waiting_plan: '计划待确认',
   completed: '已完成',
   failed: '未完成',
   cancelled: '已取消',

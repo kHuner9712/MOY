@@ -194,6 +194,90 @@ class ArtifactEditData(BaseModel):
     version_history: list[ArtifactVersionItem] = Field(default_factory=list, description="历史版本")
 
 
+class TaskPlanStep(BaseModel):
+    """计划中的一个步骤（执行前展示给用户确认）。
+
+    Attributes:
+        seq: 步骤序号。
+        title: 用户可见步骤名（声明快照）。
+        action: 执行原语（内部字段，仅用于前端展示"将要做什么"）。
+        tool_type: 所需工具类型（非工具步骤为 null）。
+        tool_operation: 工具操作标识（非工具步骤为 null）。
+        expected_artifacts: 预计产物键（来自 `produces`）。
+        needs: 依赖的前序产物键。
+        skippable: 是否允许用户取消勾选（必做步骤为 false）。
+        selected: 当前是否纳入执行。
+        note: 说明（条件不满足 / 未纳入本次计划 / 需执行前确认）。
+    """
+
+    seq: int = Field(ge=1, description="步骤序号")
+    title: str = Field(default="", description="步骤名称")
+    action: str = Field(default="", description="执行原语")
+    tool_type: str | None = Field(default=None, description="所需工具类型")
+    tool_operation: str | None = Field(default=None, description="工具操作标识")
+    expected_artifacts: list[str] = Field(default_factory=list, description="预计产物键")
+    needs: list[str] = Field(default_factory=list, description="依赖的前序产物键")
+    skippable: bool = Field(default=True, description="是否允许取消勾选")
+    selected: bool = Field(default=True, description="是否纳入执行")
+    note: str = Field(default="", description="说明文案")
+
+
+class TaskPlan(BaseModel):
+    """任务执行计划（A3 的 `plan` 字段；PUT /plan 的响应）。
+
+    Attributes:
+        task_id: 任务 ID。
+        plugin_id: 插件标识。
+        version: 计划版本（创建=1，每次编辑 +1）。
+        expires_at: 确认截止时间（ISO 8601）。
+        confirmed_at: 确认时间（未确认为 null）。
+        steps: 步骤列表。
+    """
+
+    task_id: str = Field(description="任务 ID")
+    plugin_id: str = Field(default="", description="插件标识")
+    version: int = Field(default=0, ge=0, description="计划版本")
+    expires_at: str = Field(default="", description="确认截止时间")
+    confirmed_at: str | None = Field(default=None, description="确认时间")
+    steps: list[TaskPlanStep] = Field(default_factory=list, description="步骤列表")
+
+
+class TaskPlanStepSelection(BaseModel):
+    """计划编辑的单步选择。
+
+    Attributes:
+        seq: 步骤序号。
+        selected: 是否纳入执行。
+    """
+
+    seq: int = Field(ge=1, le=8, description="步骤序号")
+    selected: bool = Field(default=True, description="是否纳入执行")
+
+
+class TaskPlanUpdateRequest(BaseModel):
+    """计划编辑请求（只支持勾选/取消勾选，不支持改顺序或新增步骤）。
+
+    Attributes:
+        plan_version: 客户端持有的计划版本（乐观并发条件）。
+        steps: 每步的选择（缺省步骤保持原状）。
+    """
+
+    plan_version: int = Field(ge=0, description="客户端持有的计划版本")
+    steps: list[TaskPlanStepSelection] = Field(
+        default_factory=list, max_length=8, description="每步的选择"
+    )
+
+
+class TaskPlanConfirmRequest(BaseModel):
+    """计划确认请求。
+
+    Attributes:
+        plan_version: 客户端持有的计划版本（乐观并发条件）。
+    """
+
+    plan_version: int = Field(ge=0, description="客户端持有的计划版本")
+
+
 class PluginTaskRuntimeData(BaseModel):
     """插件任务运行态摘要（供 A1/A3 复用的加性字段集合）。
 
@@ -228,4 +312,9 @@ __all__: list[str] = [
     "RetryTaskRequest",
     "StepArtifact",
     "StepFailure",
+    "TaskPlan",
+    "TaskPlanConfirmRequest",
+    "TaskPlanStep",
+    "TaskPlanStepSelection",
+    "TaskPlanUpdateRequest",
 ]

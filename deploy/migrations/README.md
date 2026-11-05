@@ -1,16 +1,16 @@
 # 迁移台账与孤儿清理（阶段三 B19 起）
 
 > **发布状态**：阶段三早已验收，`0003` / `0004` 等阶段三迁移已冻结、不再改动；
-> 迁移线已推进到 `0013_event_log`（底座 T01/T02，清单见下表）。
+> 迁移线已推进到 `0014_task_plan`（矩阵第 2 项计划确认，清单见下表）。
 > 任何跑过未发布期旧版的开发库、测试库，`schema_migration` 里的 checksum 会与磁盘
 > 不一致——**这是检测机制在正常工作**，不是缺陷。验证一律用**全新库**；开发库重建即可。
 
-## 迁移清单（0005–0013，按执行顺序）
+## 迁移清单（0005–0014，按执行顺序）
 
 > 更早的 `0002`–`0004` 已冻结，用途见各 SQL 文件头注释：
 > `0002_callback_idempotency_selfcheck`（回调幂等自检，原 `0002_billing_callback_unique` 改名，见 §4）、
 > `0003_phase3_plugin_tables`（插件域 9 表）、`0004_phase3_task_versions`（任务版本表）。
-> 全量迁移线为 0002–0013 共 12 个（0001 为 RESERVED 基线别名）；0013 为 `0013_event_log.sql`。
+> 全量迁移线为 0002–0014 共 13 个（0001 为 RESERVED 基线别名）；0014 为 `0014_task_plan.sql`。
 
 | 迁移脚本 | 用途（摘自各 SQL 文件头注释） |
 | --- | --- |
@@ -23,6 +23,7 @@
 | `0011_tenant_budget.sql` | 租户月度预算表（`tenant_budget`）：成本护栏读取，计费表零改动 |
 | `0012_quota_hold.sql` | `document_meta` / `plugin_task` 增 `hold_reason` 额度挂起标记，超额挂起状态落库、重启/多副本不丢 |
 | `0013_event_log.sql` | 会话事件日志 `event_log`（底座 T02，设计文档 §5.1）：16 个 HASH 分区、RLS 按租户隔离、只授 INSERT+SELECT（append-only）、`(tenant_id, session_id, seq)` + `(tenant_id, created_at)` 两个索引。**这是状态真源**（规格 §3.1 E1），删表等于删掉全部会话历史与审计证据——回滚前必须先导出 |
+| `0014_task_plan.sql` | 通用任务「计划生成 → 确认」（矩阵第 2 项）：`plugin_task` 增 `plan_version` / `plan_expires_at` / `plan_confirmed_at` 三列，状态 CHECK 扩 `waiting_plan`，并建部分索引 `idx_task_plan_expiry`（清理器按到期时间扫描）。不新增表，RLS 沿用既有 `p_tenant_isolation`；回滚见 `rollback/0014_task_plan.down.sql` |
 
 `rollback/` 目录自 `0006` 起为每个迁移配对 `*.down.sql` 回退脚本（`0005` 及更早无 down 文件）。
 

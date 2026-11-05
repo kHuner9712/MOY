@@ -18,6 +18,7 @@ from app.business.artifact_export import is_xlsx_exportable
 from app.business.task.access import assert_task_visible
 from app.business.task.deps import TaskDeps
 from app.business.task.manifest import TaskManifestResolver
+from app.business.task.plan import build_plan
 from app.core.artifact_token import make_token
 from app.core.errors import ApiError, ErrorCode
 from app.core.security import AuthContext
@@ -156,6 +157,10 @@ class TaskQuery:
                     if key in (spec.confirm.summary_fields if spec and spec.confirm else [])
                 },
             )
+        plan = None
+        if record.plan_version > 0:
+            plans = self._deps.engine.plan(manifest, record.inputs)
+            plan = build_plan(record, manifest, steps, plans)
         return TaskDetailData(
             task_id=record.task_id,
             status=TaskStatus(record.status),
@@ -186,6 +191,10 @@ class TaskQuery:
             steps_total=len(steps),
             retry_of=record.retry_of or None,
             confirm=confirm.model_dump() if confirm is not None else None,
+            plan_version=record.plan_version,
+            plan_expires_at=record.plan_expires_at,
+            plan_confirmed_at=record.plan_confirmed_at,
+            plan=plan,
         )
 
     async def steps(self, task_id: str, auth: AuthContext) -> StepsData:

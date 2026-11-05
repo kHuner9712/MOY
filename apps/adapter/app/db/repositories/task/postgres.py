@@ -34,6 +34,7 @@ from app.db.repositories.task.records import (
     OCCUPYING_STATUSES,
     QUEUE_SCAN_LIMIT,
     STATUS_QUEUED,
+    STATUS_WAITING_PLAN,
     STEP_MUTABLE_FIELDS,
     TASK_MUTABLE_FIELDS,
     StepRecord,
@@ -70,6 +71,12 @@ _PG_TASK_COLUMNS: Final[frozenset[str]] = frozenset(
         # P4-11 ③：`plugin_task.hold_reason`（迁移 0012）——只在 UPDATE 里出现，
         # **不进 INSERT 列名列表**（DEFAULT '' → R7 omittable、G-SQL arity 不变）。
         "hold_reason",
+        # 矩阵第 2 项：计划元数据（迁移 0014）。三列都有默认值，但
+        # `plan_version` / `plan_expires_at` 在创建计划任务时**随 INSERT 写入**，
+        # 保证"任务一落库就带着正确的计划版本与截止时间"（见 create_task）。
+        "plan_version",
+        "plan_expires_at",
+        "plan_confirmed_at",
     }
 )
 
@@ -121,7 +128,8 @@ class PostgresTaskStore:
                     initiator_id, trigger_type, status, progress, current_step_seq,
                     inputs, result_summary, checklist, warnings, error_message,
                     retry_of, from_step, confirm_step_seq, confirmed_step_seq,
-                    cancel_requested, usage_units, idem_key, started_at, expires_at
+                    cancel_requested, usage_units, idem_key, started_at, expires_at,
+                    plan_version, plan_expires_at, plan_confirmed_at
                 ) VALUES (
                     :tenant_id, :task_id, :plugin_id, :plugin_version, :conversation_id,
                     :initiator_id, :trigger_type, :status, :progress, :current_step_seq,
@@ -129,7 +137,8 @@ class PostgresTaskStore:
                     CAST(:checklist AS jsonb), CAST(:warnings AS jsonb), NULLIF(:error_message, ''),
                     NULLIF(:retry_of, ''), NULLIF(:from_step, 0), :confirm_step_seq,
                     :confirmed_step_seq, :cancel_requested, :usage_units, :idem_key,
-                    COALESCE(:started_at, now()), :expires_at
+                    COALESCE(:started_at, now()), :expires_at,
+                    :plan_version, :plan_expires_at, :plan_confirmed_at
                 )
                 RETURNING *
                 """,
@@ -247,6 +256,7 @@ class PostgresTaskStore:
         task_id: str,
         *,
         expected_status: str | Sequence[str] | None = None,
+        expected_plan_version: int | None = None,
         **fields: Any,
     ) -> TaskRecord | None:
         """更新任务可变字段（可带乐观状态条件）。
@@ -256,10 +266,14 @@ class PostgresTaskStore:
         用条件 UPDATE 而不是"先 SELECT 再判断再 UPDATE"：后者在并发下是典型的
         TOCTOU，取消与收尾仍会互相覆盖（本缺陷的根因）。
 
+        矩阵第 2 项追加 `expected_plan_version`：计划编辑/确认/清理都拿它做
+        第二道乐观条件，避免"用户刚编辑完、清理器按旧快照把它取消"。
+
         Args:
             tenant_id: 企业 ID。
             task_id: 任务 ID。
             expected_status: 乐观条件（期望的当前状态；`None` 表示不加条件）。
+            expected_plan_version: 计划版本乐观条件（`None` 表示不加条件）。
             **fields: 待更新字段。
 
         Returns:
@@ -295,6 +309,9 @@ class PostgresTaskStore:
         if allowed is not None:
             where += " AND status = ANY(:expected_status)"
             extra["expected_status"] = allowed
+        if expected_plan_version is not None:
+            where += " AND plan_version = :expected_plan_version"
+            extra["expected_plan_version"] = expected_plan_version
         async with tenant_scope(tenant_id, settings=self._settings) as uow:
             repo = _TaskRepository(uow)
             row = await repo.fetch_one(
@@ -306,6 +323,42 @@ class PostgresTaskStore:
                 repo.params(**extra, **params),
             )
         return _to_task(row) if row is not None else None
+
+    async def list_expired_plans(
+        self, tenant_id: str, before: str, limit: int = 200
+    ) -> list[TaskRecord]:
+        """列出已过期、仍停在 `waiting_plan` 的任务（清理器输入）。
+
+        只读、单租户：清理器对每个租户各调一次，删除/取消仍走 `update_task`
+        的 tenant_scope 写路径（RLS 兜底）。
+
+        Args:
+            tenant_id: 企业 ID。
+            before: 截止时间（ISO 8601 / datetime），早于它的计划视为过期。
+            limit: 单批上限（避免一次拉回过多行）。
+
+        Returns:
+            list[TaskRecord]: 过期计划任务行。
+        """
+        async with tenant_scope(tenant_id, read_only=True, settings=self._settings) as uow:
+            repo = _TaskRepository(uow)
+            rows = await repo.fetch_all(
+                f"""
+                SELECT * FROM {TASK_TABLE}
+                 WHERE tenant_id = :tenant_id
+                   AND status = :status
+                   AND plan_expires_at IS NOT NULL
+                   AND plan_expires_at < :before
+                 ORDER BY plan_expires_at
+                 LIMIT :limit
+                """,
+                repo.params(
+                    status=STATUS_WAITING_PLAN,
+                    before=as_datetime(before),
+                    limit=limit,
+                ),
+            )
+        return [_to_task(row) for row in rows]
 
     async def count_occupying(self, tenant_id: str, plugin_id: str) -> int:
         """统计占用额度的任务数。
@@ -797,6 +850,10 @@ def _task_params(record: TaskRecord) -> dict[str, Any]:
         # `started_at` 由调用方给（内存后端同样尊重它）；没给就交给 DDL 的 now()
         "started_at": as_datetime(record.started_at),
         "expires_at": as_datetime(record.expires_at) or as_datetime(_expires_at()),
+        # 计划元数据（矩阵第 2 项）：空串在 PG 侧由 `as_datetime` 转成 NULL
+        "plan_version": record.plan_version,
+        "plan_expires_at": as_datetime(record.plan_expires_at),
+        "plan_confirmed_at": as_datetime(record.plan_confirmed_at),
     }
 
 
@@ -839,6 +896,10 @@ def _to_task(row: Mapping[str, Any]) -> TaskRecord:
         expires_at=_timestamp(row.get("expires_at")),
         # 防御式取列：未列出该列的 SELECT 按「未挂起」处理（见 records.py 的字段注释）
         hold_reason=str(row.get("hold_reason", "") or ""),
+        # 防御式取列：旧库未迁移时按"非计划任务"处理（plan_version=0）
+        plan_version=int(row.get("plan_version", 0) or 0),
+        plan_expires_at=_timestamp(row.get("plan_expires_at")),
+        plan_confirmed_at=_timestamp(row.get("plan_confirmed_at")),
     )
 
 

@@ -297,7 +297,15 @@ def test_exactly_30_business_endpoints(client: TestClient) -> None:
             "endpoints"
         ]
     }
-    assert len(operations - phase2 - phase3 - phase4 - w1) == 30
+    # 矩阵第 2 项（计划编辑 + 计划确认共 2 条登记）同口径扣除：
+    # 它们是新增端点，不得算进核心 30，否则冻结断言会误报。
+    w2 = {
+        (str(item["method"]).upper(), str(item["path"]))
+        for item in json.loads((docs_dir / "baseline-w2-2.json").read_text(encoding="utf-8"))[
+            "endpoints"
+        ]
+    }
+    assert len(operations - phase2 - phase3 - phase4 - w1 - w2) == 30
 
 
 @pytest.mark.integration

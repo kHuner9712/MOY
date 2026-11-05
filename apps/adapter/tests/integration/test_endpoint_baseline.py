@@ -12,6 +12,8 @@
    这类放宽参数——删一个插件域端点必须立刻变红；
 6. **W1 增量**：`baseline-w1-2.json` 精确 2 条，且从 core 扣除（与 phase4 同口径）；
    W1 端点未实现时按 `[PENDING]` 报告不判红，`--strict` 判红；未登记端点立即红。
+7. **矩阵第 2 项增量**：`baseline-w2-2.json` 精确 2 条，且从 core 扣除；
+   P1/P2 本期已实现，G8 **双向严格**（无 `[PENDING]` 窗口，删基线或删端点都红）。
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ PHASE3_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase3-16.json"
 PHASE2_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase2-38.json"
 PHASE4_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase4-10.json"
 W1_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-w1-2.json"
+W2_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-w2-2.json"
 SNAPSHOT_PATH = REPO_ROOT / "docs" / "api" / "openapi.snapshot.json"
 
 
@@ -116,7 +119,9 @@ def test_actual_core_endpoints_equal_frozen_baseline() -> None:
     phase4 = validator.load_baseline(PHASE4_BASELINE_PATH)
     # W1 同口径：登记过的 2 条先扣掉，否则会被算进 core
     w1 = validator.load_baseline(W1_BASELINE_PATH)
-    core_actual = operations - phase2 - phase3 - phase4 - w1
+    # 矩阵第 2 项同口径：P1/P2 是新增且已实现，同样必须从 core 扣除
+    w2 = validator.load_baseline(W2_BASELINE_PATH)
+    core_actual = operations - phase2 - phase3 - phase4 - w1 - w2
     baseline = validator.load_baseline(CORE_BASELINE_PATH)
     assert core_actual == baseline
 
@@ -156,6 +161,7 @@ def test_repository_passes_all_gates() -> None:
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
         # W1 基线同口径：漏传会把 2 条登记端点算进 core，且 G7 判"基线不足 2 条"
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
+        w2_baseline=validator.load_baseline(W2_BASELINE_PATH),
         snapshot=_load_snapshot(),
         skip_diff=False,
     )
@@ -166,6 +172,8 @@ def test_repository_passes_all_gates() -> None:
     assert stats["phase4_declared"] == 10
     assert stats["w1_declared"] == 2, "W1 基线必须精确 2 条（stats/tasks + capabilities/recommend）"
     assert stats["w1_present"] == W1_PRESENT_EXPECTED
+    assert stats["w2_declared"] == 2, "计划基线必须精确 2 条（plan + plan/confirm）"
+    assert stats["w2_present"] == 2
 
 
 def _load_snapshot() -> dict[str, Any]:
@@ -354,6 +362,7 @@ def test_phase4_present_matches_current_batch() -> None:
         phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
+        w2_baseline=validator.load_baseline(W2_BASELINE_PATH),
         snapshot=_load_snapshot(),
         skip_diff=False,
         strict_phase4=False,
@@ -423,6 +432,7 @@ def test_w1_present_matches_current_batch() -> None:
         phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
+        w2_baseline=validator.load_baseline(W2_BASELINE_PATH),
         snapshot=_load_snapshot(),
         skip_diff=False,
         strict_phase4=False,
@@ -446,12 +456,40 @@ def test_strict_flag_only_changes_verdict_when_phase4_missing() -> None:
         phase3_baseline=validator.load_baseline(PHASE3_BASELINE_PATH),
         phase4_baseline=validator.load_baseline(PHASE4_BASELINE_PATH),
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
+        w2_baseline=validator.load_baseline(W2_BASELINE_PATH),
         snapshot=_load_snapshot(),
         skip_diff=False,
         strict_phase4=False,
     )
-    expected = 1 if (stats["phase4_missing"] or stats["w1_missing"]) else 0
+    expected = (
+        1 if (stats["phase4_missing"] or stats["w1_missing"] or stats["w2_present"] != 2) else 0
+    )
     assert validator.main(["--no-write-openapi", "--strict"]) == expected
+
+
+# ===========================================================================
+# 3d. G8：矩阵第 2 项计划端点（双向严格）
+# ===========================================================================
+def test_w2_baseline_declares_exactly_2_endpoints() -> None:
+    """计划基线必须精确 2 条（P1 计划编辑 / P2 计划确认）。"""
+    declared = validator.load_baseline(W2_BASELINE_PATH)
+    assert len(declared) == validator.W2_BASELINE_COUNT == 2
+
+
+def test_w2_missing_is_red_without_strict_flag() -> None:
+    """P1/P2 本期已实现，缺一条即红（没有 `[PENDING]` 宽容窗口）。"""
+    declared = validator.load_baseline(W2_BASELINE_PATH)
+    failures = validator.gate_w2_baseline(set(), declared)
+    assert failures and failures[0].gate == "G8"
+
+
+def test_w2_baseline_shrink_is_red() -> None:
+    """把基线删成 1 条（"让 missing 变 0"的常见做法）→ G8 立刻红。"""
+    declared = validator.load_baseline(W2_BASELINE_PATH)
+    shrunk = set(sorted(declared, key=validator.operation_sort_key)[:1])
+    failures = validator.gate_w2_baseline(shrunk, shrunk)
+    assert failures, "基线少于 2 条必须判红（删基线不算修复）"
+    assert "2" in failures[0].detail
 
 
 # ===========================================================================

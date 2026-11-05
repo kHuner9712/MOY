@@ -178,7 +178,7 @@ CREATE TABLE IF NOT EXISTS plugin_task (
                                  CHECK (trigger_type IN ('manual','retry')),
     status           TEXT        NOT NULL DEFAULT 'pending'
                                  CHECK (status IN ('pending','running','queued','waiting_confirm',
-                                                   'completed','failed','cancelled')),
+                                                   'waiting_plan','completed','failed','cancelled')),
     progress         SMALLINT    NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
     current_step_seq SMALLINT    NOT NULL DEFAULT 0,
     inputs           JSONB       NOT NULL DEFAULT '{}'::jsonb,
@@ -195,7 +195,14 @@ CREATE TABLE IF NOT EXISTS plugin_task (
     idem_key         TEXT        NOT NULL,
     started_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at      TIMESTAMPTZ,
-    expires_at       TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '180 days',
+    expires_at      TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '180 days',
+    -- 矩阵第 2 项：执行计划元数据（迁移 0014 同源）
+    --   plan_version=0 表示非计划任务；创建计划任务时=1，每次编辑 +1。
+    --   plan_expires_at 为确认截止时间；等待确认时不计并发额度。
+    --   plan_confirmed_at 写入即代表"已确认"，是确认幂等与超时清理的 CAS 依据。
+    plan_version     INTEGER     NOT NULL DEFAULT 0 CHECK (plan_version >= 0),
+    plan_expires_at  TIMESTAMPTZ,
+    plan_confirmed_at TIMESTAMPTZ,
     PRIMARY KEY (tenant_id, task_id),
     CONSTRAINT fk_task_of FOREIGN KEY (tenant_id, retry_of)
         REFERENCES plugin_task (tenant_id, task_id)
@@ -208,6 +215,10 @@ CREATE INDEX IF NOT EXISTS idx_task_status_time
     ON plugin_task (tenant_id, status, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_initiator
     ON plugin_task (tenant_id, initiator_id, started_at DESC);
+-- 矩阵第 2 项：计划清理器只扫 `waiting_plan` 且带截止时间的行（部分索引）
+CREATE INDEX IF NOT EXISTS idx_task_plan_expiry
+    ON plugin_task (tenant_id, plan_expires_at)
+ WHERE status = 'waiting_plan';
 
 -- ---------------------------------------------------------------------------
 -- 8. 任务步骤（失败只留业务语言 reason_text + operator_action，不留堆栈/原始报文）

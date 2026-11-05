@@ -61,7 +61,7 @@ push / PR 触发时自动生成并作为构件上传，命名 `openapi-spec`。
 > 阶段小计 **68 个业务端点**（30 冻结 + 38 新域）。基线文件：
 > `docs/api/baseline-core-30.json`（经评审流程保护，禁止修改）、
 > `docs/api/baseline-phase2-38.json`（只允许登记真实已实现端点）。
-> 门禁：`python deploy/validate_openapi.py`（G1-G7，失败退出码非 0）；
+> 门禁：`python deploy/validate_openapi.py`（G1-G8，失败退出码非 0）；
 > **无任何放宽参数**：阶段二历史用的 `--allow-missing-phase2` 已于 2026-10-29
 > 审计清理中从脚本本体一并移除（38/38 已交付），CI 全程 `--strict`。
 
@@ -122,10 +122,18 @@ push / PR 触发时自动生成并作为构件上传，命名 `openapi-spec`。
 | 能力推荐 | `/api/v1/capabilities` | 1 | W1-B1 |
 | **增量端点合计** | | **2** | |
 
-> 全量合计 **96 个业务端点**（30 冻结 + 38 阶段二 + 16 阶段三 + 10 阶段四 + 2 W1）。
-> 基线文件：`docs/api/baseline-phase4-10.json`、`docs/api/baseline-w1-2.json`
-> （口径同阶段三：只登记真实已实现端点；`--strict` 下 missing>0 即红，
-> 任何未登记的新端点一律立即判红，这两条都没有放宽开关）。
+**矩阵第 2 项增量端点（2 个，通用任务「计划生成 → 确认」；同挂 `/api/v1`）**
+
+| 域 | 前缀 | target | 编号 |
+| --- | --- | --- | --- |
+| 执行计划 | `/api/v1/agent/tasks/{task_id}/plan` | 2 | P1-P2 |
+| **增量端点合计** | | **2** | |
+
+> 全量合计 **98 个业务端点**（30 冻结 + 38 阶段二 + 16 阶段三 + 10 阶段四 + 2 W1 + 2 W2）。
+> 基线文件：`docs/api/baseline-phase4-10.json`、`docs/api/baseline-w1-2.json`、
+> `docs/api/baseline-w2-2.json`（口径同阶段三：只登记真实已实现端点；`--strict` 下
+> missing>0 即红，任何未登记的新端点一律立即判红，这三条都没有放宽开关）。
+> P1/P2 为**本期新增且已实现**，不做 `[PENDING]` 过渡（G8 登记侧与实现侧都严格）。
 
 ### 2.2 统一约定
 

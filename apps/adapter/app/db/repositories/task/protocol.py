@@ -58,17 +58,31 @@ class TaskStore(Protocol):
         task_id: str,
         *,
         expected_status: str | Sequence[str] | None = None,
+        expected_plan_version: int | None = None,
         **fields: Any,
     ) -> TaskRecord | None:
         """更新任务可变字段（可带乐观状态条件）。
 
         P1-2：`expected_status` 是**乐观并发条件**——写终态前先确认"库里现在的状态
         仍是这些之一"，避免"推进方拿着旧快照收尾"覆盖掉取消等并发写入的终态。
+
+        矩阵第 2 项追加 `expected_plan_version`：计划编辑 / 确认 / 超时清理共用
+        同一道版本闸门，防止"编辑完的计划被按旧快照取消"。
         """
         ...
 
     async def count_occupying(self, tenant_id: str, plugin_id: str) -> int:
         """统计占用并发额度的任务数。"""
+        ...
+
+    async def list_expired_plans(
+        self, tenant_id: str, before: str, limit: int = 200
+    ) -> list[TaskRecord]:
+        """列出已过期、仍停在 `waiting_plan` 的任务（计划清理器的唯一输入）。
+
+        只读且单租户：清理器按租户逐个调用，取消写入仍走 `update_task`
+        的 tenant_scope 写路径，RLS 兜底。
+        """
         ...
 
     async def clear_hold_reasons(self, tenant_id: str) -> int:

@@ -44,6 +44,10 @@ import type {
   TaskArtifactUpdateRequest,
   TaskArtifactUpdateResult,
   TaskDetail,
+  TaskPlan,
+  TaskPlanConfirmRequest,
+  TaskPlanConfirmResult,
+  TaskPlanUpdateRequest,
   TaskQueueInfo,
   TaskRetryRequest,
   TaskRetryResult,
@@ -1121,6 +1125,13 @@ export const agentApi = {
     options?: { max_steps?: number; timeout_seconds?: number };
     /** 插件任务必填；有值时 `inputs` 按插件声明校验 */
     plugin_id?: string;
+    /**
+     * 矩阵第 2 项：先生成计划、等用户确认后再执行。
+     *
+     * 缺省（不传）= 跟随服务端开关；服务端关闭时传 `true` 会被显式拒绝（20001），
+     * **不会静默退化成直接执行**。
+     */
+    plan_first?: boolean;
   }): Promise<
     {
       task_id: string;
@@ -1176,6 +1187,26 @@ export const agentApi = {
    */
   retryTask(taskId: string, body: TaskRetryRequest = {}): Promise<TaskRetryResult> {
     return request('POST', `/agent/tasks/${taskId}/retry`, { body });
+  },
+
+  /**
+   * 矩阵第 2 项 P1：编辑执行计划（只支持勾选/取消勾选）。
+   *
+   * 必须带当前 `plan_version`；版本落后返回 20005（前端应重新拉取详情后再编辑）。
+   * 取消勾选 = 该步置 `skipped`，**确认前不执行任何步骤**。
+   */
+  updateTaskPlan(taskId: string, body: TaskPlanUpdateRequest): Promise<TaskPlan> {
+    return request('PUT', `/agent/tasks/${taskId}/plan`, { body });
+  },
+
+  /**
+   * 矩阵第 2 项 P2：确认执行计划。
+   *
+   * 确认成功后任务从 `waiting_plan` 推进到 `queued` / `running` 并开始执行；
+   * 重复确认返回 `already_confirmed=true` 且不会再触发执行。计划过期返回 20005。
+   */
+  confirmTaskPlan(taskId: string, body: TaskPlanConfirmRequest): Promise<TaskPlanConfirmResult> {
+    return request('POST', `/agent/tasks/${taskId}/plan/confirm`, { body });
   },
 
   /**

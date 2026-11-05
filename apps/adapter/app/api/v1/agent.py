@@ -11,6 +11,8 @@
 | A6 | `/api/v1/agent/tasks/{task_id}/events` | GET | SSE 订阅 |
 | WF1 | `/api/v1/agent/tasks/{task_id}/retry` | POST | 继续/重做/重试 |
 | WF2 | `/api/v1/agent/tasks/{id}/artifacts/{artifact_id}` | PUT | 产物编辑 + 重新导出 |
+| P1 | `/api/v1/agent/tasks/{task_id}/plan` | PUT | 编辑执行计划（矩阵第 2 项） |
+| P2 | `/api/v1/agent/tasks/{task_id}/plan/confirm` | POST | 确认执行计划（矩阵第 2 项） |
 
 **双模式**（D-22）：`plugin_id` 非空的 A1 走**本地插件任务**（`TaskService`）；
 `plugin_id` 为空时与阶段一逐字等价（`AgentService` 底座代理）。A3/A4/A5 同样按
@@ -43,6 +45,7 @@ from app.schemas.agent import (
     StepsData,
     TaskDetailData,
     TaskItem,
+    TaskPlanConfirmResult,
     TaskStatus,
 )
 from app.schemas.common import SSE_HEADERS, SSE_MEDIA_TYPE, ApiResponse, PageResult, build_page
@@ -51,6 +54,9 @@ from app.schemas.task import (
     ArtifactEditRequest,
     RetryTaskData,
     RetryTaskRequest,
+    TaskPlan,
+    TaskPlanConfirmRequest,
+    TaskPlanUpdateRequest,
 )
 from app.services.agent_service import get_agent_service
 
@@ -361,6 +367,92 @@ async def cancel_task(
             data=result,
         )
     return ApiResponse[CancelTaskData].ok(result)
+
+
+@router.put(
+    "/tasks/{task_id}/plan",
+    response_model=ApiResponse[TaskPlan],
+    summary="A5+ 编辑执行计划（矩阵第 2 项）",
+    description=(
+        "确认前编辑计划：只支持勾选/取消勾选步骤（不支持改顺序或新增步骤）。"
+        "`plan_version` 是乐观并发条件，版本不匹配返回 20005。写接口，需携带 Idempotency-Key。"
+    ),
+)
+async def update_task_plan(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    task_id: str = Path(..., description="任务 ID", min_length=6, max_length=128),
+    body: TaskPlanUpdateRequest = Body(..., description="计划版本与每步选择"),
+) -> ApiResponse[TaskPlan]:
+    """编辑执行计划。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        manager: 幂等管理器。
+        task_id: 任务 ID。
+        body: 编辑请求。
+
+    Returns:
+        ApiResponse[TaskPlan]: 编辑后的计划（版本已 +1）。
+    """
+    tasks = _task_service(request)
+
+    async def factory() -> TaskPlan:
+        return await tasks.update_plan(task_id, body, context.auth)
+
+    result, replayed = await run_idempotent(request, context, factory, manager)
+    if replayed:
+        return ApiResponse[TaskPlan].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message=error_response(ErrorCode.IDEMPOTENT_DUPLICATE).message,
+            data=result,
+        )
+    return ApiResponse[TaskPlan].ok(result)
+
+
+@router.post(
+    "/tasks/{task_id}/plan/confirm",
+    response_model=ApiResponse[TaskPlanConfirmResult],
+    summary="A5+ 确认执行计划（矩阵第 2 项）",
+    description=(
+        "确认后任务才会真正执行（`waiting_plan` → `running|queued`）。"
+        "重复确认返回 `already_confirmed=true` 且不再触发推进。写接口，需携带 Idempotency-Key。"
+    ),
+)
+async def confirm_task_plan(
+    request: Request,
+    context: RequestContext = Depends(get_request_context),
+    manager: IdempotencyManager = Depends(get_idempotency_manager),
+    task_id: str = Path(..., description="任务 ID", min_length=6, max_length=128),
+    body: TaskPlanConfirmRequest = Body(..., description="计划版本"),
+) -> ApiResponse[TaskPlanConfirmResult]:
+    """确认执行计划。
+
+    Args:
+        request: FastAPI 请求对象。
+        context: 请求上下文。
+        manager: 幂等管理器。
+        task_id: 任务 ID。
+        body: 确认请求。
+
+    Returns:
+        ApiResponse[TaskPlanConfirmResult]: 确认后的状态。
+    """
+    tasks = _task_service(request)
+
+    async def factory() -> TaskPlanConfirmResult:
+        return await tasks.confirm_plan(task_id, body, context.auth)
+
+    result, replayed = await run_idempotent(request, context, factory, manager)
+    if replayed:
+        return ApiResponse[TaskPlanConfirmResult].fail(
+            code=int(ErrorCode.IDEMPOTENT_DUPLICATE),
+            message=error_response(ErrorCode.IDEMPOTENT_DUPLICATE).message,
+            data=result,
+        )
+    return ApiResponse[TaskPlanConfirmResult].ok(result)
 
 
 @router.get(

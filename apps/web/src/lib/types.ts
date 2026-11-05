@@ -199,6 +199,8 @@ export type TaskStatus =
   | 'pending'
   | 'running'
   | 'waiting_confirm'
+  /** 矩阵第 2 项：等用户确认整单执行计划（**确认前不执行任何步骤**） */
+  | 'waiting_plan'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -1579,6 +1581,62 @@ export interface TaskStepFailure {
   operator_action: string;
 }
 
+/** 计划中的单个步骤（矩阵第 2 项） */
+export interface TaskPlanStep {
+  seq: number;
+  title: string;
+  /** 执行原语（`compose` / `tool` / `retrieve` …） */
+  action: string;
+  /** 所需工具类型；非工具步骤为 null */
+  tool_type: string | null;
+  /** 工具操作标识；非工具步骤为 null */
+  tool_operation: string | null;
+  /** 预计产物键 */
+  expected_artifacts: string[];
+  /** 依赖的前序产物键 */
+  needs: string[];
+  /** 是否允许取消勾选（必做步骤为 false） */
+  skippable: boolean;
+  /** 是否纳入执行 */
+  selected: boolean;
+  /** 说明（条件不满足 / 未纳入本次计划 / 需执行前确认） */
+  note: string;
+}
+
+/** 执行计划（矩阵第 2 项）：`TaskDetail.plan` 的结构 */
+export interface TaskPlan {
+  task_id: string;
+  plugin_id: string;
+  /** 计划版本：创建=1，每次编辑 +1（编辑/确认都要带它做乐观并发） */
+  version: number;
+  /** 确认截止时间（ISO 8601） */
+  expires_at: string;
+  /** 确认时间；未确认为 null */
+  confirmed_at: string | null;
+  steps: TaskPlanStep[];
+}
+
+/** 计划编辑请求（只支持勾选/取消勾选） */
+export interface TaskPlanUpdateRequest {
+  plan_version: number;
+  steps: Array<{ seq: number; selected: boolean }>;
+}
+
+/** 计划确认请求 */
+export interface TaskPlanConfirmRequest {
+  plan_version: number;
+}
+
+/** 计划确认结果 */
+export interface TaskPlanConfirmResult {
+  task_id: string;
+  status: TaskStatus;
+  plan_version: number;
+  plan_confirmed_at: string;
+  /** 重复确认时为 true（后端不会再触发执行） */
+  already_confirmed: boolean;
+}
+
 /** 任务详情（A3） */
 export interface TaskDetail {
   task_id: string;
@@ -1594,6 +1652,11 @@ export interface TaskDetail {
   result: TaskResult | null;
   /** 人工接管信息；非 waiting_confirm 时为 null */
   confirm?: TaskConfirmInfo | null;
+  /** 计划元数据（矩阵第 2 项；非计划任务为 0 / '' / null） */
+  plan_version?: number;
+  plan_expires_at?: string;
+  plan_confirmed_at?: string;
+  plan?: TaskPlan | null;
   usage?: { total_units?: number };
   created_at?: string;
   updated_at: string;

@@ -19,6 +19,9 @@
   （`GET /api/v1/stats/tasks` / `GET /api/v1/capabilities/recommend`）；
   W1 端点实现前同样按 `[PENDING]` 打印、默认不判红，`--strict` 判红；
   **未登记的端点仍立即红**（会留在我 core 里被 G1 抓出）。
+- **G8 矩阵第 2 项登记**：`baseline-w2-2.json` 必须精确 2 条
+  （`PUT /api/v1/agent/tasks/{task_id}/plan` / `POST .../plan/confirm`）。
+  这两个端点是**本期新增且已实现**，登记侧与实现侧都严格（无 `[PENDING]`）。
 
 **阶段四为什么允许「登记了但还没实现」（G6）**：阶段四的 10 个端点（MC/MM/TD）
 要跨 T4-02~T4-05 四周落地，如果登记当天就让门禁红，唯一"解法"就是把基线删掉——
@@ -90,6 +93,9 @@ PHASE4_BASELINE_COUNT: Final[int] = 10
 
 #: W1 增量端点基线数量（`baseline-w1-2.json`：W1-A1 任务统计 / W1-B1 能力推荐）
 W1_BASELINE_COUNT: Final[int] = 2
+
+#: 矩阵第 2 项增量端点基线数量（`baseline-w2-2.json`：计划编辑 / 计划确认）
+W2_BASELINE_COUNT: Final[int] = 2
 
 #: 对外文档禁词（G5）：任何底座/中间件/内部实现的术语都不得外泄
 FORBIDDEN_TERMS: Final[tuple[str, ...]] = (
@@ -405,6 +411,36 @@ def gate_w1_baseline(
                 f"W1 端点未实现（--strict）: {_format_operations(missing)}",
             )
         )
+    return failures
+
+
+def gate_w2_baseline(
+    actual: set[tuple[str, str]],
+    declared: set[tuple[str, str]],
+) -> list[GateFailure]:
+    """G8：矩阵第 2 项（任务计划）增量端点**双向严格**。
+
+    与 W1 不同：这 2 个端点本期已实现，所以没有 `[PENDING]` 宽容窗口。
+    登记数必须精确 2（删基线让门禁变绿不算修复），登记的每条都必须已实现。
+
+    Args:
+        actual: 当前实际实现的 W2 端点（`全部端点 ∩ 已登记集合`）。
+        declared: 基线登记的 2 条。
+
+    Returns:
+        list[GateFailure]: 失败明细。
+    """
+    failures: list[GateFailure] = []
+    if len(declared) != W2_BASELINE_COUNT:
+        failures.append(
+            GateFailure(
+                "G8",
+                f"计划端点基线必须登记 {W2_BASELINE_COUNT} 条，实际 {len(declared)} 条",
+            )
+        )
+    missing = declared - actual
+    if missing:
+        failures.append(GateFailure("G8", f"计划端点未实现: {_format_operations(missing)}"))
     return failures
 
 
@@ -863,7 +899,7 @@ def run_self_test() -> int:
         for failure in positive:
             print(f"       {failure.render()}")
         return 0
-    print("[OK]   正样本（基线全集 + 同源快照）G1-G7 全绿")
+    print("[OK]   正样本（基线全集 + 同源快照）G1-G8 全绿")
 
     notes: list[str] = []
 
@@ -923,6 +959,7 @@ def collect_failures(
     phase3_baseline: set[tuple[str, str]] | None = None,
     phase4_baseline: set[tuple[str, str]] | None = None,
     w1_baseline: set[tuple[str, str]] | None = None,
+    w2_baseline: set[tuple[str, str]] | None = None,
     snapshot: dict[str, Any] | None = None,
     skip_diff: bool = False,
     strict_phase4: bool = False,
@@ -940,6 +977,7 @@ def collect_failures(
         phase3_baseline: 阶段三插件域基线端点（None 视为空集）。
         phase4_baseline: 阶段四会话/记忆/租户数据基线端点（None 视为空集）。
         w1_baseline: W1 增量基线端点（None 视为空集，且不参与 G7 判定）。
+        w2_baseline: 矩阵第 2 项增量基线端点（None 视为空集，且不参与 G8 判定）。
         snapshot: 冻结快照（None 表示跳过 G4）。
         skip_diff: 是否跳过 G4（仅 hotfix 分支允许）。
         strict_phase4: 阶段四/W1「已登记未实现」是否判红（W2 起 CI 口径）。
@@ -950,13 +988,17 @@ def collect_failures(
     declared_phase3 = phase3_baseline or set()
     declared_phase4 = phase4_baseline or set()
     declared_w1 = w1_baseline or set()
+    declared_w2 = w2_baseline or set()
     operations = collect_operations(schema)
     phase2_actual = operations & phase2_baseline
     phase3_actual = operations & declared_phase3
     phase4_actual = operations & declared_phase4
     w1_actual = operations & declared_w1
+    w2_actual = operations & declared_w2
     # 阶段四与 W1 登记过的端点必须先扣掉，否则它们会被算进 core → G1 精确相等立刻误报
-    core_actual = operations - phase2_baseline - declared_phase3 - declared_phase4 - declared_w1
+    core_actual = (
+        operations - phase2_baseline - declared_phase3 - declared_phase4 - declared_w1 - declared_w2
+    )
 
     failures: list[GateFailure] = []
     failures.extend(gate_core_baseline(core_actual, core_baseline))
@@ -969,6 +1011,9 @@ def collect_failures(
     if w1_baseline is not None:
         # 同 phase4：显式传 None = 本次不参与 W1 判定；仓库级用例一律传真实基线。
         failures.extend(gate_w1_baseline(w1_actual, declared_w1, strict=strict_phase4))
+    if w2_baseline is not None:
+        # 矩阵第 2 项：双向严格（已实现，无 PENDING 窗口）。
+        failures.extend(gate_w2_baseline(w2_actual, declared_w2))
     failures.extend(
         gate_counts(
             len(core_actual),
@@ -996,6 +1041,8 @@ def collect_failures(
         "w1_declared": len(declared_w1),
         "w1_present": len(w1_actual),
         "w1_missing": sorted(declared_w1 - w1_actual, key=operation_sort_key),
+        "w2_declared": len(declared_w2),
+        "w2_present": len(w2_actual),
         "operations": len(operations),
     }
     return failures, stats
@@ -1068,6 +1115,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     phase4_path = docs_dir / "baseline-phase4-10.json"
     # W1 增量基线（W1-A1 任务统计 / W1-B1 能力推荐，共 2 条；T01 登记）
     w1_path = docs_dir / "baseline-w1-2.json"
+    # 矩阵第 2 项增量基线（计划编辑 / 计划确认，共 2 条；2026-11-06 登记）
+    w2_path = docs_dir / "baseline-w2-2.json"
     snapshot_path = docs_dir / "openapi.snapshot.json"
     openapi_path = docs_dir / "openapi.json"
 
@@ -1095,6 +1144,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     phase3_baseline = load_baseline(phase3_path)
     phase4_baseline = load_baseline(phase4_path)
     w1_baseline = load_baseline(w1_path)
+    w2_baseline = load_baseline(w2_path)
     if not core_baseline:
         print(f"[FAIL] 核心基线文件缺失或为空: {core_path.relative_to(REPO_ROOT)}")
         return 2
@@ -1107,6 +1157,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # 同 phase4：W1 基线缺失必须立刻红——缺了会把 2 个端点算进 core，
         # 且 G7 的登记数纪律失效。
         print(f"[FAIL] W1 基线文件缺失或为空: {w1_path.relative_to(REPO_ROOT)}")
+        return 2
+    if not w2_baseline:
+        # 矩阵第 2 项基线缺失同样立刻红：缺了会把这 2 个计划端点算进 core → G1 多出。
+        print(f"[FAIL] 计划端点基线文件缺失或为空: {w2_path.relative_to(REPO_ROOT)}")
         return 2
     snapshot: dict[str, Any] | None = None
     if snapshot_path.is_file() and not args.update_snapshot:
@@ -1122,6 +1176,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         phase3_baseline=phase3_baseline,
         phase4_baseline=phase4_baseline,
         w1_baseline=w1_baseline,
+        w2_baseline=w2_baseline,
         snapshot=snapshot,
         skip_diff=args.skip_diff,
         strict_phase4=args.strict,
@@ -1136,6 +1191,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         **stats,
                         "phase4_missing": _format_pending(stats["phase4_missing"]),
                         "w1_missing": _format_pending(stats["w1_missing"]),
+                        "w2_declared": stats["w2_declared"],
+                        "w2_present": stats["w2_present"],
                     },
                     "failures": [{"gate": item.gate, "detail": item.detail} for item in failures],
                 },
@@ -1150,7 +1207,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"phase4_declared={stats['phase4_declared']} "
             f"phase4_present={stats['phase4_present']} "
             f"w1_declared={stats['w1_declared']} "
-            f"w1_present={stats['w1_present']}"
+            f"w1_present={stats['w1_present']} "
+            f"w2_declared={stats['w2_declared']} "
+            f"w2_present={stats['w2_present']}"
             f"（未实现：phase2 {stats['phase2_missing']} / "
             f"phase3 {stats['phase3_missing']} / phase4 {len(stats['phase4_missing'])} / "
             f"w1 {len(stats['w1_missing'])}）"
@@ -1171,7 +1230,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         for failure in failures:
             print(failure.render())
         if not failures:
-            print("[OK]   G1-G7 全部通过")
+            print("[OK]   G1-G8 全部通过")
 
     return 0 if not failures else 1
 

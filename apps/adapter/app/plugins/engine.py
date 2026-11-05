@@ -65,6 +65,10 @@ TASK_QUEUED: Final[str] = "queued"
 TASK_PENDING: Final[str] = "pending"
 TASK_RUNNING: Final[str] = "running"
 TASK_WAITING_CONFIRM: Final[str] = "waiting_confirm"
+#: 计划确认态（矩阵第 2 项）：执行前等用户确认整单计划。
+#: **刻意不进入** `runner._LIVE_TASK_STATUSES`——否则 `advance` 的 CAS 能拿到它，
+#: 计划确认前就会真的执行（有副作用的工具步骤）。
+TASK_WAITING_PLAN: Final[str] = "waiting_plan"
 TASK_COMPLETED: Final[str] = "completed"
 TASK_FAILED: Final[str] = "failed"
 TASK_CANCELLED: Final[str] = "cancelled"
@@ -890,6 +894,7 @@ __all__: list[str] = [
     "TASK_QUEUED",
     "TASK_RUNNING",
     "TASK_WAITING_CONFIRM",
+    "TASK_WAITING_PLAN",
     "PluginEngine",
     "StepOutcome",
     "StepPlan",

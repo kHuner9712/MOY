@@ -86,6 +86,14 @@
 CI 无 Docker），需部署环境按 [交付文档](file:///c:/Users/15864/Desktop/麦子/docs/delivery-2026-11-05-b2-xlsx-preview.md) 的
 5 分钟步骤验收；**不得把 CI 绿读成"预览已可用"**。pptx 不支持预览（仅下载）。
 
+**B1 状态（2026-11-06）**：通用任务「计划生成 → 确认 → 执行」已交付——`plan_first=true` 创建
+`waiting_plan` 任务，前端读取结构化计划（步骤/工具/预计产物）、可勾选编辑/确认/放弃；
+**确认前不执行任何有副作用能力**（`waiting_plan` 不在 `_LIVE_TASK_STATUSES`，runner 抢不到锁）。
+默认关闭（`OA_TASK_PLAN_ENABLED=false`），计划超时（默认 900 秒）后台清理为 `cancelled`。
+验证边界：工具副作用为**替身网关（EchoGateway）验证**，真实第三方工具调用未在 CI 触发；
+人工 5 分钟验收见 [交付文档](file:///c:/Users/15864/Desktop/麦子/docs/delivery-2026-11-06-task-plan-confirm.md)。
+矩阵第 2 项（B1）状态：**已完成（2026-11-06）**。
+
 **合计（估算）**：**72–109 人日，中位 90 人日**（含 B2 的 Office 预览，不含 pptx、双写、桌面/移动）。
 
 ### 3.2 6–10 周能否达成（直接回答）

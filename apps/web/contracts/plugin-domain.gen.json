@@ -58,7 +58,12 @@
       "TaskRetryRequest",
       "TaskRetryResult",
       "TaskArtifactUpdateRequest",
-      "TaskArtifactUpdateResult"
+      "TaskArtifactUpdateResult",
+      "TaskPlanStep",
+      "TaskPlan",
+      "TaskPlanUpdateRequest",
+      "TaskPlanConfirmRequest",
+      "TaskPlanConfirmResult"
     ]
   },
   "generated_from": "create_app().openapi() @ components.schemas",

@@ -43,12 +43,16 @@ from app.schemas.agent import (
     ListTasksQuery,
     StepsData,
     TaskDetailData,
+    TaskPlanConfirmResult,
 )
 from app.schemas.task import (
     ArtifactEditData,
     ArtifactEditRequest,
     RetryTaskData,
     RetryTaskRequest,
+    TaskPlan,
+    TaskPlanConfirmRequest,
+    TaskPlanUpdateRequest,
 )
 
 
@@ -287,6 +291,18 @@ class TaskService:
     async def cancel(self, task_id: str, auth: AuthContext) -> TaskDetailData:
         """取消插件任务（A5）。见 `TaskRunner.cancel`。"""
         return await self._runner.cancel(task_id, auth)
+
+    async def update_plan(
+        self, task_id: str, request: TaskPlanUpdateRequest, auth: AuthContext
+    ) -> TaskPlan:
+        """编辑执行计划（矩阵第 2 项）。见 `TaskRunner.update_plan`。"""
+        return await self._runner.update_plan(task_id, request, auth)
+
+    async def confirm_plan(
+        self, task_id: str, request: TaskPlanConfirmRequest, auth: AuthContext
+    ) -> TaskPlanConfirmResult:
+        """确认执行计划（矩阵第 2 项）。见 `TaskRunner.confirm_plan`。"""
+        return await self._runner.confirm_plan(task_id, request, auth)
 
     async def edit_artifact(
         self,

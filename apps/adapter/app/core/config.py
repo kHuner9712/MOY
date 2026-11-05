@@ -301,6 +301,13 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     plugin_task_concurrency: int = Field(default=3, ge=1, le=20)
     plugin_task_timeout_seconds: int = Field(default=900, ge=30, le=86_400)
+    #: 「通用任务计划生成 → 确认」（矩阵第 2 项，2026-11-06）。默认**关**：
+    #: 关闭时 `plan_first` 一律按 False 处理（建任务即执行，行为与存量逐字一致）。
+    #: 打开后请求可显式 `plan_first=true` 进入 `waiting_plan`，确认前零副作用。
+    task_plan_enabled: bool = False
+    #: 计划确认窗口（秒）。超时后清理器把任务置为 `cancelled(reason=plan_expired)`，
+    #: 避免"没人确认的计划"永久占着任务列表。默认 900s（与任务级超时同口径）。
+    task_plan_timeout_seconds: int = Field(default=900, ge=60, le=86_400)
     #: 「常规模式」下单次回答的字符上限（PRD 5.3 ①，运营可调）。
     #:
     #: 为什么限**字符**而不降 `max_tokens`：Dify chat 不接受 per-request 的

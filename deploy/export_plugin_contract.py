@@ -105,6 +105,12 @@ TASK_DOMAIN_EXCLUDED: Final[tuple[str, ...]] = (
     "TaskRetryResult",
     "TaskArtifactUpdateRequest",
     "TaskArtifactUpdateResult",
+    # 矩阵第 2 项：计划生成 → 确认（同样在 app/schemas/task.py，属任务域）
+    "TaskPlanStep",
+    "TaskPlan",
+    "TaskPlanUpdateRequest",
+    "TaskPlanConfirmRequest",
+    "TaskPlanConfirmResult",
 )
 
 #: 前端投影类型：后端没有同名同形的 schema，不比对

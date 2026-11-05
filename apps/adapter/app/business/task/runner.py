@@ -34,6 +34,16 @@ from app.business.audit_service import ACTION_TASK_FINISH, ACTION_TASK_RETRY, AC
 from app.business.task.access import assert_task_visible
 from app.business.task.deps import TaskDeps
 from app.business.task.manifest import TaskManifestResolver
+from app.business.task.plan import (
+    PLAN_DESELECTED_NOTE,
+    PLAN_EXPIRED_MESSAGE,
+    build_plan,
+    expire_plan,
+    is_plan_expired,
+    plan_enabled,
+    plan_expires_at,
+    validate_selection,
+)
 from app.business.task.query import TaskQuery
 from app.business.usage_service import CAP_AUTOMATION, HOLD_REASON_QUOTA
 from app.core.errors import ApiError, ErrorCode
@@ -61,6 +71,7 @@ from app.plugins.engine import (
     TASK_QUEUED,
     TASK_RUNNING,
     TASK_WAITING_CONFIRM,
+    TASK_WAITING_PLAN,
     StepOutcome,
 )
 from app.plugins.schema import PluginManifest
@@ -68,9 +79,18 @@ from app.schemas.agent import (
     CreateTaskData,
     CreateTaskRequest,
     TaskDetailData,
+    TaskPlanConfirmResult,
     TaskStatus,
 )
-from app.schemas.task import ArtifactEditData, ArtifactEditRequest, RetryTaskData, RetryTaskRequest
+from app.schemas.task import (
+    ArtifactEditData,
+    ArtifactEditRequest,
+    RetryTaskData,
+    RetryTaskRequest,
+    TaskPlan,
+    TaskPlanConfirmRequest,
+    TaskPlanUpdateRequest,
+)
 
 logger = get_logger(__name__)
 
@@ -93,6 +113,13 @@ _LIVE_TASK_STATUSES: Final[tuple[str, ...]] = (
     TASK_RUNNING,
     TASK_WAITING_CONFIRM,
 )
+
+#: 「可被取消」的状态集合 = 仍在推进 + 计划确认态。
+#:
+#: `waiting_plan` **刻意不并进** `_LIVE_TASK_STATUSES`：并进去会让 `advance`
+#: 的 CAS 拿到计划任务并真的执行（计划确认前有副作用）。取消是另一个用户动作，
+#: 它需要覆盖计划态，所以单独一组。
+_CANCELLABLE_TASK_STATUSES: Final[tuple[str, ...]] = (*_LIVE_TASK_STATUSES, TASK_WAITING_PLAN)
 
 #: 资源类型（审计 `resource_type`）
 _RESOURCE_TASK: Final[str] = "task"
@@ -206,16 +233,36 @@ class TaskRunner:
 
         plans = self._deps.engine.plan(manifest, request.inputs)
         steps = self._build_steps(plans, auth.tenant_id, "", request.inputs)
-        occupying = await self._deps.tasks.count_occupying(auth.tenant_id, plugin_id)
-        queued = await self._deps.tasks.count_queued(auth.tenant_id, plugin_id)
-        limit = self._deps.settings.plugin_task_concurrency
-        # P4-11 ③：额度挂起**并入排队**，不新增状态枚举值。
-        # 语义上两者都是"没开始跑"，因此复用 `queued`：用户看到的是
-        # 「已排队 / 额度恢复后自动开始」，而 `TaskStatus` 不多出一个
-        # 库里永不存在的筛选值（那种值会让前端筛出无法解释的空列表）。
-        quota_held = await self._quota_held(auth)
-        is_queued = occupying >= limit or quota_held
-        status = TASK_QUEUED if is_queued else TASK_RUNNING
+        settings = self._deps.settings
+        if request.plan_first is True and not settings.task_plan_enabled:
+            # 显式要求计划、但服务端开关关闭：如实拒绝，而不是"假装支持"。
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                internal_detail="task plan disabled by settings",
+            )
+        plan_first = plan_enabled(settings, request.plan_first)
+        if plan_first:
+            # 计划确认前**零执行**：不进额度判定、不写 hold_reason、不 promote、
+            # 更不调 advance。任务停在 `waiting_plan`，等用户确认。
+            is_queued = False
+            queued = 0
+            quota_held = False
+            status = TASK_WAITING_PLAN
+            expires_at_value = plan_expires_at(settings)
+            plan_version = 1
+        else:
+            occupying = await self._deps.tasks.count_occupying(auth.tenant_id, plugin_id)
+            queued = await self._deps.tasks.count_queued(auth.tenant_id, plugin_id)
+            limit = settings.plugin_task_concurrency
+            # P4-11 ③：额度挂起**并入排队**，不新增状态枚举值。
+            # 语义上两者都是"没开始跑"，因此复用 `queued`：用户看到的是
+            # 「已排队 / 额度恢复后自动开始」，而 `TaskStatus` 不多出一个
+            # 库里永不存在的筛选值（那种值会让前端筛出无法解释的空列表）。
+            quota_held = await self._quota_held(auth)
+            is_queued = occupying >= limit or quota_held
+            status = TASK_QUEUED if is_queued else TASK_RUNNING
+            expires_at_value = ""
+            plan_version = 0
 
         task_id = new_resource_id(_TASK_PREFIX)
         for step in steps:
@@ -237,9 +284,35 @@ class TaskRunner:
                 retry_of=retry_of,
                 from_step=from_step,
                 idem_key=idem_key,
+                plan_version=plan_version,
+                plan_expires_at=expires_at_value,
             )
         )
         await self._deps.tasks.create_steps(steps)
+        if plan_first:
+            await self._deps.audit.record(
+                tenant_id=auth.tenant_id,
+                actor_id=auth.user_id,
+                action=ACTION_TASK_START,
+                resource_type=_RESOURCE_TASK,
+                resource_id=task_id,
+                actor_role=auth.roles[0] if auth.roles else "",
+                change_summary={
+                    "plugin_id": plugin_id,
+                    "version": manifest.version,
+                    "status": status,
+                    "plan_version": plan_version,
+                },
+            )
+            logger.info(
+                "plugin_task_plan_created",
+                tenant_id=auth.tenant_id,
+                task_id=task_id,
+                plugin_id=plugin_id,
+                plan_version=plan_version,
+                plan_expires_at=expires_at_value,
+            )
+            return await self._create_data(record, manifest)
         if quota_held:
             # **挂起标记只在 UPDATE 里写，不进 INSERT 列名列表**：
             # DDL 的 `NOT NULL DEFAULT ''` 让它成为 R7 的 omittable，
@@ -993,6 +1066,9 @@ class TaskRunner:
                 goal="",
                 inputs=dict(record.inputs),
                 plugin_id=record.plugin_id,
+                # 重试是"已确认过的执行"的延续，**不再二次计划**：
+                # 否则每次重试都停在 waiting_plan，用户会以为重试没生效。
+                plan_first=False,
             ),
             auth,
             retry_of=task_id,
@@ -1105,7 +1181,7 @@ class TaskRunner:
                 status=TASK_CANCELLED,
                 finished_at=now_iso(),
                 error_message="任务已取消",
-                expected_status=_LIVE_TASK_STATUSES,
+                expected_status=_CANCELLABLE_TASK_STATUSES,
             )
         if updated is None:
             # 竞态输给了推进方（对方已把终态写进去）：如实返回 12003，
@@ -1119,6 +1195,282 @@ class TaskRunner:
         # 终态由本次调用写入 → 由本次调用释放额度（`transitioned=True`）
         await self.release_slot(record, transitioned=True)
         return await self._query.get_task(task_id, auth)
+
+    # ------------------------------------------------------------------
+    # 矩阵第 2 项：执行计划编辑 / 确认 / 超时清理
+    # ------------------------------------------------------------------
+    async def update_plan(
+        self, task_id: str, request: TaskPlanUpdateRequest, auth: AuthContext
+    ) -> TaskPlan:
+        """编辑执行计划（只支持勾选/取消勾选，确认前有效）。
+
+        并发口径：
+        - `plan_version` 不匹配 → 20005（别人已经改过，必须刷新后重试）；
+        - 状态不再是 `waiting_plan` → 20005（已确认/已取消）；
+        - 已过期 → 先条件写取消，再返回 20005（让用户看到"计划已过期"）。
+
+        Args:
+            task_id: 任务 ID。
+            request: 编辑请求（版本 + 每步选择）。
+            auth: 鉴权上下文。
+
+        Returns:
+            TaskPlan: 编辑后的计划（版本已 +1）。
+
+        Raises:
+            ApiError: 任务不存在（12001）、无权（20003）、参数非法（20001）、
+                版本/状态冲突（20005）。
+        """
+        record = await self._require_plan_task(task_id, auth)
+        if record.status != TASK_WAITING_PLAN:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                message="计划已确认或任务已结束，不能再编辑",
+                internal_detail=f"status={record.status}",
+            )
+        if is_plan_expired(record.plan_expires_at):
+            await expire_plan(self._deps.tasks, record)
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                message=PLAN_EXPIRED_MESSAGE,
+                internal_detail=f"task_id={task_id} plan expired",
+            )
+        if request.plan_version != record.plan_version:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                message="计划已被更新，请刷新后重试",
+                internal_detail=(f"expected={record.plan_version} got={request.plan_version}"),
+            )
+        manifest = self._resolver.manifest_of(record)
+        steps = await self._deps.tasks.list_steps(record.tenant_id, task_id)
+        wanted = {item.seq: item.selected for item in request.steps}
+        try:
+            decision = validate_selection(manifest, steps, wanted)
+        except ValueError as exc:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                message=str(exc),
+                internal_detail=f"plan_selection: {exc}",
+            ) from exc
+
+        # 先抢版本号：抢不到说明并发的编辑/确认已经发生，不再改任何步骤。
+        updated = await self._deps.tasks.update_task(
+            record.tenant_id,
+            task_id,
+            plan_version=record.plan_version + 1,
+            plan_expires_at=plan_expires_at(self._deps.settings),
+            expected_status=TASK_WAITING_PLAN,
+            expected_plan_version=record.plan_version,
+        )
+        if updated is None:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                message="计划已被更新，请刷新后重试",
+                internal_detail=f"task_id={task_id} plan cas failed",
+            )
+
+        stamp = now_iso()
+        for step in steps:
+            if step.seq in decision.deselect:
+                await self._deps.tasks.update_step(
+                    record.tenant_id,
+                    step.step_id,
+                    status=STEP_SKIPPED,
+                    reason_text=PLAN_DESELECTED_NOTE,
+                    finished_at=stamp,
+                )
+            elif step.seq in decision.reselect:
+                await self._deps.tasks.update_step(
+                    record.tenant_id,
+                    step.step_id,
+                    status=STEP_PENDING,
+                    reason_text="",
+                    finished_at="",
+                    output_summary="",
+                )
+        steps = await self._deps.tasks.list_steps(record.tenant_id, task_id)
+        plans = self._deps.engine.plan(manifest, record.inputs)
+        await self._deps.audit.record(
+            tenant_id=record.tenant_id,
+            actor_id=auth.user_id,
+            action=ACTION_TASK_START,
+            resource_type=_RESOURCE_TASK,
+            resource_id=task_id,
+            actor_role=auth.roles[0] if auth.roles else "",
+            change_summary={
+                "phase": "plan_update",
+                "plan_version": updated.plan_version,
+                "deselected": sorted(decision.deselect),
+                "reselected": sorted(decision.reselect),
+            },
+        )
+        return build_plan(updated, manifest, steps, plans)
+
+    async def confirm_plan(
+        self, task_id: str, request: TaskPlanConfirmRequest, auth: AuthContext
+    ) -> TaskPlanConfirmResult:
+        """确认执行计划（**唯一**能让计划任务开始执行的动作）。
+
+        幂等：同一任务的第二次确认返回 `already_confirmed=True`，**不再**
+        触发 `advance`（避免"重复点确认把任务推进两遍"）。
+        如果确认时并发额度已满，任务落 `queued`，由既有 `promote_queued` 拉起。
+
+        Args:
+            task_id: 任务 ID。
+            request: 确认请求（计划版本）。
+            auth: 鉴权上下文。
+
+        Returns:
+            TaskPlanConfirmResult: 确认后的状态与版本。
+
+        Raises:
+            ApiError: 任务不存在（12001）、无权（20003）、参数非法（20001）、
+                版本/状态冲突（20005）。
+        """
+        record = await self._require_plan_task(task_id, auth)
+        if record.plan_confirmed_at:
+            return TaskPlanConfirmResult(
+                task_id=task_id,
+                status=TaskStatus(record.status),
+                plan_version=record.plan_version,
+                plan_confirmed_at=record.plan_confirmed_at,
+                already_confirmed=True,
+            )
+        if record.status != TASK_WAITING_PLAN:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                message="任务不在计划确认状态",
+                internal_detail=f"status={record.status}",
+            )
+        if is_plan_expired(record.plan_expires_at):
+            await expire_plan(self._deps.tasks, record)
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                message=PLAN_EXPIRED_MESSAGE,
+                internal_detail=f"task_id={task_id} plan expired",
+            )
+        if request.plan_version != record.plan_version:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                message="计划已被更新，请刷新后重试",
+                internal_detail=(f"expected={record.plan_version} got={request.plan_version}"),
+            )
+
+        settings = self._deps.settings
+        occupying = await self._deps.tasks.count_occupying(record.tenant_id, record.plugin_id)
+        queued = await self._deps.tasks.count_queued(record.tenant_id, record.plugin_id)
+        quota_held = await self._quota_held(auth)
+        target = (
+            TASK_QUEUED
+            if (occupying >= settings.plugin_task_concurrency or quota_held)
+            else TASK_RUNNING
+        )
+        fields: dict[str, Any] = {
+            "status": target,
+            "plan_confirmed_at": now_iso(),
+            # 确认是"从头开始执行"，清掉历史单步确认位置。
+            "confirm_step_seq": 0,
+            "progress": 0,
+            "queue_position": (queued + 1) if target == TASK_QUEUED else None,
+        }
+        if quota_held:
+            fields["hold_reason"] = HOLD_REASON_QUOTA
+        updated = await self._deps.tasks.update_task(
+            record.tenant_id,
+            task_id,
+            expected_status=TASK_WAITING_PLAN,
+            expected_plan_version=record.plan_version,
+            **fields,
+        )
+        if updated is None:
+            latest = await self._deps.tasks.get_task(record.tenant_id, task_id)
+            if latest is not None and latest.plan_confirmed_at:
+                return TaskPlanConfirmResult(
+                    task_id=task_id,
+                    status=TaskStatus(latest.status),
+                    plan_version=latest.plan_version,
+                    plan_confirmed_at=latest.plan_confirmed_at,
+                    already_confirmed=True,
+                )
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                message="计划已被更新，请刷新后重试",
+                internal_detail=f"task_id={task_id} plan confirm cas failed",
+            )
+        await self._deps.audit.record(
+            tenant_id=record.tenant_id,
+            actor_id=auth.user_id,
+            action=ACTION_TASK_START,
+            resource_type=_RESOURCE_TASK,
+            resource_id=task_id,
+            actor_role=auth.roles[0] if auth.roles else "",
+            change_summary={
+                "phase": "plan_confirm",
+                "plan_version": updated.plan_version,
+                "status": target,
+            },
+        )
+        logger.info(
+            "plugin_task_plan_confirmed",
+            tenant_id=record.tenant_id,
+            task_id=task_id,
+            plan_version=updated.plan_version,
+            status=target,
+        )
+        if target == TASK_QUEUED:
+            return TaskPlanConfirmResult(
+                task_id=task_id,
+                status=TaskStatus.QUEUED,
+                plan_version=updated.plan_version,
+                plan_confirmed_at=updated.plan_confirmed_at,
+            )
+        # 计划已确认 → 现在才允许推进（`waiting_plan` 不在 `_LIVE_TASK_STATUSES`，
+        # 因此这是该任务第一次拿到推进权）。
+        await self.advance_record(updated)
+        latest = await self._deps.tasks.get_task(record.tenant_id, task_id) or updated
+        return TaskPlanConfirmResult(
+            task_id=task_id,
+            status=TaskStatus(latest.status),
+            plan_version=latest.plan_version,
+            plan_confirmed_at=latest.plan_confirmed_at or updated.plan_confirmed_at,
+        )
+
+    async def _require_plan_task(self, task_id: str, auth: AuthContext) -> TaskRecord:
+        """读取并校验"这是一张可操作的计划任务"。
+
+        Args:
+            task_id: 任务 ID。
+            auth: 鉴权上下文。
+
+        Returns:
+            TaskRecord: 任务行。
+
+        Raises:
+            ApiError: 功能未开启 / 任务不存在 / 非本人 / 不是计划任务。
+        """
+        if not self._deps.settings.task_plan_enabled:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                message="当前未开启任务计划功能",
+                internal_detail="task_plan_enabled=false",
+            )
+        record = await self._deps.tasks.get_task(auth.tenant_id, task_id)
+        if record is None:
+            raise ApiError(ErrorCode.TASK_NOT_FOUND, internal_detail=f"task_id={task_id}")
+        assert_task_visible(record, auth)
+        if record.initiator_id != auth.user_id:
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                message="只有发起人可以确认或修改执行计划",
+                internal_detail=f"initiator={record.initiator_id} actor={auth.user_id}",
+            )
+        if record.plan_version <= 0:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                message="该任务没有可确认的执行计划",
+                internal_detail=f"task_id={task_id} plan_version=0",
+            )
+        return record
 
     # ------------------------------------------------------------------
     # WF2 产物编辑

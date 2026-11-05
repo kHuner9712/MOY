@@ -543,6 +543,7 @@ classDiagram
 | 重试 | 仅 `on_failure: retry` 且失败码 `retryable`（`10004/11005/13004/30001/30002`）；最多 1 次，退避 800ms；`confirm` 后的 `tool` 步骤**永不自动重试** |
 | 降级 | `abort`：任务 `failed`，后续 `skipped`；`continue`：该步 `failed` 但任务继续，最终任务 `succeeded` + `warnings[]`（"哪一步没做成、影响什么"）；`skip_and_mark`：该步 `skipped` 并在核查清单标「待人工确认」 |
 | 人工接管 | `confirm` 步骤未确认 → 任务 `waiting_confirm`，**15 分钟不自动继续**（PRD P0-P3-13 验收③）；确认走 WF1 `decision=continue`（**同任务续跑**），重做走 `decision=redo`（同任务续跑，只重跑该步及下游） |
+| 整单计划确认（矩阵第 2 项） | `plan_first=true` → 任务 `waiting_plan`，**不推进任何步骤、不占额度、不触发工具**；用户可编辑勾选（P1 `PUT .../plan`）并确认（P2 `POST .../plan/confirm`）后才进入 `queued/running`。未确认超过 `OA_TASK_PLAN_TIMEOUT_SECONDS`（默认 900）由后台清理器置 `cancelled`（`error_message=计划已过期，未执行`，**不计入用户主动取消**）。**默认关闭**（`OA_TASK_PLAN_ENABLED=false`）；关闭时显式 `plan_first=true` 返回 20001，不静默退化为直接执行 |
 | 重试本步 / 从头重试 | WF1 `decision=retry_step`（带 `from_step`）/ `retry_all` → **新建任务**，`retry_of=原 task_id`，原任务状态永不改变；前序成功步骤的产物**复制不重跑**（PRD 验收①） |
 | 并发上限 | 同租户同插件 ≤3 个 `running`；第 4 个进入 **`queued`** 并返回 **200 + `status=queued` + `queue_position=N`**（提示「前面还有 N 个任务在跑，稍后自动开始」），**不返回 429/20006**（PRD E-12；4xx 会触发前端整屏报错） |
 | 产物 | 每步 0..n 个 `plugin_artifact`；`text ≤ 32KB` 内联（已脱敏），`file` 写对象存储（`storage_key`），下载走 `A4` 下发的 `download_url`（平台代理，**不暴露存储地址**）；`table` 存 CSV + 前 5 行 `preview_text`；留存 **180 天**（Q3-5），过期后 `download_url=null` 且前端提示「产物已过期，可重新发起任务」 |

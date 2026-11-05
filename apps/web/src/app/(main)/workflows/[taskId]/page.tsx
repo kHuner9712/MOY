@@ -9,6 +9,7 @@ import { ChecklistPanel } from '@/components/workflow/checklist-panel';
 import { RunStatusBadge } from '@/components/workflow/run-status-badge';
 import { StepTimeline } from '@/components/workflow/step-timeline';
 import { TaskHeader } from '@/components/workflow/task-header';
+import { TaskPlanPanel } from '@/components/workflow/task-plan-panel';
 import { ConfirmBar } from '@/components/workbench/confirm-bar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,8 +21,14 @@ import { toBusinessMessage } from '@/lib/business-errors';
 import { orPlaceholder } from '@/lib/format';
 import type { TaskWarning } from '@/lib/types';
 
-/** 进行中状态（决定事件驱动的轮询兜底开关） */
-const ACTIVE_STATUS: readonly string[] = ['queued', 'pending', 'running', 'waiting_confirm'];
+/** 进行中状态（决定事件驱动的轮询兜底开关；`waiting_plan` 也轮询，用于反映计划超时取消） */
+const ACTIVE_STATUS: readonly string[] = [
+  'queued',
+  'pending',
+  'running',
+  'waiting_confirm',
+  'waiting_plan',
+];
 
 /** 事件不可用时的兜底轮询间隔 */
 const POLL_INTERVAL_MS = 5000;
@@ -120,6 +127,45 @@ export default function TaskDetailPage(): React.JSX.Element {
     onError: (error) => toast.error(toBusinessMessage(error)),
   });
 
+  /**
+   * 计划编辑（P1）：只改勾选，不触发执行。
+   *
+   * 失败后统一重拉详情：20005 表示版本落后或计划过期，界面必须回到服务端事实，
+   * 不能让用户继续在过期/旧版本上编辑。
+   */
+  const updatePlanMutation = useApiMutation(
+    (steps: Array<{ seq: number; selected: boolean }>) =>
+      agentApi.updateTaskPlan(taskId, { plan_version: task?.plan_version ?? 0, steps }),
+    {
+      invalidateKeys: [QUERY_KEYS.pluginTask(taskId)],
+      onSuccess: () => toast.success('已保存计划调整'),
+      onError: (error) => {
+        toast.error(toBusinessMessage(error));
+        void taskQuery.refetch();
+      },
+    },
+  );
+
+  /** 计划确认（P2）：确认成功才会真正开始执行 */
+  const confirmPlanMutation = useApiMutation(
+    () => agentApi.confirmTaskPlan(taskId, { plan_version: task?.plan_version ?? 0 }),
+    {
+      invalidateKeys: [QUERY_KEYS.pluginTask(taskId), QUERY_KEYS.pluginTaskSteps(taskId)],
+      onSuccess: (result) => {
+        toast.success(
+          result.already_confirmed ? '计划已确认过，正在按计划执行' : '计划已确认，开始执行',
+        );
+        void taskQuery.refetch();
+        void stepsQuery.refetch();
+      },
+      onError: (error) => {
+        // 计划过期（20005）或已被取消：提示后回到服务端事实
+        toast.error(toBusinessMessage(error));
+        void taskQuery.refetch();
+      },
+    },
+  );
+
   const handleRefetch = React.useCallback((): void => {
     void taskQuery.refetch();
     void stepsQuery.refetch();
@@ -206,6 +252,17 @@ export default function TaskDetailPage(): React.JSX.Element {
         onRedo={() => continueMutation.mutate('redo')}
         onCancel={() => cancelMutation.mutate(undefined)}
       />
+
+      {task.status === 'waiting_plan' && task.plan ? (
+        <TaskPlanPanel
+          key={`${task.task_id}-${task.plan.version}`}
+          plan={task.plan}
+          busy={updatePlanMutation.isPending || confirmPlanMutation.isPending}
+          onUpdate={(steps) => updatePlanMutation.mutate(steps)}
+          onConfirm={() => confirmPlanMutation.mutate(undefined)}
+          onCancel={() => cancelMutation.mutate(undefined)}
+        />
+      ) : null}
 
       <TaskHeader task={task} />
 

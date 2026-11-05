@@ -41,6 +41,7 @@ from fastapi.openapi.utils import get_openapi
 from app.api.sso_routes import router as sso_router
 from app.api.v1.artifact_files import router as artifact_files_router
 from app.api.v1.router import include_all_routers
+from app.business.task.plan_cleanup import plan_cleanup_loop
 from app.core.cache_backend import aclose_shared_redis, validate_cache_backend_startup
 from app.core.config import Settings, get_settings
 from app.core.crypto import validate_startup as validate_credential_startup
@@ -403,6 +404,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     runner: JobRunner | None = None
     queue_depth_task: asyncio.Task[None] | None = None
+    plan_cleanup_task: asyncio.Task[None] | None = None
     if should_start_runner(settings, has_engine=engine is not None):
         runner = get_job_runner(settings)
         runner.start()
@@ -413,6 +415,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         queue_depth_task = asyncio.create_task(
             refresh_loop(get_job_store(settings)), name="oa-task-queue-depth"
         )
+        # 矩阵第 2 项：计划超时清理（只在开关打开时启动）。
+        # 写路径逐租户走 `tenant_scope`，枚举租户是只读 `platform_scope`。
+        if settings.task_plan_enabled:
+            plan_cleanup_task = asyncio.create_task(
+                plan_cleanup_loop(settings), name="oa-task-plan-cleanup"
+            )
         # 阶段四 T4-05.3：保留期清理**每日一次**。入队放在启动流程里而不是依赖
         # cron：私有化现场没有 cron 是常态，而"清理任务靠人记得配"等于没有。
         # 去重键固定（`retention-daily`），重启多少次都只会有一次在排。
@@ -433,6 +441,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             queue_depth_task.cancel()
             try:
                 await queue_depth_task
+            except asyncio.CancelledError:
+                pass
+        if plan_cleanup_task is not None:
+            plan_cleanup_task.cancel()
+            try:
+                await plan_cleanup_task
             except asyncio.CancelledError:
                 pass
         # H-1（审计 2026-10-28）：先停底座连接、再释放业务库——

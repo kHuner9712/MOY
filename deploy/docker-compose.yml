@@ -697,6 +697,10 @@ services:
       # docs/delivery-2026-11-05-b2-xlsx-preview.md 的 5 分钟步骤验收；**CI 绿不等于预览可用**。
       OA_ARTIFACT_XLSX_ENABLED: ${OA_ARTIFACT_XLSX_ENABLED:-true}
       OA_OFFICE_PREVIEW_ENABLED: ${OA_OFFICE_PREVIEW_ENABLED:-false}
+      # 矩阵第 2 项（2026-11-06）：通用任务计划生成 → 确认。默认关，
+      # 关闭时建任务即执行（行为与存量一致）；开启后需前端确认才会真正执行。
+      OA_TASK_PLAN_ENABLED: ${OA_TASK_PLAN_ENABLED:-false}
+      OA_TASK_PLAN_TIMEOUT_SECONDS: ${OA_TASK_PLAN_TIMEOUT_SECONDS:-900}
     ports:
       # G1（审计 2026-11-02 P0-4）：绑回环，仅本机调试可达——对外只走 edge（TLS）。
       # 明文 8000/3000 不得裸绑全网卡：那会绕过边缘限流/安全头/证书。
