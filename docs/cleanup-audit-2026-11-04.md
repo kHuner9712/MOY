@@ -100,8 +100,8 @@
 | §4 依赖 | 10 | 6 | 0 | 4 |
 | **合计（拍板前建议）** | **50** | **38** | **2** | **10** |
 
-**执行后处置统计（2026-11-04）**：已执行·更新 **37**；已执行·删除 **2**；部分执行 **1**（P09）；
-未执行 **10**（S10、T01、T04–T07、P01、P03、P04、P10：均属「保留/无需动作」或用户明确另起一轮）。
+**执行后处置统计（2026-11-05，含 P04/P09 收口）**：已执行·更新 **39**；已执行·删除 **2**；部分执行 **0**；
+未执行 **9**（S10、T01、T04–T07、P01、P03、P10：均属「保留/无需动作」）。
 
 风险分布：高 **8** 条（D01、D02、D06、D07、D08、D15、T02、P08）；中 **23** 条（P09 按「中-高」计入）；低 **19** 条。
 
@@ -127,7 +127,7 @@
 2. **`.env.lite.example:42` 死键**：直接删除，还是先实现 `OA_OFFLINE_MODE` 消费方？（D15）
 3. **6 个孤立 fixture**：确认删除 `limiter/api_error/fingerprint/pg_pool_engine/seeded_tenants/member_headers`？（T03，测试基础设施，风险低但影响测试维护习惯）
 4. **历史审计文档**：加状态横幅保留，还是整体移入 `docs/archive/`？（S01–S05）
-5. **锁内双版本**：`@types/node` 20 vs 26、`eslint` 10 vs 9 是否收敛？收敛可能改变 lint/构建行为，需单独 PR 验证。（P04）
+5. **锁内双版本**：`@types/node` 20 vs 26、`eslint` 10 vs 9 是否收敛？收敛可能改变 lint/构建行为，需单独 PR 验证。（P04）——**已于 2026-11-05 独立执行，结论见 §8.4**
 6. **`wheel` 构建依赖**：是否授权做一次隔离构建验证后再删？（P02）
 7. **NOTICE**：补生成与交付映射，还是从 `architecture-phase4.md:1023` 的交付承诺中删除？（P08）
 8. **SBOM 与许可证扫描**：是否改为阻断门禁？LGPL（sharp optional）是否判黑需实跑确认。（P06、P09）
@@ -210,12 +210,12 @@ foreach($p in @('apps/adapter/scripts/validate_plugins.py','deploy/validate_plug
 | P01 | ⬜ 未执行 | 保留：无高置信未用包 |
 | P02 | ✅ 已执行（删除） | 隔离构建验证：移除 `wheel` 前后 `pip wheel . --no-deps` 均成功（setuptools 自带 bdist_wheel），故删除 |
 | P03 | ⬜ 未执行 | 保留：`tailwindcss-animate` 为 `animate-in` 类隐式必需；仅建议移入 dependencies |
-| P04 | ⬜ 未执行 | 用户拍板另起独立一轮（@types/node 20/26、eslint 10/9），本轮不动 |
+| P04 | ✅ 已执行 | `@types/node` 收敛为单一 22.20.5（对齐运行时 Node 22）；`eslint` 收敛为单一 9.39.5（v10 被插件 peer 硬锁，不升级）。手段：直接依赖对齐 + npm11 重新解析，未手改 lock；详见 §8.4 |
 | P05 | ✅ 已执行 | web `vitest` 由 `^5.0.5` 收敛为 `5.0.5`，与 `@vitest/coverage-v8` 精确版本一致；lock 同步 |
 | P06 | ✅ 已执行 | SBOM 两 job 保持 `continue-on-error: true`，补拍板口径注释（告警不阻断） |
 | P07 | ✅ 已执行 | SBOM 文档数据源改为 uv.lock/venv/pyproject + package-lock + images.lock + difypkg |
 | P08 | ✅ 已执行 | 新增 `docs/compliance/NOTICE`，纳入交付清单映射并重新生成 manifest |
-| P09 | 🟡 部分执行 | LGPL 实跑判定完成（见 8.2）；许可证工具版本锁定未做（避免本轮扩大 CI 变更） |
+| P09 | ✅ 已执行 | LGPL 实跑判定完成（见 8.2）；扫描工具已锁精确版本：`pip-licenses==5.5.5`、`pyyaml==6.0.3`、`license-checker@25.0.1`；SBOM 仍保持告警不阻断 |
 | P10 | ⬜ 未执行 | 保留：`python-multipart` 为框架上传必需 |
 
 ### 8.2 wheel 与 LGPL 实跑结论
@@ -231,6 +231,7 @@ foreach($p in @('apps/adapter/scripts/validate_plugins.py','deploy/validate_plug
 | 第 2 批（删除） | 2675 passed / 258 skipped / 0 failed | 72 文件 / 1112 用例 | 89.78/85.06/84.93/90.98；86.42% | 16/16 EXIT 0 |
 | 第 3 批（README/CI） | 2675 passed / 258 skipped / 0 failed | 72 文件 / 1112 用例 | 89.78/85.06/84.93/90.98；86.42% | 16/16 EXIT 0 |
 | 第 4 批（结构/合规） | 2675 passed / 258 skipped / 0 failed | 72 文件 / 1112 用例 | 89.78/85.06/84.93/90.98；86.42% | 16/16 EXIT 0 |
+| 第 5 批（P04/P09） | 2675 passed / 258 skipped / 0 failed | 72 文件 / 1112 用例 | 89.78/85.06/84.93/90.98；86.42% | 16/16 EXIT 0（`validate_batch_clock.py` 需 `--batch B21`） |
 
 > PG 口径：本机无 Docker 与 `OA_TEST_DATABASE_URL`，`--run-pg` 未执行；PG 用例 258 条按设计 skip。CI 侧有真库，以 CI 结果为准。
 
@@ -241,6 +242,52 @@ foreach($p in @('apps/adapter/scripts/validate_plugins.py','deploy/validate_plug
 | 第 1 批 | `0d616a6` | 13 |
 | 第 2 批 | `a928230` | 3 |
 | 第 3 批 | `03adc8c` | 10 |
-| 第 4 批 | 本提交（含归档、NOTICE、SBOM 注释、wheel 删除） | 20 |
+| 第 4 批 | `6e7271c`（含归档、NOTICE、SBOM 注释、wheel 删除） | 20 |
+| 第 5 批（P04） | `5e5c400` 锁内双版本收敛（lock 重新解析） | 3 |
+| 第 5 批（P09） | `0704642` 扫描工具精确版本锁定 | 1 |
 
 CI 验收（同一 SHA 的 CI Adapter + CI Web）run 编号与结论见最终汇报。
+
+### 8.5 P04 / P09 收口实跑（2026-11-05）
+
+**P04 双版本成因（实测 `npm ls` / `npm explain`）**
+
+| 包 | 双版本 | 引入方 | 性质 |
+| --- | --- | --- | --- |
+| `@types/node` | 20.19.43 @ `apps/web/node_modules`；26.6.6 @ 根 | 20.x 为 `apps/web` 直接 devDependency；26.x 为 `vite@8.3.5` 的 `peerOptional`（`^20.19.0 \|\| >=22.12.0`） | 直接依赖 + 传递 peer |
+| `eslint` | 9.39.5 @ 根；10.14.0 @ `apps/web/node_modules` | 10.x 为 `apps/web` 直接 devDependency（CI `npm run lint` 实际使用这份）；9.x 为 `eslint-config-next` 传递插件链的 peer 上限（react ≤^9.7、jsx-a11y ≤^9、import ≤^9） | 直接依赖 + 传递 peer |
+
+**收敛结果**
+
+- 运行时 Node 来源：`ci-web.yml` 五处 `node-version: '22'`、`apps/web/Dockerfile` 三 stage `node:22-alpine` ⇒ `@types/node` 以 22 为准。
+- `@types/node`：`^20.14.0` → `^22.20.5`，全树仅剩单一 22.20.5。
+- `eslint`：`^10.13.0` → `^9.39.5`，全树仅剩单一 9.39.5。**不升 v10**：`eslint-plugin-react@7.37.5`（最新）peer 上限 `^9.7`、`eslint-plugin-jsx-a11y@6.10.2`（最新）上限 `^9`、`eslint-plugin-import@2.32.0`（最新）上限 `^9`；`typescript-eslint@8.72.1` 虽已支持 v10，但插件整体不支持，强升等于让插件跑在未声明区间。升级条件：上述三个插件与 `eslint-config-next` 全链路把 peer 放宽到 `^10`。
+- 手段：**直接依赖版本对齐 + npm 重新解析**，未使用 `npm audit fix --force`，未手工编辑 `package-lock.json`。npm 的增量安装不会重算 peer 边，故将 `eslint-config-next` / `next` 提升到各自 `^` 范围内的最新补丁（16.4.2→16.4.5、16.4.3→16.4.5），触发该子树重新解析；lock 其余部分沿用原 pin（diff：删除 50 / 新增 18 / 版本变更 11，均为 eslint-10 子树与 @types/node、typescript-eslint 补丁）。
+- 连带变化：`typescript-eslint` 8.72.0→8.72.1（补丁）。`next` 补丁升级已由生产构建门禁覆盖（`next build` 成功）。
+
+**P09 扫描工具锁定**
+
+- `dependency-scan.yml:226`：`pip install pip-licenses==5.5.5 pyyaml==6.0.3`
+- `dependency-scan.yml:148`：`python -m pip install pyyaml==6.0.3`
+- `dependency-scan.yml:270`：`npm install -g license-checker@25.0.1`
+- SBOM 两 job 仍 `continue-on-error: true`（告警不阻断，未改）。
+
+**门禁实跑**
+
+| 项 | 结果 |
+| --- | --- |
+| 后端 `pytest tests`（含覆盖率门禁 85） | 2675 passed / 258 skipped / 0 failed；86.42%（PG 用例按设计 skip：本机无 Docker/DSN） |
+| 前端 vitest | 72 文件 / 1112 用例全绿 |
+| 前端覆盖率 | 89.78 / 85.06 / 84.93 / 90.98（门槛 88.8 / 84.0 / 83.9 / 90.0） |
+| `tsc --noEmit`（@types/node 20→22 后） | 通过 |
+| `eslint . --max-warnings=0`（v9.39.5） | 0 warning |
+| prettier | 通过 |
+| `next build` 生产构建（Next 16.4.5） | 成功 |
+| 16 道 `deploy/validate_*.py` | 16/16 EXIT 0 |
+| `npm audit --audit-level=high` | 0 high / 8 moderate（收敛前 10 moderate，无新增；minimatch DoS 为既有存量） |
+
+**残余风险**
+
+1. **ESLint 9.x 已上游 EOL（npm 标记 deprecated）**：受插件链 peer 上限所限只能停在 9.39.5；待插件链支持 v10 后立刻迁移。
+2. `minimatch` 的 ReDoS（moderate）仍随 ESLint 9 存在，与收敛前同源，未新增。
+3. 本机无 PG，258 条 PG 用例未执行；以 CI 真库结果为准。
