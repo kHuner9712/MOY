@@ -1,7 +1,7 @@
 {
   "version": "phase3-pl-v1",
   "source": "docs/architecture-phase3.md §5.2 / §5.3（PL1-PL14 + WF1 + WF2，共 16 端点）",
-  "note": "**键集合的权威真相源已换为 `contracts/plugin-domain.gen.json`**（由 deploy/export_plugin_contract.py 从 create_app().openapi() 派生，W-01 契约换源）。本文件降级为「可选性 + 枚举」的权威：required/optional 的逐键归属仍由本文件守（后端全部字段带默认值，OpenAPI 不输出 required，故可选性不能由生成契约承担）。键集合由 `scan:contract:gen` 三方比对（gen ↔ types.ts ↔ 本文件），可选性与枚举由 `scan:contract` 比对（本文件 ↔ types.ts）。2026-10-25：附录 A 8 处漂移收敛——PluginMarketItem/PluginCapabilitiesData 增 install_block_reason、PluginDetail 删 vendor 增 install_count+install_block_reason、InstalledPluginItem 增 icon_key、PluginInstallResult 增 already_installed、PluginRollbackResult 增 has_update、PluginGrantsUpdateResult 删 plugin_id；PluginInstalledStatus 扩到 5 值与后端属性级枚举一致。",
+  "note": "**键集合的权威真相源已换为 `contracts/plugin-domain.gen.json`**（由 deploy/export_plugin_contract.py 从 create_app().openapi() 派生，W-01 契约换源）。本文件降级为「可选性 + 枚举」的权威：required/optional 的逐键归属仍由本文件守（后端全部字段带默认值，OpenAPI 不输出 required，故可选性不能由生成契约承担）。键集合由 `scan:contract:gen` 三方比对（gen ↔ types.ts ↔ 本文件），可选性与枚举由 `scan:contract` 比对（本文件 ↔ types.ts）。2026-10-25：附录 A 8 处漂移收敛——PluginMarketItem/PluginCapabilitiesData 增 install_block_reason、PluginDetail 删 vendor 增 install_count+install_block_reason、InstalledPluginItem 增 icon_key、PluginInstallResult 增 already_installed、PluginRollbackResult 增 has_update、PluginGrantsUpdateResult 删 plugin_id；PluginInstalledStatus 扩到 5 值与后端属性级枚举一致。2026-11-05：TaskArtifact 增 content_type/xlsx_url/preview_url（B2，均可选；旧客户端可忽略）。",
   "interfaces": {
     "PluginMarketItem": {
       "required": [
@@ -287,7 +287,10 @@
         "size_bytes",
         "expires_at",
         "created_at",
-        "download_url"
+        "download_url",
+        "content_type",
+        "xlsx_url",
+        "preview_url"
       ]
     },
     "TaskDetail": {
