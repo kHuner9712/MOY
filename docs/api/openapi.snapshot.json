@@ -688,6 +688,32 @@
         "title": "ApiResponse[DeleteGrantData]",
         "type": "object"
       },
+      "ApiResponse_DeleteMcpServerData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeleteMcpServerData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[DeleteMcpServerData]",
+        "type": "object"
+      },
       "ApiResponse_DeleteRoleData_": {
         "properties": {
           "code": {
@@ -1024,6 +1050,58 @@
           }
         },
         "title": "ApiResponse[MarketDetailData]",
+        "type": "object"
+      },
+      "ApiResponse_McpServerListData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpServerListData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[McpServerListData]",
+        "type": "object"
+      },
+      "ApiResponse_McpServerWriteData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpServerWriteData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[McpServerWriteData]",
         "type": "object"
       },
       "ApiResponse_MemoryBatchDeleteData_": {
@@ -1570,6 +1648,32 @@
           }
         },
         "title": "ApiResponse[PlanListData]",
+        "type": "object"
+      },
+      "ApiResponse_ProbeMcpServerData_": {
+        "properties": {
+          "code": {
+            "default": 0,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProbeMcpServerData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "ApiResponse[ProbeMcpServerData]",
         "type": "object"
       },
       "ApiResponse_ProfileData_": {
@@ -4627,6 +4731,20 @@
         "title": "DeleteGrantData",
         "type": "object"
       },
+      "DeleteMcpServerData": {
+        "description": "删除结果。\n\nAttributes:\n    deleted: 是否已删除。",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "DeleteMcpServerData",
+        "type": "object"
+      },
       "DeleteRoleData": {
         "description": "ID7 响应数据。\n\nAttributes:\n    role_id: 角色 ID。\n    deleted: 是否已删除。",
         "properties": {
@@ -6080,6 +6198,120 @@
         "title": "MarketItem",
         "type": "object"
       },
+      "McpServerItem": {
+        "description": "一条 MCP server 登记（不含任何凭据字段）。\n\nAttributes:\n    server_id: 登记 ID。\n    tenant_id: 所属企业。\n    name: 服务器名（插件动作标识的前半段）。\n    transport: 连接方式。\n    endpoint: 地址或本地程序路径。\n    args: 本地程序的启动内容。\n    allowed_tools: 允许的工具白名单。\n    enabled: 是否启用。\n    timeout_ms: 单次超时。\n    max_output_bytes: 返回内容上限。\n    credential_configured: 是否配置了凭据（**不返回引用本身**）。\n    created_at: 创建时间。\n    updated_at: 最近更新时间。",
+        "properties": {
+          "allowed_tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Tools",
+            "type": "array"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Args",
+            "type": "array"
+          },
+          "created_at": {
+            "default": "",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_configured": {
+            "title": "Credential Configured",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "max_output_bytes": {
+            "title": "Max Output Bytes",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "server_id": {
+            "title": "Server Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "title": "Timeout Ms",
+            "type": "integer"
+          },
+          "transport": {
+            "enum": [
+              "http",
+              "stdio"
+            ],
+            "title": "Transport",
+            "type": "string"
+          },
+          "updated_at": {
+            "default": "",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "tenant_id",
+          "name",
+          "transport",
+          "endpoint",
+          "enabled",
+          "timeout_ms",
+          "max_output_bytes",
+          "credential_configured"
+        ],
+        "title": "McpServerItem",
+        "type": "object"
+      },
+      "McpServerListData": {
+        "description": "登记列表。\n\nAttributes:\n    items: 登记项。\n    total: 总数。",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "McpServerListData",
+        "type": "object"
+      },
+      "McpServerWriteData": {
+        "description": "登记写入结果。\n\nAttributes:\n    item: 落库后的登记。",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/McpServerItem"
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "title": "McpServerWriteData",
+        "type": "object"
+      },
       "MemberItem": {
         "description": "组织成员条目。\n\nB08 加性扩展（D-13：组织来源改为业务库）：新增 `department_ids` /\n`department_names` / `status` 三个**可选**字段，既有字段保持不变。\n\nAttributes:\n    user_id: 用户 ID。\n    display_name: 展示名。\n    email: 邮箱。\n    role: 角色。\n    joined_at: 加入时间。\n    department_ids: 所属部门 ID 列表。\n    department_names: 所属部门名称列表。\n    status: 在册状态（`active` / `invited` / `disabled`）。",
         "properties": {
@@ -7405,6 +7637,42 @@
           }
         },
         "title": "PluginCapabilityItem",
+        "type": "object"
+      },
+      "ProbeMcpServerData": {
+        "description": "连通性探测结果（不含地址与凭据）。\n\nAttributes:\n    ok: 是否连通。\n    reason: 失败分类（`connect_failed` / `timeout` / `auth_failed` / `protocol_error`）。\n    duration_ms: 耗时。\n    tool_count: 白名单内可用工具数。\n    tools: 白名单内可用工具名。",
+        "properties": {
+          "duration_ms": {
+            "default": 0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "tool_count": {
+            "default": 0,
+            "title": "Tool Count",
+            "type": "integer"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "ProbeMcpServerData",
         "type": "object"
       },
       "ProfileData": {
@@ -10862,6 +11130,107 @@
           "document_id"
         ],
         "title": "UploadDocumentData",
+        "type": "object"
+      },
+      "UpsertMcpServerRequest": {
+        "additionalProperties": false,
+        "description": "登记/更新一台 MCP server（声明式）。\n\nAttributes:\n    tenant_id: 目标企业。\n    server_id: 更新时传既有 ID；不传则新建。\n    name: 服务器名。\n    transport: 连接方式。\n    endpoint: 地址或本地程序路径。\n    args: 本地程序启动内容。\n    credential_ref: 凭据编号（**只接受引用形态**）。\n    allowed_tools: 工具白名单。\n    enabled: 是否启用（默认关）。\n    timeout_ms: 单次超时。\n    max_output_bytes: 返回内容上限。",
+        "properties": {
+          "allowed_tools": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Allowed Tools",
+            "type": "array"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Args",
+            "type": "array"
+          },
+          "credential_ref": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Credential Ref",
+            "type": "string"
+          },
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "endpoint": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "max_output_bytes": {
+            "anyOf": [
+              {
+                "maximum": 1048576.0,
+                "minimum": 1024.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Bytes"
+          },
+          "name": {
+            "maxLength": 32,
+            "minLength": 2,
+            "title": "Name",
+            "type": "string"
+          },
+          "server_id": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Server Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "maxLength": 64,
+            "minLength": 2,
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 120000.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          },
+          "transport": {
+            "enum": [
+              "http",
+              "stdio"
+            ],
+            "title": "Transport",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "name",
+          "transport",
+          "endpoint",
+          "allowed_tools"
+        ],
+        "title": "UpsertMcpServerRequest",
         "type": "object"
       },
       "UpsertRoleRequest": {
@@ -15729,6 +16098,267 @@
         "summary": "M4 用量统计",
         "tags": [
           "模型服务"
+        ]
+      }
+    },
+    "/api/v1/ops/mcp-servers": {
+      "get": {
+        "description": "列出指定企业已登记的外部工具服务。响应不含凭据明文与凭据编号，只给出是否已配置凭据。需 ops:console:access 权限。",
+        "operationId": "list_mcp_servers_api_v1_ops_mcp_servers_get",
+        "parameters": [
+          {
+            "description": "目标企业",
+            "in": "query",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "description": "目标企业",
+              "maxLength": 64,
+              "minLength": 2,
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_McpServerListData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MCP1 外部服务登记列表",
+        "tags": [
+          "运营管理"
+        ]
+      },
+      "post": {
+        "description": "声明式登记或更新一台外部工具服务。凭据只接受平台凭据编号，不接受明文密钥；默认关闭，需显式 enabled=true 才会被任务使用。",
+        "operationId": "upsert_mcp_server_api_v1_ops_mcp_servers_post",
+        "parameters": [
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertMcpServerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_McpServerWriteData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MCP2 登记外部服务",
+        "tags": [
+          "运营管理"
+        ]
+      }
+    },
+    "/api/v1/ops/mcp-servers/{server_id}": {
+      "delete": {
+        "description": "删除指定企业的外部服务登记。删除后插件步骤会立即失败，不会继续调用外部代码。",
+        "operationId": "delete_mcp_server_api_v1_ops_mcp_servers__server_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "title": "Server Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "目标企业",
+            "in": "query",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "description": "目标企业",
+              "maxLength": 64,
+              "minLength": 2,
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DeleteMcpServerData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MCP3 删除外部服务",
+        "tags": [
+          "运营管理"
+        ]
+      }
+    },
+    "/api/v1/ops/mcp-servers/{server_id}/probe": {
+      "post": {
+        "description": "连接一次并读取工具列表，用于登记后确认可用性。失败只返回分类（超时/连不上/鉴权/协议），不返回地址、凭据或外部错误原文。",
+        "operationId": "probe_mcp_server_api_v1_ops_mcp_servers__server_id__probe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "title": "Server Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "目标企业",
+            "in": "query",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "description": "目标企业",
+              "maxLength": 64,
+              "minLength": 2,
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "私有化模式可省略；SaaS 多租户场景用于指定生效租户，需与令牌声明一致",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ProbeMcpServerData_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "MCP4 探测外部服务",
+        "tags": [
+          "运营管理"
         ]
       }
     },

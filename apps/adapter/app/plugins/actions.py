@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
@@ -146,6 +147,18 @@ OUTBOUND_TOOL_OPERATIONS: Final[tuple[tuple[str, str], ...]] = (
     ("feishu", "send_message"),
     ("wechat_mp", "publish_article"),
     ("github", "create_pull_request"),
+)
+
+#: 外部 MCP 工具（矩阵第 3 项）。
+#:
+#: **所有 MCP 工具一律视为对外动作**：平台不知道外部 server 的实现做了什么，
+#: 也无法穷举哪些工具有副作用。因此这里用「类型级」判定代替「操作级白名单」，
+#: 加载期强制要求 `confirm`，运行期仍走任务确认态。
+MCP_TOOL_TYPE: Final[str] = "mcp"
+
+#: MCP 动作标识形态：`<server_name>.<tool_name>`（服务器名不含 `.`，故只切一次）。
+MCP_OPERATION_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^[a-z][a-z0-9_-]{1,31}\.[A-Za-z0-9_.-]{1,64}$"
 )
 
 #: 产物最大内联长度（超出写对象存储）
@@ -344,7 +357,7 @@ def is_outbound_operation(tool_type: str, operation: str) -> bool:
     Returns:
         bool: 对外可见返回 True。
     """
-    return (tool_type, operation) in OUTBOUND_TOOL_OPERATIONS
+    return tool_type == MCP_TOOL_TYPE or (tool_type, operation) in OUTBOUND_TOOL_OPERATIONS
 
 
 def declared_tool_paths(step: StepSpec) -> tuple[tuple[str, str], ...]:
@@ -476,6 +489,8 @@ __all__: list[str] = [
     "CAPABILITY_KEYS",
     "DIRECTORY_TOOL_OPERATIONS",
     "MAX_INLINE_ARTIFACT_BYTES",
+    "MCP_OPERATION_PATTERN",
+    "MCP_TOOL_TYPE",
     "ORG_CAPABILITIES",
     "OUTBOUND_TOOL_OPERATIONS",
     "PERSONAL_CAPABILITIES",

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "frozen_target": 4,
+  "note": "矩阵第 3 项（MCP 客户端）增量基线：外部服务登记列表 / 登记更新 / 删除 / 连通性探测。四个端点本期一次性实现并收口（G9 双向严格，无 PENDING 窗口）。凭据只收平台凭据编号，任何端点响应都不含凭据明文。",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1/ops/mcp-servers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/ops/mcp-servers"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/ops/mcp-servers/{server_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/ops/mcp-servers/{server_id}/probe"
+    }
+  ],
+  "registered_at": "2026-11-06"
+}

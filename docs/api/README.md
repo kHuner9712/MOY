@@ -61,7 +61,7 @@ push / PR 触发时自动生成并作为构件上传，命名 `openapi-spec`。
 > 阶段小计 **68 个业务端点**（30 冻结 + 38 新域）。基线文件：
 > `docs/api/baseline-core-30.json`（经评审流程保护，禁止修改）、
 > `docs/api/baseline-phase2-38.json`（只允许登记真实已实现端点）。
-> 门禁：`python deploy/validate_openapi.py`（G1-G8，失败退出码非 0）；
+> 门禁：`python deploy/validate_openapi.py`（G1-G9，失败退出码非 0）；
 > **无任何放宽参数**：阶段二历史用的 `--allow-missing-phase2` 已于 2026-10-29
 > 审计清理中从脚本本体一并移除（38/38 已交付），CI 全程 `--strict`。
 
@@ -134,6 +134,25 @@ push / PR 触发时自动生成并作为构件上传，命名 `openapi-spec`。
 > `docs/api/baseline-w2-2.json`（口径同阶段三：只登记真实已实现端点；`--strict` 下
 > missing>0 即红，任何未登记的新端点一律立即判红，这三条都没有放宽开关）。
 > P1/P2 为**本期新增且已实现**，不做 `[PENDING]` 过渡（G8 登记侧与实现侧都严格）。
+
+**MCP 增量端点（4 个，矩阵第 3 项；同挂 `/api/v1`）**
+
+| 能力 | 端点 | 条数 | 编号 |
+| --- | --- | --- | --- |
+| 外部服务登记列表 | `GET /api/v1/ops/mcp-servers` | 1 | MC1 |
+| 登记 / 更新外部服务 | `POST /api/v1/ops/mcp-servers` | 1 | MC2 |
+| 删除外部服务 | `DELETE /api/v1/ops/mcp-servers/{server_id}` | 1 | MC3 |
+| 连通性探测 | `POST /api/v1/ops/mcp-servers/{server_id}/probe` | 1 | MC4 |
+| **增量端点合计** | | **4** | |
+
+> 全量合计 **102 个业务端点**（30 冻结 + 38 阶段二 + 16 阶段三 + 10 阶段四 + 2 W1 + 2 W2 + 4 MCP）。
+> 基线文件：`docs/api/baseline-phase4-10.json`、`docs/api/baseline-w1-2.json`、
+> `docs/api/baseline-w2-2.json`、`docs/api/baseline-b3-4.json`（口径同阶段三：只登记
+> 真实已实现端点；`--strict` 下 missing>0 即红，任何未登记的新端点一律立即判红，
+> 这四个基线组都没有放宽开关）。
+> 矩阵第 3 项的 4 条为**本期新增且已实现**，不做 `[PENDING]` 过渡（G9 登记侧与实现侧都严格）。
+> 与业务端点不同，MCP 能力本身有独立开关 `OA_MCP_ENABLED`（默认 `false`）；关闭时
+> 登记端点返回 `20003`，插件步骤里的 `tool_type="mcp"` 直接失败，不会发起任何外部连接。
 
 ### 2.2 统一约定
 

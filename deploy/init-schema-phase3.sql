@@ -288,7 +288,40 @@ CREATE INDEX IF NOT EXISTS idx_art_task
     ON plugin_artifact (tenant_id, task_id, step_id);
 
 -- ---------------------------------------------------------------------------
--- 10. RLS：严格隔离 7 张 + 共享目录 2 张（重声明阶段二的 DO 块，把新表并进去）
+-- 9.1 MCP server 登记（矩阵第 3 项，迁移 `0015` 同源）
+--
+-- 只存声明，不存凭据明文：`credential_ref` 是引用，明文在 credential_store
+-- 的密文里；`allowed_tools` 是工具白名单；`enabled` 默认 FALSE。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mcp_server (
+    tenant_id        TEXT        NOT NULL,
+    server_id        TEXT        NOT NULL
+                     CHECK (server_id ~ '^mcp_[A-Za-z0-9]{6,40}$'),
+    name             TEXT        NOT NULL
+                     CHECK (name ~ '^[a-z][a-z0-9_-]{1,31}$'),
+    transport        TEXT        NOT NULL
+                     CHECK (transport IN ('http','stdio')),
+    endpoint         TEXT        NOT NULL DEFAULT '',
+    args             JSONB       NOT NULL DEFAULT '[]'::jsonb
+                     CHECK (jsonb_typeof(args) = 'array'),
+    credential_ref   TEXT        NOT NULL DEFAULT '',
+    allowed_tools    JSONB       NOT NULL DEFAULT '[]'::jsonb
+                     CHECK (jsonb_typeof(allowed_tools) = 'array'),
+    enabled          BOOLEAN     NOT NULL DEFAULT FALSE,
+    timeout_ms       INTEGER     NOT NULL DEFAULT 15000
+                     CHECK (timeout_ms BETWEEN 1000 AND 120000),
+    max_output_bytes INTEGER     NOT NULL DEFAULT 65536
+                     CHECK (max_output_bytes BETWEEN 1024 AND 1048576),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, server_id),
+    CONSTRAINT uq_mcp_server_name UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_server_enabled
+    ON mcp_server (tenant_id, enabled);
+
+-- ---------------------------------------------------------------------------
+-- 10. RLS：严格隔离 8 张 + 共享目录 2 张（重声明阶段二的 DO 块，把新表并进去）
 --     为什么必须重声明：共享表的策略允许读 tenant_id='__platform__'，
 --     若沿用严格策略，租户会话读不到平台目录行 → 市场空白（比报错更难排查）。
 -- ---------------------------------------------------------------------------
@@ -297,7 +330,8 @@ DECLARE
     t             TEXT;
     strict_tables TEXT[] := ARRAY[
         'plugin_installation', 'plugin_grant', 'plugin_capability_policy',
-        'plugin_review', 'plugin_task', 'plugin_task_step', 'plugin_artifact'
+        'plugin_review', 'plugin_task', 'plugin_task_step', 'plugin_artifact',
+        'mcp_server'
     ];
     shared_tables TEXT[] := ARRAY[
         'permission_catalog', 'billing_plan', 'ops_settings',

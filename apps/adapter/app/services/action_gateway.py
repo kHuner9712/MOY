@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -32,6 +32,7 @@ from app.core.security import AuthContext
 from app.plugins.actions import (
     ACTION_INTERNAL_LABELS,
     ACTION_WHITELIST,
+    MCP_TOOL_TYPE,
     ActionResult,
     ArtifactDraft,
     RunContext,
@@ -40,6 +41,9 @@ from app.plugins.sanitizer import ArtifactSanitizer
 from app.schemas.model import ChatMessage, GenerateRequest, MessageRole, ModelProfile
 from app.schemas.rag import SearchRequest
 from app.schemas.tool import ExecuteRequest
+
+if TYPE_CHECKING:
+    from app.services.mcp_tool_bridge import McpToolBridge
 
 logger = get_logger(__name__)
 
@@ -85,6 +89,7 @@ class ServicesActionGateway:
         self._model: Any = None
         self._rag: Any = None
         self._tools: Any = None
+        self._mcp: McpToolBridge | None = None
 
     # ------------------------------------------------------------------
     # 依赖（延迟构造：插件层不 import services，只在这一层接触）
@@ -112,6 +117,18 @@ class ServicesActionGateway:
 
             self._rag = get_rag_service()
         return self._rag
+
+    def _mcp_bridge(self) -> McpToolBridge:
+        """取 MCP 工具桥接实例（矩阵第 3 项）。
+
+        Returns:
+            McpToolBridge: MCP 工具桥接。
+        """
+        if self._mcp is None:
+            from app.services.mcp_tool_bridge import McpToolBridge
+
+            self._mcp = McpToolBridge()
+        return self._mcp
 
     def _tool_service(self) -> Any:
         """取工具服务实例。
@@ -299,6 +316,10 @@ class ServicesActionGateway:
         """
         tool_type = str(params.get("tool_type") or "")
         operation = str(params.get("operation") or "")
+        # 外部 MCP 工具走独立桥接：不经过 `ToolService`（避免把外部代码混进
+        # 内置工具连接表），但仍在插件步骤的能力/确认链路内。
+        if tool_type == MCP_TOOL_TYPE:
+            return await self._mcp_bridge().execute(ctx, params)
         tool_params = _tool_params(params)
         execution = await self._tool_service().execute(
             ExecuteRequest(tool_type=tool_type, operation=operation, params=tool_params),

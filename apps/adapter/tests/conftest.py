@@ -55,6 +55,7 @@ from app.db.repositories.event_log import reset_event_store
 from app.db.repositories.grant_repo import reset_grant_store
 from app.db.repositories.job_repo import reset_job_store
 from app.db.repositories.knowledge_base_repo import reset_knowledge_base_store
+from app.db.repositories.mcp_repo import reset_mcp_server_store
 from app.db.repositories.memory import reset_memory_store
 from app.db.repositories.ops_repo import reset_ops_store
 from app.db.repositories.org import reset_org_store
@@ -237,6 +238,7 @@ def _reset_all() -> None:
     reset_usage_store()
     reset_usage_service()
     reset_tool_store()
+    reset_mcp_server_store()
     reset_publish_registry()
     reset_audit_recorder()
     reset_logging_for_test()

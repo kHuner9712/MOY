@@ -395,6 +395,47 @@ class CredentialResolver:
         )
         return ResolvedCredential(api_key=plaintext, source="bound", credential_ref=credential_ref)
 
+    async def resolve_ref(self, tenant_id: str, credential_ref: str) -> str:
+        """按引用解密凭据（**只用于非知识库场景**，如 MCP server）。
+
+        与 `resolve()` 的区别：本方法不做「按知识库绑定查找」，也不回落全局凭据；
+        调用方必须已经拿到明确的 `credential_ref`。明文只活在调用栈里，
+        本方法不写日志、不缓存明文。
+
+        Args:
+            tenant_id: 租户 ID。
+            credential_ref: 凭据引用。
+
+        Returns:
+            str: 明文凭据。
+
+        Raises:
+            ApiError: 凭据不存在/已吊销（11007），或密钥不可用（30004）。
+        """
+        if not credential_ref:
+            raise ApiError(
+                ErrorCode.KB_CREDENTIAL_UNAVAILABLE,
+                internal_detail="empty credential_ref",
+            )
+        try:
+            record = await self._load_record(tenant_id, credential_ref)
+            return await self._decrypt(record)
+        except ApiError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "credential_resolve_ref_failed",
+                credential_ref_suffix=ref_suffix(credential_ref),
+                reason=type(exc).__name__,
+            )
+            raise ApiError(
+                ErrorCode.KB_CREDENTIAL_UNAVAILABLE,
+                internal_detail=(
+                    f"mcp credential unavailable ref_suffix={ref_suffix(credential_ref)} "
+                    f"reason={type(exc).__name__}"
+                ),
+            ) from exc
+
     async def _load_record(self, tenant_id: str, credential_ref: str) -> CredentialRecord:
         """读取凭据记录（优先命中密文缓存）。
 

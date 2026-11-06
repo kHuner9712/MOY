@@ -34,6 +34,8 @@ from app.plugins.actions import (
     ACTION_RETRYABLE,
     ACTION_WHITELIST,
     CAPABILITY_KEYS,
+    MCP_OPERATION_PATTERN,
+    MCP_TOOL_TYPE,
     is_outbound_operation,
     render_file_violations,
 )
@@ -361,6 +363,18 @@ class PluginRegistry:
             pairs = [(step.tool_type or "", step.operation or "")]
             pairs.extend((alt.tool_type, alt.operation) for alt in step.tool_alternatives)
             for tool_type, operation in pairs:
+                # MCP 是**窄例外**：工具名由租户登记的外部 server 决定，静态
+                # `tool_registry.yaml` 无法穷举。这里只校验 `${server}.${tool}`
+                # 形态；白名单与启用态在运行期由 `McpServerService` 复核。
+                if tool_type == MCP_TOOL_TYPE:
+                    if not MCP_OPERATION_PATTERN.match(operation):
+                        return LoadFailure(
+                            source,
+                            STAGE_TOOL,
+                            f"步骤 {step.seq} 的外部工具动作标识不正确",
+                            operation,
+                        )
+                    continue
                 spec = registry.get(tool_type)
                 if spec is None:
                     return LoadFailure(

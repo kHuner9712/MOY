@@ -343,6 +343,29 @@ class Settings(BaseSettings):
     plugin_artifact_download_prefix: str = "/api/v1/agent/artifacts"
 
     # ------------------------------------------------------------------
+    # MCP 客户端（矩阵第 3 项，2026-11-06）
+    #
+    # 默认**关**：外部 MCP server 是外部代码，未经运营登记与白名单不得触达。
+    # 打开后也只允许「已登记 + 已启用 + 工具在白名单 + 插件步骤带 confirm」的调用。
+    #
+    # `mcp_allow_stdio`：stdio 等于在本机起子进程，默认关；staging/production
+    #   即使打开也在登记层拒绝（见 `business/mcp_service`）。
+    # `mcp_stdio_allowed_commands`：逗号分隔的可执行文件白名单（绝对路径或 basename）。
+    # `mcp_allow_insecure_http`：非 loopback 的 `http://` 默认拒绝，只允许 https。
+    # `mcp_default_timeout_ms` / `mcp_connect_timeout_ms`：单次调用总超时与建连超时。
+    # `mcp_max_output_bytes`：返回体硬上限（逐块累计，超限即中止，不落库大报文）。
+    # `mcp_max_servers_per_tenant`：单租户登记上限（防止把登记表当配置仓库用）。
+    # ------------------------------------------------------------------
+    mcp_enabled: bool = False
+    mcp_allow_stdio: bool = False
+    mcp_stdio_allowed_commands: str = ""
+    mcp_allow_insecure_http: bool = False
+    mcp_default_timeout_ms: int = Field(default=15_000, ge=1_000, le=120_000)
+    mcp_connect_timeout_ms: int = Field(default=5_000, ge=1_000, le=30_000)
+    mcp_max_output_bytes: int = Field(default=64 * 1024, ge=1_024, le=1 * 1024 * 1024)
+    mcp_max_servers_per_tenant: int = Field(default=10, ge=1, le=50)
+
+    # ------------------------------------------------------------------
     # 数据保留期与记忆（阶段四 §3.5 口径表）
     #
     # 全部可配、**不得写死在代码里**：保留期是合规条款的一部分（私有化客户合同里

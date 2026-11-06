@@ -104,7 +104,7 @@ GUARD_HINTS: Final[tuple[str, ...]] = (
 #: `ALTER TABLE` 必须配的异常处理（把 `insufficient_privilege` 翻译成可照做的文案）
 PRIVILEGE_HANDLER: Final[str] = "insufficient_privilege"
 
-#: 阶段三必须存在的 9 张表（少一张说明 init 脚本被改漏）
+#: 阶段三必须存在的 10 张表（少一张说明 init 脚本被改漏；`mcp_server` 为矩阵第 3 项）
 PHASE3_TABLES: Final[tuple[str, ...]] = (
     "plugin_catalog",
     "plugin_version",
@@ -115,6 +115,7 @@ PHASE3_TABLES: Final[tuple[str, ...]] = (
     "plugin_task",
     "plugin_task_step",
     "plugin_artifact",
+    "mcp_server",
 )
 
 #: B19 新增的三列（init 脚本必须含，否则新库会被 0004 判"缺列"）
