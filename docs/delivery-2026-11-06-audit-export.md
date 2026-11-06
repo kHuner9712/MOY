@@ -13,7 +13,7 @@
 
 | 能力 | 行为 | 开关 |
 | --- | --- | --- |
-| CSV 导出 | `GET /api/v1/identity/audit-logs/export?format=csv&start_at=…&end_at=…`，11 列、表头为中文 | `OA_AUDIT_LOG_EXPORT_ENABLED=false`（默认关） |
+| CSV 导出 | `GET /api/v1/identity/audit-logs/export?format=csv&start_at=…&end_at=…`，11 列，表头为英文键（与 JSONL 的键一一对应，便于回灌/脚本处理） | `OA_AUDIT_LOG_EXPORT_ENABLED=false`（默认关） |
 | JSON Lines 导出 | 同端点 `format=jsonl`，每行一个 JSON 对象（键集合与 CSV 列一一对应） | 同上 |
 | 过滤 | `actor_id` / `action` / `action_group` / `resource_type` / `result`（均为可选精确匹配/域过滤） | 同上 |
 | 导出留痕 | 每次导出写一条 `audit_log.export`：导出人、角色、格式、起止时间、结果条数、过滤条件 | 同上 |

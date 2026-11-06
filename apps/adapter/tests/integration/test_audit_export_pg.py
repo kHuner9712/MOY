@@ -119,7 +119,7 @@ async def test_keyset_pagination_is_stable_and_complete(
     pg_settings: Settings, seeded: None
 ) -> None:
     """每页 2 条翻完 A 租户：4 条业务记录，不重不漏，导出留痕被排除。"""
-    assert count_audit_logs(pg_settings, TENANT_A, _query()) == 4
+    assert await count_audit_logs(pg_settings, TENANT_A, _query()) == 4
     collected: list[dict[str, object]] = []
     async for row in iter_audit_export(pg_settings, TENANT_A, _query(), page_size=2):
         collected.append(row)
