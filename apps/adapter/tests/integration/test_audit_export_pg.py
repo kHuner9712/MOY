@@ -17,6 +17,8 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+from sqlalchemy import text as sql_text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.audit_actions import ACTION_AUDIT_LOG_EXPORT
 from app.core.config import Settings, reset_settings_cache
@@ -26,6 +28,9 @@ from app.db.repositories.audit_repo import (
     iter_audit_export,
 )
 from app.db.session import platform_scope, tenant_scope
+
+#: 清理必须用超级用户：应用角色对 `audit_log` 有 `REVOKE UPDATE, DELETE`（不可篡改契约）。
+pytest_plugins = ["tests.integration.pg_fixture"]
 
 pytestmark = [pytest.mark.integration, pytest.mark.pg]
 
@@ -63,8 +68,12 @@ def pg_settings(pg_dsn: str) -> Settings:
 
 
 @pytest.fixture
-async def seeded(pg_settings: Settings) -> AsyncIterator[None]:
-    """写入两租户记录（A 租户 5 条、其中 2 条同一时间戳 + 1 条导出留痕；B 租户 2 条）。"""
+async def seeded(pg_settings: Settings, b01_superuser_engine: AsyncEngine) -> AsyncIterator[None]:
+    """写入两租户记录（A 租户 5 条、其中 2 条同一时间戳 + 1 条导出留痕；B 租户 2 条）。
+
+    写入走真实租户作用域（满足 RLS `WITH CHECK`）；清理用超级用户引擎，
+    因为应用角色对 `audit_log` 没有 DELETE 权限（这本身就是不可篡改契约）。
+    """
     rows = [
         (TENANT_A, "kb.create", "2026-10-10T00:00:00Z"),
         (TENANT_A, "kb.update", "2026-10-11T00:00:00Z"),
@@ -74,11 +83,8 @@ async def seeded(pg_settings: Settings) -> AsyncIterator[None]:
         (TENANT_B, "kb.create", "2026-10-10T00:00:00Z"),
         (TENANT_B, "kb.update", "2026-10-11T00:00:00Z"),
     ]
-    async with platform_scope(pg_settings) as uow:
-        await uow.execute(
-            "DELETE FROM audit_log WHERE tenant_id IN (:a, :b)", {"a": TENANT_A, "b": TENANT_B}
-        )
-        for tenant, action, occurred in rows:
+    for tenant, action, occurred in rows:
+        async with tenant_scope(tenant, settings=pg_settings) as uow:
             await uow.execute(
                 """
                 INSERT INTO audit_log
@@ -86,31 +92,20 @@ async def seeded(pg_settings: Settings) -> AsyncIterator[None]:
                      actor_role, action_display_name, change_summary, occurred_at, trace_id)
                 VALUES
                     (:tenant_id, 'usr_pg', :action, 'kb', 'kb_1', 'success',
-                     'org_admin', :action, '{"name": "制度库"}'::jsonb, :occurred_at, 'trc_pg')
+                     'org_admin', :action, '{"name": "制度库"}'::jsonb,
+                     CAST(CAST(:occurred_at AS text) AS timestamptz), 'trc_pg')
                 """,
                 {"tenant_id": tenant, "action": action, "occurred_at": occurred},
             )
     try:
         yield
     finally:
-        async with platform_scope(pg_settings) as uow:
-            await uow.execute(
-                "DELETE FROM audit_log WHERE tenant_id IN (:a, :b)", {"a": TENANT_A, "b": TENANT_B}
+        async with b01_superuser_engine.connect() as connection:
+            await connection.execute(
+                sql_text("DELETE FROM audit_log WHERE tenant_id IN (:a, :b)"),
+                {"a": TENANT_A, "b": TENANT_B},
             )
-
-
-@pytest.fixture
-async def unseeded(pg_settings: Settings) -> AsyncIterator[None]:
-    """清空两租户记录（不预置数据，供索引/RLS 结构断言使用）。"""
-    async with platform_scope(pg_settings) as uow:
-        await uow.execute(
-            "DELETE FROM audit_log WHERE tenant_id IN (:a, :b)", {"a": TENANT_A, "b": TENANT_B}
-        )
-    yield
-    async with platform_scope(pg_settings) as uow:
-        await uow.execute(
-            "DELETE FROM audit_log WHERE tenant_id IN (:a, :b)", {"a": TENANT_A, "b": TENANT_B}
-        )
+            await connection.commit()
 
 
 def _query(**overrides: object) -> AuditQuery:
@@ -134,6 +129,8 @@ async def test_keyset_pagination_is_stable_and_complete(
     assert len(set(ids)) == len(ids)
     assert all(row["tenant_id"] == TENANT_A for row in collected)
     assert all(row["action"] != ACTION_AUDIT_LOG_EXPORT for row in collected)
+    # JSONB 必须还原成对象（asyncpg 对 text() 查询可能给回字符串）
+    assert all(row["change_summary"] == {"name": "制度库"} for row in collected)
 
 
 async def test_tenant_scope_and_rls_block_cross_tenant(pg_settings: Settings, seeded: None) -> None:
@@ -148,7 +145,7 @@ async def test_tenant_scope_and_rls_block_cross_tenant(pg_settings: Settings, se
     assert {row["tenant_id"] for row in visible} == {TENANT_B}
 
 
-async def test_audit_log_keeps_force_rls_and_policy(pg_settings: Settings, unseeded: None) -> None:
+async def test_audit_log_keeps_force_rls_and_policy(pg_settings: Settings) -> None:
     """迁移 0016 不得削弱隔离：ENABLE + FORCE + 策略仍在。"""
     async with platform_scope(pg_settings) as uow:
         flags = await uow.fetch_all(
@@ -168,7 +165,7 @@ async def test_audit_log_keeps_force_rls_and_policy(pg_settings: Settings, unsee
     assert "p_tenant_isolation" in {row["policyname"] for row in policies}
 
 
-async def test_export_keyset_index_exists(pg_settings: Settings, unseeded: None) -> None:
+async def test_export_keyset_index_exists(pg_settings: Settings) -> None:
     """迁移 0016 新建的键集分页索引存在。"""
     async with platform_scope(pg_settings) as uow:
         present = await uow.fetch_scalar(

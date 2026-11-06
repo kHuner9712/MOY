@@ -23,6 +23,7 @@ PostgreSQL 实现走带索引的 SQL（`idx_audit_log_tenant_time` / `_actor` / 
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -477,7 +478,6 @@ def _row_to_export(row: object) -> dict[str, Any]:
         dict[str, Any]: 导出记录。
     """
     data = dict(row) if isinstance(row, dict) else {}
-    summary = data.get("change_summary")
     return {
         "id": int(data.get("id") or 0),
         "tenant_id": str(data.get("tenant_id", "")),
@@ -488,10 +488,24 @@ def _row_to_export(row: object) -> dict[str, Any]:
         "result": str(data.get("result", "success")),
         "actor_role": str(data.get("actor_role", "") or ""),
         "action_display_name": str(data.get("action_display_name", "") or ""),
-        "change_summary": dict(summary) if isinstance(summary, dict) else {},
+        "change_summary": _json_object(data.get("change_summary")),
         "occurred_at": _to_timestamp(data.get("occurred_at")),
         "trace_id": str(data.get("trace_id", "") or ""),
     }
+
+
+def _json_object(value: object) -> dict[str, Any]:
+    """把 JSONB 列规范化为字典（asyncpg 对 text() 查询可能给回 JSON 字符串）。"""
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return dict(parsed)
+    return {}
 
 
 def _row_to_entry(row: object) -> AuditEntry:
