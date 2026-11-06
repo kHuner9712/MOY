@@ -650,6 +650,12 @@ async def _refresh_with_replay(conf: Settings, current: str) -> TokenSet:
                 return flight.result
             if flight.error is not None:
                 raise flight.error
+        if flight.finished_at is None and not flight.task.cancelled():
+            # 「任务已完成」与「创建者回填 finished_at/result」之间有一次事件循环
+            # 让出：后到请求此刻会看到 done=True 但两个字段都还空着。必须等它的
+            # 结果，**绝不能**当成「没有在途任务」再打一次下游。
+            # （CI 42213385870 实测触发：两次下游调用相隔恰好等于模拟时延 0.4s。）
+            return await asyncio.shield(flight.task)
 
     task = asyncio.create_task(refresh_tokens(conf, current))
     flight = _RefreshFlight(task=task, finished_at=None, result=None, error=None)

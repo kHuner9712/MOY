@@ -239,6 +239,41 @@ def test_concurrent_refresh_single_flight_one_downstream_call(
     assert cookies[0] == cookies[1], "并发两次响应的刷新 Cookie 不一致，不是同一结果"
 
 
+async def test_finished_but_unfinalized_flight_does_not_refire(
+    sso_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """任务已完成、创建者尚未回填结果：后到请求等结果，绝不再打下游。
+
+    该窗口是真的（CI `42213385870` 两次下游调用相隔恰好等于模拟时延）。这里
+    直接构造「done=True 且 `finished_at`/`result` 皆空」的瞬间，比靠线程调度
+    撞运气更可靠。
+    """
+    fake = _RaceFakeRefresh(sso_settings)
+    monkeypatch.setattr(sso_routes, "refresh_tokens", fake)
+
+    rotated = TokenSet(
+        access_token=make_token(settings=sso_settings),
+        refresh_token=ROTATED_REFRESH,
+        expires_in=300,
+        refresh_expires_in=1800,
+    )
+
+    async def _immediate() -> TokenSet:
+        return rotated
+
+    task = asyncio.create_task(_immediate())
+    await asyncio.wait([task])
+    sso_routes._refresh_flights[sso_routes._token_digest(OLD_REFRESH)] = sso_routes._RefreshFlight(  # noqa: SLF001
+        task=task, finished_at=None, result=None, error=None
+    )
+
+    tokens = await sso_routes._refresh_with_replay(sso_settings, OLD_REFRESH)  # noqa: SLF001
+
+    assert tokens.refresh_token == ROTATED_REFRESH
+    assert fake.calls == [], "已完成但未回填的任务被当成在途缺失，重复打了下游"
+
+
 def test_refresh_replay_within_window_skips_downstream(
     sso_client: TestClient,
     sso_settings: Settings,
