@@ -495,8 +495,9 @@ DO UPDATE SET units = usage_monthly.units + EXCLUDED.units, updated_at = now();
 > | 阶段四 0009/0010 | `user_memory` / `memory_embedding` / `user_memory_setting` / `background_job` | 4 |
 > | 阶段四 0011 | `tenant_budget` | 1 |
 > | **底座 0013（T02）** | `event_log`（父表，`HASH(session_id)` 分区，主键 `(tenant_id, session_id, seq)`）+ `event_log_p00` … `event_log_p15`（16 个分区，**是真实 relation**，也会出现在 `information_schema.tables` 里） | **17** |
+> | 阶段五 0015（矩阵第 3 项） | `mcp_server`（外部 MCP 服务登记，strict RLS） | 1 |
 >
-> 合计 25 + 9 + 2 + 4 + 1 + 17 = **58 张**。新增迁移建表时必须同批更新
+> 合计 25 + 9 + 2 + 4 + 1 + 17 + 1 = **59 张**。新增迁移建表时必须同批更新
 > ①本表 ②`test_schema_baseline.py::EXPECTED_TABLES` ③`test_g11_migration_idempotency.py::EXPECTED_TABLES`
 > ——三处任缺一处，都会在下一次全量跑时变红（这正是它们存在的意义）。
 

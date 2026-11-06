@@ -69,6 +69,8 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
         "plugin_task",
         "plugin_task_step",
         "plugin_artifact",
+        # 阶段五 0015（矩阵第 3 项）：外部 MCP 服务登记（凭据只存引用，strict RLS）
+        "mcp_server",
         # 阶段四 0011（T4-04.3）：租户月度预算
         "tenant_budget",
         # 底座 0013（T02）：会话事件日志——1 张 HASH 分区父表 + 16 个分区。
@@ -129,6 +131,8 @@ STRICT_TENANT_TABLES: frozenset[str] = frozenset(
         "member_role",
         "audit_log",
         "integration_outbox",
+        # 阶段五 0015：外部服务登记必须 FORCE RLS（凭据引用也按租户隔离）
+        "mcp_server",
     }
 )
 
