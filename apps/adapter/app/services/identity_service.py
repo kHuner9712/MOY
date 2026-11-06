@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Final
 
+from app.business.audit_export_service import AuditExportPlan, AuditExportRequest
 from app.clients.keycloak_client import KeycloakClient, get_keycloak_client
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
@@ -470,6 +471,41 @@ class IdentityService:
             page=request.page,
             page_size=request.page_size,
         )
+
+    async def export_audit_logs(
+        self, request: AuditExportRequest, auth: AuthContext
+    ) -> AuditExportPlan:
+        """校验导出权限与租户边界，交给业务层做范围/上限判定与留痕。
+
+        与 U6 共用同一个权限点（`audit:log:read`）。**平台令牌一律拒绝**：
+        平台不是租户，`__platform__` 行不属于任何客户，允许平台"按租户导出"
+        就等于把跨租户读取能力开了一个口子。
+
+        Args:
+            request: 导出请求（`tenant_id` 会被令牌覆盖，不信任入参）。
+            auth: 鉴权上下文。
+
+        Returns:
+            AuditExportPlan: 已校验并已留痕的导出计划。
+
+        Raises:
+            ApiError: 权限不足（20003）、平台令牌（20003）。
+        """
+        from dataclasses import replace
+
+        from app.business.audit_export_service import get_audit_export_service
+        from app.business.policy_service import get_policy_service
+        from app.core.security import is_platform_scope
+
+        await get_policy_service(self._settings).require_point(auth, AUDIT_READ_PERMISSION)
+        if is_platform_scope(auth, auth.tenant_id):
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                message="平台账号不能导出客户的操作记录",
+                internal_detail="audit_export_rejected_platform_scope",
+            )
+        scoped = replace(request, tenant_id=auth.tenant_id)
+        return await get_audit_export_service(self._settings).prepare(scoped)
 
     # ------------------------------------------------------------------
     # 辅助：组织信息组装

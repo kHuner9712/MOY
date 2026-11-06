@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "frozen_target": 1,
+  "note": "矩阵第 4 项（操作记录导出）增量基线：按租户 + 时间范围导出 CSV / JSON Lines。本期一次性实现并收口（G10 双向严格，无 PENDING 窗口）。导出行为自身写 audit_log.export 留痕，且该留痕不进入导出结果。",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1/identity/audit-logs/export"
+    }
+  ],
+  "registered_at": "2026-11-06"
+}

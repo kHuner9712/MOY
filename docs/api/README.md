@@ -61,7 +61,7 @@ push / PR 触发时自动生成并作为构件上传，命名 `openapi-spec`。
 > 阶段小计 **68 个业务端点**（30 冻结 + 38 新域）。基线文件：
 > `docs/api/baseline-core-30.json`（经评审流程保护，禁止修改）、
 > `docs/api/baseline-phase2-38.json`（只允许登记真实已实现端点）。
-> 门禁：`python deploy/validate_openapi.py`（G1-G9，失败退出码非 0）；
+> 门禁：`python deploy/validate_openapi.py`（G1-G10，失败退出码非 0）；
 > **无任何放宽参数**：阶段二历史用的 `--allow-missing-phase2` 已于 2026-10-29
 > 审计清理中从脚本本体一并移除（38/38 已交付），CI 全程 `--strict`。
 
@@ -145,14 +145,27 @@ push / PR 触发时自动生成并作为构件上传，命名 `openapi-spec`。
 | 连通性探测 | `POST /api/v1/ops/mcp-servers/{server_id}/probe` | 1 | MC4 |
 | **增量端点合计** | | **4** | |
 
-> 全量合计 **102 个业务端点**（30 冻结 + 38 阶段二 + 16 阶段三 + 10 阶段四 + 2 W1 + 2 W2 + 4 MCP）。
+> 全量合计 **103 个业务端点**（30 冻结 + 38 阶段二 + 16 阶段三 + 10 阶段四 + 2 W1 + 2 W2 + 4 MCP + 1 审计导出）。
 > 基线文件：`docs/api/baseline-phase4-10.json`、`docs/api/baseline-w1-2.json`、
-> `docs/api/baseline-w2-2.json`、`docs/api/baseline-b3-4.json`（口径同阶段三：只登记
-> 真实已实现端点；`--strict` 下 missing>0 即红，任何未登记的新端点一律立即判红，
-> 这四个基线组都没有放宽开关）。
+> `docs/api/baseline-w2-2.json`、`docs/api/baseline-b3-4.json`、`docs/api/baseline-b4-1.json`
+> （口径同阶段三：只登记真实已实现端点；`--strict` 下 missing>0 即红，任何未登记的
+> 新端点一律立即判红，这五个基线组都没有放宽开关）。
 > 矩阵第 3 项的 4 条为**本期新增且已实现**，不做 `[PENDING]` 过渡（G9 登记侧与实现侧都严格）。
 > 与业务端点不同，MCP 能力本身有独立开关 `OA_MCP_ENABLED`（默认 `false`）；关闭时
 > 登记端点返回 `20003`，插件步骤里的 `tool_type="mcp"` 直接失败，不会发起任何外部连接。
+
+**操作记录导出端点（1 个，矩阵第 4 项；同挂 `/api/v1`）**
+
+| 能力 | 端点 | 条数 | 编号 |
+| --- | --- | --- | --- |
+| 操作记录导出（CSV / JSON Lines） | `GET /api/v1/identity/audit-logs/export` | 1 | U7 |
+| **增量端点合计** | | **1** | |
+
+> U7 复用既有权限点 `audit:log:read`，**平台令牌一律拒绝**；租户恒取令牌，起止时间
+> 必填、跨度 ≤ 90 天、行数上限 `OA_AUDIT_LOG_EXPORT_MAX_ROWS`（默认 20 万）。
+> 功能开关 `OA_AUDIT_LOG_EXPORT_ENABLED` 默认 `false`（关闭时返回 `20003`）。
+> 每次导出写入一条 `audit_log.export` 留痕，且该留痕**不进入导出结果**（防递归导出）。
+> 门禁 G10 对这条增量端点做双向严格登记（实现侧缺一即红，登记侧多一即红）。
 
 ### 2.2 统一约定
 

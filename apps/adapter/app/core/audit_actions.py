@@ -128,6 +128,13 @@ ACTION_PERMISSION_DENIED: Final[str] = "security.permission_denied"
 ACTION_TENANT_DATA_EXPORT: Final[str] = "tenant_data.export"
 ACTION_TENANT_DATA_DELETE: Final[str] = "tenant_data.delete"
 
+#: 操作：导出操作记录（矩阵第 4 项，2026-11-06）
+#:
+#: 导出行为本身必须留痕：谁导出、时间范围、结果条数。该留痕**不进入**导出结果
+#: （见 `audit_repo.EXPORT_EXCLUDED_ACTIONS`），避免递归导出与导出集自我膨胀。
+#: `change_summary` 只放范围/格式/条数，**不放任何记录正文**。
+ACTION_AUDIT_LOG_EXPORT: Final[str] = "audit_log.export"
+
 #: 操作：支付回调被拒绝（签名/金额/订单状态校验未通过，B09 安全加固）
 #:
 #: 拒绝事件**必须**进审计：`payment_callback_log` 只记「已接受并处理」的回调，
@@ -178,9 +185,11 @@ ACTION_DISPLAY_NAMES: Final[dict[str, str]] = {
     ACTION_PERMISSION_DENIED: "权限校验未通过",
     ACTION_TENANT_DATA_EXPORT: "导出企业数据",
     ACTION_TENANT_DATA_DELETE: "删除企业数据",
+    ACTION_AUDIT_LOG_EXPORT: "导出操作记录",
 }
 
 __all__: list[str] = [
+    "ACTION_AUDIT_LOG_EXPORT",
     "ACTION_DEPT_CREATE",
     "ACTION_DEPT_DELETE",
     "ACTION_DEPT_UPDATE",

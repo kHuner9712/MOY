@@ -103,6 +103,9 @@ W2_BASELINE_COUNT: Final[int] = 2
 #: 矩阵第 3 项增量端点基线数量（`baseline-b3-4.json`：MCP server 登记 / 删除 / 探测 / 列表）
 B3_BASELINE_COUNT: Final[int] = 4
 
+#: 矩阵第 4 项增量端点基线数量（`baseline-b4-1.json`：操作记录导出）
+B4_BASELINE_COUNT: Final[int] = 1
+
 #: 对外文档禁词（G5）：任何底座/中间件/内部实现的术语都不得外泄
 FORBIDDEN_TERMS: Final[tuple[str, ...]] = (
     "dify",
@@ -480,6 +483,38 @@ def gate_b3_baseline(
     return failures
 
 
+def gate_b4_baseline(
+    actual: set[tuple[str, str]],
+    declared: set[tuple[str, str]],
+) -> list[GateFailure]:
+    """G10：矩阵第 4 项（操作记录导出）增量端点**双向严格**。
+
+    与 G9 同口径：本期一次性实现，没有 `[PENDING]` 宽容窗口；登记数必须精确 1，
+    登记的端点必须已实现。
+
+    Args:
+        actual: 当前实际实现的 B4 端点（`全部端点 ∩ 已登记集合`）。
+        declared: 基线登记的 1 条。
+
+    Returns:
+        list[GateFailure]: 失败明细。
+    """
+    failures: list[GateFailure] = []
+    if len(declared) != B4_BASELINE_COUNT:
+        failures.append(
+            GateFailure(
+                "G10",
+                f"操作记录导出端点基线必须登记 {B4_BASELINE_COUNT} 条，实际 {len(declared)} 条",
+            )
+        )
+    missing = declared - actual
+    if missing:
+        failures.append(
+            GateFailure("G10", f"操作记录导出端点未实现: {_format_operations(missing)}")
+        )
+    return failures
+
+
 def gate_counts(
     core_count: int,
     phase2_count: int,
@@ -772,7 +807,7 @@ _SELF_TEST_ENUM: Final[tuple[str, ...]] = ("active", "paused", "retired")
 #: 收窄枚举时被删掉的那个值（`_SELF_TEST_ENUM` 的最后一个）
 _SELF_TEST_ENUM_REMOVED: Final[str] = "retired"
 
-#: 七套基线文件的文件名（自检按名读取，只读，不改）
+#: 八套基线文件的文件名（自检按名读取，只读，不改）
 _SELF_TEST_BASELINES: Final[tuple[tuple[str, str], ...]] = (
     ("core_baseline", "baseline-core-30.json"),
     ("phase2_baseline", "baseline-phase2-38.json"),
@@ -781,6 +816,7 @@ _SELF_TEST_BASELINES: Final[tuple[tuple[str, str], ...]] = (
     ("w1_baseline", "baseline-w1-2.json"),
     ("w2_baseline", "baseline-w2-2.json"),
     ("b3_baseline", "baseline-b3-4.json"),
+    ("b4_baseline", "baseline-b4-1.json"),
 )
 
 
@@ -856,7 +892,7 @@ def _gate_failures_of(
     Args:
         schema: 待判定的 schema。
         snapshot: 冻结快照。
-        baselines: 七套基线。
+        baselines: 八套基线。
 
     Returns:
         list[GateFailure]: 失败清单。
@@ -870,6 +906,7 @@ def _gate_failures_of(
         w1_baseline=baselines["w1_baseline"],
         w2_baseline=baselines["w2_baseline"],
         b3_baseline=baselines["b3_baseline"],
+        b4_baseline=baselines["b4_baseline"],
         snapshot=snapshot,
         strict_phase4=True,
     )
@@ -939,7 +976,7 @@ def run_self_test() -> int:
         for failure in positive:
             print(f"       {failure.render()}")
         return 0
-    print("[OK]   正样本（基线全集 + 同源快照）G1-G9 全绿")
+    print("[OK]   正样本（基线全集 + 同源快照）G1-G10 全绿")
 
     notes: list[str] = []
 
@@ -1001,11 +1038,12 @@ def collect_failures(
     w1_baseline: set[tuple[str, str]] | None = None,
     w2_baseline: set[tuple[str, str]] | None = None,
     b3_baseline: set[tuple[str, str]] | None = None,
+    b4_baseline: set[tuple[str, str]] | None = None,
     snapshot: dict[str, Any] | None = None,
     skip_diff: bool = False,
     strict_phase4: bool = False,
 ) -> tuple[list[GateFailure], dict[str, Any]]:
-    """执行七道门禁并汇总结果。
+    """执行十道门禁并汇总结果。
 
     阶段三**恒严格**（无放宽参数）：少一条即红。
     阶段四按 G6 口径：登记数严格、实现数默认只报告（`strict_phase4` 时才判红）。
@@ -1020,6 +1058,7 @@ def collect_failures(
         w1_baseline: W1 增量基线端点（None 视为空集，且不参与 G7 判定）。
         w2_baseline: 矩阵第 2 项增量基线端点（None 视为空集，且不参与 G8 判定）。
         b3_baseline: 矩阵第 3 项（MCP 客户端）增量基线端点（None 视为空集，且不参与 G9 判定）。
+        b4_baseline: 矩阵第 4 项（操作记录导出）增量基线端点（None 视为空集，且不参与 G10 判定）。
         snapshot: 冻结快照（None 表示跳过 G4）。
         skip_diff: 是否跳过 G4（仅 hotfix 分支允许）。
         strict_phase4: 阶段四/W1「已登记未实现」是否判红（W2 起 CI 口径）。
@@ -1032,6 +1071,7 @@ def collect_failures(
     declared_w1 = w1_baseline or set()
     declared_w2 = w2_baseline or set()
     declared_b3 = b3_baseline or set()
+    declared_b4 = b4_baseline or set()
     operations = collect_operations(schema)
     phase2_actual = operations & phase2_baseline
     phase3_actual = operations & declared_phase3
@@ -1039,6 +1079,7 @@ def collect_failures(
     w1_actual = operations & declared_w1
     w2_actual = operations & declared_w2
     b3_actual = operations & declared_b3
+    b4_actual = operations & declared_b4
     # 阶段四与 W1 登记过的端点必须先扣掉，否则它们会被算进 core → G1 精确相等立刻误报
     core_actual = (
         operations
@@ -1048,6 +1089,7 @@ def collect_failures(
         - declared_w1
         - declared_w2
         - declared_b3
+        - declared_b4
     )
 
     failures: list[GateFailure] = []
@@ -1067,6 +1109,9 @@ def collect_failures(
     if b3_baseline is not None:
         # 矩阵第 3 项（MCP 客户端）：双向严格（已实现，无 PENDING 窗口）。
         failures.extend(gate_b3_baseline(b3_actual, declared_b3))
+    if b4_baseline is not None:
+        # 矩阵第 4 项（操作记录导出）：双向严格（已实现，无 PENDING 窗口）。
+        failures.extend(gate_b4_baseline(b4_actual, declared_b4))
     failures.extend(
         gate_counts(
             len(core_actual),
@@ -1098,6 +1143,8 @@ def collect_failures(
         "w2_present": len(w2_actual),
         "b3_declared": len(declared_b3),
         "b3_present": len(b3_actual),
+        "b4_declared": len(declared_b4),
+        "b4_present": len(b4_actual),
         "operations": len(operations),
     }
     return failures, stats
@@ -1174,6 +1221,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     w2_path = docs_dir / "baseline-w2-2.json"
     # 矩阵第 3 项增量基线（MCP server 列表/登记/删除/探测，共 4 条；2026-11-06 登记）
     b3_path = docs_dir / "baseline-b3-4.json"
+    # 矩阵第 4 项增量基线（操作记录导出，共 1 条；2026-11-06 登记）
+    b4_path = docs_dir / "baseline-b4-1.json"
     snapshot_path = docs_dir / "openapi.snapshot.json"
     openapi_path = docs_dir / "openapi.json"
 
@@ -1203,6 +1252,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     w1_baseline = load_baseline(w1_path)
     w2_baseline = load_baseline(w2_path)
     b3_baseline = load_baseline(b3_path)
+    b4_baseline = load_baseline(b4_path)
     if not core_baseline:
         print(f"[FAIL] 核心基线文件缺失或为空: {core_path.relative_to(REPO_ROOT)}")
         return 2
@@ -1225,6 +1275,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         # 且 G9 的登记数纪律失效。
         print(f"[FAIL] MCP 端点基线文件缺失或为空: {b3_path.relative_to(REPO_ROOT)}")
         return 2
+    if not b4_baseline:
+        # 矩阵第 4 项基线同口径：缺了会把这 1 个导出端点算进 core → G1 多出，
+        # 且 G10 的登记数纪律失效。
+        print(f"[FAIL] 操作记录导出端点基线文件缺失或为空: {b4_path.relative_to(REPO_ROOT)}")
+        return 2
     snapshot: dict[str, Any] | None = None
     if snapshot_path.is_file() and not args.update_snapshot:
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -1241,6 +1296,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         w1_baseline=w1_baseline,
         w2_baseline=w2_baseline,
         b3_baseline=b3_baseline,
+        b4_baseline=b4_baseline,
         snapshot=snapshot,
         skip_diff=args.skip_diff,
         strict_phase4=args.strict,
@@ -1259,6 +1315,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "w2_present": stats["w2_present"],
                         "b3_declared": stats["b3_declared"],
                         "b3_present": stats["b3_present"],
+                        "b4_declared": stats["b4_declared"],
+                        "b4_present": stats["b4_present"],
                     },
                     "failures": [{"gate": item.gate, "detail": item.detail} for item in failures],
                 },
@@ -1277,7 +1335,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"w2_declared={stats['w2_declared']} "
             f"w2_present={stats['w2_present']} "
             f"b3_declared={stats['b3_declared']} "
-            f"b3_present={stats['b3_present']}"
+            f"b3_present={stats['b3_present']} "
+            f"b4_declared={stats['b4_declared']} "
+            f"b4_present={stats['b4_present']}"
             f"（未实现：phase2 {stats['phase2_missing']} / "
             f"phase3 {stats['phase3_missing']} / phase4 {len(stats['phase4_missing'])} / "
             f"w1 {len(stats['w1_missing'])}）"
@@ -1298,7 +1358,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         for failure in failures:
             print(failure.render())
         if not failures:
-            print("[OK]   G1-G9 全部通过")
+            print("[OK]   G1-G10 全部通过")
 
     return 0 if not failures else 1
 

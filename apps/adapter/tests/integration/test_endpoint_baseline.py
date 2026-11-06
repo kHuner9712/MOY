@@ -44,6 +44,7 @@ PHASE4_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-phase4-10.json"
 W1_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-w1-2.json"
 W2_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-w2-2.json"
 B3_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-b3-4.json"
+B4_BASELINE_PATH = REPO_ROOT / "docs" / "api" / "baseline-b4-1.json"
 SNAPSHOT_PATH = REPO_ROOT / "docs" / "api" / "openapi.snapshot.json"
 
 
@@ -124,7 +125,9 @@ def test_actual_core_endpoints_equal_frozen_baseline() -> None:
     w2 = validator.load_baseline(W2_BASELINE_PATH)
     # 矩阵第 3 项同口径：MCP 的 4 条运营端点也已实现，必须从 core 扣除
     b3 = validator.load_baseline(B3_BASELINE_PATH)
-    core_actual = operations - phase2 - phase3 - phase4 - w1 - w2 - b3
+    # 矩阵第 4 项同口径：操作记录导出的 1 条端点同样从 core 扣除
+    b4 = validator.load_baseline(B4_BASELINE_PATH)
+    core_actual = operations - phase2 - phase3 - phase4 - w1 - w2 - b3 - b4
     baseline = validator.load_baseline(CORE_BASELINE_PATH)
     assert core_actual == baseline
 
@@ -166,6 +169,7 @@ def test_repository_passes_all_gates() -> None:
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         w2_baseline=validator.load_baseline(W2_BASELINE_PATH),
         b3_baseline=validator.load_baseline(B3_BASELINE_PATH),
+        b4_baseline=validator.load_baseline(B4_BASELINE_PATH),
         snapshot=_load_snapshot(),
         skip_diff=False,
     )
@@ -180,6 +184,8 @@ def test_repository_passes_all_gates() -> None:
     assert stats["w2_present"] == 2
     assert stats["b3_declared"] == 4, "MCP 基线必须精确 4 条（列表/登记/删除/探测）"
     assert stats["b3_present"] == 4
+    assert stats["b4_declared"] == 1, "操作记录导出基线必须精确 1 条（CSV / JSON Lines 同端点）"
+    assert stats["b4_present"] == 1
 
 
 def _load_snapshot() -> dict[str, Any]:
@@ -370,6 +376,7 @@ def test_phase4_present_matches_current_batch() -> None:
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         w2_baseline=validator.load_baseline(W2_BASELINE_PATH),
         b3_baseline=validator.load_baseline(B3_BASELINE_PATH),
+        b4_baseline=validator.load_baseline(B4_BASELINE_PATH),
         snapshot=_load_snapshot(),
         skip_diff=False,
         strict_phase4=False,
@@ -441,6 +448,7 @@ def test_w1_present_matches_current_batch() -> None:
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         w2_baseline=validator.load_baseline(W2_BASELINE_PATH),
         b3_baseline=validator.load_baseline(B3_BASELINE_PATH),
+        b4_baseline=validator.load_baseline(B4_BASELINE_PATH),
         snapshot=_load_snapshot(),
         skip_diff=False,
         strict_phase4=False,
@@ -466,6 +474,7 @@ def test_strict_flag_only_changes_verdict_when_phase4_missing() -> None:
         w1_baseline=validator.load_baseline(W1_BASELINE_PATH),
         w2_baseline=validator.load_baseline(W2_BASELINE_PATH),
         b3_baseline=validator.load_baseline(B3_BASELINE_PATH),
+        b4_baseline=validator.load_baseline(B4_BASELINE_PATH),
         snapshot=_load_snapshot(),
         skip_diff=False,
         strict_phase4=False,

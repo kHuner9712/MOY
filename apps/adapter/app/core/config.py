@@ -452,6 +452,23 @@ class Settings(BaseSettings):
     ratelimit_default_per_minute: int = Field(default=120, ge=1)
 
     # ------------------------------------------------------------------
+    # 操作记录导出（矩阵第 4 项，2026-11-06）
+    #
+    # `audit_log_export_enabled`：总开关，**默认关**。关闭时导出端点返回 20003，
+    #   不读库、不写导出留痕。
+    # `audit_log_export_max_rows`：单次导出的行数硬上限。超过即拒绝并提示缩小
+    #   时间范围，**绝不静默截断**（与 TD1 企业数据导出的口径一致）。
+    # `audit_log_export_page_size`：键集分页每页条数（逐页一个新短事务）。
+    # `audit_log_export_rate_limit` / `_rate_window_seconds`：同一「租户+用户+路径」
+    #   在窗口内的最大导出次数（导出比查询贵得多，单独限流，不复用全局默认值）。
+    # ------------------------------------------------------------------
+    audit_log_export_enabled: bool = False
+    audit_log_export_max_rows: int = Field(default=200_000, ge=1, le=1_000_000)
+    audit_log_export_page_size: int = Field(default=500, ge=100, le=5_000)
+    audit_log_export_rate_limit: int = Field(default=3, ge=1, le=1_000)
+    audit_log_export_rate_window_seconds: int = Field(default=3_600, ge=60, le=86_400)
+
+    # ------------------------------------------------------------------
     # 上传限制（错误码 20008 / 11003）
     # ------------------------------------------------------------------
     max_upload_bytes: int = Field(default=52_428_800, ge=1)  # 50MB

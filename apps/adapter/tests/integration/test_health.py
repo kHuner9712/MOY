@@ -312,7 +312,14 @@ def test_exactly_30_business_endpoints(client: TestClient) -> None:
             "endpoints"
         ]
     }
-    assert len(operations - phase2 - phase3 - phase4 - w1 - w2 - b3) == 30
+    # 矩阵第 4 项（操作记录导出 1 条登记）同口径扣除。
+    b4 = {
+        (str(item["method"]).upper(), str(item["path"]))
+        for item in json.loads((docs_dir / "baseline-b4-1.json").read_text(encoding="utf-8"))[
+            "endpoints"
+        ]
+    }
+    assert len(operations - phase2 - phase3 - phase4 - w1 - w2 - b3 - b4) == 30
 
 
 @pytest.mark.integration

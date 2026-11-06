@@ -580,6 +580,12 @@ ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS trace_id           TEXT;
 CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_time
     ON audit_log (tenant_id, occurred_at DESC);
 
+-- 矩阵第 4 项（迁移 0016）：操作记录导出的键集分页索引。
+-- 导出按 `occurred_at ASC, id ASC` 正序翻页，需要 (tenant_id, occurred_at, id)
+-- 才能让整个排序走索引；查询端点 U6 仍用上面的 DESC 索引。
+CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_time_id
+    ON audit_log (tenant_id, occurred_at, id);
+
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor
     ON audit_log (tenant_id, actor_id, occurred_at DESC);
 

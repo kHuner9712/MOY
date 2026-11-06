@@ -9,16 +9,28 @@
 | U4 | `/api/v1/identity/organizations/{org_id}/invitations` | POST | 邀请成员 |
 | U5 | `/api/v1/identity/organizations/{org_id}/roles` | POST | 创建/分配角色 |
 | U6 | `/api/v1/identity/audit-logs` | POST | 审计日志查询 |
+| U7 | `/api/v1/identity/audit-logs/export` | GET | 审计日志导出（CSV / JSON Lines，矩阵第 4 项） |
 
 本文件只做参数装配与响应封装，协议转换全部在 `services/identity_service.py`。
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from datetime import UTC, datetime
+from typing import cast
 
+from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi.responses import StreamingResponse
+
+from app.business.audit_export_service import (
+    AuditExportFormat,
+    AuditExportRequest,
+    get_audit_export_service,
+)
+from app.core.config import get_request_settings
 from app.core.errors import ErrorCode, error_response
 from app.core.idempotency import IdempotencyManager, get_idempotency_manager
+from app.core.ratelimit import get_request_rate_limiter
 from app.core.security import RequestContext, get_request_context, run_idempotent
 from app.schemas.common import ApiResponse, PageResult
 from app.schemas.identity import (
@@ -34,7 +46,7 @@ from app.schemas.identity import (
     VerifyData,
     VerifyRequest,
 )
-from app.services.identity_service import get_identity_service
+from app.services.identity_service import IdentityService, get_identity_service
 
 router = APIRouter(prefix="/identity", tags=["用户权限服务"])
 
@@ -273,3 +285,90 @@ async def query_audit_logs(
             data=result,
         )
     return ApiResponse[PageResult[AuditLogItem]].ok(result)
+
+
+@router.get(
+    "/audit-logs/export",
+    response_class=StreamingResponse,
+    summary="U7 操作记录导出",
+    description=(
+        "按租户 + 时间范围导出操作记录，支持 CSV 与 JSON Lines。"
+        "起止时间必填，跨度不超过 90 天；超过行数上限会报错而不是截断。"
+        "功能由 `OA_AUDIT_LOG_EXPORT_ENABLED` 控制（默认关闭），"
+        "每次导出都会写入一条操作记录（导出留痕不随文件外带）。"
+    ),
+)
+async def export_audit_logs(
+    request: Request,
+    export_format: str = Query(
+        "csv", alias="format", pattern="^(csv|jsonl)$", description="导出格式：csv / jsonl"
+    ),
+    start_at: str = Query("", description="起始时间（ISO 8601，必填）"),
+    end_at: str = Query("", description="结束时间（ISO 8601，必填）"),
+    actor_id: str = Query("", description="操作人精确过滤"),
+    action: str = Query("", description="动作编码精确过滤"),
+    action_group: str = Query("", description="动作域过滤（如 department）"),
+    resource_type: str = Query("", description="资源类型过滤"),
+    result: str = Query("", description="结果过滤：success / failure"),
+    context: RequestContext = Depends(get_request_context),
+) -> StreamingResponse:
+    """U7 操作记录导出。
+
+    Args:
+        request: FastAPI 请求对象。
+        export_format: `csv` / `jsonl`。
+        start_at: 起始时间（ISO 8601，含）。
+        end_at: 结束时间（ISO 8601，含）。
+        actor_id: 操作人精确过滤。
+        action: 动作编码精确过滤。
+        action_group: 动作域过滤。
+        resource_type: 资源类型过滤。
+        result: 结果过滤。
+        context: 请求上下文。
+
+    Returns:
+        StreamingResponse: 边取边写的导出文件。
+
+    Raises:
+        ApiError: 权限不足（20003）、参数非法（20001）、触发限流（20006）。
+    """
+    settings = get_request_settings(request)
+    limiter = get_request_rate_limiter(request)
+    if limiter.enabled:
+        await limiter.check(
+            context.auth.tenant_id,
+            context.auth.user_id,
+            "identity:audit-logs:export",
+            limit=settings.audit_log_export_rate_limit,
+            window_seconds=settings.audit_log_export_rate_window_seconds,
+        )
+
+    plan = await IdentityService(settings).export_audit_logs(
+        AuditExportRequest(
+            tenant_id=context.auth.tenant_id,
+            actor_id=context.auth.user_id,
+            actor_role=context.auth.roles[0] if context.auth.roles else "",
+            export_format=cast(AuditExportFormat, export_format),
+            start_at=start_at,
+            end_at=end_at,
+            actor_filter=actor_id,
+            action=action,
+            action_group=action_group,
+            resource_type=resource_type,
+            result=result,
+            trace_id=context.trace_id,
+        ),
+        context.auth,
+    )
+    service = get_audit_export_service(settings)
+    media_type = "text/csv; charset=utf-8" if export_format == "csv" else "application/x-ndjson"
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"audit-logs-{context.auth.tenant_id}-{stamp}.{export_format}"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Export-Id": plan.export_id,
+        "X-Export-Rows": str(plan.rows),
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+    return StreamingResponse(service.stream(plan), media_type=media_type, headers=headers)

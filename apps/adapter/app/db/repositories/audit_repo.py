@@ -23,11 +23,13 @@ PostgreSQL 实现走带索引的 SQL（`idx_audit_log_tenant_time` / `_actor` / 
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Final
+from typing import Any, Final
 
 from app.core.audit_actions import (
+    ACTION_AUDIT_LOG_EXPORT,
     ACTION_DEPT_CREATE,
     ACTION_DEPT_DELETE,
     ACTION_DEPT_UPDATE,
@@ -71,6 +73,19 @@ from app.db.session import tenant_scope
 #: 单次查询的最大时间跨度（天）：超过则由服务层返回 20001（架构文档 §4.4 要点）
 MAX_QUERY_SPAN_DAYS: Final[int] = 90
 
+#: 导出结果中**必须排除**的动作：导出留痕本身不再进入导出集。
+#:
+#: 为什么：如果导出把「导出」这条记录也写进文件，下一次导出就会多出一行，
+#: 反复导出形成递归膨胀；同时导出集也不该成为"谁导过什么"的第二份副本——
+#: 这份留痕应通过 U6 查询查看，而不是随文件外带。
+EXPORT_EXCLUDED_ACTIONS: Final[frozenset[str]] = frozenset({ACTION_AUDIT_LOG_EXPORT})
+
+#: 导出用的键集分页起点（早于任何真实记录）
+EXPORT_CURSOR_TS: Final[str] = "1970-01-01T00:00:00Z"
+
+#: 导出用的键集分页起点 ID
+EXPORT_CURSOR_ID: Final[int] = 0
+
 #: 操作域 → 用户可见名称（U6 的 `action_group` 选项与 ID11 的分组展示共用）
 ACTION_GROUP_NAMES: Final[dict[str, str]] = {
     "knowledge_base": "知识库",
@@ -81,6 +96,7 @@ ACTION_GROUP_NAMES: Final[dict[str, str]] = {
     "billing": "计量与账单",
     "ops": "运营管理",
     "plugin": "插件与工作台",
+    "audit_log": "操作记录",
 }
 
 #: ID11 动作目录（分组 → 动作清单），顺序即前端下拉顺序
@@ -106,6 +122,8 @@ ACTION_CATALOG: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
         ),
     ),
     ("ops", (ACTION_TENANT_STATUS, ACTION_ORDER_CONFIRMED, ACTION_SETTINGS_UPDATE)),
+    # 矩阵第 4 项：导出留痕自成一域（ID11 下拉可见，但不随导出外带）
+    ("audit_log", (ACTION_AUDIT_LOG_EXPORT,)),
     (
         "plugin",
         (
@@ -254,6 +272,42 @@ async def _query_postgres(
     Returns:
         AuditQueryResult: 当前页记录与总条数。
     """
+    where_clause, parameters = _conditions(tenant_id, query)
+
+    async with tenant_scope(tenant_id, read_only=True, settings=settings) as uow:
+        rows = await uow.fetch_all(
+            f"""
+            SELECT id, tenant_id, actor_id, action, resource_type, resource_id, result,
+                   actor_role, action_display_name, change_summary, occurred_at, trace_id
+            FROM {AUDIT_TABLE}
+            WHERE {where_clause}
+            ORDER BY occurred_at DESC, id DESC
+            LIMIT :limit OFFSET :offset
+            """,
+            {**parameters, "limit": query.page_size, "offset": query.offset},
+        )
+        total = await uow.fetch_scalar(
+            f"SELECT COUNT(*) FROM {AUDIT_TABLE} WHERE {where_clause}", parameters
+        )
+    return AuditQueryResult(items=[_row_to_entry(row) for row in rows], total=int(total or 0))
+
+
+def _conditions(
+    tenant_id: str,
+    query: AuditQuery,
+    *,
+    excluded_actions: frozenset[str] = frozenset(),
+) -> tuple[str, dict[str, object]]:
+    """把查询条件编成 WHERE 子句与命名参数（U6 与导出共用，防止两份口径漂移）。
+
+    Args:
+        tenant_id: 租户 ID（**恒定条件**：RLS 之外再显式加一层租户过滤）。
+        query: 查询条件。
+        excluded_actions: 需要排除的动作集合（导出用，防递归导出）。
+
+    Returns:
+        tuple[str, dict[str, object]]: `(WHERE 子句, 命名参数)`。
+    """
     conditions = ["tenant_id = :tenant_id"]
     parameters: dict[str, object] = {"tenant_id": tenant_id}
     if query.actor_id:
@@ -280,24 +334,164 @@ async def _query_postgres(
     if query.end_at:
         conditions.append("occurred_at <= CAST(CAST(:end_at AS text) AS timestamptz)")
         parameters["end_at"] = query.end_at
-    where_clause = " AND ".join(conditions)
+    for index, action in enumerate(sorted(excluded_actions)):
+        # 动作编码只来自模块常量（`EXPORT_EXCLUDED_ACTIONS`），不接收用户输入；
+        # 值仍走命名参数绑定，避免"常量表改大后忘记转义"的隐患。
+        key = f"excluded_action_{index}"
+        conditions.append(f"action <> :{key}")
+        parameters[key] = action
+    return " AND ".join(conditions), parameters
 
-    async with tenant_scope(tenant_id, read_only=True, settings=settings) as uow:
-        rows = await uow.fetch_all(
-            f"""
-            SELECT id, tenant_id, actor_id, action, resource_type, resource_id, result,
-                   actor_role, action_display_name, change_summary, occurred_at, trace_id
-            FROM {AUDIT_TABLE}
-            WHERE {where_clause}
-            ORDER BY occurred_at DESC, id DESC
-            LIMIT :limit OFFSET :offset
-            """,
-            {**parameters, "limit": query.page_size, "offset": query.offset},
-        )
-        total = await uow.fetch_scalar(
-            f"SELECT COUNT(*) FROM {AUDIT_TABLE} WHERE {where_clause}", parameters
-        )
-    return AuditQueryResult(items=[_row_to_entry(row) for row in rows], total=int(total or 0))
+
+async def count_audit_logs(
+    settings: Settings | None,
+    tenant_id: str,
+    query: AuditQuery,
+    *,
+    excluded_actions: frozenset[str] = EXPORT_EXCLUDED_ACTIONS,
+) -> int:
+    """统计满足条件的记录条数（导出的上限判定与留痕条数共用）。
+
+    Args:
+        settings: 可选配置实例。
+        tenant_id: 租户 ID。
+        query: 查询条件（`page` / `page_size` 不参与统计）。
+        excluded_actions: 需要排除的动作集合（默认排除导出留痕）。
+
+    Returns:
+        int: 条数。
+    """
+    conf = settings or get_settings()
+    if conf.uses_postgres:
+        where_clause, parameters = _conditions(tenant_id, query, excluded_actions=excluded_actions)
+        async with tenant_scope(tenant_id, read_only=True, settings=conf) as uow:
+            total = await uow.fetch_scalar(
+                f"SELECT COUNT(*) FROM {AUDIT_TABLE} WHERE {where_clause}", parameters
+            )
+        return int(total or 0)
+    recorder = get_in_memory_audit_recorder(conf)
+    entries = await recorder.entries_for(tenant_id)
+    return sum(
+        1 for entry in entries if entry.action not in excluded_actions and _matches(entry, query)
+    )
+
+
+async def iter_audit_export(
+    settings: Settings | None,
+    tenant_id: str,
+    query: AuditQuery,
+    *,
+    page_size: int,
+    excluded_actions: frozenset[str] = EXPORT_EXCLUDED_ACTIONS,
+) -> AsyncIterator[dict[str, Any]]:
+    """按**键集分页**逐页产出导出记录（每页一个只读短事务）。
+
+    为什么键集而不是 `OFFSET`：`OFFSET 199000` 要求数据库先扫过前 199000 行再
+    丢掉，页数越多越慢；键集分页每页只走一个索引区间，代价恒定（与 TD1 企业
+    数据导出的做法一致）。
+
+    排序为 `occurred_at ASC, id ASC`：导出文件按时间正序更易核对，且键集游标
+    只需 `(occurred_at, id)` 一个二元组。同一时间戳的多行由 `id` 稳定排序，
+    不会跨页重复或漏行。
+
+    Args:
+        settings: 可选配置实例。
+        tenant_id: 租户 ID。
+        query: 查询条件。
+        page_size: 每页条数（由配置给出并已做范围约束）。
+        excluded_actions: 需要排除的动作集合（默认排除导出留痕）。
+
+    Yields:
+        dict[str, Any]: 一行记录（键与 U6 查询字段一致，另含 `id`）。
+    """
+    conf = settings or get_settings()
+    if not conf.uses_postgres:
+        recorder = get_in_memory_audit_recorder(conf)
+        entries = [
+            entry
+            for entry in await recorder.entries_for(tenant_id)
+            if entry.action not in excluded_actions and _matches(entry, query)
+        ]
+        entries.sort(key=lambda entry: entry.occurred_at)
+        for index, entry in enumerate(entries, start=1):
+            yield {
+                "id": index,
+                "tenant_id": entry.tenant_id,
+                "actor_id": entry.actor_id,
+                "action": entry.action,
+                "resource_type": entry.resource_type,
+                "resource_id": entry.resource_id,
+                "result": entry.result,
+                "actor_role": entry.actor_role,
+                "action_display_name": entry.action_display_name,
+                "change_summary": dict(entry.change_summary),
+                "occurred_at": entry.occurred_at,
+                "trace_id": entry.trace_id,
+            }
+        return
+
+    where_clause, parameters = _conditions(tenant_id, query, excluded_actions=excluded_actions)
+    cursor_ts = EXPORT_CURSOR_TS
+    cursor_id = EXPORT_CURSOR_ID
+    while True:
+        async with tenant_scope(tenant_id, read_only=True, settings=conf) as uow:
+            rows = await uow.fetch_all(
+                f"""
+                SELECT id, tenant_id, actor_id, action, resource_type, resource_id, result,
+                       actor_role, action_display_name, change_summary, occurred_at, trace_id
+                FROM {AUDIT_TABLE}
+                WHERE {where_clause}
+                  AND (occurred_at, id) > (
+                      CAST(CAST(:cursor_ts AS text) AS timestamptz),
+                      CAST(:cursor_id AS bigint)
+                  )
+                ORDER BY occurred_at ASC, id ASC
+                LIMIT :page_size
+                """,
+                {
+                    **parameters,
+                    "cursor_ts": cursor_ts,
+                    "cursor_id": cursor_id,
+                    "page_size": page_size,
+                },
+            )
+        if not rows:
+            return
+        for row in rows:
+            yield _row_to_export(row)
+        if len(rows) < page_size:
+            return
+        last = rows[-1]
+        data = dict(last) if isinstance(last, dict) else {}
+        cursor_ts = _to_timestamp(data.get("occurred_at"))
+        cursor_id = int(data.get("id") or 0)
+
+
+def _row_to_export(row: object) -> dict[str, Any]:
+    """把数据库行映射为导出记录（保留 `id` 供键集游标使用）。
+
+    Args:
+        row: 行映射。
+
+    Returns:
+        dict[str, Any]: 导出记录。
+    """
+    data = dict(row) if isinstance(row, dict) else {}
+    summary = data.get("change_summary")
+    return {
+        "id": int(data.get("id") or 0),
+        "tenant_id": str(data.get("tenant_id", "")),
+        "actor_id": str(data.get("actor_id", "")),
+        "action": str(data.get("action", "")),
+        "resource_type": str(data.get("resource_type", "")),
+        "resource_id": str(data.get("resource_id", "") or ""),
+        "result": str(data.get("result", "success")),
+        "actor_role": str(data.get("actor_role", "") or ""),
+        "action_display_name": str(data.get("action_display_name", "") or ""),
+        "change_summary": dict(summary) if isinstance(summary, dict) else {},
+        "occurred_at": _to_timestamp(data.get("occurred_at")),
+        "trace_id": str(data.get("trace_id", "") or ""),
+    }
 
 
 def _row_to_entry(row: object) -> AuditEntry:
