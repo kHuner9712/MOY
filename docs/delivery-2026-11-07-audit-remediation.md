@@ -78,7 +78,7 @@
 
 ---
 
-## 阶段 1：P0 高危整改（进行中）
+## 阶段 1：P0 高危整改（已完成 5/5：H-01 ~ H-05）
 
 ### H-01 告警投递：规则从「存在但不可达」变为「可达且可自证」
 
@@ -266,5 +266,60 @@ TL1 在 `test_tool_executions.py`；下载链路的集成用例覆盖 `fetch_art
 - CI 侧结论以**同 SHA 的 `CI Web` 绿**为准（本文件在推送后回填结果）；不再存在
   "本地绿、CI 跳过"的中间态。
 
-### H-05 CI paths 覆盖（待做）
+### H-05 CI paths 覆盖（已完成）
+
+**要钉住的假绿**：`ci-web.yml` 的 `paths` 只有 `apps/web/**`，但该 job 第一步
+`npm ci` 读的是**仓库根**的 `package.json` / `package-lock.json`（monorepo
+npm workspaces）。只改根锁文件的 PR **不触发前端门禁**——依赖树变了，
+eslint / tsc / vitest / next build 一个都不跑，而合并前看到的绿是上一次的绿。
+同理，H-04 新增的 e2e realm 夹具（决定账号/角色/回调地址）也不在 paths 内。
+
+**已完成的变更**
+
+- `.github/workflows/ci-web.yml`：push 与 pull_request 的 `paths` 同步新增
+  `package.json`、`package-lock.json`、`.github/e2e/**`。
+- `.github/workflows/dependency-scan.yml`：PR `paths` 新增 `package-lock.json`
+  ——SCA 读的是锁文件本身，只改 lock 却不扫描等于协议黑名单失效。
+- `.github/workflows/ci-adapter.yml`：`paths` 新增
+  `.github/workflows/ci-web.yml`、`.github/workflows/dependency-scan.yml`
+  （新门禁要校验这两个 workflow 的 paths，对方改了它必须跑），并新增两个 step：
+  `CI paths 漂移校验` 与 `CI paths 漂移自检`。
+- `deploy/validate_ci_paths.py`（新建，第 17 个 `.py` 门禁）：
+  - **C-1 输入覆盖**：26 条"门禁依赖输入"声明（根 `package.json`/`package-lock.json`、
+    `apps/web/package.json`/`Dockerfile`、`apps/adapter/pyproject.toml`/`uv.lock`/`Dockerfile`、
+    `deploy/migrations/*.sql`、`deploy/init-schema-*.sql`、compose、`images.lock`、
+    `prometheus.yml`、`alert.rules.yml`、`docs/api/openapi.json`、e2e 夹具、三个 workflow 自身），
+    逐条校验是否被对应 workflow 的 **push 与 pull_request 两个事件**分别命中；
+  - **C-2 死模式**：`paths` 里每条正向模式必须命中仓库真实文件
+    （`apps/web/package-lock.json` 这类抄错路径的过滤条件语法合法但永不触发）；
+  - **glob 按 GitHub 语义**实现（`*` 不跨 `/`、`**` 跨），并有负样本证明
+    `apps/*` 覆盖不了 `apps/web/package.json`（防 `startswith` 式假绿）；
+  - `--self-test` 8 条样本（正样本 2 / 负样本 6，含 fail-closed exit 2）。
+- `qa/phase4-verify.sh`：门禁本体与 `--self-test` 两处计数 16→17，新门禁进
+  FAMILY_A（自检成功 = exit 1）。
+- 文档：`docs/engineering-standards.md` 附录 A.1 增第 18 行（门禁总数 18），
+  正文计数同步。
+
+**对质量的影响（数据）**
+
+- 新增门禁 1 道（`deploy/validate_*` 共 18 个，其中 `.py` 17 个）；
+  `validate_gate_wiring.py` 实测由 16 → **17 个脚本全部被 workflow 引用**。
+- 覆盖声明 26 条；自检 8 条样本（含"根锁不被覆盖"真实事故回放、glob 跨层语义、
+  死模式、输入缺失、workflow 缺失 fail-closed）。
+- 假绿被堵：**只改根锁文件的 PR 现在会真的跑前端全量门禁**；门禁自身的
+  `paths` 也进入被校验面（改 ci-web/dependency-scan 的 paths 会触发校验器）。
+- 真实仓库反向验证：把 ci-web 的 paths 回退为 `apps/web/**`，校验器 exit 1 并
+  逐条列出未覆盖输入（26 条声明中的 ci-web 部分全部报红），非"写死通过"。
+
+### H-04 收尾：CI 侧回填（同 SHA `7ffd209` 双绿）
+
+| 流水线 | run | 结论 | 证据 |
+| --- | --- | --- | --- |
+| `CI Web` | `42327506671` | **success** | `E2E 主旅程（真跑 SSO→兑换→工作台→插件安装，无跳过开关）` job 1m38s 通过；日志 `[PASS] Keycloak 测试 realm 就绪（第 14 次探测）`、`6 passed (17.0s)` |
+| `CI Adapter` | `42327506581` | **success** | PG 服务 + `--run-pg` 全量 pytest、注册表校验（含 H-01 告警链路自证）全绿 |
+| `Dependency Scan` | `42327506571` | **success** | — |
+
+**结论**：H-04 是 **CI 真跑通**（浏览器 + 真实 Keycloak），不是「降级为 API 级」；
+不存在任何跳过主旅程的开关。CI Web 的 e2e job 时长（1m38s）也印证它真的起了
+Keycloak 并跑了登录链路（只跑匿名段约 10 秒即可结束）。
 

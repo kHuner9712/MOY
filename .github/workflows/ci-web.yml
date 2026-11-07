@@ -20,6 +20,15 @@ on:
       # 而 paths 不含 `apps/adapter/**` → 改它们同样不触发本工作流的 scan:capability。
       - 'apps/adapter/app/plugins/actions.py'
       - 'apps/adapter/app/plugins/manifests/**'
+      # H-05（2026-11-07 全仓审计）：monorepo 的 npm workspaces 让**根**的
+      # `package.json` / `package-lock.json` 成为 `npm ci` 的真源。paths 只写
+      # `apps/web/**` 时，只改根锁文件的 PR 不触发本 workflow —— 依赖树变了，
+      # eslint/tsc/vitest/next build 一个都不跑，合并前看到的绿是上一次的绿。
+      # 判据由 `deploy/validate_ci_paths.py` 机械校验（C-1 输入覆盖 + C-2 死模式）。
+      - 'package.json'
+      - 'package-lock.json'
+      # H-04 起 e2e 账号/角色/回调地址由该 realm 夹具决定；改了它必须重跑主旅程。
+      - '.github/e2e/**'
       - '.github/workflows/ci-web.yml'
   pull_request:
     paths:
@@ -27,6 +36,9 @@ on:
       - 'docs/prd-phase2-increment.md'
       - 'apps/adapter/app/plugins/actions.py'
       - 'apps/adapter/app/plugins/manifests/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/e2e/**'
       - '.github/workflows/ci-web.yml'
   workflow_dispatch:
 

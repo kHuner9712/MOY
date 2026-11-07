@@ -213,7 +213,7 @@
 
 ## 附录 A：规范 → 机械门禁映射表
 
-### A.1 `deploy/validate_*`（17 个：16 `.py` + 1 `.sh`）
+### A.1 `deploy/validate_*`（18 个：17 `.py` + 1 `.sh`）
 
 | # | 门禁 | 职责（取自各自文件头） | CI 挂载点 | 自检 | 覆盖规范 |
 | --- | --- | --- | --- | --- | --- |
@@ -234,8 +234,9 @@
 | 15 | `deploy/validate_repository_parity.py` | G-38 内存/PG 双实现对称 | `ci-adapter.yml:375`、`:383` | ✔ | S3.2-d |
 | 16 | `deploy/validate_schema_retention.py` | G-31 产物留存列/默认值/类型 | `ci-adapter.yml:449`、`:454` | ✔ | S7.3（产物表结构） |
 | 17 | `deploy/validate_secrets.py` | G-33 密钥占位值生成说明 + 禁明文兜底 | `dependency-scan.yml:173`、`:178` | ✔ | S4.1-b、S4.1-c |
+| 18 | `deploy/validate_ci_paths.py` | C-1 依赖输入（根锁 / `uv.lock` / `pyproject.toml` / Dockerfile / 迁移 / `deploy/` 配置 / e2e 夹具）必须被对应 workflow 的 push+PR `paths` 命中；C-2 死模式回代真实文件 | `ci-adapter.yml`「CI paths 漂移校验」（H-05） | ✔ | S6.7、H-05 |
 
-> `qa/phase4-verify.sh:252-275` 另有一套「16 个 `.py` 门禁本体」的本地复跑清单
+> `qa/phase4-verify.sh:252-275` 另有一套「17 个 `.py` 门禁本体」的本地复跑清单
 > （FAMILY_A / FAMILY_B 两组，按自检退出码语义分），与 CI 挂载互为补充。
 
 ### A.2 四条 workflow（job 级）

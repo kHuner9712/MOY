@@ -17,6 +17,8 @@ on:
       - 'apps/**'
       - 'deploy/**'
       - 'package.json'
+      # H-05：SCA 读的是锁文件本身；只改 lock 不触发扫描，协议黑名单就形同虚设。
+      - 'package-lock.json'
       - '.github/workflows/dependency-scan.yml'
   push:
     branches: [main, develop]

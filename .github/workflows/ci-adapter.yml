@@ -12,6 +12,8 @@ on:
   # - deploy/**   → validate_config_names（编排注入的键名）/ validate_openapi / validate_*；
   # - docs/api/** → G4 与快照比对，否则快照可单方面提交而无人校验；
   # - scripts/**  → gen_delivery_manifest（清单生成器）与 check_error_catalog 的真源。
+  # - 另两个 workflow 文件 → `validate_ci_paths.py` 校验它们的 paths 覆盖，
+  #   改了对方 paths 而本 workflow 不跑，等于判据自己躲过了自己的检查（H-05）。
   # 这三类 diff 通常是几 KB，不会显著抬升额度。
   push:
     branches: [main, develop, 'feature/**', 'release/**', 'hotfix/**']
@@ -21,6 +23,8 @@ on:
       - 'docs/api/**'
       - 'scripts/**'
       - '.github/workflows/ci-adapter.yml'
+      - '.github/workflows/ci-web.yml'
+      - '.github/workflows/dependency-scan.yml'
   pull_request:
     paths:
       - 'apps/adapter/**'
@@ -28,6 +32,8 @@ on:
       - 'docs/api/**'
       - 'scripts/**'
       - '.github/workflows/ci-adapter.yml'
+      - '.github/workflows/ci-web.yml'
+      - '.github/workflows/dependency-scan.yml'
   workflow_dispatch:
 
 concurrency:
@@ -489,6 +495,35 @@ jobs:
             exit 1
           fi
           echo "门禁接线自检通过：6 条样本（含自指）全部符合预期"
+
+      # ------------------------------------------------------------------
+      # 门禁 4c-5：CI paths 漂移（H-05）
+      #
+      # 钉住的事故：`ci-web.yml` 的 paths 只写 `apps/web/**`，但该 job 第一步
+      # `npm ci` 读的是**仓库根**的 `package.json` / `package-lock.json`（npm
+      # workspaces）。只改根锁文件的 PR 不触发前端门禁——依赖树变了，eslint /
+      # tsc / vitest / next build 一个都不跑，而报告里仍是"绿"。
+      #   C-1 输入覆盖：根锁、`uv.lock`、`pyproject.toml`、Dockerfile、迁移、
+      #       `deploy/` 配置、e2e 夹具等依赖输入，必须被对应 workflow 的
+      #       push 与 pull_request paths 命中；
+      #   C-2 死模式：paths 里每条正向模式必须命中仓库真实文件（抄错路径的
+      #       过滤条件语法合法但永不触发）。
+      # 退出码：0 通过 / 1 有漂移 / 2 无法判定（workflow 或文件清单缺失）。
+      # ------------------------------------------------------------------
+      - name: CI paths 漂移校验（C-1 输入覆盖 + C-2 死模式）
+        run: python ../../deploy/validate_ci_paths.py
+
+      - name: CI paths 漂移自检（可红证明）
+        run: |
+          set +e
+          python ../../deploy/validate_ci_paths.py --self-test
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "CI paths 自检未按预期命中负样本（退出码 $code，期望 1）"
+            exit 1
+          fi
+          echo "CI paths 自检通过：8 条样本（含 glob 语义与 fail-closed）全部符合预期"
 
       - name: 迁移门禁自检（可红证明）
         run: |

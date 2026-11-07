@@ -147,6 +147,7 @@ python deploy/validate_packaging.py              # ci-adapter.yml:514
 python deploy/validate_plugins.py                # ci-adapter.yml:404
 python deploy/validate_batch_clock.py --check-docs   # ci-adapter.yml:218
 python deploy/validate_gate_wiring.py           # ci-adapter.yml:479（判据存在 ≠ 判据在跑）
+python deploy/validate_ci_paths.py              # ci-adapter.yml（改依赖输入不触发门禁 = 假绿）
 ```
 
 **交付 / 终验**（仓库根）：
