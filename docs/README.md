@@ -42,6 +42,8 @@
 | `phase{1,2,3,4}-acceptance-report.md` | 各阶段验收结论与遗留项 |
 | `phase2-gate-evidence.md` / `phase3-backend-handoff.md` / `phase3-demo-script.md` | 门禁取证 / 交接 / 演示脚本 |
 | `phase4-delivery-manifest.md` | 交付清单（含「等价实现」列） |
+| `delivery-2026-11-07-b5-offline-package.md` | **B5 离线包交付验收**：验收清单（CI / 真机两栏）、通过/有条件/不通过判定、首次真机全流程脚本（3A/3B） |
+| `pilot-plan-2026-11-07.md` | **B5 气隙离线包试点方案**：现场步骤、角色分工、回滚演练模板、中止条件、签字页 |
 | `phase4-batch-log.md` / `phase4-batch2-*.md` | 阶段四批次记录 |
 | `qa-*.md` | QA 测试计划、批次报告、豁免、签核 |
 
@@ -76,7 +78,7 @@
 
 | 入口 | 用途 | 备注 |
 | --- | --- | --- |
-| `qa/phase4-verify.sh` | 四阶段终验 9 项（含 16 道部署门禁 + pytest） | CI 亦引用；`--pytest-mode pg\|both\|skip` |
+| `qa/phase4-verify.sh` | 四阶段终验 9 项（含 21 个部署门禁 + pytest） | CI 亦引用；`--pytest-mode pg\|both\|skip` |
 | `qa/goldset/run.py` | 金标任务集复跑（20 用例） | 需真实服务与凭据；缺凭据返回 `blocked`，**拒绝伪造结果** |
 | `scripts/bench/bench_{chat,kb,plugin}.py` | 性能压测 | 用法见 `scripts/bench/README.md` 与 `perf-disclosure.md` |
 | `scripts/demo_phase3.sh` | 阶段三三插件端到端演示 | 需 `OA_TEST_DATABASE_URL` |

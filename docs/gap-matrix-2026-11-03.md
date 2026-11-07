@@ -43,6 +43,9 @@
 - **主场项**：大厂用资金/团队/分发堆出来，Moy 追进去是消耗战；
 - **尖刀项**：Moy 可以靠私有化/治理/可审计做出差异，且大厂结构性不愿意做。
 
+> **口径说明（2026-11-07）**：下表「麦子现状」保留 **2026-11-03 原始快照**，不做逐格改写；
+> B1–B5 交付后的最新状态见 §3.1 各状态段与 §3.4，二者冲突时以 §3.4 为准（#10 已就地更新）。
+
 | # | 能力域 | 分类 | 竞品覆盖（仅已核实 5 家） | 麦子现状 | 代码证据 | 补齐成本（估算，人日） | 主要模块 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 身份与权限（SSO/SCIM/角色） | 准入 | WorkBuddy/Accio 未披露 SSO/SCIM（未核实细节）；CC/Codex 企业身份未核实 | **半有**：OIDC 登录/会话/刷新/登出齐全，RBAC 有；SCIM 无 | `apps/adapter/app/api/sso_routes.py:29-39`、`app/core/security.py:541`（`require_permission`）；全仓 `scim` 0 命中（实测检索） | SCIM 10–15；其余 0–2 | `sso_routes.py`、`oidc_server.py`、`security.py`、身份域仓储 |
@@ -54,7 +57,7 @@
 | 7 | 插件与技能 | 尖刀（对生态）/准入（对官方能力） | 5 家均有 Skills；3 家有市场 | **有骨架（官方 6 个）**：声明式 manifest、安装即启用、6 原语引擎、护栏；无第三方发布/签名/SDK | `app/plugins/schema.py:208`（`extra="forbid"` 基类）、`actions.py:28-36`、`business/plugin_service.py:487-504`、`app/plugins/manifests/*.json`（6 份） | 官方深化按垂直计；第三方生态 V1.1（见 §5） | `plugins/*`、`business/plugin_service.py`、前端 plugins 页 |
 | 8 | 用量与计费 | 准入 | 5 家计费口径未核实（WorkBuddy 有费用统计宣称需一手核验） | **半有**：usage_event、配额、套餐/订单、月度对账；**无按插件归因、无发票/结算** | `deploy/init-schema-phase2.sql:288-305`、`app/api/v1/billing.py`、`app/services/model_service.py:897`、`app/core/audit_actions.py:70-71` | 插件归因 8–12；账单导出 8–12 | `business/usage_service.py`、`billing.py`、`db/repositories/usage/*` |
 | 9 | 审计与合规 | 准入 | Accio 明示本地审计；其余未核实 | **半有**：审计查询/动作枚举/权限拒绝留痕；**无导出；合规文档待建** | `app/api/v1/identity.py:236-266`、`app/db/repositories/audit_repo.py:75-123`（`ACTION_GROUP_NAMES`/`ALL_ACTIONS`）、`business/audit_service.py` | 审计导出 6–10；合规三件套 10–15（含法务） | `identity.py`、`audit_service.py`、导出 worker |
-| 10 | 部署形态（SaaS/私有化/气隙） | **尖刀** | WorkBuddy/Accio/Muse 为桌面/云；气隙私有化未核实 | **半有**：compose 9 容器、k8s base、`install.sh --offline` 加载侧；**离线包构建脚本未实现**，`OA_OFFLINE_MODE` 死配置已于 2026-11-04 审计删除 | `deploy/docker-compose.lite.yml`、`deploy/k8s/base/`、`deploy/install.sh:657-709`、`deploy/offline/README.md:1-22`、`deploy/validate_config_names.py:145/459` | 离线包构建+校验 12–18；气隙验收 3–5 | `deploy/offline/*`、`install.sh`、`images.lock`、SBOM |
+| 10 | 部署形态（SaaS/私有化/气隙） | **尖刀** | WorkBuddy/Accio/Muse 为桌面/云；气隙私有化未核实 | **已完成（B5，2026-11-07）**：3A 介质构建/校验（`validate_offline_media.py`）+ 3B 目标机预检/加载/升级/回滚（`validate_offline_apply.py`）；**默认不启用**（无运行时开关，`install.sh --offline` 未接入，须显式调用 3B CLI）；真实 skopeo/psql/cosign/插件导入与**首次真机生成尚未执行** | `deploy/validate_offline_media.py`、`deploy/validate_offline_apply.py`、`docs/offline-package.md`、`docs/delivery-2026-11-07-b5-offline-package.md`、`docs/pilot-plan-2026-11-07.md`、`deploy/docker-compose.lite.yml`、`deploy/install.sh:657-709`、`deploy/images.lock` | 已完成（构建+校验 12–18；加载/升级/回滚按 3B 实际结算）；剩余一键安装接入 2–3 | `deploy/offline/*`、`install.sh`、`images.lock`、SBOM |
 | 11 | 可观测与运维 | 准入 | 5 家运维能力未核实 | **有**：`/healthz` `/readyz` `/metrics`、Prometheus 规则、队列深度、ops 端点、备份/恢复 | `app/api/v1/router.py:90-147`（`/healthz`/`/readyz`）、`app/core/metrics.py`、`deploy/prometheus.yml`、`deploy/alert.rules.yml`、`docs/deployment-guide.md:41-42` | 支持包/诊断导出 3–5 | `core/metrics.py`、`workers/queue_depth.py`、`api/v1/ops.py`、deploy 监控 |
 | 12 | 客户端形态（Web/桌面/移动） | 主场 | WorkBuddy/Accio 桌面；Muse Web+桌面+移动；CC/Codex CLI | **半有**：仅 Web（`apps/web`）与后端；无桌面、无移动、无 CLI | 仓库顶层仅 `apps/adapter`、`apps/web`（实测目录）；前端 `apps/web/src/app/(main)/*` | 桌面 40–60；移动 50–80（均不计入基线） | 新增 `apps/desktop` / `apps/mobile`，共享 API 契约 |
 | 13 | 可靠性与性能 | 主场 | 5 家容量承诺未核实（不可比） | **半有**：任务重试/续跑、队列上界、原语超时、备份恢复；**吞吐/首字 P95 全部待压测** | `business/task/runner.py:915-997`、`plugins/actions.py:165`、`docs/perf-disclosure.md:128-139`（明确写「待压测」） | 压测+SLO 调优 8–12 | `scripts/bench/*`、`perf-disclosure.md`、task/queue |
@@ -114,6 +117,19 @@ RLS 留存，回滚只删索引。默认关闭（`OA_AUDIT_LOG_EXPORT_ENABLED=fa
 5 分钟步骤验收。
 矩阵第 4 项（B4）状态：**已完成（2026-11-06）**。
 
+**B5 状态（2026-11-07）**：气隙离线包**构建+校验（3A）与目标机加载/升级/回滚（3B）**
+已交付——3A 固定介质布局与 `MANIFEST`/`SHA256SUMS`/签名，逐条哈希与篡改检测；
+3B 提供 `preflight`（架构/磁盘余量/工具）、`verify`（写前 fail-closed）、`load`（镜像/wheels/
+SQL 升序/插件，幂等断点续跑）、`upgrade`（同大版本最多跨 1 个次版本）、`rollback`
+（down SQL 逆序 + 旧镜像 + 插件恢复，中途失败 `exit 3` 并给人工介入）。
+**默认不启用**：无离线运行时开关，`install.sh --offline` 一键安装**未接入**，现场须显式调用 3B CLI。
+验证边界：CI 用假介质 + FakeExecutor 真跑逻辑；**真实 `skopeo` 导入 Docker、真实 `psql`、
+真实 cosign 验签、真实插件导入器、真实磁盘判定均未执行**，且 **3A 首次真机生成尚未执行**。
+验收按 [B5 交付验收文档](file:///c:/Users/15864/Desktop/麦子/docs/delivery-2026-11-07-b5-offline-package.md)、
+试点按 [试点方案](file:///c:/Users/15864/Desktop/麦子/docs/pilot-plan-2026-11-07.md)；
+真机清单全部勾选前**不得对外称「离线交付已验证」**。
+矩阵第 10 项（B5）状态：**已完成（2026-11-07，待真机验收）**。
+
 **合计（估算）**：**72–109 人日，中位 90 人日**（含 B2 的 Office 预览，不含 pptx、双写、桌面/移动）。
 
 ### 3.2 6–10 周能否达成（直接回答）
@@ -129,6 +145,25 @@ RLS 留存，回滚只删索引。默认关闭（`OA_AUDIT_LOG_EXPORT_ENABLED=fa
 
 B2 xlsx+预览（22）→ B1 计划确认（10）→ B3 MCP（12）→ B4 审计导出（8）→ B5 离线包（15），合计 **67 人日（估算，区间 56–85）**。这是「客户不当场淘汰」的下限，不含性能调优与四层授权。
 
+### 3.4 14 项总体进度（2026-11-07）
+
+> 判定口径：按 **V1.0 准入基线 B0–B7 + §5 明确不做清单**；「已完成」只表示 V1.0 范围内的
+> 交付物已落地，**不等于真机已验证**（每项验证边界见 §3.1 各状态段）。
+
+| 状态 | 项数 | 能力域 |
+| --- | --- | --- |
+| 已完成（V1.0 口径） | **9** | #2 多租户隔离、#3 对话与任务执行（B1）、#4 文档与知识、#5 办公成果物（B2）、#6 集成与连接器（B3 MCP）、#7 插件与技能、#10 部署形态（B5）、#11 可观测与运维、#12 客户端（Web） |
+| 部分完成 | **4** | #1 身份与权限（缺 SCIM，待拍板）、#8 用量与计费（缺插件归因/账单导出）、#9 审计与合规（导出已完成，合规文档未定稿）、#13 可靠性与性能（B7 压测未做） |
+| 未开始 | **1** | #14 协作与分享（明确不做，V1.1） |
+
+**准入基线**：B0–B5 **已完成 6/8**；剩余 B6（会话级能力集 + 四层授权）与
+B7（性能基线），按原估算合计 **16–24 人日**（未重估）。
+
+**总体状态结论**：V1.0 的「客户不当场淘汰」基线已完成 6/8，离线交付这条尖刀已从
+「半有」变为「构建/加载/升级/回滚全链路有实现」；但 **B2/B3/B4/B5 都带真机验证边界**，
+B5 尤其尚未做过首次真机生成与加载。下一步不是继续加功能，而是把 B5 真机验收、
+B6/B7 与性能口径闭环；对外表述必须区分「已完成」与「已验证」。
+
 ---
 
 ## 4. 分阶段路线
@@ -142,6 +177,7 @@ B2 xlsx+预览（22）→ B1 计划确认（10）→ B3 MCP（12）→ B4 审计
 - **验收口径（全部可测）**：
   1. 一份 10 分钟演示脚本：企业 SSO 登录 → 一句话生成计划并确认 → 上传 xlsx 提问 → 产出 xlsx 并预览 → 调用 1 个 MCP 工具 → 导出审计日志；全程无阻断。
   2. 气隙机器：`install.sh --offline` 一次装成，断网可用，篡改包退出码 3。
+     **（2026-11-07 注：一键入口未接入；当前以 3B CLI 分步装成、校验失败非零退出为等价验收口径）**
   3. 性能：首字 P95（mock 上游）≤1s、检索 P95 ≤800ms、100 并发错误率 <1%（实测产物落 `results/`，不得手填）。
   4. 质量门禁：后端/前端覆盖率不低于现值（86.13 / 89.78/85.06/84.93/90.98），16 道门禁全绿。
   5. 审计导出：导出行为本身留痕，导出文件不含密钥/内部路径。
@@ -231,8 +267,9 @@ B2 xlsx+预览（22）→ B1 计划确认（10）→ B3 MCP（12）→ B4 审计
 
 ## 附：本矩阵的计数与复算
 
-- 矩阵项：**14**（准入 9 / 主场 3 / 尖刀 2）。
-- 准入基线：**8 项（B0–B7）**，其中 B0 已完成；新增成本 **72–109 人日（估算，中位 90）**。
+- 矩阵项：**14**（准入 9 / 主场 3 / 尖刀 2）；按 V1.0 口径已完成 **9**、部分 **4**、未开始 **1**（2026-11-07）。
+- 准入基线：**8 项（B0–B7）**，其中 **B0–B5 已完成 6 项**（各带验证边界）；
+  剩余 B6/B7 **16–24 人日（估算）**。
 - 最小可演示基线（5 项）：**56–85 人日（估算，中位 67）**。
 - 6–10 周可行性：**1 人不可；2 人勉强可（需冻结范围）；3 人可**。
-- 实测质量基线：后端 2559 passed / 238 skipped、覆盖率 86.13%；前端 72 文件、覆盖率 89.78/85.06/84.93/90.98；16 道门禁全绿（SHA `38d0cd4`）。
+- 实测质量基线：后端 2559 passed / 238 skipped、覆盖率 86.13%；前端 72 文件、覆盖率 89.78/85.06/84.93/90.98；16 道门禁全绿（SHA `38d0cd4`；2026-11-07 已扩到 21 个 `deploy/validate_*`，见 `docs/engineering-standards.md` 附录 A.1）。
