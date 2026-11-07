@@ -171,7 +171,47 @@
 **仍未闭环**：`deploy/squid.conf` 仍是 `http_access allow localnet` 且无 `dstdomain`
 （G-11），网络层出站白名单属部署侧工作，不在本条范围。
 
-### H-03 零测试端点（待做）
+### H-03 零测试端点（已完成，含审计前提修正）
+
+**审计前提修正**：审计用「模块名/文件名」在 `tests/` 里检索，得出
+`ops_mcp.py` / `tools_ext.py` / `artifact_service.py` / `table_parse.py` 零引用。
+复核后**四条结论都不成立**：`test_ops_mcp_api.py` 已覆盖 4 个运营端点；
+TL1 在 `test_tool_executions.py`；下载链路的集成用例覆盖 `fetch_artifact`；
+`table_parse` 被 `schedule_timeline` / `screening_risk` 间接驱动。
+真正的缺口是**维度**而非「有没有」：权限拒绝只覆盖了企业令牌、跨租户、
+边界输入、能力开关关闭、分页越界都没有用例。
+
+**已完成的变更**
+
+- `tests/integration/test_ops_mcp_api.py`：3 → **11 个用例**（+8）。
+  新增：跨租户（A 登记对 B 不可见、探测/删除 404 `20004`、A 记录未被误删）、
+  平台哨兵租户 `__platform__` 拒绝（`20001` + 明确文案）、未登记 ID 的
+  probe/delete（`20004` 而非 500）、旧版 SSE/未知传输参数化拒绝（3 组）、
+  租户 ID/登记 ID 长度越界统一 `400 + 20001`、`mcp_enabled=false` 时
+  **写端点 20003 而列表仍可读**（能力关闭不关死运维排查路径）。
+- `tests/integration/test_tool_executions.py`：+3 个用例。`page_size∈{0,201}`
+  统一 `400 + 20001`；页码越界返回空页且 `meta.total=0`（不回退成全量）。
+- `tests/unit/test_table_parse.py`（新建，**11 个用例**）：BOM 不污染首列、
+  引号内逗号、空输入、非法 UTF-8 不抛异常、缺列补空串、markdown 表格
+  分隔行/对齐标记、乱序缺列补空、非表格文本、全空单元格语义、`column_count`。
+- `tests/unit/test_artifact_service.py`（新建，**3 个用例**）：按令牌租户
+  + 产物 ID 精确查询、同名产物在别的租户返回 `None`、缺失返回 `None`
+  且存储实例由传入 Settings 组装（不是进程默认单例）。
+- `tests/unit/test_tool_store_tenant_scope.py`（新建，**2 个用例**）：调用记录
+  按租户过滤、租户内分页（offset 不把他人记录翻进来）。
+
+**对质量的影响**
+
+- 净增 **27 个用例**（含参数化展开），四条「零测试」全部由「间接覆盖」升级为
+  「直接覆盖 + 对抗维度」。
+- 假绿被堵：`mcp_enabled=false` 的写端点此前无断言（关能力后若守卫被绕过不会被发现）；
+  TL1 的 `page_size` 上限只有 OpenAPI 声明、无运行时用例；跨租户在运营端点
+  此前完全无覆盖。
+- 覆盖率：`table_parse` / `artifact_service` / `ops_mcp` 由「仅间接」变为直接命中；
+  未删任何断言、未加 `pragma`。
+
+**仍未闭环**：`ops_mcp` 的 PostgreSQL 存储路径（`PostgresMcpServerStore`）只有内存
+实现被这些用例驱动；SQL 侧由 `--run-pg` 的仓储用例覆盖，本条不再扩。
 
 ### H-04 主旅程 E2E（待做）
 

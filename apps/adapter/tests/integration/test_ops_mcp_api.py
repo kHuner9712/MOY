@@ -203,3 +203,143 @@ def test_plaintext_credential_is_rejected(
     )
     assert response.status_code == 400, response.text
     assert response.json()["code"] == 20001
+
+
+def test_cross_tenant_isolation(
+    client: TestClient, mcp_settings: Settings, mcp_server: str
+) -> None:
+    """A 企业的登记对 B 企业不可见，也删不掉、探不到（跨租户四端点全覆盖）。"""
+    headers = _headers(mcp_settings, ops=True)
+    other_tenant = "tnt_mcp_api_b"
+
+    created = client.post(BASE_PATH, headers=headers, json=_payload(mcp_server))
+    server_id = created.json()["data"]["item"]["server_id"]
+
+    listed = client.get(BASE_PATH, headers=headers, params={"tenant_id": other_tenant})
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["data"]["total"] == 0
+    assert server_id not in listed.text
+
+    probed = client.post(
+        f"{BASE_PATH}/{server_id}/probe",
+        headers=headers,
+        params={"tenant_id": other_tenant},
+    )
+    assert probed.status_code == 404, probed.text
+    assert probed.json()["code"] == 20004
+
+    deleted = client.delete(
+        f"{BASE_PATH}/{server_id}", headers=headers, params={"tenant_id": other_tenant}
+    )
+    assert deleted.status_code == 404, deleted.text
+    assert deleted.json()["code"] == 20004
+
+    # A 的登记仍在（跨租户删除没有误删）
+    still_there = client.get(BASE_PATH, headers=headers, params={"tenant_id": TENANT_A})
+    assert still_there.json()["data"]["total"] == 1
+
+
+def test_platform_sentinel_tenant_is_rejected(client: TestClient, mcp_settings: Settings) -> None:
+    """平台哨兵不能当企业写进表里（20001，且提示具体企业）。"""
+    headers = _headers(mcp_settings, ops=True)
+    response = client.get(BASE_PATH, headers=headers, params={"tenant_id": OPS_TENANT})
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["code"] == 20001
+    assert body["message"] == "请指定具体企业"
+
+
+def test_unknown_server_returns_20004(client: TestClient, mcp_settings: Settings) -> None:
+    """未登记的 ID：探测与删除都是 20004，不是 500。"""
+    headers = _headers(mcp_settings, ops=True)
+    probed = client.post(
+        f"{BASE_PATH}/{SAMPLE_SERVER_ID}/probe",
+        headers=headers,
+        params={"tenant_id": TENANT_A},
+    )
+    assert probed.status_code == 404, probed.text
+    assert probed.json()["code"] == 20004
+
+    deleted = client.delete(
+        f"{BASE_PATH}/{SAMPLE_SERVER_ID}", headers=headers, params={"tenant_id": TENANT_A}
+    )
+    assert deleted.status_code == 404, deleted.text
+    assert deleted.json()["code"] == 20004
+
+
+@pytest.mark.parametrize("transport", ["sse", "websocket", ""])
+def test_unsupported_transport_is_rejected(
+    client: TestClient, mcp_settings: Settings, mcp_server: str, transport: str
+) -> None:
+    """旧版 SSE / 未知传输在登记阶段拒绝（20001），不落库。"""
+    headers = _headers(mcp_settings, ops=True)
+    response = client.post(
+        BASE_PATH, headers=headers, json=_payload(mcp_server, transport=transport)
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["code"] == 20001
+
+    listed = client.get(BASE_PATH, headers=headers, params={"tenant_id": TENANT_A})
+    assert listed.json()["data"]["total"] == 0
+
+
+def test_boundary_inputs_are_validation_errors(client: TestClient, mcp_settings: Settings) -> None:
+    """路径/查询参数越界统一 400 + 20001（不是 500，也不放行）。"""
+    headers = _headers(mcp_settings, ops=True)
+
+    too_short_tenant = client.get(BASE_PATH, headers=headers, params={"tenant_id": "x"})
+    assert too_short_tenant.status_code == 400, too_short_tenant.text
+    assert too_short_tenant.json()["code"] == 20001
+
+    too_long_tenant = client.get(BASE_PATH, headers=headers, params={"tenant_id": "t" * 65})
+    assert too_long_tenant.status_code == 400, too_long_tenant.text
+    assert too_long_tenant.json()["code"] == 20001
+
+    too_short_id = client.post(
+        f"{BASE_PATH}/abc/probe", headers=headers, params={"tenant_id": TENANT_A}
+    )
+    assert too_short_id.status_code == 400, too_short_id.text
+    assert too_short_id.json()["code"] == 20001
+
+
+def test_disabled_capability_rejects_write_but_allows_read() -> None:
+    """`mcp_enabled=false` 时登记/删除/探测 20003，列表仍可读（不泄漏写入口）。"""
+    reset_settings_cache()
+    conf = Settings(
+        env="test",
+        deploy_mode="saas",
+        downstream_enabled=False,
+        auth_mode="stub",
+        jwt_secret="mcp-api-test-secret",
+        ratelimit_enabled=False,
+        business_store="memory",
+        mcp_enabled=False,
+    )
+    app: FastAPI = create_app(conf)
+    with TestClient(app) as disabled_client:
+        headers = _headers(conf, ops=True)
+        listed = disabled_client.get(BASE_PATH, headers=headers, params={"tenant_id": TENANT_A})
+        assert listed.status_code == 200, listed.text
+
+        created = disabled_client.post(
+            BASE_PATH,
+            headers=headers,
+            json=_payload("http://127.0.0.1:9/mcp"),
+        )
+        assert created.status_code == 403, created.text
+        assert created.json()["code"] == 20003
+
+        deleted = disabled_client.delete(
+            f"{BASE_PATH}/{SAMPLE_SERVER_ID}", headers=headers, params={"tenant_id": TENANT_A}
+        )
+        assert deleted.status_code == 403, deleted.text
+        assert deleted.json()["code"] == 20003
+
+        probed = disabled_client.post(
+            f"{BASE_PATH}/{SAMPLE_SERVER_ID}/probe",
+            headers=headers,
+            params={"tenant_id": TENANT_A},
+        )
+        assert probed.status_code == 403, probed.text
+        assert probed.json()["code"] == 20003
+    reset_settings_cache()

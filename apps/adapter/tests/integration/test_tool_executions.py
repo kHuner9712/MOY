@@ -442,6 +442,28 @@ def test_tl1_requires_permission(client: TestClient, settings: Settings) -> None
     assert response.json()["code"] == 20003
 
 
+@pytest.mark.parametrize("page_size", [0, 201])
+def test_tl1_rejects_out_of_range_page_size(
+    client: TestClient, settings: Settings, page_size: int
+) -> None:
+    """`page_size` 越界统一 400 + 20001（不截断、不放行超大页）。"""
+    response = client.get(
+        f"/api/v1/tools/executions?page=1&page_size={page_size}", headers=_headers(settings)
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["code"] == 20001
+
+
+def test_tl1_page_beyond_range_returns_empty_page(client: TestClient, settings: Settings) -> None:
+    """页码超出记录数返回空页，meta.total 仍为 0（不是 500 / 不是全量回退）。"""
+    body = client.get(
+        "/api/v1/tools/executions?page=99&page_size=20", headers=_headers(settings)
+    ).json()
+    assert body["code"] == 0
+    assert body["data"]["items"] == []
+    assert body["data"]["meta"]["total"] == 0
+
+
 def test_t3_lists_connections_after_connect(client: TestClient, settings: Settings) -> None:
     """连接后 T3 列表包含该工具（B06 连接落库后的读取路径）。"""
     _connect(client, settings, "wecom", tag="t3-conn")
