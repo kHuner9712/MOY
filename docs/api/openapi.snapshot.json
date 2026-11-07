@@ -3401,6 +3401,45 @@
         "title": "CapabilityCard",
         "type": "object"
       },
+      "CapabilityDeclaration": {
+        "description": "会话/任务能力声明（三个维度必填，空数组合法）。\n\nAttributes:\n    tools: 允许调用的工具类型。\n    resource_types: 允许访问的资源类型。\n    artifact_formats: 允许产出的产物格式。",
+        "properties": {
+          "artifact_formats": {
+            "description": "允许产出的产物格式（空数组表示不允许产出任何产物）",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Artifact Formats",
+            "type": "array"
+          },
+          "resource_types": {
+            "description": "允许访问的资源类型（空数组表示不允许任何资源）",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Resource Types",
+            "type": "array"
+          },
+          "tools": {
+            "description": "允许调用的工具类型（∈ 工具注册表；空数组表示不允许任何工具）",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tools",
+          "resource_types",
+          "artifact_formats"
+        ],
+        "title": "CapabilityDeclaration",
+        "type": "object"
+      },
       "CapabilityInputBrief": {
         "description": "所需输入提示（D-17「所需输入提示」的契约形态）。\n\nAttributes:\n    key: 输入键（插件声明 `inputs[].key`）。\n    label: 用户可见名称（插件声明 `inputs[].label`）。\n    type: 控件类型（`text` / `textarea` / `select` / `email` / `file` 等）。\n    required: 是否必填。",
         "properties": {
@@ -4555,8 +4594,19 @@
         "type": "object"
       },
       "CreateTaskRequest": {
-        "description": "A1 创建任务请求。\n\nAttributes:\n    conversation_id: 会话 ID。\n    goal: 任务目标（业务语言描述）。\n    profile: 能力档位。\n    tool_grants: 允许使用的工具类型列表。\n    inputs: 任务输入。\n    options: 执行选项。",
+        "description": "A1 创建任务请求。\n\nAttributes:\n    conversation_id: 会话 ID。\n    goal: 任务目标（业务语言描述）。\n    profile: 能力档位。\n    tool_grants: 允许使用的工具类型列表。\n    capabilities: 会话级能力声明（可选；不传=继承调用者权限）。\n    inputs: 任务输入。\n    options: 执行选项。",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CapabilityDeclaration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "会话级能力声明（B6，可选）。不传=继承调用者权限；传了则三个维度必填，只能收窄、不可放大，越界返回 14009"
+          },
           "conversation_id": {
             "default": "",
             "description": "会话 ID，形如 conv_01HF8...",

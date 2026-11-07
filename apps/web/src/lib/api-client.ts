@@ -1121,6 +1121,17 @@ export const agentApi = {
     goal: string;
     profile?: 'general' | 'code' | 'long_context' | 'reasoning';
     tool_grants?: string[];
+    /**
+     * B6：会话级能力声明（可选）。
+     *
+     * 不传=继承调用者权限；传了则三个维度必填，只能收窄、不可放大，
+     * 越界由服务端返回 14009（不会静默裁剪）。
+     */
+    capabilities?: {
+      tools: string[];
+      resource_types: string[];
+      artifact_formats: string[];
+    };
     inputs?: Record<string, unknown>;
     options?: { max_steps?: number; timeout_seconds?: number };
     /** 插件任务必填；有值时 `inputs` 按插件声明校验 */

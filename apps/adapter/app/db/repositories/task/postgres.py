@@ -77,6 +77,8 @@ _PG_TASK_COLUMNS: Final[frozenset[str]] = frozenset(
         "plan_version",
         "plan_expires_at",
         "plan_confirmed_at",
+        # B6（迁移 0017）：会话能力快照。建任务时随 INSERT 写入，之后不可变。
+        "session_capabilities",
     }
 )
 
@@ -129,7 +131,8 @@ class PostgresTaskStore:
                     inputs, result_summary, checklist, warnings, error_message,
                     retry_of, from_step, confirm_step_seq, confirmed_step_seq,
                     cancel_requested, usage_units, idem_key, started_at, expires_at,
-                    plan_version, plan_expires_at, plan_confirmed_at
+                    plan_version, plan_expires_at, plan_confirmed_at,
+                    session_capabilities
                 ) VALUES (
                     :tenant_id, :task_id, :plugin_id, :plugin_version, :conversation_id,
                     :initiator_id, :trigger_type, :status, :progress, :current_step_seq,
@@ -138,7 +141,8 @@ class PostgresTaskStore:
                     NULLIF(:retry_of, ''), NULLIF(:from_step, 0), :confirm_step_seq,
                     :confirmed_step_seq, :cancel_requested, :usage_units, :idem_key,
                     COALESCE(:started_at, now()), :expires_at,
-                    :plan_version, :plan_expires_at, :plan_confirmed_at
+                    :plan_version, :plan_expires_at, :plan_confirmed_at,
+                    CAST(:session_capabilities AS jsonb)
                 )
                 RETURNING *
                 """,
@@ -854,6 +858,7 @@ def _task_params(record: TaskRecord) -> dict[str, Any]:
         "plan_version": record.plan_version,
         "plan_expires_at": as_datetime(record.plan_expires_at),
         "plan_confirmed_at": as_datetime(record.plan_confirmed_at),
+        "session_capabilities": json.dumps(record.session_capabilities, ensure_ascii=False),
     }
 
 
@@ -900,6 +905,8 @@ def _to_task(row: Mapping[str, Any]) -> TaskRecord:
         plan_version=int(row.get("plan_version", 0) or 0),
         plan_expires_at=_timestamp(row.get("plan_expires_at")),
         plan_confirmed_at=_timestamp(row.get("plan_confirmed_at")),
+        # 防御式取列：旧库未迁移时按「未声明能力」处理（继承权限）
+        session_capabilities=_json_field(row.get("session_capabilities")),
     )
 
 

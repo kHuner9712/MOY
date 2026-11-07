@@ -31,6 +31,7 @@ from dataclasses import replace
 from typing import Any, Final
 
 from app.business.audit_service import ACTION_TASK_FINISH, ACTION_TASK_RETRY, ACTION_TASK_START
+from app.business.authz_service import TOOL_EXECUTE_POINT, get_authorization_service
 from app.business.task.access import assert_task_visible
 from app.business.task.deps import TaskDeps
 from app.business.task.manifest import TaskManifestResolver
@@ -46,6 +47,7 @@ from app.business.task.plan import (
 )
 from app.business.task.query import TaskQuery
 from app.business.usage_service import CAP_AUTOMATION, HOLD_REASON_QUOTA
+from app.core.capability import AuthzRequest, CapabilitySet, ResourceRef
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
 from app.core.logging import get_logger
@@ -82,6 +84,7 @@ from app.schemas.agent import (
     TaskPlanConfirmResult,
     TaskStatus,
 )
+from app.schemas.capability_scope import CapabilityDeclaration
 from app.schemas.task import (
     ArtifactEditData,
     ArtifactEditRequest,
@@ -123,6 +126,56 @@ _CANCELLABLE_TASK_STATUSES: Final[tuple[str, ...]] = (*_LIVE_TASK_STATUSES, TASK
 
 #: 资源类型（审计 `resource_type`）
 _RESOURCE_TASK: Final[str] = "task"
+
+#: 插件能力键 → 会话能力资源类型（B6）。
+#:
+#: 插件声明的能力键是「业务语义」，会话能力集用的是「资源类型」；两者必须有
+#: 一张显式映射表，否则声明 `resource_types: []` 仍能跑读知识库的插件。
+_PLUGIN_CAPABILITY_RESOURCE_MAP: Final[dict[str, str]] = {
+    "personal.knowledge.read": "knowledge_base",
+    "personal.file.read": "document",
+    "personal.tool.use": "tool_connection",
+    "org.directory.read": "team",
+    "org.repo.write": "tool_connection",
+    "org.external.publish": "tool_connection",
+}
+
+
+def _manifest_capability_requirements(
+    manifest: PluginManifest,
+) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """从插件清单派生本次任务可能用到的工具/资源类型/产物格式。
+
+    采用**全量保守口径**：清单里所有步骤（含 `when` 可能不执行的）与所有
+    可选工具备选都计入，避免"声明没写、运行时却调到"的缝隙。
+
+    Args:
+        manifest: 插件清单。
+
+    Returns:
+        tuple[frozenset[str], frozenset[str], frozenset[str]]:
+            工具、资源类型、产物格式。
+    """
+    tools: set[str] = set()
+    formats: set[str] = set()
+    for step in manifest.steps:
+        tool_type = str(getattr(step, "tool_type", "") or "").strip()
+        if tool_type:
+            tools.add(tool_type)
+        for alternative in getattr(step, "tool_alternatives", ()) or ():
+            alt_type = str(getattr(alternative, "tool_type", "") or "").strip()
+            if alt_type:
+                tools.add(alt_type)
+        render_format = str(getattr(step, "render_format", "") or "").strip()
+        if render_format:
+            formats.add(render_format)
+
+    resource_types: set[str] = set()
+    for capability in manifest.capability_keys:
+        mapped = _PLUGIN_CAPABILITY_RESOURCE_MAP.get(capability)
+        if mapped:
+            resource_types.add(mapped)
+    return frozenset(tools), frozenset(resource_types), frozenset(formats)
 
 
 class TaskRunner:
@@ -184,7 +237,7 @@ class TaskRunner:
             ApiError: 上述任一校验失败。
         """
         plugin_id = request.plugin_id
-        _, manifest, policies = await self._deps.plugins.prepare_task(
+        installation, manifest, policies = await self._deps.plugins.prepare_task(
             plugin_id=plugin_id, auth=auth
         )
         declared = set(manifest.capability_keys)
@@ -214,9 +267,28 @@ class TaskRunner:
         # 20001：声明级输入校验（必填 / 长度 / 选项）
         self._deps.engine.preflight(manifest, request.inputs, granted)
 
+        # B6：会话能力四层授权（仅当客户端提交 capabilities 时启用；
+        # 未提交时保持旧行为并登记为「继承调用者权限」待收敛路径）。
+        session_capabilities = await self._authorize_task_capabilities(
+            request=request,
+            auth=auth,
+            plugin_id=plugin_id,
+            installation=installation,
+            manifest=manifest,
+        )
+
         if idem_key:
             existing = await self._deps.tasks.find_by_idem(auth.tenant_id, plugin_id, idem_key)
             if existing is not None:
+                # 同键不同能力声明：拒绝，不静默沿用旧任务（否则客户端会以为
+                # 新声明生效了，实际跑的是旧范围）。
+                if session_capabilities is not None:
+                    snapshot = CapabilitySet.from_mapping(existing.session_capabilities)
+                    if snapshot.as_dict() != session_capabilities.as_dict():
+                        raise ApiError(
+                            ErrorCode.PARAM_INVALID,
+                            internal_detail="idempotency key reused with different capabilities",
+                        )
                 recorded = await self._create_data(existing, manifest)
                 return await self._with_quota_notice(recorded, auth)
         else:
@@ -286,6 +358,9 @@ class TaskRunner:
                 idem_key=idem_key,
                 plan_version=plan_version,
                 plan_expires_at=expires_at_value,
+                session_capabilities=(
+                    session_capabilities.as_dict() if session_capabilities is not None else {}
+                ),
             )
         )
         await self._deps.tasks.create_steps(steps)
@@ -409,6 +484,111 @@ class TaskRunner:
             logger.warning("task_quota_check_failed", detail=type(exc).__name__)
             return False
 
+    # ------------------------------------------------------------------
+    # B6 会话能力
+    # ------------------------------------------------------------------
+    async def _authorize_task_capabilities(
+        self,
+        *,
+        request: CreateTaskRequest,
+        auth: AuthContext,
+        plugin_id: str,
+        installation: Any,
+        manifest: PluginManifest,
+    ) -> CapabilitySet | None:
+        """建单期执行四层授权，并返回需要持久化的能力快照。
+
+        Args:
+            request: 创建请求。
+            auth: 鉴权上下文。
+            plugin_id: 插件 ID。
+            installation: 插件安装记录（提供租户与状态）。
+            manifest: 已解析的插件清单。
+
+        Returns:
+            CapabilitySet | None: 声明能力集；未声明时返回 None（继承权限）。
+
+        Raises:
+            ApiError: 任一层拒绝（权限/租户/资源 `20003`，能力越界 `14009`）。
+        """
+        if request.capabilities is None:
+            logger.info(
+                "authz_capability_inherited",
+                operation="plugin.task.create",
+                tenant_id=auth.tenant_id,
+                plugin_id=plugin_id,
+            )
+            return None
+        declared = request.capabilities.to_capability_set()
+        tools, resource_types, formats = _manifest_capability_requirements(manifest)
+        resource = (
+            ResourceRef(
+                resource_type="plugin",
+                resource_id=plugin_id,
+                tenant_id=getattr(installation, "tenant_id", auth.tenant_id),
+                state=getattr(installation, "status", ""),
+                required_state="enabled",
+            )
+            if installation is not None
+            else None
+        )
+        await get_authorization_service().authorize(
+            auth,
+            AuthzRequest(
+                tenant_id=auth.tenant_id,
+                permission=TOOL_EXECUTE_POINT if tools else "",
+                declared=declared,
+                required_tools=tools,
+                required_resource_types=resource_types,
+                required_artifact_formats=formats,
+                resource=resource,
+                operation="plugin.task.create",
+            ),
+        )
+        return declared
+
+    async def _enforce_record_capabilities(
+        self, record: TaskRecord, manifest: PluginManifest
+    ) -> None:
+        """执行期按持久化快照复核（只校验「操作是否在声明内」）。
+
+        上界已在建单期固化；这里不重算上界，避免执行期权限变化把已收敛的
+        声明放大。违规在建单后仍可能发生（快照被篡改 / 迁移异常），因此
+        开跑前 fail-closed。
+
+        Args:
+            record: 任务行。
+            manifest: 插件清单。
+
+        Raises:
+            ApiError: 快照不完整或操作超出声明（14009）。
+        """
+        if not record.session_capabilities:
+            return
+        try:
+            declared = CapabilitySet.from_mapping(record.session_capabilities)
+        except ValueError as exc:
+            # 快照被篡改/格式漂移：按「声明不可信」fail-closed，而不是退回继承权限。
+            raise ApiError(
+                ErrorCode.CAPABILITY_SCOPE_EXCEEDED,
+                internal_detail="persisted session capabilities are malformed",
+            ) from exc
+        if not declared.fully_declared:
+            raise ApiError(
+                ErrorCode.CAPABILITY_SCOPE_EXCEEDED,
+                internal_detail="persisted session capabilities are incomplete",
+            )
+        tools, resources, formats = _manifest_capability_requirements(manifest)
+        await get_authorization_service().enforce_declaration(
+            self._auth_of(record),
+            declared=declared,
+            required_tools=tools,
+            required_resource_types=resources,
+            required_artifact_formats=formats,
+            tenant_id=record.tenant_id,
+            operation="plugin.task.advance",
+        )
+
     async def _with_quota_notice(self, data: CreateTaskData, auth: AuthContext) -> CreateTaskData:
         """给 A1 成功响应补上非阻断额度提示（B27 `15006`）。
 
@@ -486,6 +666,7 @@ class TaskRunner:
         steps = await self._deps.tasks.list_steps(record.tenant_id, record.task_id)
         if not steps:  # pragma: no cover - 建任务时必写骨架
             return
+        await self._enforce_record_capabilities(record, manifest)
         artifacts = await self._deps.artifacts.list_by_task(record.tenant_id, record.task_id)
         outputs = {item.output_key: item.inline_text or item.external_url for item in artifacts}
         skipped_keys: set[str] = set()
@@ -1069,6 +1250,12 @@ class TaskRunner:
                 # 重试是"已确认过的执行"的延续，**不再二次计划**：
                 # 否则每次重试都停在 waiting_plan，用户会以为重试没生效。
                 plan_first=False,
+                # B6：重试必须复制原任务的能力快照，不允许借重试放大范围。
+                capabilities=(
+                    CapabilityDeclaration.from_mapping(record.session_capabilities)
+                    if record.session_capabilities
+                    else None
+                ),
             ),
             auth,
             retry_of=task_id,

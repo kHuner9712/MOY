@@ -13,6 +13,7 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.capability_scope import CapabilityDeclaration
 from app.schemas.common import PageQuery
 from app.schemas.model import ModelProfile, Usage
 from app.schemas.task import StepArtifact, StepFailure, TaskPlan
@@ -96,6 +97,7 @@ class CreateTaskRequest(BaseModel):
         goal: 任务目标（业务语言描述）。
         profile: 能力档位。
         tool_grants: 允许使用的工具类型列表。
+        capabilities: 会话级能力声明（可选；不传=继承调用者权限）。
         inputs: 任务输入。
         options: 执行选项。
     """
@@ -106,6 +108,13 @@ class CreateTaskRequest(BaseModel):
     goal: str = Field(default="", max_length=4000, description="任务目标")
     profile: ModelProfile = Field(default=ModelProfile.GENERAL, description="能力档位")
     tool_grants: list[str] = Field(default_factory=list, description="允许使用的工具类型列表")
+    capabilities: CapabilityDeclaration | None = Field(
+        default=None,
+        description=(
+            "会话级能力声明（B6，可选）。不传=继承调用者权限；传了则三个维度必填，"
+            "只能收窄、不可放大，越界返回 14009"
+        ),
+    )
     inputs: dict[str, Any] = Field(default_factory=dict, description="任务输入")
     options: TaskOptions = Field(default_factory=lambda: TaskOptions(), description="执行选项")
     plugin_id: str = Field(

@@ -19,8 +19,10 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Final
 
+from app.business.authz_service import TOOL_EXECUTE_POINT, get_authorization_service
 from app.business.usage_service import UsageService, get_usage_service
 from app.clients.dify_client import DifyClient, get_dify_client
+from app.core.capability import AuthzRequest
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.ids import new_resource_id
@@ -355,6 +357,39 @@ class AgentService:
     # ------------------------------------------------------------------
     # A1 创建任务
     # ------------------------------------------------------------------
+    async def _authorize_capabilities(self, request: CreateTaskRequest, auth: AuthContext) -> None:
+        """在普通任务建单期执行四层授权（B6）。
+
+        未提交 `capabilities` 时保持旧行为（继承调用者权限），只登记一次调试日志；
+        提交后则按「租户 → 权限点 → 会话能力 → 资源」校验，越界直接 `14009`。
+
+        Args:
+            request: 创建请求。
+            auth: 鉴权上下文。
+
+        Raises:
+            ApiError: 任一层拒绝（权限/租户/资源 `20003`，能力越界 `14009`）。
+        """
+        if request.capabilities is None:
+            logger.debug(
+                "authz_capability_inherited",
+                operation="agent.task.create",
+                tenant_id=auth.tenant_id,
+            )
+            return
+        declared = request.capabilities.to_capability_set()
+        required_tools = frozenset(request.tool_grants or ())
+        await get_authorization_service().authorize(
+            auth,
+            AuthzRequest(
+                tenant_id=auth.tenant_id,
+                permission=TOOL_EXECUTE_POINT if required_tools else "",
+                declared=declared,
+                required_tools=required_tools,
+                operation="agent.task.create",
+            ),
+        )
+
     async def create_task(self, request: CreateTaskRequest, auth: AuthContext) -> CreateTaskData:
         """创建 Agent 任务（异步执行）。
 
@@ -385,6 +420,7 @@ class AgentService:
                 前端就地展示、不弹错。域内码 `12001` 由 A3 查询路径抛、
                 `12003` 由 A4/A5 取消与重试路径抛，本方法均不产生。
         """
+        await self._authorize_capabilities(request, auth)
         if request.tool_grants:
             logger.info(
                 "agent_task_create_requested",

@@ -161,6 +161,9 @@ class TaskRecord:
         started_at: 开始时间。
         finished_at: 结束时间。
         expires_at: 产物过期时间（180 天）。
+        session_capabilities: 会话级能力快照（B6）。空字典=未声明（继承调用者
+            权限的历史任务）；非空时执行期按快照做准入。**建任务后不可变**，
+            重试只能复制、不能放大。
     """
 
     tenant_id: str = ""
@@ -200,6 +203,9 @@ class TaskRecord:
     plan_version: int = 0
     plan_expires_at: str = ""
     plan_confirmed_at: str = ""
+    #: 会话级能力快照（B6，迁移 0017）：`{}` = 未声明（继承权限）；
+    #: 非空 = `{"tools": [...], "resource_types": [...], "artifact_formats": [...]}`。
+    session_capabilities: dict[str, Any] = field(default_factory=dict)
 
     @property
     def terminal(self) -> bool:

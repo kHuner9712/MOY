@@ -203,6 +203,10 @@ CREATE TABLE IF NOT EXISTS plugin_task (
     plan_version     INTEGER     NOT NULL DEFAULT 0 CHECK (plan_version >= 0),
     plan_expires_at  TIMESTAMPTZ,
     plan_confirmed_at TIMESTAMPTZ,
+    -- B6：会话级能力快照（迁移 0017 同源）。
+    --   `{}` = 未提交能力声明（历史路径继承调用者权限，待收敛）；
+    --   非空 = 本次任务声明的工具/资源类型/产物格式，执行期按此准入。
+    session_capabilities JSONB  NOT NULL DEFAULT '{}'::jsonb,
     PRIMARY KEY (tenant_id, task_id),
     CONSTRAINT fk_task_of FOREIGN KEY (tenant_id, retry_of)
         REFERENCES plugin_task (tenant_id, task_id)

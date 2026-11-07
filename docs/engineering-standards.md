@@ -211,10 +211,10 @@
 
 ---
 
-## S8 规范强制化（六类约束与机械判据）
+## S8 规范强制化（七类约束与机械判据）
 
 S1–S7 是**条款**，附录 A 是**条款 → 门禁**映射。本节回答评审最常问的一句：
-「这条规范现在真的会拦住我吗？」——按六类给出**已生效的机械判据**。判据的
+「这条规范现在真的会拦住我吗？」——按七类给出**已生效的机械判据**。判据的
 可执行真源是 `deploy/validate_standards.py`（第 20 个 `.py` 门禁，CI
 `ci-adapter.yml`「工程规范强制门禁」+ `--self-test`），它**不重造**已有 19 道门禁，
 只补三类现有门禁覆盖不到的漂移：豁免基线偷偷加行、文档计数与磁盘不一致、
@@ -227,7 +227,7 @@ S1–S7 是**条款**，附录 A 是**条款 → 门禁**映射。本节回答�
 `deploy/validate_ci_paths.py` 把该脚本登记为 ci-web 的依赖输入（C-1），
 改脚本会同时触发两侧。
 
-### S8.1 六类约束
+### S8.1 七类约束
 
 | 类别 | 强制判据 | 红灯条件 | 复用的既有门禁 |
 | --- | --- | --- | --- |
@@ -237,6 +237,7 @@ S1–S7 是**条款**，附录 A 是**条款 → 门禁**映射。本节回答�
 | 配置一致 | STD-4：模板每个 `OA_*` 必须解析到 `Settings` 字段或 `INFRA_ENV_KEYS`（带理由）；每个 `Settings` 字段必须有 app 内消费方或登记到 `CODE_ONLY_FIELDS`（带理由+到期批次）；8 个安全敏感键必须在两份模板中显式出现 | 无主键、死配置、安全键缺失 | `validate_config_names.py` R1/R2、`validate_deploy.py` R2/R6、`validate_secrets.py` |
 | 文档一致 | STD-5：附录 A.1 的「N 个：M `.py` + K `.sh`」必须与磁盘一致；附录 A.5 清单必须逐条覆盖全部 `deploy/validate_*`，且四列非空 | 计数不符、清单缺行/多行、列空 | `validate_batch_clock.py --check-docs`（批次号四处同步）、`scripts/gen_delivery_manifest.py --check` |
 | 安全默认 | STD-6：`mcp_allowed_hosts` 默认空串（出站默认拒绝）、`mcp_allow_loopback=false`、`mcp_enabled=false`、`ssrf_proxy_url` 空；模板同名键保持同一默认 | 默认放开 / 模板打开开关 | `validate_secrets.py`（禁明文兜底）、H-02 的 20 条 SSRF 对抗用例、`validate_import_directions.py`（分层） |
+| 授权不可放大 | STD-7：权限判定必须按「租户 → 权限点 → 会话能力 → 资源」固定顺序执行，任一层拒绝即拒绝；会话能力只能由上层权限点派生收窄，客户端提交声明越界必须返回 `14009` 且**不得**求交后继续；拒绝必须留痕（层 / 权限点 / 请求项），不得记录正文与令牌 | 判定顺序颠倒、越界声明被夹紧后放行、拒绝无留痕或留痕含敏感明文 | `apps/adapter/tests/security/test_authz_four_layers.py`（28 条，`-m security` 真跑）、`check_error_catalog.py --strict`（`14009` 三处登记） |
 
 ### S8.2 豁免与到期
 

@@ -93,6 +93,9 @@ class ErrorCode(IntEnum):
     OWNER_PROTECTED = 14007
     #: 同级或更高级成员保护 / 操作自己
     MEMBER_MODIFICATION_FORBIDDEN = 14008
+    #: 会话能力声明超出调用者权限（B6）。**拒绝而非静默裁剪**：声明只能收窄，
+    #: 任何越界声明都必须原样拒绝，避免客户端误以为声明已生效。
+    CAPABILITY_SCOPE_EXCEEDED = 14009
 
     # ---------------- 计费与订阅域 15001-15099（阶段二 B09，架构文档 §7.1） ----------------
     #: 套餐能力未开通（BL3 BL6）
@@ -345,6 +348,12 @@ ERROR_REGISTRY: Final[dict[ErrorCode, ErrorSpec]] = {
         403,
         "你没有权限修改该成员",
         "同级或更高级成员保护 / 操作自己",
+    ),
+    ErrorCode.CAPABILITY_SCOPE_EXCEEDED: ErrorSpec(
+        ErrorCode.CAPABILITY_SCOPE_EXCEEDED,
+        403,
+        "本次会话的能力设置超出你的权限范围，请调整后重试",
+        "会话能力声明（工具/资源类型/产物格式）越出调用者权限上界（B6）",
     ),
     # 计费与订阅域（文案取自架构文档 §7.1，**禁止**改写为技术语言）
     ErrorCode.PLAN_FEATURE_UNAVAILABLE: ErrorSpec(
