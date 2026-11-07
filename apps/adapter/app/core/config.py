@@ -98,9 +98,11 @@ class Settings(BaseSettings):
     default_tenant_id: str = "default"
     #: 跨租户切换时的成员关系校验开关（AR-017 配套回退开关）。
     #:
-    #: - `auto`（默认）：仅当 `deploy_mode == "saas"` **且** `auth_mode != "stub"` 时校验。
-    #:   私有化模式没有跨租户这回事；stub 模式是本地联调（不验签），查成员关系只会
-    #:   让「随手编个令牌」的联调流程失效，且 stub 在生产被 `validate_auth_startup` 拦死。
+    #: - `auto`（默认）：仅当 `deploy_mode == "saas"` 时校验（B-5 起**不再排除 stub**）。
+    #:   私有化模式没有跨租户这回事；此前排除 stub 的理由是「本地联调 + stub 被启动期
+    #:   防呆拦死」，但 `env` 默认 `development` 时启动期 8 条判据整体失效，
+    #:   「stub 不存在于线上」只是假设。现在 stub 也走 AR-017，本地联调需给目标租户
+    #:   补一条组织/角色归属（与 oidc 同口径）。
     #: - `always`：任何模式都校验（灰度期想收紧时用）。
     #:   **已知限制**：`always` 在**私有化模式**下会把「令牌声明被忽略」也判成跨租户
     #:   （私有化模式下生效租户恒为 `default`，只要令牌声明不是 `default` 就不相等），

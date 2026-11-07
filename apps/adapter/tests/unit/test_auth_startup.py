@@ -17,14 +17,18 @@ from app.core.security import validate_auth_startup
 def test_production_stub_is_rejected() -> None:
     """生产环境使用桩鉴权 → 30004（不验签等于关闭鉴权）。"""
     with pytest.raises(ApiError) as excinfo:
-        validate_auth_startup(Settings(env="production", auth_mode="stub", jwt_secret="a" * 32))
+        validate_auth_startup(
+            Settings(env="production", auth_mode="stub", jwt_secret="a" * 32, host="127.0.0.1")
+        )
     assert excinfo.value.code == ErrorCode.CONFIG_ERROR
 
 
 def test_staging_stub_is_rejected() -> None:
     """预发同样按生产口径拦截（预发常被用来做上线前演练，数据是真的）。"""
     with pytest.raises(ApiError) as excinfo:
-        validate_auth_startup(Settings(env="staging", auth_mode="stub", jwt_secret="a" * 32))
+        validate_auth_startup(
+            Settings(env="staging", auth_mode="stub", jwt_secret="a" * 32, host="127.0.0.1")
+        )
     assert excinfo.value.code == ErrorCode.CONFIG_ERROR
 
 
@@ -53,8 +57,10 @@ def test_production_oidc_with_secret_passes() -> None:
 
 
 def test_development_stub_is_allowed() -> None:
-    """本地开发允许桩模式（离线联调与演示需要）。"""
-    validate_auth_startup(Settings(env="development", auth_mode="stub", jwt_secret=""))
+    """本地开发允许桩模式，但**仅限 loopback 监听**（B-5 硬化 3）。"""
+    validate_auth_startup(
+        Settings(env="development", auth_mode="stub", jwt_secret="", host="127.0.0.1")
+    )
 
 
 # ===========================================================================
@@ -212,11 +218,48 @@ def test_auto_mode_passes_in_production() -> None:
     )
 
 
-def test_downgrade_switch_off_allowed_in_test_env() -> None:
-    """development/test 不受新门禁影响（离线单测需要能构造降级态）。"""
+def test_downgrade_switch_off_rejected_in_test_env_without_explicit_allow() -> None:
+    """B-5 行为变更：`off` 在 test/development 下也**不得静默生效**。
+
+    旧行为是「development/test 因启动期提前 return，off 连 WARNING 都没有就生效」。
+    现在所有 env 都要求 `off` + `allow_security_downgrade=true` 双显式声明；
+    夹具补 loopback host 是为了避开硬化 3，让用例精确测「降级开关」这一条。
+    """
+    with pytest.raises(ApiError) as excinfo:
+        validate_auth_startup(
+            Settings(
+                env="test",
+                auth_mode="stub",
+                jwt_secret="",
+                host="127.0.0.1",
+                tenant_membership_check="off",
+            )
+        )
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+    assert "OA_ALLOW_SECURITY_DOWNGRADE" in excinfo.value.internal_detail
+
+
+def test_downgrade_switch_off_explicitly_allowed_in_development_logs_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """路径 1：development 下显式放行的降级必须留下**显著 ERROR** 留痕。
+
+    Args:
+        capsys: 结构化日志直写 stdout，用 capsys 而非 caplog。
+    """
     validate_auth_startup(
-        Settings(env="test", auth_mode="stub", jwt_secret="", tenant_membership_check="off")
+        Settings(
+            env="development",
+            auth_mode="stub",
+            jwt_secret="",
+            host="127.0.0.1",
+            tenant_membership_check="off",
+            allow_security_downgrade=True,
+        )
     )
+    captured = capsys.readouterr().out
+    assert "security_downgrade_enabled" in captured
+    assert "ERROR" in captured or "error" in captured
 
 
 # ===========================================================================
@@ -261,7 +304,9 @@ def test_production_blank_public_base_url_is_rejected() -> None:
 def test_development_does_not_require_public_base_url() -> None:
     """development 不拦（本地演示没有域名，且该环境不对外）。"""
     validate_auth_startup(
-        Settings(env="development", auth_mode="stub", jwt_secret="", public_base_url="")
+        Settings(
+            env="development", auth_mode="stub", jwt_secret="", public_base_url="", host="127.0.0.1"
+        )
     )
 
 
@@ -385,6 +430,48 @@ def test_http_public_base_url_does_not_warn_in_development(
             env="development",
             auth_mode="stub",
             public_base_url="http://localhost:3000",
+            host="127.0.0.1",
         )
     )
     assert "cookie_secure_disabled" not in capsys.readouterr().out
+
+
+# ===========================================================================
+# B-5 硬化 3：stub + 非 loopback 监听 → 30004（**不受 env 限制**）
+# ===========================================================================
+
+
+@pytest.mark.parametrize("env_name", ["development", "test", "staging", "production"])
+def test_stub_non_loopback_bind_is_rejected_in_every_env(env_name: str) -> None:
+    """`auth_mode=stub` 且 `OA_HOST` 非回环 → 所有 env 一律 30004。
+
+    这条判据是「`env` 默认 development + `auth_mode` 默认 stub + `host` 默认
+    0.0.0.0」这条越权链唯一的机械阻断点：下方 8 条判据在 development/test
+    被提前 return，若无本判据，漏注入配置就会得到一个完全不验签的服务。
+
+    Args:
+        env_name: 环境名（四种全部覆盖，证明不受 env 限制）。
+    """
+    with pytest.raises(ApiError) as excinfo:
+        validate_auth_startup(
+            Settings(
+                env=env_name,  # type: ignore[arg-type]
+                auth_mode="stub",
+                jwt_secret="a" * 32,
+                host="0.0.0.0",  # noqa: S104 - 负样本：刻意绑定全部网卡
+            )
+        )
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+    assert "OA_HOST" in excinfo.value.internal_detail
+
+
+@pytest.mark.parametrize("loopback", ["127.0.0.1", "localhost", "::1"])
+def test_stub_loopback_bind_is_allowed(loopback: str) -> None:
+    """显式回环地址仍允许本机联调（判据不能误伤合法开发路径）。
+
+    Args:
+        loopback: 回环地址字面量。
+    """
+    validate_auth_startup(
+        Settings(env="development", auth_mode="stub", jwt_secret="", host=loopback)
+    )

@@ -39,6 +39,7 @@ def _settings(max_upload_bytes: int = 52_428_800) -> Settings:
         deploy_mode="private",
         downstream_enabled=False,
         auth_mode="stub",
+        host="127.0.0.1",  # B-5：stub 仅 loopback 可启动
         jwt_secret=TEST_JWT_SECRET,
         ratelimit_enabled=False,
         background_jobs_enabled=False,

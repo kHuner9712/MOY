@@ -154,6 +154,7 @@ class TestMetricsEndpoint:
                 env="test",
                 business_store="memory",
                 auth_mode="stub",
+                host="127.0.0.1",  # B-5：stub 仅 loopback 可启动
                 jwt_secret="x",
                 ratelimit_enabled=False,
             )
@@ -177,6 +178,7 @@ class TestMetricsEndpoint:
                 env="test",
                 business_store="memory",
                 auth_mode="stub",
+                host="127.0.0.1",  # B-5：stub 仅 loopback 可启动
                 jwt_secret="x",
                 ratelimit_enabled=False,
             )
@@ -204,6 +206,7 @@ class TestMetricsEndpoint:
                 env="test",
                 business_store="memory",
                 auth_mode="stub",
+                host="127.0.0.1",  # B-5：stub 仅 loopback 可启动
                 jwt_secret="x",
                 ratelimit_enabled=False,
             )

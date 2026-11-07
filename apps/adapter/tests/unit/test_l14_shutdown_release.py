@@ -48,6 +48,7 @@ def _settings(**overrides: Any) -> Settings:
         "deploy_mode": "private",
         "business_store": "memory",
         "auth_mode": "stub",
+        "host": "127.0.0.1",  # B-5：stub 仅 loopback 可启动
         "jwt_secret": "l14-shutdown-unit-secret",
         "downstream_enabled": False,
         "ratelimit_enabled": False,

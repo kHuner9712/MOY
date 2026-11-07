@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -760,7 +761,7 @@ async def get_auth_context(request: Request) -> AuthContext:
     return auth
 
 
-def _has_cross_tenant_privilege(auth: AuthContext) -> bool:
+def _has_cross_tenant_privilege(auth: AuthContext, settings: Settings | None = None) -> bool:
     """判断令牌是否为「可跨租户」的平台运维令牌。
 
     **直接复用 `is_platform_scope`，不再另写一套条件**：两处口径曾经各自演进
@@ -768,12 +769,27 @@ def _has_cross_tenant_privilege(auth: AuthContext) -> bool:
     另一处仍按旧口径放行，形成「看起来修了、实际还能进」的形态（SEC-02）。
     跨租户特权与平台视角本来就是同一件事，只保留一个判定出口。
 
+    **B-5 硬化**：`auth_mode=stub` 不验签，`roles` 声明（含通配 `*`）由调用方
+    任意填写，不具备任何可信度；此时若仍按 `is_platform_scope` 授予跨租户特权，
+    `get_request_context` 会跳过 AR-017 成员校验 → 任意 `X-Tenant-Id` 越权。
+    故桩模式一律不授予跨租户特权，让请求落回成员校验。
+
     Args:
         auth: 鉴权上下文（**令牌原始值**，不是收敛后的值）。
+        settings: 可选配置实例（缺省读全局单例）。
 
     Returns:
         bool: 具备跨租户特权返回 True。
     """
+    conf = settings or get_settings()
+    if conf.auth_mode == "stub":
+        logger.warning(
+            "platform_scope_denied_in_stub_mode",
+            user_id=auth.user_id,
+            token_tenant=auth.tenant_id,
+            hint="stub 不验签，roles 声明不可信，不授予跨租户特权",
+        )
+        return False
     return is_platform_scope(auth, auth.tenant_id)
 
 
@@ -835,11 +851,13 @@ def _should_check_membership(auth: AuthContext, settings: Settings) -> bool:
 
     - `off`：跳过（紧急回退，属于安全降级，仅在线上止血时使用）；
     - `always`：总是校验；
-    - `auto`：仅 `deploy_mode == "saas"` 且 `auth_mode != "stub"` 时校验。
+    - `auto`：仅 `deploy_mode == "saas"` 时校验（**B-5 起不再排除 stub**）。
 
-    `auto` 为什么排除 stub：stub 不验签，本地联调常用手编令牌+任意租户头，
-    强校验会让联调流程失效；而 stub 在 staging/production 已被
-    `validate_auth_startup` 拦成启动失败，不存在"线上靠自动档漏校验"的窗口。
+    B-5 之前 `auto` 排除 stub：理由是「stub 是本地联调、且生产被启动期防呆拦住」。
+    但 `OA_ENV` 默认 `development`（`config.py:51`），启动期 8 条判据整体不生效，
+    「stub 不存在于线上」只是假设而非机械保证；一旦漏注入配置，
+    `saas + stub + auto` 就是一条完整的跨租户越权链。现在 stub 也走 AR-017，
+    代价仅是本地联调需要给目标租户补一条组织/角色归属（与 oidc 同口径）。
 
     Args:
         auth: 鉴权上下文（仅在 `off` 档写告警日志时使用，不参与判定）。
@@ -859,7 +877,7 @@ def _should_check_membership(auth: AuthContext, settings: Settings) -> bool:
         return False
     if mode == "always":
         return True
-    return settings.deploy_mode == "saas" and settings.auth_mode != "stub"
+    return settings.deploy_mode == "saas"
 
 
 async def get_request_context(
@@ -906,7 +924,7 @@ async def get_request_context(
     settings = get_request_settings(request)
     tenant_id = resolve_tenant_id(request, auth, settings)
     if tenant_id != auth.tenant_id:
-        privileged = _has_cross_tenant_privilege(auth)
+        privileged = _has_cross_tenant_privilege(auth, settings)
         if tenant_id == OPS_TENANT_ID and not privileged:
             # 先于任何仓储查询拒绝：`__platform__` 不是真实租户，流入 RLS 会变 500
             logger.warning(
@@ -1220,6 +1238,28 @@ def _jwt_secret_placeholder_reason(secret: str) -> str:
     return ""
 
 
+def _is_loopback_bind(host: str) -> bool:
+    """判断监听地址是否**仅限本机回环**（B-5 硬化 3 的判据）。
+
+    只认显式回环地址：`localhost`、`127.0.0.0/8`、`::1`。
+    `0.0.0.0`（容器默认，监听全部网卡）与任何具体网卡 IP 都算**对外可达**；
+    无法解析的地址按「非回环」处理（fail-closed，不把看不懂的值当安全值）。
+
+    Args:
+        host: `Settings.host`（`OA_HOST`）。
+
+    Returns:
+        bool: 仅限本机回环返回 True。
+    """
+    normalized = (host or "").strip().lower()
+    if normalized in {"localhost", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 def validate_auth_startup(settings: Settings | None = None) -> None:
     """启动期鉴权防呆（OA-REVIEW-002 / S1）。
 
@@ -1244,7 +1284,11 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
     7. 同一环境下 `jwt_algorithm` 以 `RS` 开头但 `keycloak_base_url` 为空 →
        30004（K6 / R8：JWKS 地址只能由它推导，否则每个请求都 20002，而真因是配置）；
     8. 同一环境下 `OA_PUBLIC_BASE_URL` 不是 `https://` → **只告警不阻断**
-       （P0-5 §2.4.6：会话 Cookie 会丢掉 `Secure`，会话标识在明文 HTTP 上传输）。
+       （P0-5 §2.4.6：会话 Cookie 会丢掉 `Secure`，会话标识在明文 HTTP 上传输）；
+    9. **不受 env 限制（B-5 前置判据）**：`auth_mode=stub` 且 `OA_HOST` 非回环
+       → 30004；`tenant_membership_check=off` 未经 `allow_security_downgrade=true`
+       显式放行或已过 deadline → 30004；显式放行时对所有 env 写
+       `security_downgrade_enabled` ERROR 留痕。
 
     第 8 条为什么**不是**判据：私有化纯 HTTP 是合法现场（客户内网、无域名无证书），
     屏蔽它等于把这类部署挡在门外。但"能部署"不等于"可以没人知道"——故用
@@ -1255,11 +1299,14 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
     第 5 条的理由：`off` 会跳过跨租户成员校验，等于允许「持 A 租户令牌 +
     `X-Tenant-Id: B`」跨租户读写。它必须保留（线上卡死时要能止血），但**不能
     「配一行就生效」**——否则它从止血手段变成漏洞：谁都能在 .env 里加一行关掉隔离，
-    系统只打一条 WARNING 就放行。所以生产/预发要它生效必须**两处同时显式声明**
+    系统只打一条 WARNING 就放行。    所以**所有环境**要它生效必须**两处同时显式声明**
     （`off` + `allow_security_downgrade=true`），让"我确实要降级"成为一个
-    可审计的动作而不是一次手滑。
+    可审计的动作而不是一次手滑（B-5 起不再只覆盖生产/预发）。
 
-    development/test 不拦：离线单测与本地演示需要桩模式与降级态，且这两个环境不对外。
+    其余 8 条判据仍只在 staging/production 生效：离线单测与本地演示需要桩模式、
+    空密钥等降级态。但第 9 条**必须放在那道提前 return 之前**——`config.py` 的
+    `env` 默认就是 `development`，若跟着一起 return，「漏注入 OA_ENV/OA_AUTH_MODE
+    → saas + stub + 非 loopback 监听」这条越权链就完全没有机械阻断点。
 
     Args:
         settings: 可选配置实例（注入优先）。
@@ -1269,6 +1316,76 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
             签名密钥，或未经放行就关闭跨租户成员校验（30004）。
     """
     conf = settings or get_settings()
+
+    # ------------------------------------------------------------------
+    # B-5 前置硬判据（**必须在 env 提前 return 之前，对所有 env 生效**）
+    #
+    # 为什么前置：`config.py:51` 的 `env` 默认 `development`，落在
+    # `_INSECURE_AUTH_ENVS` 里，下方 8 条判据整体被 `return` 跳过。
+    # 漏注入 OA_ENV / OA_AUTH_MODE 时会得到「saas + stub + 0.0.0.0」——
+    # 不验签、roles 可伪造、X-Tenant-Id 可跨租户。这两条判据不依赖 env，
+    # 是那条链唯一的机械阻断点。
+    # ------------------------------------------------------------------
+    if conf.auth_mode == "stub" and not _is_loopback_bind(conf.host):
+        logger.error(
+            "auth_mode_stub_exposed",
+            env=conf.env,
+            host=conf.host,
+            hint="stub 不验签：非 loopback 监听等于把未鉴权服务暴露到网络",
+        )
+        raise ApiError(
+            ErrorCode.CONFIG_ERROR,
+            internal_detail=(
+                f"OA_AUTH_MODE=stub 且 OA_HOST={conf.host!r} 不是回环地址。"
+                "桩模式不校验令牌签名，任何人都能自造 sub/tenant_id/roles；"
+                "监听全部网卡时等于把未鉴权服务暴露到网络。"
+                "修复：设 OA_AUTH_MODE=oidc 并配置 OA_JWT_SECRET；"
+                "如确需本地联调，显式设 OA_HOST=127.0.0.1（仅本机可达）。"
+            ),
+        )
+
+    if conf.tenant_membership_check == "off":
+        # QA-07：时效检查——off 且 deadline 已过 = 安全配置错误（所有 env 生效）。
+        deadline = conf.tenant_membership_check_deadline
+        if deadline is not None:
+            now = datetime.now(tz=deadline.tzinfo) if deadline.tzinfo else datetime.now()
+            if now > deadline:
+                logger.error(
+                    "security_downgrade_deadline_expired",
+                    env=conf.env,
+                    deadline=deadline.isoformat(),
+                )
+                raise ApiError(
+                    ErrorCode.CONFIG_ERROR,
+                    internal_detail=(
+                        f"OA_TENANT_MEMBERSHIP_CHECK=off 的时效已过期"
+                        f"（OA_TENANT_MEMBERSHIP_CHECK_DEADLINE={deadline.isoformat()}）："
+                        "紧急止血不允许无限期开启。请将 OA_TENANT_MEMBERSHIP_CHECK 改回 auto"
+                        "（如确需延长止血，先修校验问题再更新 deadline）。"
+                    ),
+                )
+        if not conf.allow_security_downgrade:
+            logger.error("security_downgrade_not_allowed", env=conf.env)
+            raise ApiError(
+                ErrorCode.CONFIG_ERROR,
+                internal_detail=(
+                    f"当前环境为 {conf.env}，但 OA_TENANT_MEMBERSHIP_CHECK=off："
+                    "该开关会跳过跨租户成员校验，等于允许「持 A 租户令牌 + "
+                    "X-Tenant-Id: B」跨租户读写。任何环境都禁用未经放行的安全降级；"
+                    "如确需临时止血，必须同时显式设置 OA_ALLOW_SECURITY_DOWNGRADE=true，"
+                    "并建议配置 OA_TENANT_MEMBERSHIP_CHECK_DEADLINE 限定恢复时限。"
+                ),
+            )
+        # 已显式放行：对所有 env 都写 ERROR 留痕（原先 development/test 因提前
+        # return 连 WARNING 都没有，等于降级静默生效）。
+        logger.error(
+            "security_downgrade_enabled",
+            env=conf.env,
+            tenant_membership_check=conf.tenant_membership_check,
+            deadline=(deadline.isoformat() if deadline else ""),
+            hint="IDOR 窗口已开启：跨租户切换未做成员校验；止血后必须立即改回 auto",
+        )
+
     if conf.env in _INSECURE_AUTH_ENVS:
         logger.debug("auth_startup_check_skipped", env=conf.env, auth_mode=conf.auth_mode)
         return
@@ -1366,56 +1483,8 @@ def validate_auth_startup(settings: Settings | None = None) -> None:
                 "改完还需重跑 `sh deploy/keycloak/render-realm.sh` 并重建 web 镜像。"
             ),
         )
-    if conf.tenant_membership_check == "off":
-        # QA-07（审计 2026-10-28）：时效检查——off 且 deadline 已过 = 安全配置错误，
-        # 启动即失败（fail loud）。止血开关不允许"忘了开回来"还一直开着。
-        deadline = conf.tenant_membership_check_deadline
-        if deadline is not None:
-            now = datetime.now(tz=deadline.tzinfo) if deadline.tzinfo else datetime.now()
-            if now > deadline:
-                logger.error(
-                    "security_downgrade_deadline_expired",
-                    env=conf.env,
-                    deadline=deadline.isoformat(),
-                )
-                raise ApiError(
-                    ErrorCode.CONFIG_ERROR,
-                    internal_detail=(
-                        f"OA_TENANT_MEMBERSHIP_CHECK=off 的时效已过期"
-                        f"（OA_TENANT_MEMBERSHIP_CHECK_DEADLINE={deadline.isoformat()}）："
-                        "紧急止血不允许无限期开启。请将 OA_TENANT_MEMBERSHIP_CHECK 改回 auto"
-                        "（如确需延长止血，先修校验问题再更新 deadline）。"
-                    ),
-                )
-        if not conf.allow_security_downgrade:
-            logger.error("security_downgrade_not_allowed_in_production", env=conf.env)
-            raise ApiError(
-                ErrorCode.CONFIG_ERROR,
-                internal_detail=(
-                    f"当前环境为 {conf.env}，但 OA_TENANT_MEMBERSHIP_CHECK=off："
-                    "该开关会跳过跨租户成员校验，等于允许「持 A 租户令牌 + "
-                    "X-Tenant-Id: B」跨租户读写。生产/预发禁用安全降级开关；"
-                    "如确需临时止血，必须同时显式设置 OA_ALLOW_SECURITY_DOWNGRADE=true，"
-                    "并建议配置 OA_TENANT_MEMBERSHIP_CHECK_DEADLINE 限定恢复时限。"
-                ),
-            )
-        if conf.env not in _INSECURE_AUTH_ENVS:
-            # QA-07：生产/预发放行的降级必须以 error 横幅出现（不再是 WARNING）——
-            # 此刻系统存在IDOR 窗口：跨租户读写不校验成员关系。
-            logger.error(
-                "security_downgrade_enabled",
-                env=conf.env,
-                tenant_membership_check=conf.tenant_membership_check,
-                deadline=(deadline.isoformat() if deadline else ""),
-                hint="IDOR 窗口已开启：跨租户切换未做成员校验；止血后必须立即改回 auto",
-            )
-        else:
-            logger.warning(
-                "security_downgrade_enabled",
-                env=conf.env,
-                tenant_membership_check=conf.tenant_membership_check,
-                hint="安全降级已显式放行：跨租户切换未做成员校验，止血后必须改回 auto",
-            )
+    # `tenant_membership_check=off` 的守卫（时效 / 双显式放行 / 显著留痕）已前置到
+    # 函数开头的 B-5 段，对**所有 env** 生效；此处不再重复判定，避免同一开关两套口径。
     if conf.env in _COOKIE_SECURE_WARN_ENVS and not is_secure_from_base_url(conf.public_base_url):
         # P0-5 §2.4.6：`Secure` 只由 `OA_PUBLIC_BASE_URL` 的 scheme 派生，**不读
         # `X-Forwarded-Proto`**（那个头可以让任何客户端决定会话是否加密）。

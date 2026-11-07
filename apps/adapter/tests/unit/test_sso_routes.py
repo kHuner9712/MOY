@@ -332,6 +332,7 @@ def test_stub_mode_returns_503_without_cookies(
             env="test",
             deploy_mode="private",
             auth_mode="stub",
+            host="127.0.0.1",  # B-5：stub 仅 loopback 可启动
             jwt_secret="unit-test-jwt-secret-32-bytes-long",
             ratelimit_enabled=False,
             background_jobs_enabled=False,

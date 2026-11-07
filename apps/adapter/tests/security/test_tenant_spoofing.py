@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient
 
 from app.core import security as security_module
 from app.core.config import Settings
-from app.core.errors import ErrorCode
+from app.core.errors import ApiError, ErrorCode
 from app.db.repositories.org import MemberLink, get_org_store
 from app.db.repositories.role import get_role_store
 from app.main import create_app
@@ -76,6 +76,9 @@ def _settings(**overrides: Any) -> Settings:
         "deploy_mode": "saas",
         "downstream_enabled": False,
         "auth_mode": "oidc",
+        # B-5 硬化 3：stub 用例必须显式声明 loopback 才能启动应用，
+        # 否则会在 lifespan 撞 30004，测不到 AR-017 成员校验本身。
+        "host": "127.0.0.1",
         "jwt_secret": REAL_SECRET,
         "jwt_algorithm": "HS256",
         "jwt_audience": "officeai-adapter",
@@ -401,8 +404,12 @@ def test_membership_check_off_skips_validation() -> None:
     这是**故意的安全降级**：开关存在的意义是"校验逻辑本身导致线上不可用"时止血，
     所以这里断言"确实放过了"，好让开关失效这件事在测试里也是可见的
     （而不是某天被人删掉后没人发现）。
+
+    B-5 起 `off` 必须**同时**显式 `allow_security_downgrade=true` 才能启动
+    （所有 env 生效），故夹具补上放行条件；否则会在 lifespan 撞 30004，
+    测不到「off 确实跳过成员校验」这件事本身。
     """
-    settings = _settings(tenant_membership_check="off")
+    settings = _settings(tenant_membership_check="off", allow_security_downgrade=True)
     app = create_app(settings)
     with TestClient(app) as client:
         response = client.get(
@@ -413,8 +420,13 @@ def test_membership_check_off_skips_validation() -> None:
     assert response.json()["data"]["tenant"]["tenant_id"] == TENANT_B
 
 
-def test_membership_check_auto_skips_stub_mode() -> None:
-    """`auto` 档在 stub 模式（本地联调）下不校验，避免手编令牌联调被挡。"""
+def test_membership_check_auto_still_checks_stub_mode() -> None:
+    """B-5 行为变更：`auto` 档在 stub + saas 下**仍执行** AR-017 成员校验。
+
+    旧行为（本用例原名 `test_membership_check_auto_skips_stub_mode`）是 stub 下直接
+    放过，配合「`env` 默认 development → 启动期 8 条判据整体失效」构成可复现越权链。
+    现在 stub 也必须证明自己是目标租户成员，否则 403 / 20003。
+    """
     settings = _settings(auth_mode="stub")
     app = create_app(settings)
     with TestClient(app) as client:
@@ -422,7 +434,8 @@ def test_membership_check_auto_skips_stub_mode() -> None:
             PROFILE_PATH,
             headers=_headers(_issue_token(tenant_id=TENANT_A, user_id=USER_A), TENANT_B),
         )
-    assert response.status_code == 200
+    assert response.status_code == 403
+    assert response.json()["code"] == int(ErrorCode.FORBIDDEN)
 
 
 def test_membership_check_always_enforced_even_in_private_mode() -> None:
@@ -437,6 +450,69 @@ def test_membership_check_always_enforced_even_in_private_mode() -> None:
     # 私有化模式下生效租户被收敛为 default，用户在 default 无任何归属 → 拒绝
     assert response.status_code == 403
     assert response.json()["code"] == int(ErrorCode.FORBIDDEN)
+
+
+# ===========================================================================
+# 用例 7b：B-5 硬化回归（stub 不再是绕过 AR-017 成员校验的后门）
+# ===========================================================================
+
+
+def test_stub_auto_triggers_membership_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """硬化 1：`auto` 在 stub + saas 下必须真的调用 `assert_tenant_membership`。
+
+    用哨兵记录调用而不是只看最终 403：否则「端点级守卫顺带救绿」会让本用例
+    在成员校验被删掉时仍然通过（与 `__platform__` 用例同一条教训）。
+    """
+    calls: list[tuple[str, str]] = []
+
+    async def _spy(auth: Any, tenant_id: str, settings: Settings) -> None:
+        calls.append((auth.user_id, tenant_id))
+        raise ApiError(ErrorCode.FORBIDDEN, internal_detail="tenant membership required")
+
+    monkeypatch.setattr(security_module, "assert_tenant_membership", _spy)
+    app = create_app(_settings(auth_mode="stub"))
+    with TestClient(app) as client:
+        response = client.get(
+            PROFILE_PATH,
+            headers=_headers(_issue_token(tenant_id=TENANT_A, user_id=USER_A), TENANT_B),
+        )
+    assert calls == [(USER_A, TENANT_B)], "stub 下 auto 档必须触发 AR-017 成员校验"
+    assert response.status_code == 403
+
+
+def test_stub_wildcard_role_cannot_bypass_membership() -> None:
+    """硬化 2：stub 下 `roles=["*"]` 不再获得跨租户特权、不能跳过成员校验。
+
+    stub 不验签，通配角色只是调用方自己写进令牌的字符串；旧实现里
+    `is_platform_scope` 会据此返回 privileged=True，`get_request_context`
+    随即整段跳过 AR-017 → 任意 `X-Tenant-Id` 越权。
+    """
+    app = create_app(_settings(auth_mode="stub"))
+    with TestClient(app) as client:
+        response = client.get(
+            PROFILE_PATH,
+            headers=_headers(
+                _issue_token(tenant_id=TENANT_A, user_id=USER_A, roles=["*"]), TENANT_B
+            ),
+        )
+    assert response.status_code == 403
+    assert response.json()["code"] == int(ErrorCode.FORBIDDEN)
+
+
+def test_saas_oidc_bootstrap_header_default_is_denied(saas_client: TestClient) -> None:
+    """ADR-0007 §4 负样本：令牌 A + `X-Tenant-Id: default`（非 default 成员）→ 403。
+
+    锁住「自举毒化」：前端若把 `currentTenantId` 初值改回 `'default'`，
+    首个 profile 请求带 default 头会把会话固定在 default 租户，
+    或在用户非 default 成员时直接 403 落到 error 态。
+    """
+    token = _issue_token(tenant_id=TENANT_A, user_id=USER_A)
+    response = saas_client.get(PROFILE_PATH, headers=_headers(token, PRIVATE_TENANT))
+    assert response.status_code == 403
+    body = response.json()
+    assert body["code"] == int(ErrorCode.FORBIDDEN)
+    assert body["message"] == "当前账号没有该操作的权限"
+    assert PRIVATE_TENANT not in body["message"]
 
 
 # ===========================================================================

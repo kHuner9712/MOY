@@ -270,6 +270,9 @@ def settings() -> Settings:
         deploy_mode="private",
         downstream_enabled=False,
         auth_mode="stub",
+        # B-5 硬化 3：stub 仅允许 loopback 监听，否则 validate_auth_startup 判 30004。
+        # 夹具是 ASGI 内存传输、从不绑定端口，显式声明 127.0.0.1 才不误伤合法单测。
+        host="127.0.0.1",
         jwt_secret=TEST_JWT_SECRET,
         ratelimit_enabled=False,
         # 阶段四 T4-03.2：测试环境**一律不启动**后台轮询（`should_start_runner` 另有
