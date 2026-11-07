@@ -332,8 +332,8 @@
 ### 5.1 代码规范
 
 - 前后端均采用 ESLint / 对应语言 Lint 工具做强制代码检查，不符合规范代码禁止合并
-- 核心模块必须编写单元测试，核心接口覆盖率不低于 80%
-- 严格遵循 Git Flow 工作流，所有功能通过 Feature 分支开发，Code Review 后方可合并主干
+- 核心模块必须编写单元测试；**覆盖率门槛以 CI 配置为唯一真源**（适配层 `--cov-fail-under=85`、PG 仓储 `--fail-under=88`、前端四阈值见 `apps/web/vitest.config.mts`），门槛只升不降，本文不写死数字
+- **分支策略：主干开发**（`main` 唯一主干 + 短生命周期 `feature/*` + PR 合入 + tag 发版，`hotfix/*` 仍须 PR；不设 `develop`/`release/*`，见 `docs/architecture-v1.0.md` §9.4 与 `CONTRIBUTING.md` §2）
 
 ### 5.2 接口规范
 

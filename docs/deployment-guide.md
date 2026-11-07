@@ -118,9 +118,9 @@
 │   ├── images.lock                # 镜像清单：名称 + 标签 + 指纹（digest）
 │   ├── nginx/                     # 入口网关配置
 │   ├── migrations/                # 增量变更脚本（含 rollback/ 下的回退脚本）
-│   ├── offline/
-│   │   ├── images/                # 镜像归档 *.tar + checksums.sha256
-│   │   └── plugins/               # 模型服务插件离线包
+│   ├── offline/                   # [待排期] 打包脚本未实现，V1.0 仓库内仅 README + plugins
+│   │   ├── images/                # [待排期，仓库内不存在] 镜像归档 *.tar + checksums.sha256
+│   │   └── plugins/               # 模型服务插件离线包（当前 1 个 .difypkg）
 │   ├── backup.sh / restore.sh     # 备份 / 恢复
 │   └── validate_*.py              # 交付自检脚本
 ├── docs/                          # 本手册与合规文档
@@ -128,7 +128,11 @@
 └── (可选) sbom.cdx.json           # 组件清单（供客户安全评审）
 ```
 
+> **状态标注（离线包待排期，2026-11-06 复核）**：以上 `deploy/offline/images/` 与 `checksums.sha256` 是**交付包**应有结构，**不是当前仓库内容**。`deploy/offline/README.md:1,3,12` 明示「阶段四验收范围外、待排期」「占位目录，打包脚本均未实现」「当前一个都不存在」；仓库内 `deploy/offline/` 实测只有 `README.md` 与 `plugins/deepseek-0.0.25.difypkg`，`.gitignore:87` 排除 `deploy/offline/images/`。**V1.0 不提供 `--offline` 安装能力**；对应命令见 §4.1 已降级为「待排期」。
+
 ### 3.2 完整性校验（**装之前必须做**）
+
+> **状态标注（离线包待排期）**：本节命令只适用于**交付侧已生成离线镜像包**的现场。当前仓库内 `deploy/offline/images/` 不存在（依据见 §3.1 状态标注与 `deploy/offline/README.md:1,3,12`），直接执行下面的 `cd deploy/offline/images` 会因目录不存在而失败。V1.0 请走 §4.1 的在线安装 `--online`；离线校验能力待交付侧排期完成后启用。
 
 镜像归档目录内应同时存在 `checksums.sha256`（或 `checksums.txt`）与若干 `*.tar`。校验必须在该目录内执行——清单里写的是相对文件名：
 
@@ -152,7 +156,7 @@ sha256sum *.tar > checksums.sha256
 grep -c "digest:" deploy/images.lock    # 应等于镜像条目数，为 0 说明清单被改坏
 ```
 
-> 判据：`sha256sum -c` 通过 ≠ 镜像与 `images.lock` 同批次。安装脚本还会逐个核对镜像指纹（第 4.3 节），两者都过才算"包是对的"。离线包与 `images.lock` **必须成对交付**，混批次会在核对阶段以退出码 `3` 明确失败，不会装到一半。
+> 判据：`sha256sum -c` 通过 ≠ 镜像与 `images.lock` 同批次。安装脚本还会逐个核对镜像指纹（第 4.3 节），两者都过才算"包是对的"。离线包与 `images.lock` **必须成对交付**，混批次会在核对阶段以退出码 `3` 明确失败，不会装到一半。（离线包构建脚本仍待排期，见 §3.1 / §3.2 状态标注；`deploy/install.sh:25` 定义退出码 `3` = 镜像不可用。）
 
 ---
 
@@ -161,20 +165,22 @@ grep -c "digest:" deploy/images.lock    # 应等于镜像条目数，为 0 说�
 ### 4.1 一条命令
 
 ```bash
-# 离线（推荐，内网无外网）
+# 离线（待排期：离线包构建脚本未实现，V1.0 不可用；见下方状态标注）
 bash deploy/install.sh --offline
 
-# 离线包放在别处（例如 U 盘挂载点）
+# 离线包放在别处（例如 U 盘挂载点）——同样待排期
 bash deploy/install.sh --offline --images-dir /mnt/usb/officeai-images
 
-# 在线（有外网镜像仓库时；按指纹拉取，标签不作为依据）
+# 在线（V1.0 可用：有外网镜像仓库时；按指纹拉取，标签不作为依据）
 bash deploy/install.sh --online
 ```
+
+> **状态标注（把「推荐」降级为「待排期」）**：`--offline` 依赖 `deploy/offline/images/*.tar` 与 `checksums.sha256`，但离线包构建脚本仍待排期（`deploy/offline/README.md:1,3,12`），V1.0 仓库内该目录不存在（见 §3.1、§3.2 状态标注）。照抄离线命令会在镜像准备阶段以退出码 `3`（镜像不可用）失败（`deploy/install.sh:25`）。**V1.0 唯一可用的安装路径是 `--online`**；离线安装能力待交付侧排期完成后再启用，本手册届时同步。
 
 安装脚本做的事（顺序固定，任一步失败即停，不留半装状态）：
 
 1. **前置检查**：Docker/Compose 版本、引擎可用内存、宿主端口占用、配置占位符 `CHANGE_ME_*` 是否已全部替换。
-2. **镜像准备**：离线包校验与导入，或在线按指纹拉取；逐个核对指纹。
+2. **镜像准备**：离线包校验与导入（离线分支待排期，见 §4.1 状态标注），或在线按指纹拉取；逐个核对指纹。
 3. **生成环境文件**：从 `.env.lite.example` 生成 `deploy/.env.lite`，随机口令用 `openssl rand -hex 24` 生成（hex 字符集天然 URL 安全，避免口令嵌进连接串后出错）。
 4. **建库与初始化**：创建业务库、身份库、插件库，执行初始化脚本。
 5. **执行数据库变更**：以一次性任务方式运行（不挂在业务服务启动路径上，避免多副本同时改表）。
@@ -237,6 +243,30 @@ bash deploy/validate_lite_up.sh --check-only    # 静态断言：编排、配置
 ## 6. 升级已有环境
 
 > **本章是升级操作的唯一权威步骤。** 存量环境升级与全新安装的本质区别只有一句话：**库是已经存在的，所以初始化脚本里那些"建库级对象"的动作不会重跑**。
+
+### 6.0 升级前必读：A-03 边缘 TLS 与对外基址行为变更（2026-11-06 起）
+
+> **这是预期内的行为变更，不是故障。** 本轮 `deploy/install.sh` 修复了「主交付路径默认降级」：此前缺证书会自动生成自签证书且只告警、http 基址也照常起栈。修复后，**生产路径在起栈前会以 `die 1` 明确拒绝**下列三种情形（`deploy/install.sh:863-866` 的 A-03 说明、`:900-959` 的 `ensure_edge_cert()`）：
+
+| # | 触发条件 | 安装器行为 |
+| --- | --- | --- |
+| ① | `deploy/nginx/tls/fullchain.pem` 或 `privkey.pem` 缺失，且未显式设置 `OA_ALLOW_SELF_SIGNED_TLS=1` | 拒绝以自签证书起栈；要求放入真实证书 |
+| ② | `OA_LITE_PUBLIC_URL` 仍是 `http://` 基址 | 拒绝起栈（边缘 80 → 301 → 443，会话 Cookie 的 `Secure` 只由基址 scheme 决定） |
+| ③ | 证书已存在，但 CN/SAN 不覆盖对外基址主机名 | 拒绝起栈；**现有证书原样保留、不覆盖** |
+
+**默认值与老现场回填口径**：全新安装默认对外基址改为 `https://localhost`；新增 `OA_LITE_PROXY_TLS_PORT=443`（`deploy/install.sh:406-428`）。老现场走 `backfill_derived_env()`（`:479-504`）：**只补缺失键、不覆盖人工值**——`OA_LITE_PROXY_TLS_PORT` 缺失时补 `443`；若 `OA_LITE_PUBLIC_URL` 仍是 http 基址只 `warn` 提示改 https，**不会替运维改写**，随后 `ensure_edge_cert()` 仍会硬阻断。因此老现场升级前必须人工处置，不能依赖脚本回填。
+
+**运维三选一（升级前必须完成其一）**：
+
+1. **已有覆盖对外主机名的真实证书**：把证书放到 `deploy/nginx/tls/{fullchain,privkey}.pem`（私钥 `chmod 600`），并把 `OA_LITE_PUBLIC_URL` 改为 `https://<主机名>`（端口按 `OA_LITE_PROXY_TLS_PORT` 拼接）。
+2. **基址已是 https、但证书尚未就位或主机名不匹配**：申请/换发覆盖该主机名的真实证书（私有 CA 或 ACME）放入上述路径后重跑；或把 `OA_LITE_PUBLIC_URL` 改到与现有证书 CN/SAN 一致的主机名。
+3. **仅本地/联调验证、不对外交付**：显式设置 `OA_ALLOW_SELF_SIGNED_TLS=1`，允许生成 30 天自签证书并放行 http 基址。
+
+> ⚠ **自签证书禁止用于生产交付**。该开关是 `[DEV-ONLY]`：浏览器会告警、统一登录 issuer 只在本机可达；上线前必须以真实证书覆盖同名两件（`deploy/install.sh:954-960`）。本节与第 12 章证书排障、第 16 章对外暴露面收口的口径一致：自签仅限验证用途。
+
+**本机示例（不含任何密钥值）**：被忽略的 `deploy/.env.lite` 当前 `OA_LITE_PUBLIC_URL` 为 `http://localhost:65200`，且 `deploy/nginx/tls/` 尚未创建。若在本机重跑安装，会同时命中 ② 与 ① 两条拒绝；仅当显式设置 `OA_ALLOW_SELF_SIGNED_TLS=1` 时才按第 3 种处置继续——该环境**不得**作为生产交付形态。
+
+> 本节只说明行为变更与处置；证书与基址的实际修改由运维在现场完成，本手册不改动 `deploy/` 下任何文件。
 
 ### 6.1 升级前必读：五种升级结果（先认清"看哪一行"）
 
@@ -611,9 +641,11 @@ OA_MAINTENANCE=1 bash deploy/restore.sh --from <dir> --stop-apps   # 抢不到�
 | --- | --- | --- |
 | `sql/enable-vector-extension.sql` | 存量升级前启用检索扩展（第 6.3 节） | DBA（超级用户） |
 | `sql/retention-audit.sql` | 操作记录保留期清理（应用侧无权限，必须 DBA 执行） | DBA（库属主） |
-| `sql/tenant-export-manual.sql` | 私有化环境下按客户要求导出全库 | DBA |
-| `sql/full-export.sql` | 全库导出（迁移/下线场景） | DBA |
-| `sql/full-purge.sql` | 全库清空（**危险操作**，需双人复核 + 维护窗口 + 已确认备份） | DBA |
+| `sql/tenant-export-manual.sql` | **单租户**导出（`-v tenant=<tenant_id>` 必填；6 处 `\copy` 全部带 `WHERE tenant_id = current_setting('moy.tenant')`，见 `sql/tenant-export-manual.sql:9,34-38,52-65`）；TD1 在线导出不可用时的 DBA 手工通道，**不会导出全库** | DBA |
+| `sql/full-export.sql` | **全库 / 跨租户**导出（41 处 `\copy`、`SELECT *`、无 `tenant_id` 过滤，见 `sql/full-export.sql:35-42`）；**仅私有化单租户下线 / 迁移场景，SaaS 多租户禁用**（会导出全部租户数据） | DBA |
+| `sql/full-purge.sql` | 全库清空（**危险操作**，需双人复核 + 维护窗口 + 已确认备份）；**技术护栏待补，当前依赖流程与合同**（见下方说明） | DBA |
+
+> **技术护栏待补，当前依赖流程与合同（本轮不裁决、不要写成已满足）**：`sql/full-purge.sql:56-90` 以**库属主**执行 `TRUNCATE TABLE ... audit_log ...`，**不校验 180 天审计保留期是否已满**，可以清掉未过期的操作记录；上表「双人复核」是流程要求，脚本本身没有对应的技术拦截（应用角色无 DELETE 权限的保护在这条路径上被库属主绕过）。`docs/architecture-phase4.md:1373` 的 A-4「审计表 180 天清理的执行主体」仍标记为 `[待架构确认]`，本轮不裁决、不宣称已闭环。合规侧「审计保留期须写入合同」的义务见《隐私政策》§5.1、《部署手册》§13.1 与《数据处理协议》§10；在护栏补齐前，**只能依赖流程与合同约束**。
 
 > 操作记录表的保留期清理**必须交给 DBA**：应用账号对该表无删除权限。清理任务运行时会逐字输出 `audit_log=skipped(no privilege)`——这一行是"应用侧知道自己没权限"的唯一证据，**不要把它当报错删掉**。
 

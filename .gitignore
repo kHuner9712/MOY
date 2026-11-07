@@ -102,6 +102,8 @@ Thumbs.db
 # 工具链本地工作区（不纳入版本控制）
 # ---------------------------------------------------------------------------
 .workbuddy/
+# Trae IDE 本地计划稿，设计要点脱敏后归档 docs/decisions/（由 PM 执行）
+.trae/
 
 # QA 一次性验证产物（Sprint 0 探针脚本，保留本地历史、不入库）
 apps/adapter/qa_probe/probe_contract.py

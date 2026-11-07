@@ -30,6 +30,18 @@
 > 原因是适配层尚无 Valkey 客户端（限流为进程内实现），且 D-12 已明确
 > 「Valkey 只做实时限速与诊断，不作为用量真相源」。因此本脚本以
 > **事件表**作为独立第二来源完成对账，口径等价且更强（事件表是幂等且可审计的）。
+
+**执行形态与 CI 边界（B-8 结论）**：
+
+- **不由 PR CI 触发**；由部署侧每日 02:00 调度执行
+  （`docs/architecture-phase2.md:417` 的「运维 cron 或 CI 手动跑」）。
+- 正确性由 `tests/integration/test_usage_endpoints.py` 与
+  `tests/integration/test_qa_b07_b08_verification.py` 的单测/集成门禁覆盖，
+  脚本本体不进 `.github/workflows/`。
+- 执行需真实 PostgreSQL（`OA_BUSINESS_STORE=postgres`，否则退出码 2 / `[SKIP]`），
+  且偏差超限时**会写** `audit_log(billing.reconcile_mismatch)`。
+  因此**禁止在 CI 空账期运行**：三项计量全 0 的「恒等假绿」没有统计意义
+  （`docs/qa-phase2-test-plan.md` R-5 要求最小样本量），还会污染审计表。
 """
 
 from __future__ import annotations

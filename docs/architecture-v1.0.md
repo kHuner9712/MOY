@@ -1325,7 +1325,7 @@ officeai/                              # Monorepo 根目录
 | 任务 ID | 任务名称 | 周次 | 执行角色 | 交付物 | 依赖 |
 | --- | --- | --- | --- | --- | --- |
 | T01 | 底座部署验证 + 项目基础设施 + 接口规范定稿 | 第 1-2 周 | 工程师（寇豆码）+ 架构师（高见远）+ 主理人（齐活林）组织评审 | ① 可运行 Dify 底座环境（含首批 3 模型路由假设）② monorepo 脚手架、CI/lint/SCA 门禁 ③ 接口规范 v1.0 评审定稿 | — |
-| T02 | 适配层核心框架 + 五大标准接口开发 | 第 3-5 周 | 工程师（寇豆码） | 适配层服务（五大接口域全部端点）、单元测试（核心接口覆盖率 ≥ 80%）、OpenAPI 文档 | T01 |
+| T02 | 适配层核心框架 + 五大标准接口开发 | 第 3-5 周 | 工程师（寇豆码） | 适配层服务（五大接口域全部端点）、单元测试（覆盖率门槛**以 §9.6 CI 真源为准**，本表不写死数字）、OpenAPI 文档 | T01 |
 | T03 | 前端基础框架 + 统一组件库 | 第 3-5 周 | 工程师（寇豆码） | Next.js 框架、shadcn/ui 封装组件库、api-client、SSE 流式渲染组件、设计令牌 | T01 |
 | T04 | 适配层与底座全量联调 + 基础权限体系 | 第 5-7 周 | 工程师 + QA（严过关） | 联调测试报告（五大接口域对 Dify/Keycloak）、Keycloak 基础权限（用户/组织/角色/校验出口）、契约测试 | T02 |
 | T05 | 前端对话与知识库页面 + 全链路 Demo + 第一阶段验收 | 第 6-8 周 | 工程师 + QA + 主理人 | 可演示 Demo（完整对话 + 文档问答 + 引用溯源）、全链路测试报告、第一阶段验收报告 | T03、T04 |
@@ -1551,24 +1551,23 @@ graph LR
 - 日志分级：ERROR=需告警的系统/下游错误；WARN=重试/降级；INFO=关键业务节点；DEBUG=开发调试（生产关闭）；
 - **日志中禁止记录**：用户令牌、工具授权凭据、文档正文全文。
 
-## 9.4 Git Flow 分支策略
+## 9.4 分支策略（主干开发）
 
-- `main`：生产分支，仅接受 `release/*` 与 `hotfix/*` 合并，打 tag 发布；
-- `develop`：集成分支，功能完成后合入；
-- `feature/*`：功能分支（如 `feature/adapter-rag-api`），开发完成提 MR，Code Review 通过后合 develop；
-- `release/*`：版本冻结，仅 bugfix；`hotfix/*`：生产热修；
+- `main`：**唯一主干**、生产分支；所有变更经 PR + Code Review + CI 全绿合入，打 tag 发版；
+- `feature/*`：**短生命周期**功能分支（如 `feature/adapter-rag-api`），合入 `main` 后即删除；
+- `hotfix/*`：紧急修复分支，**仍须 PR + 同样门禁**方可合入 `main`；
+- **不设 `develop`、不设 `release/*`**；
 - 提交信息：`type(scope): 说明`（feat/fix/refactor/test/docs/chore）。
 
-> **现状说明（审计 OA-AUDIT-001 / P1-4，2026-10-22）**
-> 截至当前，仓库**实际只有 `main` 一个分支**（`git branch -a` 无 `develop`），
-> 全部交付提交均直落 `main`。因此各处文档登记的代码基线已统一改为
-> `` `main` @ <sha> ``（涉及的基线 `321d4f1` / `db7aea7` / `3b82df2` /
-> `4923e1f` / `d363909` / `046c432` 经 `git merge-base --is-ancestor` 核验，
-> **均在 `main` 历史内**，可正常追溯）。
->
-> 两条路选一条即可，但**不要长期维持"文档写 develop、实际只有 main"**：
-> ① 采用主干开发，把本节 Git Flow 修订为 `main` + `feature/*`；
-> ② 恢复 `develop` 作为集成分支，并让后续交付按本节执行。
+> **裁决记录（2026-11-07，主理人齐活林；附录 B-1 已裁决）**
+> 本节此前写 Git Flow（`develop` / `release/*` / `hotfix/*`）并在「现状说明」中自承
+> 「实际只有 `main` 一个分支」，形成文档与事实长期分叉。按「项目总目标与执行标准
+> 不得降格、不得偏移」原则，正式**采用主干开发**：`main` 唯一主干 + 短生命周期
+> `feature/*` + PR 合入 + tag 发版，保留 `hotfix/*`（仍须 PR）。**不恢复 `develop`**。
+> 各处文档登记的代码基线继续沿用 `` `main` @ <sha> ``（涉及的基线 `321d4f1` /
+> `db7aea7` / `3b82df2` / `4923e1f` / `d363909` / `046c432` 经
+> `git merge-base --is-ancestor` 核验，均在 `main` 历史内，可正常追溯）。
+> 对应执行口径见 `CONTRIBUTING.md §2`；规范单一真源见 `docs/engineering-standards.md` 附录 B-1。
 
 ## 9.5 环境变量规范
 
@@ -1578,14 +1577,23 @@ graph LR
 | `OA_DEPLOY_MODE` | `saas` / `private` | 部署模式（双模式切换开关） |
 | `OA_DIFY_BASE_URL` | `http://dify-api:5001` | 底座地址（仅适配层可见） |
 | `OA_DIFY_DEFAULT_APP_KEY` | `app-xxx` | 底座应用密钥 |
-| `OA_KEYCLOAK_URL` / `OA_KEYCLOAK_REALM` | ... | IAM 配置 |
+| `OA_KEYCLOAK_BASE_URL` / `OA_KEYCLOAK_REALM` | `http://keycloak:8080` / `officeai` | IAM 配置（**订正 2026-11-07**：原名 `OA_KEYCLOAK_URL` 与 `Settings.keycloak_base_url` 不匹配且无 alias，会被 pydantic 静默忽略；见 `deploy/validate_config_names.py:1-14`） |
 | `OA_DATABASE_URL` / `OA_REDIS_URL` / `OA_MILVUS_URI` / `OA_OBJECT_STORE_*` | ... | 基础设施连接（对象存储配置项 2026-10-21 由 `OA_MINIO_*` 改名，QA 附录 A P2-4） |
 | `OA_LOG_LEVEL` | `INFO` | 日志级别 |
+
+> **约束（附录 B-3，2026-11-07 裁决）**：本节表格及本项目所有文档示例中的 `OA_*` 键，
+> 必须是 `apps/adapter/app/core/config.py::Settings` 的**实际字段**（环境变量 =
+> `OA_` + 字段名大写）；由 `deploy/validate_config_names.py` R1 机械保证，
+> CI 入口 `.github/workflows/ci-adapter.yml:320`。
 
 ## 9.6 CI 门禁（强制）
 
 - Lint（ruff / eslint）+ 类型检查（mypy / tsc）不过禁合并；
-- 适配层核心接口测试覆盖率 < 80% 禁合并；
+- 测试覆盖率（**以 CI 为真源，门槛只升不降；2026-11-07 附录 B-2 裁决订正**）：
+  - 适配层总覆盖率 ≥ **85%**（`.github/workflows/ci-adapter.yml:549-557` 的 `--cov-fail-under=85`；`apps/adapter/pyproject.toml:256` 的 `fail_under = 85`）；必须带 `--run-pg`，且 `skipped=0`（`ci-adapter.yml:560-581`）；
+  - PG 仓储实现 `db/repositories/*/postgres.py` ≥ **88%**（`ci-adapter.yml:598-601` 的 `coverage report --fail-under=88`）；
+  - 前端 vitest 四阈值（`apps/web/vitest.config.mts:305-310`）：`statements ≥ 88.8` / `branches ≥ 84.0` / `functions ≥ 83.9` / `lines ≥ 90.0`，CI 入口 `ci-web.yml:92`；
+  - 原「< 80% 禁合并」为阶段一口径，**已作废**；不得用 `--cov-fail-under` 参数临时放宽（`ci-adapter.yml:533`）；
 - **底座直连扫描**：`apps/web` 与未来插件 SDK 代码中出现 `dify/milvus/litellm/5001` 等字样即失败（1.4 红线的代码级防线）；
 - **底座直连扫描的范围说明**：`apps/adapter/qa_probe/bootstrap_dify.py` **不在**该扫描范围内，
   理由与边界见 §1.4 第 6 条（P2-12 运维引导脚本豁免：部署期一次性、不进镜像、不被 `app` import、
@@ -1622,13 +1630,20 @@ graph LR
   | **G-26 插件声明 schema** | 6 段声明通过 `extra="forbid"` 校验；`--self-test` 用负样本证明"能拦" | `python deploy/validate_plugins.py --self-test` | B16 |
   | **G-27 插件界面唯一宿主** | 插件目录 0 个自带 `.css`/`.jsx`；宿主页无 `pluginId ===`/`switch`/查表/集合分支 | `node apps/web/scripts/check-workbench-host.mjs` | B24 / B27 |
   | **G-28 能力/原语白名单** | 静态枚举校验 + 运行时守卫；`plg_hr_admin` 多余能力已收敛 | `python deploy/validate_plugins.py` | B18 / B27 |
-  | **G-29 phase3 端点基线** | `core=30 / phase2=38/38 / phase3=16/16`，严格模式；删一项须先改基线 | `python deploy/validate_openapi.py` | B21 |
+  | **G-29 端点基线（8 套 / 合计 103）** | `docs/api/baseline-*.json` 共 8 套：`core-30`(30) + `phase2-38`(38) + `phase3-16`(16) + `phase4-10`(10) + `w1-2`(2) + `w2-2`(2) + `b3-4`(4) + `b4-1`(1) = **103**；严格模式（`--strict`）；删一项须先改基线 | `python deploy/validate_openapi.py --strict` | B21 / 2026-11-07 订正 |
   | **G-30 前端契约快照** | 32 接口 / 169 字段 / 5 枚举与 `docs/api/baseline-phase3-16.json` 零差异 | `node apps/web/scripts/check-plugin-contract.mjs` | B27 |
   | **G-31 Schema 保留策略** | `plugin_task.expires_at` 列存在、默认 180 天、类型 timestamptz；改默认值即红 | `python deploy/validate_schema_retention.py` | B28 |
   | **G-13 扩展（错误码三处一致 + 内部码禁区）** | 注册表 / 架构文档 / `business-errors.ts` 三处码集合一致；`17002` 不得进前端兜底表、`message`、A3/A4 响应体 | `python apps/adapter/scripts/check_error_catalog.py --strict --forbid-internal 17002` | B18 / B28 |
 
   > **门禁编号归属说明**：G-26 ~ G-31 的判据与命令以 `docs/architecture-phase3.md` §10 为唯一真源；
   > 本文档只登记"存在哪些门禁、命令是什么"，避免两处各自演化出不同判据。
+
+  > **【规范待固化】文档端点数 = 基线合计（附录 B-9，2026-11-07 裁决）**：
+  > 本节表格中的端点数字必须与 `docs/api/baseline-*.json` 的 `endpoints` 数组长度合计
+  > （当前 8 套 / **103**）机械相等，`deploy/validate_openapi.py` 与各基线文件是**唯一真源**。
+  > 该等式目前**只有文档、没有门禁**：建议新增 `deploy/validate_endpoint_doc_parity.py`
+  > （或并入 `deploy/validate_openapi.py`），扫描本文档与架构文档的端点数断言相等；
+  > 门禁落地前，订正后的数字仍须人工复核。
 
 - **切片 1 新增门禁（G-37：分层依赖方向，审计 P1-3 ~ P1-7 / P2-9 ~ P2-11）**：
 

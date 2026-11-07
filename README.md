@@ -13,7 +13,8 @@
 向上层（前端交互层、场景插件层、业务能力层）输出自研标准接口，实现「替换底座仅改适配层，上层零改动」。
 
 **当前进度**：第一至第四阶段主体已交付，W1（总纲对齐）切片 A/B 已完成。
-**96 个端点全部就绪**（core 30 + phase2 38 + phase3 16 + phase4 10 + W1 2）。
+**103 个端点全部就绪**，以 `docs/api/baseline-*.json` 8 套基线为唯一真源：
+`core 30 + phase2 38 + phase3 16 + phase4 10 + W1 2 + W2 2 + B3 4 + B4 1 = 103`（`validate_openapi.py --strict` EXIT 0）。
 
 > **测试数字口径（务必连同数字一起读）**
 > 测试与覆盖率存在**两套口径**，脱离前置条件单独引用数字会误导：
@@ -43,7 +44,7 @@ officeai/                              # Monorepo 根目录
 │   │   │   ├── main.py                # FastAPI 入口：中间件、异常处理器、路由挂载
 │   │   │   ├── core/                  # 配置、错误码、日志、鉴权、幂等、限流
 │   │   │   ├── middleware/            # trace_id 注入、统一异常兜底
-│   │   │   ├── api/v1/                # 标准接口端点（M/R/A/T/U + 插件域 PL/WF + 统计/能力，共 96 个）
+│   │   │   ├── api/v1/                # 标准接口端点（M/R/A/T/U + 插件域 PL/WF + 统计/能力，共 103 个）
 │   │   │   ├── schemas/               # 请求响应模型（契约同步）
 │   │   │   ├── services/              # 协议转换服务（唯一允许写下游调用的位置）
 │   │   │   ├── clients/               # 底座 HTTP 客户端（唯一调用出口）
@@ -183,7 +184,7 @@ docker compose -f docker-compose.saas.yml up -d   # SaaS 本地联调
 | 统一响应 | `{code, message, data}`，`code=0` 成功 |
 | 错误提示 | 仅使用业务语言，严禁透传 code、堆栈、下游原始错误 |
 | 提交信息 | `type(scope): 说明`（feat/fix/refactor/test/docs/chore） |
-| 分支策略 | `main` / `develop` / `feature/*` / `release/*` / `hotfix/*` |
+| 分支策略 | **主干开发**：`main` 唯一主干 + 短生命周期 `feature/*` + PR 合入 + tag 发版；`hotfix/*` 仍须 PR。不设 `develop` / `release/*`（见 `docs/architecture-v1.0.md` §9.4、`CONTRIBUTING.md` §2） |
 
 ### 架构红线（违反即打回）
 
@@ -234,7 +235,7 @@ OA_BATCH=B21 pytest tests -q --cov=app --cov-report=term-missing
 
 | 项 | 值 |
 | --- | --- |
-| 端点契约 | `core=30 / phase2=38/38 / phase3=16/16 / phase4=10/10 / w1=2/2`，合计 **96**，`--strict` EXIT 0 |
+| 端点契约 | 8 套基线合计 **103**（`core 30 / phase2 38 / phase3 16 / phase4 10 / w1 2 / w2 2 / b3 4 / b4 1`），`validate_openapi.py --strict` EXIT 0 |
 | 本机测试（无 PG） | **2559 passed / 238 skipped / 0 failed**（收集 2797，2026-11-04 实测，命令见 §一）；含 PG 口径**以 CI junit.xml 工件为准**（最近 success：2026-11-03 run `41641650690`） |
 | 覆盖率 | 门槛 **85%**（CI 硬地板 `--cov-fail-under=85`，卡合并覆盖率）；现值以 CI 工件为准。历史快照：91.94%（含 PG，`cedd3e9`）/ 85.87%（无 PG，2026-10-30）。余量判断一律看**绝对单位差**，不看百分比（见 §6.3 第 5 条） |
 | 静态门禁 | `ruff check` / `ruff format` / `mypy` 全绿 |
