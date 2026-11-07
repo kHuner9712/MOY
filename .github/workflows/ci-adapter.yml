@@ -525,6 +525,38 @@ jobs:
           fi
           echo "CI paths 自检通过：8 条样本（含 glob 语义与 fail-closed）全部符合预期"
 
+      # ------------------------------------------------------------------
+      # 门禁 4c-6：工程规范强制化（阶段 2）
+      #
+      # `docs/engineering-standards.md` S1–S7 是条款，本步骤把其中**可用代码
+      # 判定**的六类变成机械约束；不重造已有 18 道门禁，只补它们覆盖不到的
+      # 漂移面：
+      #   STD-1 豁免基线：每条必须有审计编号 + due_batch + 消除计划，条数上限
+      #        方向 23 / 环 3（只许减不许增）；
+      #   STD-2 层矩阵：`app/` 新增二级包必须同步 LAYERS；
+      #   STD-3 测试纪律：禁 `.only(`、禁无条件 pytest.mark.skip、workflow 禁
+      #        ALLOW_SKIP、新增 business/services/repositories 模块必须同 diff 带测试；
+      #   STD-4 配置一致：模板每个 OA_* 必须有 Settings 字段或带理由的基础设施
+      #        白名单；每个 Settings 字段必须有 app 内消费方或登记"代码默认值"；
+      #   STD-5 文档一致：附录 A.1 计数与磁盘一致、A.5 清单逐条覆盖四列非空；
+      #   STD-6 安全默认：出站白名单默认空、回环/MCP 默认关、SSRF 代理默认空。
+      # 退出码：0 通过 / 1 违规 / 2 输入缺失（fail-closed）。
+      # ------------------------------------------------------------------
+      - name: 工程规范强制门禁（六类约束）
+        run: python ../../deploy/validate_standards.py
+
+      - name: 工程规范门禁自检（可红证明）
+        run: |
+          set +e
+          python ../../deploy/validate_standards.py --self-test
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "规范门禁自检未按预期命中负样本（退出码 $code，期望 1）"
+            exit 1
+          fi
+          echo "规范门禁自检通过：15 条样本（六类判据 + fail-closed）全部符合预期"
+
       - name: 迁移门禁自检（可红证明）
         run: |
           set +e

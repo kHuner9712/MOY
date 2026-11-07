@@ -109,6 +109,11 @@ REQUIREMENTS: Final[tuple[Requirement, ...]] = (
         ".github/e2e/keycloak-realm-ci.json",
         "H-04 后它决定 e2e 账号、角色与回调地址",
     ),
+    Requirement(
+        "ci-web.yml",
+        "deploy/validate_standards.py",
+        "阶段 2 起本 workflow 执行该脚本的前端侧子集（--checks STD-3）",
+    ),
     Requirement("ci-web.yml", ".github/workflows/ci-web.yml", "门禁自身"),
     # ------------------------------------------------------------------
     # ci-adapter.yml：后端锁 / 依赖清单 / 镜像 / 迁移 / 部署配置

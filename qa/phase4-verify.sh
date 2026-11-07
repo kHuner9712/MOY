@@ -249,7 +249,7 @@ check "3d" "ruff format --check deploy" "0" x_ruff run_ruff_dep_f
 check "3e" "ruff check .（apps/adapter）" "0" x_ruff run_ruff_all_c
 check "3f" "ruff format --check .（apps/adapter）" "0" x_ruff run_ruff_all_f
 
-# --- 第 4 项：17 个 deploy/validate_*.py 门禁本体 ------------------------------
+# --- 第 4 项：18 个 deploy/validate_*.py 门禁本体 ------------------------------
 # 两条需要 --baseline（不给就用默认基线文件，显式给是为了让"用了哪份基线"可追溯）
 i=0
 for f in "$ROOT"/deploy/validate_*.py; do
@@ -266,12 +266,12 @@ for f in "$ROOT"/deploy/validate_*.py; do
   check "4.$i" "gate $base" "0" x_head run_v
 done
 
-# --- 第 5 项：17 个 --self-test（分族判定）------------------------------------
+# --- 第 5 项：18 个 --self-test（分族判定）------------------------------------
 # 族A：成功 = exit 1；族B：成功 = exit 0。判错族 = 把通过的门禁判成失败。
 FAMILY_A="validate_batch_clock.py validate_ci_paths.py validate_deploy.py
 validate_gate_wiring.py validate_migrations.py validate_openapi.py
 validate_packaging.py validate_plugins.py validate_schema_retention.py
-validate_secrets.py"
+validate_secrets.py validate_standards.py"
 FAMILY_B="validate_config_names.py validate_deps.py validate_images.py validate_pg_markers.py
 validate_repository_parity.py validate_import_directions.py validate_offline_pkgs.py"
 

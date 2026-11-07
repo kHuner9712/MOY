@@ -29,6 +29,8 @@ on:
       - 'package-lock.json'
       # H-04 起 e2e 账号/角色/回调地址由该 realm 夹具决定；改了它必须重跑主旅程。
       - '.github/e2e/**'
+      # 阶段 2：本 workflow 直接执行该脚本的前端侧子集（--checks STD-3）。
+      - 'deploy/validate_standards.py'
       - '.github/workflows/ci-web.yml'
   pull_request:
     paths:
@@ -39,6 +41,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/e2e/**'
+      - 'deploy/validate_standards.py'
       - '.github/workflows/ci-web.yml'
   workflow_dispatch:
 
@@ -90,6 +93,18 @@ jobs:
       # ------------------------------------------------------------------
       - name: tsc --noEmit
         run: npm run typecheck:web
+
+      # ------------------------------------------------------------------
+      # 门禁 2b：工程规范（前端侧 STD-3 测试纪律）
+      #
+      # 阶段 2 的 `validate_standards.py` 在 ci-adapter 全量跑六类；但其中
+      # STD-3 直接约束 `apps/web/e2e/**`（禁 `.only(`、禁无条件 skip、禁
+      # `ALLOW_SKIP` 开关）。只在 adapter 侧接线时，**只改 e2e 的 PR 不会触发
+      # 该判据**（apps/web 不在 ci-adapter 的 paths 内）——前端约束等于漏一半。
+      # 这里用同一份脚本的 `--checks STD-3` 子集，保证两侧判据同源。
+      # ------------------------------------------------------------------
+      - name: 工程规范门禁（前端侧 STD-3 测试纪律）
+        run: python3 deploy/validate_standards.py --checks STD-3
 
       # ------------------------------------------------------------------
       # 门禁 3：前端单元测试（vitest，带覆盖率门禁）

@@ -295,15 +295,15 @@ eslint / tsc / vitest / next build 一个都不跑，而合并前看到的绿是
   - **glob 按 GitHub 语义**实现（`*` 不跨 `/`、`**` 跨），并有负样本证明
     `apps/*` 覆盖不了 `apps/web/package.json`（防 `startswith` 式假绿）；
   - `--self-test` 8 条样本（正样本 2 / 负样本 6，含 fail-closed exit 2）。
-- `qa/phase4-verify.sh`：门禁本体与 `--self-test` 两处计数 16→17，新门禁进
-  FAMILY_A（自检成功 = exit 1）。
+- `qa/phase4-verify.sh`：门禁本体与 `--self-test` 两处计数 16→17（阶段 2 再 +1）。
 - 文档：`docs/engineering-standards.md` 附录 A.1 增第 18 行（门禁总数 18），
   正文计数同步。
 
 **对质量的影响（数据）**
 
-- 新增门禁 1 道（`deploy/validate_*` 共 18 个，其中 `.py` 17 个）；
-  `validate_gate_wiring.py` 实测由 16 → **17 个脚本全部被 workflow 引用**。
+- 新增门禁 1 道（H-05 后 `deploy/validate_*` 共 18 个，其中 `.py` 17 个；
+  阶段 2 加入 `validate_standards.py` 后共 19 个 / `.py` 18 个）；
+  `validate_gate_wiring.py` 实测由 16 → **17 → 18 个脚本全部被 workflow 引用**。
 - 覆盖声明 26 条；自检 8 条样本（含"根锁不被覆盖"真实事故回放、glob 跨层语义、
   死模式、输入缺失、workflow 缺失 fail-closed）。
 - 假绿被堵：**只改根锁文件的 PR 现在会真的跑前端全量门禁**；门禁自身的
@@ -322,4 +322,54 @@ eslint / tsc / vitest / next build 一个都不跑，而合并前看到的绿是
 **结论**：H-04 是 **CI 真跑通**（浏览器 + 真实 Keycloak），不是「降级为 API 级」；
 不存在任何跳过主旅程的开关。CI Web 的 e2e job 时长（1m38s）也印证它真的起了
 Keycloak 并跑了登录链路（只跑匿名段约 10 秒即可结束）。
+
+---
+
+## 阶段 2：规范强制约束（已完成）
+
+### 交付物
+
+| 文件 | 作用 |
+| --- | --- |
+| `deploy/validate_standards.py`（新建） | 六类规范的机械判据（STD-1…STD-6），带 `--self-test`（15 条样本）与 `--checks` 子集 |
+| `.github/workflows/ci-adapter.yml` | 接线「工程规范强制门禁」+「可红证明」两步（全量六类） |
+| `.github/workflows/ci-web.yml` | 前端侧同源子集 `--checks STD-3`，并把脚本登记进 paths |
+| `docs/engineering-standards.md` | 新增 S8（六类约束表 + 豁免到期规则）+ 附录 A.5 门禁清单（19 行，四列） |
+| `qa/phase4-verify.sh` | 本地复跑清单 17→18 个 `.py`，新门禁进 FAMILY_A（自检成功 = exit 1） |
+| `deploy/.env.lite.example` | 补 MCP/SSRF 四项安全默认键（轻量版也不许默认放开出站） |
+| `deploy/validate_ci_paths.py` | C-1 新增「ci-web 依赖 `validate_standards.py`」声明 |
+| `docs/delivery-2026-11-07-audit-remediation.md` | 本节 |
+
+### 六类判据与红灯条件
+
+| 编号 | 检查什么 | 红灯条件 |
+| --- | --- | --- |
+| STD-1 | 两份基线豁免的完备性（审计编号 + `due_batch` + 消除计划）与条数上限（方向 23 / 环 3） | 缺任一字段 / 超上限 / 编号不合法 |
+| STD-2 | `apps/adapter/app/` 二级包 ⊆ `LAYERS` | 矩阵外新包 |
+| STD-3 | 测试纪律：`.only(`、无条件 `pytest.mark.skip(`、workflow `ALLOW_SKIP`、新增业务模块同 diff 带测试 | 任一命中 |
+| STD-4 | 模板键 ↔ Settings ↔ 消费方；安全敏感键必须出现在模板 | 无主键 / 死配置 / 安全键缺失 |
+| STD-5 | A.1 计数与磁盘一致；A.5 清单逐条覆盖且四列非空 | 计数漂移 / 缺行 / 多行 / 列空 |
+| STD-6 | 出站白名单默认空、回环/MCP 默认关、SSRF 代理默认空、模板同默认 | 默认被打开 |
+
+### 对质量的影响（数据）
+
+- `--self-test`：**15/15 通过**（正样本 2、负样本 13；覆盖六类判据 + fail-closed）；
+  真实仓库 `exit 0`，`--checks STD-3` 子集 `exit 0`。
+- 门禁总数：`deploy/validate_*` **19 个**（18 `.py` + 1 `.sh`），
+  `validate_gate_wiring.py` 实测 **18 个 `.py` 全部被 workflow 引用**。
+- 登记面：基础设施 env 白名单 **37** 条（每条带理由）、代码默认值字段 **11** 条
+  （带理由 + 到期批次 B30）、安全敏感模板键 **12** 项（`.env.example` 8 + lite 4）。
+- 被门禁抓出的真实问题：**12 个 `Settings` 字段无 app 内消费方**（死配置），
+  其中 `pay_mch_id` 在 `config.py` 内部属性中消费、其余 11 个已登记待接线；
+  若不登记即为红灯——不是「先写着以后用」的默认绿灯。
+- 补上的假绿面：豁免基线可无期限增长、文档门禁计数可与磁盘脱节、
+  e2e 的 `.only`/跳过开关可在 web 侧静默生效（原先只在 adapter 接线，已补 ci-web）。
+
+### 遗留口径
+
+- STD-1 的条数上限是**审计当日实测值**（23 / 3），关闭豁免后需同步下调常量；
+  上调必须改代码并评审，不能只往基线文件加行。
+- `--checks STD-3` 在 ci-web 只跑测试纪律子集；配置/文档类判据仍在 adapter 全量跑
+  （它们的真源都在后端与 `deploy/`，web 侧无输入）。
+
 

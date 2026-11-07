@@ -211,9 +211,52 @@
 
 ---
 
+## S8 规范强制化（六类约束与机械判据）
+
+S1–S7 是**条款**，附录 A 是**条款 → 门禁**映射。本节回答评审最常问的一句：
+「这条规范现在真的会拦住我吗？」——按六类给出**已生效的机械判据**。判据的
+可执行真源是 `deploy/validate_standards.py`（第 18 个 `.py` 门禁，CI
+`ci-adapter.yml`「工程规范强制门禁」+ `--self-test`），它**不重造**已有 17 道门禁，
+只补三类现有门禁覆盖不到的漂移：豁免基线偷偷加行、文档计数与磁盘不一致、
+配置项只声明不消费。
+
+**前端侧同源判据**：STD-3 直接约束 `apps/web/e2e/**`，而 `apps/web` 不在
+`ci-adapter` 的 paths 内——只在 adapter 侧接线时，只改 e2e 的 PR 不会触发该判据。
+因此 `ci-web.yml` 的 quality-gate 用**同一份脚本**跑子集
+`python3 deploy/validate_standards.py --checks STD-3`；判据单源、两侧同真。
+`deploy/validate_ci_paths.py` 把该脚本登记为 ci-web 的依赖输入（C-1），
+改脚本会同时触发两侧。
+
+### S8.1 六类约束
+
+| 类别 | 强制判据 | 红灯条件 | 复用的既有门禁 |
+| --- | --- | --- | --- |
+| 分层与依赖方向 | STD-1：两份 `*_baseline.txt` 每条豁免必须带审计编号 + `due_batch=Bn` + 消除计划；条数上限 **方向 23 / 环 3**，只许减不许增 | 缺任一字段、条数超过上限、审计编号不合法 | `validate_import_directions.py`（矩阵 + SCC + stale + 到期）、`validate_batch_clock.py` |
+| 命名与模块边界 | STD-2：`apps/adapter/app/` 实际二级包必须全部在 `LAYERS` 内；STD-5 清单逐条覆盖 | 出现矩阵外新包且未同步矩阵 | `validate_import_directions.py`（S1.1-b）、`validate_openapi.py`（API 路径） |
+| 测试强制 | STD-3：测试/e2e 禁 `.only(`；禁无条件 `pytest.mark.skip(`；workflow 禁 `ALLOW_SKIP`；新增 `business/`、`services/`、`db/repositories/` 模块必须同 diff 带测试改动（基线 `HEAD~1`） | 任一命中；新增业务模块零测试 | `validate_pg_markers.py`、CI 覆盖率高地板（S6.2/S6.4/S6.5） |
+| 配置一致 | STD-4：模板每个 `OA_*` 必须解析到 `Settings` 字段或 `INFRA_ENV_KEYS`（带理由）；每个 `Settings` 字段必须有 app 内消费方或登记到 `CODE_ONLY_FIELDS`（带理由+到期批次）；8 个安全敏感键必须在两份模板中显式出现 | 无主键、死配置、安全键缺失 | `validate_config_names.py` R1/R2、`validate_deploy.py` R2/R6、`validate_secrets.py` |
+| 文档一致 | STD-5：附录 A.1 的「N 个：M `.py` + K `.sh`」必须与磁盘一致；附录 A.5 清单必须逐条覆盖全部 `deploy/validate_*`，且四列非空 | 计数不符、清单缺行/多行、列空 | `validate_batch_clock.py --check-docs`（批次号四处同步）、`scripts/gen_delivery_manifest.py --check` |
+| 安全默认 | STD-6：`mcp_allowed_hosts` 默认空串（出站默认拒绝）、`mcp_allow_loopback=false`、`mcp_enabled=false`、`ssrf_proxy_url` 空；模板同名键保持同一默认 | 默认放开 / 模板打开开关 | `validate_secrets.py`（禁明文兜底）、H-02 的 20 条 SSRF 对抗用例、`validate_import_directions.py`（分层） |
+
+### S8.2 豁免与到期
+
+`CODE_ONLY_FIELDS` / `INFRA_ENV_KEYS` 是**带理由的白名单**，新增条目必须同时写
+理由与到期批次；`validate_standards.py` 会断言两列非空。基线豁免的上限
+（23 / 3）是 2026-11-07 审计实测值，**只许减不许增**——要新增一条豁免，先改本节
+的上限常量并走评审，而不是往基线文件里加一行。
+
+### S8.3 门禁清单（名字 / 检查什么 / 红灯条件 / 维护者）
+
+> 由 STD-5 逐行校验：本表必须**恰好覆盖** `deploy/validate_*` 全部文件（当前 18 个），
+> 四列不得为空。新增门禁时同步本表；行序与附录 A.1 一致。
+
+见附录 **A.5**（下表为机器可校验的权威清单）。
+
+---
+
 ## 附录 A：规范 → 机械门禁映射表
 
-### A.1 `deploy/validate_*`（18 个：17 `.py` + 1 `.sh`）
+### A.1 `deploy/validate_*`（19 个：18 `.py` + 1 `.sh`）
 
 | # | 门禁 | 职责（取自各自文件头） | CI 挂载点 | 自检 | 覆盖规范 |
 | --- | --- | --- | --- | --- | --- |
@@ -235,9 +278,37 @@
 | 16 | `deploy/validate_schema_retention.py` | G-31 产物留存列/默认值/类型 | `ci-adapter.yml:449`、`:454` | ✔ | S7.3（产物表结构） |
 | 17 | `deploy/validate_secrets.py` | G-33 密钥占位值生成说明 + 禁明文兜底 | `dependency-scan.yml:173`、`:178` | ✔ | S4.1-b、S4.1-c |
 | 18 | `deploy/validate_ci_paths.py` | C-1 依赖输入（根锁 / `uv.lock` / `pyproject.toml` / Dockerfile / 迁移 / `deploy/` 配置 / e2e 夹具）必须被对应 workflow 的 push+PR `paths` 命中；C-2 死模式回代真实文件 | `ci-adapter.yml`「CI paths 漂移校验」（H-05） | ✔ | S6.7、H-05 |
+| 19 | `deploy/validate_standards.py` | 六类规范机械判据：豁免基线完备性与上限、层矩阵包边界、测试纪律（`.only`/无条件 skip/`ALLOW_SKIP`/新模块带用例）、配置一致（模板键↔Settings↔消费方）、文档一致（A.1 计数 + A.5 清单）、安全默认 | `ci-adapter.yml`「工程规范强制门禁」（阶段 2） | ✔ | S8.1–S8.3 |
 
-> `qa/phase4-verify.sh:252-275` 另有一套「17 个 `.py` 门禁本体」的本地复跑清单
+> `qa/phase4-verify.sh:252-275` 另有一套「18 个 `.py` 门禁本体」的本地复跑清单
 > （FAMILY_A / FAMILY_B 两组，按自检退出码语义分），与 CI 挂载互为补充。
+
+### A.5 门禁清单（名字 / 检查什么 / 红灯条件 / 维护者）
+
+> STD-5 逐行校验：必须恰好覆盖磁盘上全部 `deploy/validate_*`（当前 19 个），
+> 四列不得为空；新增/删除门禁必须同 diff 增删本表行。
+
+| # | 门禁 | 检查什么 | 红灯条件 | 维护者 |
+| --- | --- | --- | --- | --- |
+| 1 | `deploy/validate_batch_clock.py` | `OA_BATCH` 与台账 `due_batch`、文档四处同步 | 批次落后 / 文档未同步 / 自检样本不符 | 平台工程（部署） |
+| 2 | `deploy/validate_config_names.py` | 编排注入 `OA_*` 是否 `Settings` 字段；`NEXT_PUBLIC_*` 是否有同名 ARG | 无主键且未登记理由 / ARG 缺失 | 平台工程（部署） |
+| 3 | `deploy/validate_deploy.py` | R1–R6：DSN 属主、显式 env、initdb 挂载、lockroot、端口、k8s 键 | 任一规则命中 / 编排集合漏加 | 平台工程（部署） |
+| 4 | `deploy/validate_deps.py` | 依赖清单 ↔ 架构 §8.1/§8.2 + 最低安全版本 + 漏洞 | 未登记依赖 / 低于安全版本 / 命中黑名单 | 平台工程（后端） |
+| 5 | `deploy/validate_gate_wiring.py` | 每个门禁是否真的被 workflow 引用（判据存在 ≠ 判据在跑） | 有脚本未被任何 workflow 引用 | 平台工程（部署） |
+| 6 | `deploy/validate_images.py` | compose 镜像 ⊆ `images.lock` 精确标签 + 上游存在性 + 文档版本 | 浮动标签 / 摘要不符 / 文档版本漂移 | 平台工程（部署） |
+| 7 | `deploy/validate_import_directions.py` | G-37 层矩阵 + Tarjan 环 + 基线 stale/到期 | 新增违规 / 环 / 基线过期 / 已修未删行 | 平台工程（后端） |
+| 8 | `deploy/validate_lite_up.sh` | 轻量版静态断言 + 真起栈（容器数 / 内存 / 健康检查） | 起栈失败 / 容器超限 / 健康检查未就绪 | 平台工程（部署） |
+| 9 | `deploy/validate_migrations.py` | 迁移静态自检 + 空库/已装库双路径实跑 | SQL 不幂等 / 双路径结果不一致 | 平台工程（后端） |
+| 10 | `deploy/validate_offline_pkgs.py` | `.difypkg` 协议黑名单 / 弱著佐权 / 已知漏洞 / SBOM | 命中黑名单协议 / 高危漏洞 / 无法生成 SBOM | 平台工程（安全） |
+| 11 | `deploy/validate_openapi.py` | G1–G5 端点基线 + 对外文档禁词 | 端点集合漂移 / 文档泄露底座术语 | 平台工程（后端） |
+| 12 | `deploy/validate_packaging.py` | `app/` 全子包是否进打包清单 | 漏包（历史上漏 `business`/`db`） | 平台工程（后端） |
+| 13 | `deploy/validate_pg_markers.py` | 需真实 PG 的用例是否带 `pg` 标记 | 缺标记导致 PG 用例静默跳过 | 平台工程（后端） |
+| 14 | `deploy/validate_plugins.py` | 插件声明 schema / 能力枚举 / 产物依赖闭合 | schema 非法 / 能力越界 / 依赖不闭合 | 平台工程（后端） |
+| 15 | `deploy/validate_repository_parity.py` | 内存/PG 双实现方法名、record 字段、钩子对称 | 双实现不对称 / 基线 stale | 平台工程（后端） |
+| 16 | `deploy/validate_schema_retention.py` | 产物留存列 / 默认值 / 类型 | 缺列 / 类型不符 / 默认值漂移 | 平台工程（后端） |
+| 17 | `deploy/validate_secrets.py` | 密钥占位值生成说明 + 禁明文兜底 | 缺生成说明 / `${VAR:-常量}` | 平台工程（安全） |
+| 18 | `deploy/validate_ci_paths.py` | 依赖输入是否被对应 workflow 的 push+PR `paths` 命中；死模式回代真实文件 | 根锁/锁文件/夹具变更不触发门禁 / 抄错路径 | 平台工程（部署） |
+| 19 | `deploy/validate_standards.py` | 六类规范：豁免基线上限与到期、层矩阵包边界、测试纪律、配置三方一致、文档计数/清单一致、安全默认 | 基线超限或缺到期 / 矩阵外新包 / `.only` 或无理由 skip / 死配置 / 文档与磁盘不一致 / 安全默认被打开 | 平台工程（后端） |
 
 ### A.2 四条 workflow（job 级）
 
