@@ -1,18 +1,20 @@
-# 离线介质包（3A 构建侧已实现）
+# 离线介质包（3A 构建侧 + 3B 目标机侧已实现）
 
-> **状态：3A 已落地**（2026-11-07）：构建与校验由
-> `deploy/validate_offline_media.py` 提供；介质内容、生成/校验步骤、体积预期与
-> 已知限制见 [`docs/offline-package.md`](../../docs/offline-package.md)。
-> 目标机加载/升级/回滚（3B）尚未实现。
+> **状态：3A / 3B 已落地**（2026-11-07）：构建与校验由
+> `deploy/validate_offline_media.py` 提供；目标机预检/加载/升级/回滚由
+> `deploy/validate_offline_apply.py` 提供。介质内容、生成/校验/加载步骤、失败处置
+> 与未验证边界见 [`docs/offline-package.md`](../../docs/offline-package.md)。
+> 首次真机生成尚未执行（3A 的真实搬运未验证）。
 >
 > 说明：`OA_OFFLINE_MODE` 已于 2026-11-04 审计确认为无消费方的死配置并删除；
 > 本轮不新增环境变量（版本/架构/垂直均为命令行参数）。
 
-## 已交付内容（3A）
+## 已交付内容（3A / 3B）
 
 ```text
 deploy/
 ├── validate_offline_media.py   # 构建（build）/ 校验（verify）/ 自检（self-test）/ 就绪检查
+├── validate_offline_apply.py   # 目标机：preflight / verify / load / upgrade / rollback / self-test
 └── offline/
     ├── plugins/                # 离线插件包（.difypkg，当前含 deepseek-0.0.25）
     └── README.md               # 本文件（内容清单与合规登记）

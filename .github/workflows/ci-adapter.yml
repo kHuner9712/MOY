@@ -568,6 +568,17 @@ jobs:
       - name: 离线介质包门禁自检（纯逻辑 + 篡改检测）
         run: python ../../deploy/validate_offline_media.py self-test
 
+      # ------------------------------------------------------------------
+      # 门禁 4c-8：离线介质目标机链路（阶段 3B 加载/升级/回滚）
+      #
+      # 假介质包 + 真实临时文件系统 + FakeExecutor（可替换的命令执行层）跑完整流程：
+      # 预检、写前校验、加载、幂等重入、崩溃断点续跑、升级合法/非法、回滚成功、
+      # 回滚中途失败（退出码 3）。真实 skopeo 导入 Docker、真实 psql、真实插件
+      # 导入器不在 runner 执行，不设 allow-skip；未验证边界见 docs/offline-package.md §10。
+      # ------------------------------------------------------------------
+      - name: 离线介质目标机链路自检（加载/升级/回滚）
+        run: python ../../deploy/validate_offline_apply.py self-test
+
       - name: 迁移门禁自检（可红证明）
         run: |
           set +e

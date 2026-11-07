@@ -92,7 +92,8 @@
   ```
 - 私有化环境默认**不出网**：出站控制由客户网络策略/代理执行（V1.0 无 `OA_OFFLINE_MODE`
   运行时开关，该键已于 2026-11-04 审计删除；离线介质包的**构建与校验**已落地（阶段 3A），
-  见 [`docs/offline-package.md`](offline-package.md)；目标机加载仍属 3B，尚未实现）。
+  目标机**预检/加载/升级/回滚**已由 `deploy/validate_offline_apply.py` 提供（阶段 3B），
+  见 [`docs/offline-package.md`](offline-package.md)；`install.sh --offline` 分支仍未接入）。
   若客户允许出站，仅需放通模型服务与客户已连接的工具平台域名。
 
 ### 2.4 系统与时钟
@@ -132,13 +133,15 @@
 > **状态（2026-11-07）**：交付介质包不落在仓库 `deploy/offline/images/`，而是由
 > `python deploy/validate_offline_media.py build` 产出到 `dist/offline/moy-offline-v<version>-x86_64/`
 > （`dist/` 已忽略）。仓库内 `deploy/offline/` 只有 `README.md` 与 `plugins/`。
-> 3A 只提供**构建 + 校验**；**V1.0 仍不提供 `--offline` 安装能力**（3B 待实现）。
+> 3A 提供**构建 + 校验**，3B 提供**目标机加载/升级/回滚 CLI**；
+> **V1.0 仍不提供 `install.sh --offline` 安装能力**（安装器尚未接入 3B CLI）。
 
 ### 3.2 完整性校验（**装之前必须做**）
 
-> **状态（2026-11-07）**：离线介质包的**构建与校验**已落地（阶段 3A），内容与步骤见
-> [`docs/offline-package.md`](offline-package.md)。目标机**加载/升级/回滚**属 3B，
-> 尚未实现；因此 §4.1 的 `--offline` 安装分支仍不可用。
+> **状态（2026-11-07）**：离线介质包的**构建与校验**已落地（阶段 3A），目标机
+> **预检/加载/升级/回滚**已落地（阶段 3B，`deploy/validate_offline_apply.py`），
+> 内容与步骤见 [`docs/offline-package.md`](offline-package.md)。**首次真机生成尚未执行**；
+> §4.1 的 `install.sh --offline` 安装分支仍未接入，仍不可用。
 
 交付侧生成的介质包形如 `moy-offline-v<version>-x86_64/`，校验用同一脚本完成
 （逐条比对 `SHA256SUMS`，并指出具体坏掉的条目）：

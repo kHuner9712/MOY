@@ -8,7 +8,7 @@
 | 0 | 工作区整理（28 项未提交改动逐项判定） | 已完成 |
 | 1 | 5 条高危（H-01…H-05） | 已完成 5/5 |
 | 2 | 规范强制化（`engineering-standards` + 门禁） | 已完成 |
-| 3 | 气隙离线包（矩阵 B5） | 3A 已完成（构建+校验）；3B/3C 待开始 |
+| 3 | 气隙离线包（矩阵 B5） | 3A 已完成（构建+校验）；3B 已完成（加载/升级/回滚）；3C 待开始（交付验收/试点方案） |
 
 ---
 
@@ -427,5 +427,49 @@ moy-offline-v<version>-x86_64/
 估算 **9–13 GB**：镜像 8–12 GB（19 个运行时镜像）+ wheels 120–250 MB +
 npm 缓存 80–200 MB + SQL/插件/SBOM <100 MB；实测以 `MANIFEST.json` 的
 `totals.bytes` 为准（本轮未在构建机实测）。
+
+---
+
+## 阶段 3B：目标机加载、升级与回滚（已完成）
+
+范围：**只做目标机侧**（加载器 CLI + 状态/失败语义 + CI 可跑链路 + 文档）；
+交付验收文档/试点方案属 3C，不在本节。
+
+### 交付物
+
+| 文件 | 作用 |
+| --- | --- |
+| `deploy/validate_offline_apply.py`（新建） | 四个子命令：`preflight`（架构/磁盘余量/必要工具）、`verify`（签名+SHA256SUMS+MANIFEST 一致性，写前 fail-closed）、`load`（镜像/wheels/SQL/插件，幂等断点续跑）、`upgrade`（版本兼容校验后走 load）、`rollback`（down SQL 逆序+旧镜像+插件恢复，失败停安全点 exit 3）；另有 `self-test` |
+| `apps/adapter/tests/unit/test_offline_apply.py`（新建） | 32 个单测：预检（磁盘/工具/架构）、篡改与 MANIFEST 不一致拒绝、加载/幂等/崩溃重入、同版本换包与跨版本 load 拒绝、升级矩阵、升级只跑新增迁移、升级失败保留 previous、回滚成功/中途失败重入/介质丢失、CLI 自检 |
+| `.github/workflows/ci-adapter.yml` | 新增「离线介质目标机链路自检」step（假介质 + 真实临时文件系统 + FakeExecutor），不设 allow-skip |
+| `docs/offline-package.md` | 新增 §9 目标机全流程、§10 失败处置表与人工介入点、§11 CI 覆盖与未验证边界；页首写明「首次真机生成尚未执行」 |
+| `docs/engineering-standards.md` | A.1/A.5 增第 21 行（21 个：20 `.py` + 1 `.sh`），S8 计数同步 |
+| `qa/phase4-verify.sh` | 19→20 个 `.py`；新门禁进 FAMILY_B（自检成功 = exit 0） |
+| `deploy/validate_standards.py` | STD-5 文档串同步为「21 个：20 `.py` + 1 `.sh`」 |
+| `docs/delivery-2026-11-07-audit-remediation.md` | 本节 |
+
+### 关键语义
+
+- **写前否决**：`preflight` 或 `verify` 任一失败都 `exit 1`，不生成状态文件、不执行任何
+  包内 SQL；磁盘判据 `totals.bytes + max(20%, 512 MiB)`。
+- **幂等/断点**：状态文件 `moy-offline-state/v1` 记录 `applied` 幂等键；重复执行只打
+  `[SKIP]`，加载中途失败记 `status=partial` + `last_error={step,target,detail}`，重跑从断点继续。
+- **升级**：同大版本、次版本最多跨 1；跨大版本/跳 2 个次版本/降级/同版本一律拒绝并说明。
+  升级前先落 `previous` 快照，中途失败可直接 `rollback`。
+- **回滚**：只执行清单登记的 `sql/rollback/` 且逆序；失败 `status=rollback_failed`、
+  `rollback_completed/pending` 落盘、打印三条人工介入指令并 `exit 3`，不报成功。
+- **安全**：不执行介质包内任何脚本；SQL/插件顺序严格取 MANIFEST，不扫目录；
+  状态文件不含数据库连接串。
+
+### CI 真跑与未验证边界
+
+CI 真跑：`self-test`（假介质 + FakeExecutor 全流程，含崩溃重入与回滚中途失败）+ 32 个单测。
+**未验证**：真实 `skopeo` 导入 Docker、真实 `psql`、真实插件导入器、真实磁盘判定、
+真实 cosign 签名；且 **3A 首次真机生成尚未执行**，3B 未拿真实介质包在真机跑过。
+验证条件见 `docs/offline-package.md` §11。
+
+### 3C 剩余
+
+交付验收文档（验收清单/判定标准）与试点方案（现场步骤、角色分工、回滚演练与签字页）。
 
 
