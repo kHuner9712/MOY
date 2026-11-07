@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
@@ -260,6 +261,29 @@ def _reset_all() -> None:
     reset_plugin_grant_service()
     reset_plugin_review_service()
     reset_plugin_service()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _default_loopback_host() -> Iterator[None]:
+    """把测试进程的默认监听地址钉在回环（B-5 硬化 3）。
+
+    `validate_auth_startup` 对 `auth_mode=stub` 有**不依赖 env** 的硬判据：
+    非 loopback 监听一律 30004。测试进程从不真正绑定端口，但大量用例直接
+    `Settings(auth_mode="stub")`（不显式传 host），会拿到生产默认 `0.0.0.0`。
+
+    在进程级注入 `OA_HOST=127.0.0.1` 一次，比给 60 余处构造点逐个补参数更稳：
+    - 显式传参优先（`test_auth_startup` 的 `0.0.0.0` 负样本照常生效）；
+    - PG 夹具里 `Settings(...)` 同样受益，避免"只在写库用例里红"。
+    """
+    previous = os.environ.get("OA_HOST")
+    os.environ.setdefault("OA_HOST", "127.0.0.1")
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("OA_HOST", None)
+        else:
+            os.environ["OA_HOST"] = previous
 
 
 @pytest.fixture
