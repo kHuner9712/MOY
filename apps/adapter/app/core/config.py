@@ -357,11 +357,24 @@ class Settings(BaseSettings):
     # `mcp_default_timeout_ms` / `mcp_connect_timeout_ms`：单次调用总超时与建连超时。
     # `mcp_max_output_bytes`：返回体硬上限（逐块累计，超限即中止，不落库大报文）。
     # `mcp_max_servers_per_tenant`：单租户登记上限（防止把登记表当配置仓库用）。
+    #
+    # H-02（审计 2026-11-07）出站安全：
+    # `mcp_allowed_hosts` 是**目标主机白名单**（逗号分隔，支持 `*.example.com`）。
+    #   **默认空 = 全部拒绝**：登记外部 MCP server 前必须先声明目标域，否则
+    #   运营账号可以把适配层当内网探测跳板（169.254.169.254 / 10.x / fd00::/8）。
+    # `mcp_allow_loopback` 只用于本地开发联调，且 staging/production 一律拒绝；
+    #   默认关，回环同样属于内网段。
+    # `ssrf_proxy_url` 是适配层出站统一代理（compose 的 `ssrf_proxy`）。
+    #   为空时直连并做 DNS 钉扎；非空时由代理解析，适配层仍先做白名单与
+    #   字面量 IP 判定。G-9 遗留项的代码侧闭环。
     # ------------------------------------------------------------------
     mcp_enabled: bool = False
     mcp_allow_stdio: bool = False
     mcp_stdio_allowed_commands: str = ""
     mcp_allow_insecure_http: bool = False
+    mcp_allowed_hosts: str = ""
+    mcp_allow_loopback: bool = False
+    ssrf_proxy_url: str = ""
     mcp_default_timeout_ms: int = Field(default=15_000, ge=1_000, le=120_000)
     mcp_connect_timeout_ms: int = Field(default=5_000, ge=1_000, le=30_000)
     mcp_max_output_bytes: int = Field(default=64 * 1024, ge=1_024, le=1 * 1024 * 1024)

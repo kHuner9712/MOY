@@ -25,6 +25,7 @@ from app.business.credential_service import CredentialResolver, get_credential_r
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
+from app.core.net_safety import UnsafeTargetError, ensure_allowlisted, is_blocked_ip, parse_ip
 from app.core.security import OPS_TENANT_ID
 from app.db.repositories.mcp_repo import (
     McpServerRecord,
@@ -76,6 +77,8 @@ class McpTarget:
         connect_timeout_ms: 建连超时。
         max_output_bytes: 响应体上限。
         allow_insecure_http: 是否允许非 loopback 明文 http。
+        allow_loopback: 是否放行回环（仅 development/test 且显式开关）。
+        proxy_url: 出站代理（空 = 直连并做 DNS 钉扎）。
         allowed_tools: 工具白名单（运行期已复核）。
     """
 
@@ -90,6 +93,8 @@ class McpTarget:
     connect_timeout_ms: int = 5_000
     max_output_bytes: int = 64 * 1024
     allow_insecure_http: bool = False
+    allow_loopback: bool = False
+    proxy_url: str = ""
     allowed_tools: tuple[str, ...] = ()
 
 
@@ -463,13 +468,50 @@ class McpServerService:
                 message="服务地址不能带片段标识",
                 internal_detail="endpoint contains fragment",
             )
-        loopback = parts.hostname in {"127.0.0.1", "localhost", "::1"}
+
+        host = parts.hostname or ""
+        # H-02(a)：白名单默认拒绝。运营账号不能"先登记再探测"未声明的域。
+        try:
+            ensure_allowlisted(host, self._allowed_hosts())
+        except UnsafeTargetError as exc:
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                message="该服务地址不在允许范围内，请由管理员先声明目标域",
+                internal_detail=f"mcp host rejected: {exc.reason}",
+            ) from exc
+
+        # H-02(a)：字面量 IP / localhost 先判内网段。`localhost` 解析后才暴露，
+        # 这里提前拦，错误更直接（且不依赖 DNS 可用性）。
+        literal = parse_ip(host)
+        is_local_name = host.lower() == "localhost" or host.lower().endswith(".localhost")
+        blocked = (literal is not None and is_blocked_ip(literal)) or is_local_name
+        if blocked and not (
+            self._loopback_permitted() and (literal is None or literal.is_loopback)
+        ):
+            raise ApiError(
+                ErrorCode.PARAM_INVALID,
+                message="服务地址不能指向内网或保留地址",
+                internal_detail=f"blocked endpoint host={host!r}",
+            )
+        loopback = is_local_name or (literal is not None and literal.is_loopback)
         if parts.scheme == "http" and not loopback and not self._settings.mcp_allow_insecure_http:
             raise ApiError(
                 ErrorCode.PARAM_INVALID,
                 message="外部服务地址必须使用 https",
                 internal_detail="insecure http rejected",
             )
+
+    def _allowed_hosts(self) -> tuple[str, ...]:
+        """解析目标白名单（逗号分隔；空串 = 空元组 = 全拒绝）。"""
+        raw = self._settings.mcp_allowed_hosts
+        return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+    def _loopback_permitted(self) -> bool:
+        """回环是否可放行：显式开关且非 staging/production。"""
+        return self._settings.mcp_allow_loopback and self._settings.env not in {
+            "staging",
+            "production",
+        }
 
     def _validate_stdio(self, endpoint: str) -> None:
         """校验本地连接（默认关；生产/预发一律拒绝）。
@@ -601,6 +643,10 @@ class McpServerService:
             credential = await self._credentials.resolve_ref(
                 record.tenant_id, record.credential_ref
             )
+        if record.transport == TRANSPORT_HTTP:
+            # H-02：登记后配置可能已收紧（白名单/内网判定），执行前必须复核，
+            # 不能"登记时合法 → 永远合法"。
+            self._validate_url(record.endpoint)
         return McpTarget(
             tenant_id=record.tenant_id,
             server_id=record.server_id,
@@ -613,6 +659,8 @@ class McpServerService:
             connect_timeout_ms=self._settings.mcp_connect_timeout_ms,
             max_output_bytes=record.max_output_bytes,
             allow_insecure_http=self._settings.mcp_allow_insecure_http,
+            allow_loopback=self._loopback_permitted(),
+            proxy_url=self._settings.ssrf_proxy_url,
             allowed_tools=record.allowed_tools,
         )
 

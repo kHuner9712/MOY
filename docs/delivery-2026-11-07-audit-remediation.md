@@ -118,7 +118,58 @@
 
 **仍未闭环**：无内置 Loki/Tempo/Grafana（M-06，属可观测性纵深，不在 P0 范围）。
 
-### H-02 SSRF 阻断（待做）
+**CI 首跑红与修复（d11a142，2026-11-07）**：CI Adapter `42321575875` 的 H-01 自证步骤
+以 `Permission denied`（exit 126）失败——`deploy/alertmanager-entrypoint.sh` 在 git 中是
+`100644`，Linux runner 上无执行位，而 CI 用 `sh -c "/etc/.../entrypoint.sh"` 直接执行。
+修复：CI 改为 `sh /etc/alertmanager/entrypoint.sh`（compose 里本就显式 `/bin/sh` 前缀，
+不受影响），并给脚本补执行位。CI Web `42321597212` 的 E2E 在同一 SHA 上因 B-5 硬化
+（`auth_mode=stub` + `host=0.0.0.0`）以 `30004` 拒绝起栈——job 里 uvicorn 虽绑
+`127.0.0.1`，但 `Settings.host` 仍是默认 `0.0.0.0`；补 `OA_HOST=127.0.0.1` 与绑定位一致。
+
+### H-02 SSRF 阻断（已完成）
+
+**已完成的变更**
+
+- `apps/adapter/app/core/net_safety.py`（新建）：地址判定与解析钉扎的单一实现。
+  - 拒绝段 IPv4：`0.0.0.0/8`、`10/8`、`100.64/10`（CGNAT）、`127/8`、`169.254/16`
+    （含 `169.254.169.254` 元数据地址）、`172.16/12`、`192.0.0.0/24`、`192.0.2.0/24`、
+    `192.168/16`、`198.18/15`、`198.51.100/24`、`203.0.113/24`、`224/4`、`240/4`。
+  - 拒绝段 IPv6：`::/128`、`::1/128`、`fc00::/7`（含 `fd00::/8`）、`fe80::/10`、
+    `ff00::/8`、`2001:db8::/32`、`64:ff9b::/96`；`::ffff:` 映射地址先拆成 IPv4 再判定，
+    `::ffff:169.254.169.254` 与 `::ffff:127.0.0.1` 均被拒。
+  - `resolve_host_ip()`：**解析一次**，任一解析结果命中拒绝段则整体拒绝（fail-closed）；
+    字面量 IP 直接判定，不经过 DNS。
+- `apps/adapter/app/core/config.py`：新增 `mcp_allowed_hosts`（默认空）、
+  `mcp_allow_loopback`（默认 false）、`ssrf_proxy_url`（默认空）。
+- `apps/adapter/app/business/mcp_service.py`：登记与执行前**两处**校验 —— 先过目标白名单
+  （空名单 = 全拒绝，`*.example.com` 支持子域通配且根域不命中），再判内网/保留地址；
+  回环仅在 `env∈{test,development}` 且显式 `mcp_allow_loopback` 时放行。错误统一
+  `PARAM_INVALID` + 安全文案（不回显解析结果）。
+- `apps/adapter/app/clients/mcp_client.py`：`McpConnection` 记录 `pinned_ip` / `host_header` /
+  `proxy_url`；请求 URL 换成已判定的 IP（IPv6 加方括号），保留原主机名作 `Host` 头与 TLS
+  `sni_hostname` 扩展 —— **DNS rebinding 在解析后无法再改向**。
+- `apps/adapter/app/services/mcp_runner.py`：probe 与 execute 共用 `_connection()`；
+  HTTP 无代理时先 `resolve_host_ip()` 再钉扎；`unsafe_target:<reason>` 只进内部诊断，
+  不把 IP/解析细节透给调用方。
+- `deploy/.env.example`：`OA_MCP_ALLOWED_HOSTS=`（默认空 = 全拒绝，附声明示例）、
+  `OA_MCP_ALLOW_LOOPBACK=false`；`OA_SSRF_PROXY_URL` 注明适配层已消费。
+- `docs/deployment-guide.md` §16.4：三道闸口径 + 现场可复核断言
+  （登记 `169.254.169.254` / `[fd00::1]` / `[::ffff:127.0.0.1]` 应得 `400` + `20001`）。
+
+**对质量的影响**
+
+- 新增 `apps/adapter/tests/unit/test_mcp_ssrf.py` **20 个用例**：IP 拒绝参数化（含 mapped /
+  CGNAT / ULA）、白名单通配与根域不命中、混合解析 fail-closed、IPv4/IPv6 钉扎与
+  `Host`/SNI 回填、空名单全拒绝、内网字面量即便在名单内也拒绝、回环仅在 test + 显式开关、
+  代理模式不钉扎。
+- 假绿被堵：审计实测 `app/` 内 ssrf/169.254 零命中、`OA_SSRF_PROXY_URL` 零读取（G-9）；
+  现在登记内网目标在**登记阶段**就失败，而不是等出网时才暴露。
+- 兼容性：既有 4 个 MCP 测试文件补 `mcp_allowed_hosts` / `mcp_allow_loopback` 后全绿；
+  默认配置（空白名单）下行为从「任意地址可用」变为「默认拒绝」——这是**有意的安全默认**，
+  已在部署手册登记为上线前必配项。
+
+**仍未闭环**：`deploy/squid.conf` 仍是 `http_access allow localnet` 且无 `dstdomain`
+（G-11），网络层出站白名单属部署侧工作，不在本条范围。
 
 ### H-03 零测试端点（待做）
 

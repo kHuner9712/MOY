@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from typing import Any, Final
+from urllib.parse import urlsplit
 
 from app.business.mcp_service import McpServerService, McpTarget
 from app.clients import mcp_client
@@ -23,6 +24,7 @@ from app.clients.mcp_client import McpConnection, McpError
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
+from app.core.net_safety import UnsafeTargetError, resolve_host_ip
 
 logger = get_logger(__name__)
 
@@ -116,7 +118,8 @@ class McpRunner:
                 "tools": [],
             }
         try:
-            names = await mcp_client.list_tools(self._connection(target))
+            connection = await self._connection(target)
+            names = await mcp_client.list_tools(connection)
             allowed = sorted(set(names) & set(target.allowed_tools))
             duration_ms = int((time.monotonic() - started) * 1000)
             logger.info(
@@ -170,7 +173,8 @@ class McpRunner:
         target, tool_name = await self._service.prepare_execute(tenant_id, operation)
         started = time.monotonic()
         try:
-            result = await mcp_client.call_tool(self._connection(target), tool_name, arguments)
+            connection = await self._connection(target)
+            result = await mcp_client.call_tool(connection, tool_name, arguments)
         except ApiError:
             raise
         except McpError as exc:
@@ -240,15 +244,35 @@ class McpRunner:
             size_bytes=result.size_bytes,
         )
 
-    def _connection(self, target: McpTarget) -> McpConnection:
-        """把业务层解析结果转成客户端连接参数。
+    async def _connection(self, target: McpTarget) -> McpConnection:
+        """把业务层解析结果转成客户端连接参数（HTTP 在这里做 DNS 钉扎）。
+
+        H-02(a) 的关键点：**判定与连接使用同一个 IP**。
+        - 未配置 `OA_SSRF_PROXY_URL`：本地解析一次 → 校验 → 把该 IP 写进连接参数，
+          客户端直接用 IP 建连（TLS SNI/Host 仍用原主机名）；
+        - 配置了代理：由代理解析与出站，适配层不钉扎（白名单/字面量 IP 判定已在
+          业务层与 `prepare_*` 复核中完成）。
 
         Args:
             target: 已解析的连接参数。
 
         Returns:
             McpConnection: 客户端连接参数。
+
+        Raises:
+            McpError: 目标被判定为内网/保留地址（`connect_failed`，不泄漏原因细节）。
         """
+        pinned_ip = ""
+        host_header = ""
+        if target.transport == "http" and not target.proxy_url:
+            parts = urlsplit(target.endpoint)
+            host = parts.hostname or ""
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+            try:
+                pinned_ip = await resolve_host_ip(host, port, allow_loopback=target.allow_loopback)
+            except UnsafeTargetError as exc:
+                raise McpError("connect_failed", f"unsafe_target:{exc.reason}") from exc
+            host_header = host
         return McpConnection(
             transport=target.transport,
             endpoint=target.endpoint,
@@ -258,6 +282,9 @@ class McpRunner:
             connect_timeout_ms=target.connect_timeout_ms,
             max_output_bytes=target.max_output_bytes,
             allow_insecure_http=target.allow_insecure_http,
+            pinned_ip=pinned_ip,
+            host_header=host_header,
+            proxy_url=target.proxy_url,
         )
 
 

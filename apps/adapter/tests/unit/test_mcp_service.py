@@ -45,6 +45,9 @@ def _settings(**overrides: object) -> Settings:
         "mcp_allow_stdio": True,
         "mcp_stdio_allowed_commands": sys.executable,
         "mcp_allow_insecure_http": True,
+        # H-02：白名单默认拒绝；本文件需要覆盖真实本地 server 与示例域名。
+        "mcp_allowed_hosts": "127.0.0.1,localhost,example.com",
+        "mcp_allow_loopback": True,
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]

@@ -55,6 +55,9 @@ def mcp_settings() -> Settings:
         ratelimit_enabled=False,
         business_store="memory",
         mcp_enabled=True,
+        # H-02：本地真实 MCP server 走回环；白名单必须显式声明（默认拒绝）。
+        mcp_allowed_hosts="127.0.0.1,localhost",
+        mcp_allow_loopback=True,
     )
 
 

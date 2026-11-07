@@ -936,3 +936,18 @@ k8s 形态（`deploy/k8s/base/`）与上述口径一致：Service 仅 ClusterIP�
 对外走 Ingress（TLS 用 Secret 引用）；密钥全部走 `officeai-secrets`（由
 `kubectl create secret --from-env-file=deploy/.env` 生成，禁止入库）。清单定位仍是
 **V1.1 准备物**（V1.0 以 compose + 边缘上线），详见 `deploy/k8s/README.md`。
+
+### 16.4 出站面（SSRF，H-02 2026-11-07）
+
+适配层唯一由**用户/运营可配置**的出站目标是 MCP server。它现在有三道闸：
+
+| 闸 | 行为 | 配置 |
+| --- | --- | --- |
+| 目标白名单 | **默认空 = 全拒绝**；只放行声明的主机（精确或 `*.example.com`） | `OA_MCP_ALLOWED_HOSTS` |
+| 地址判定 | 解析后按 IP 判定，拒绝回环/私网/链路本地/CGNAT/保留段；IPv6 含 `fc00::/7`、`fe80::/10`，并拆 `::ffff:` 映射 | 内置，无开关 |
+| 连接钉扎 | 判定与连接用**同一个 IP**（防 DNS rebinding）；TLS 的 SNI/Host 仍用原主机名 | 配置 `OA_SSRF_PROXY_URL` 时改由代理解析，不做本地钉扎 |
+
+- `OA_MCP_ALLOWED_HOSTS=` 留空时，登记任何外部 MCP server 都会返回 `20001`。这是刻意的安全默认：**先声明、再登记**。
+- 回环仅在 `development/test` 且 `OA_MCP_ALLOW_LOOPBACK=true` 时可用；`staging/production` 恒拒绝。
+- 可复核断言：在运营端登记 `https://169.254.169.254/mcp` / `https://[fd00::1]/mcp` / `https://[::ffff:127.0.0.1]/mcp`，**三种都应返回 400/`20001`**；登记后修改 DNS 指向内网，probe 仍应失败且响应不含解析细节（`connect_failed`）。
+

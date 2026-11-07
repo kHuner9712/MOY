@@ -185,11 +185,12 @@
 | 分级 | 计划 | 已实施 | 部分实施 | 未实施 |
 |---|---|---|---|---|
 | 严重 | 6 | **6** | 0 | 0 |
-| 一般 | 22 | **6** | 1 | 15 |
+| 一般 | 22 | **7** | 1 | 14 |
 | 轻微 | 25 | **4** | 0 | 21 |
-| **合计** | **53** | **16** | **1** | **36** |
+| **合计** | **53** | **17** | **1** | **35** |
 
 > 判定口径：**已实施** = 代码/配置已改且通过验证；**部分实施** = 主目标达成但配套项缺；**未实施** = 本轮未动（原因见 §5.4）。
+> 计数含 2026-11-07 补做的 G-9（H-02），其余条目状态未变。
 
 ### 5.2 严重级：6/6 全部完成（含真实构建验证）
 
@@ -212,6 +213,7 @@
 | **G-6 R2-QA-08** | ✅ 完成 | `ci-adapter.yml` 加 `uv lock --check`（在 `uv sync` 之前）。**验证**：本地 `uv lock --check` 通过（锁与 pyproject 一致） |
 | **G-7 R2-ARC-06** | ✅ 完成 | SCA 黑名单补 `BUSL / Business Source / PolyForm / Commons Clause / Elastic-2 / Elastic License / CC-BY-NC / RSAL`，并扩正负样本自检。**验证**：本地 13 个正样本全命中（含 `BUSL-1.1`、`PolyForm-Noncommercial-1.0.0`、`RSALv2`、`CC-BY-NC-4.0`），`MIT/Apache-2.0/BSD-3-Clause/MPL-2.0/ISC/PSF-2.0` **零误伤** |
 | **G-8 R2-ARC-17** | ✅ 完成 | 删除 `pyproject.toml` 的 `ignore::DeprecationWarning:httpx.*`（实测 no-op 空转），原位留 10 行解释；新建 `docs/dependency-upgrade-watchlist.md`（W-1~W-6，含到期判据与触发条件）。**验证**：删除后 pytest 告警数与之前一致（证明它确实从未生效） |
+| **G-9 R2-QA-06** | ✅ 完成（2026-11-07，H-02） | 选方案②「真正接上」：新增 `app/core/net_safety.py`（IPv4/IPv6 全保留段判定 + `::ffff:` 映射拆分 + 解析后钉扎）；`mcp_service` 登记与执行两处校验，目标白名单 `OA_MCP_ALLOWED_HOSTS` 默认空 = 全拒绝；`mcp_client` 按已判定 IP 连接并回填 `Host`/SNI（防 DNS rebinding）；`mcp_runner` probe 同受约束；`OA_SSRF_PROXY_URL` 由适配层 `httpx.AsyncClient(proxy=...)` 消费。**验证**：新增 `tests/unit/test_mcp_ssrf.py` **20 条**（含 `169.254.169.254`、`fd00::/8`、`::ffff:127.0.0.1` 全拒，混合解析 fail-closed，钉扎/代理用例）；MCP 相关 70 条全绿 |
 | **L-6 R2-ARC-13** | ✅ 完成 | `dependency-scan.yml`：Valkey 文案由「D-06 待决」改为「D-06 已于 2026-10-21 批准，无需人工确认」；license 扫描由 `working-directory: apps/web` + `npm install` 改为**仓库根 `npm ci` + `--start .`**（与 `npm audit` 同源） |
 | **L-7 R2-ARC-16** | ✅ 完成 | `images.lock` 的 plugin-daemon 条目补 `note`：说明 `-local` 是上游官方变体、非本地自建、升级须保持后缀。**验证**：`validate_images.py` exit 0 |
 | **L-10 R2-ENG-13** | ✅ 完成 | `docker-compose.lite.yml:123` / `docker-compose.saas.yml:75` 的 `allkeys-lru` → `volatile-lru`（与全量栈对齐），并注明代价。**验证**：三套 `docker compose config` 全 exit 0 |
@@ -224,7 +226,7 @@
 |---|---|
 | **G-2 R2-ENG-02 支付验签** | 涉及资金链路的签名载荷变更，需与支付渠道/Dify 侧联调并设计兼容期（旧签名仍要验）。改错会**直接造成对账差异**，不应在无真实回调样本时动手；建议单独立项 + 灰度。 |
 | **G-5 R2-ARC-14 精确标签** | `pgvector:0.8.7-pg18-bookworm` 与 `nginx:1.28-alpine` 需先**拉取验证存在性**再改（否则部署直接失败）。本地无这两个镜像、拉取受网络限制，故本轮只保留方案。 |
-| **G-9~G-22 其余一般项** | 均为业务逻辑改动（SSRF 接线/上传 magic/判权统一/CSP/渲染异步化/额度快照/缓存 LRU/租约粒度/`:8000` 收敛/文档版本/同层 SCC），单条都要改核心链路并补对抗用例。在**无 CI 回归**（S-4 待远端验证）的前提下批量改核心逻辑，风险高于收益。 |
+| **G-10~G-22 其余一般项** | 均为业务逻辑改动（上传 magic/判权统一/CSP/渲染异步化/额度快照/缓存 LRU/租约粒度/`:8000` 收敛/文档版本/同层 SCC），单条都要改核心链路并补对抗用例。在**无 CI 回归**（S-4 待远端验证）的前提下批量改核心逻辑，风险高于收益。 |
 | **L-1~L-25 其余轻微项** | 同上；且部分（L-3 `security.py` 拆分、L-19 并行化）属结构性改动，方案里已明确「须等 e2e 在 CI 跑稳一个迭代」。 |
 | **`docker-build-smoke` CI job（G-3 配套）** | 需要 CI 能拉 `node:22-alpine` / `python:3.13-slim` 并跑约 5 分钟构建。在 CI 额度未恢复前加这个 job，只会让"永远红"多一条。**建议与 S-4 一起在远端首次实跑时加入**——R4 静态门禁已能覆盖它的主要价值。 |
 

@@ -112,6 +112,9 @@ def _settings() -> Settings:
         mcp_allow_stdio=True,
         mcp_stdio_allowed_commands=sys.executable,
         mcp_allow_insecure_http=True,
+        # H-02：真实本地 MCP server 走回环；白名单必须显式声明。
+        mcp_allowed_hosts="127.0.0.1,localhost",
+        mcp_allow_loopback=True,
     )
 
 

@@ -27,6 +27,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Final
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -80,6 +81,9 @@ class McpConnection:
         max_output_bytes: 返回体上限。
         connect_timeout_ms: 建连超时。
         allow_insecure_http: 是否允许非 loopback 的 `http://`。
+        pinned_ip: 已解析并通过内网判定的 IP（**非空时直接连它**，防 DNS rebinding）。
+        host_header: 钉扎连接时要回填的原始主机名（TLS SNI 与 Host 头）。
+        proxy_url: 出站代理（非空时代理解析，不做本地钉扎）。
     """
 
     transport: str
@@ -90,6 +94,9 @@ class McpConnection:
     connect_timeout_ms: int = 5_000
     max_output_bytes: int = 64 * 1024
     allow_insecure_http: bool = False
+    pinned_ip: str = ""
+    host_header: str = ""
+    proxy_url: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,7 +224,13 @@ async def _http_session(conn: McpConnection, method: str, params: dict[str, Any]
     }
     if conn.credential:
         headers["Authorization"] = f"Bearer {conn.credential}"
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+    url, pin_headers, extensions = _pinned_request(conn)
+    headers.update(pin_headers)
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=False,
+        proxy=conn.proxy_url or None,
+    ) as client:
         init_payload = {
             "jsonrpc": "2.0",
             "id": _INIT_ID,
@@ -229,18 +242,51 @@ async def _http_session(conn: McpConnection, method: str, params: dict[str, Any]
             },
         }
         init_result, session_id = await _http_rpc(
-            client, conn.endpoint, init_payload, headers, conn.max_output_bytes
+            client, url, init_payload, headers, conn.max_output_bytes, extensions
         )
         if session_id:
             headers["Mcp-Session-Id"] = session_id
         _assert_result(init_result, _INIT_ID)
-        await _http_notify(client, conn.endpoint, headers, "notifications/initialized")
+        await _http_notify(client, url, headers, "notifications/initialized", extensions)
 
         payload = {"jsonrpc": "2.0", "id": _CALL_ID, "method": method, "params": params}
         response, _ = await _http_rpc(
-            client, conn.endpoint, payload, headers, conn.max_output_bytes
+            client, url, payload, headers, conn.max_output_bytes, extensions
         )
         return _result_of(response, _CALL_ID)
+
+
+def _pinned_request(conn: McpConnection) -> tuple[str, dict[str, str], dict[str, Any]]:
+    """把已钉扎的 IP 拼回 URL，并把原始主机名放进 Host/SNI。
+
+    H-02(a)：判定与连接之间不能再解析一次 DNS（否则 `evil.example.com`
+    第一次解析返回公网 IP 骗过判定，第二次返回 `169.254.169.254`）。
+    因此连接用的是 `conn.pinned_ip` 字面量；TLS 仍以原主机名做 SNI 与证书校验。
+
+    Args:
+        conn: 连接参数。
+
+    Returns:
+        tuple[str, dict[str, str], dict[str, Any]]:
+        `(请求 URL, 额外请求头, httpcore 扩展)`。未钉扎时原样返回。
+    """
+    if not conn.pinned_ip:
+        return conn.endpoint, {}, {}
+    parts = urlsplit(conn.endpoint)
+    host = conn.pinned_ip
+    netloc = f"[{host}]" if ":" in host else host
+    if parts.port:
+        netloc = f"{netloc}:{parts.port}"
+    url = urlunsplit((parts.scheme, netloc, parts.path or "/", parts.query, ""))
+    host_header = conn.host_header or parts.hostname or ""
+    default_port = 443 if parts.scheme == "https" else 80
+    if parts.port and parts.port != default_port:
+        host_header = f"{host_header}:{parts.port}"
+    headers = {"Host": host_header}
+    extensions: dict[str, Any] = (
+        {"sni_hostname": conn.host_header} if parts.scheme == "https" and conn.host_header else {}
+    )
+    return url, headers, extensions
 
 
 async def _http_rpc(
@@ -249,15 +295,17 @@ async def _http_rpc(
     payload: dict[str, Any],
     headers: dict[str, str],
     max_bytes: int,
+    extensions: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """发送一条 JSON-RPC 请求并读取响应。
 
     Args:
         client: HTTP 客户端。
-        url: 地址。
+        url: 地址（可能是钉扎后的 IP 形式）。
         payload: JSON-RPC 载荷。
         headers: 请求头。
         max_bytes: 响应体上限。
+        extensions: httpcore 扩展（TLS SNI 等）。
 
     Returns:
         tuple[dict[str, Any], str]: `(响应 JSON, session_id)`。
@@ -265,7 +313,9 @@ async def _http_rpc(
     Raises:
         McpError: 鉴权失败/协议错误/超限。
     """
-    async with client.stream("POST", url, json=payload, headers=headers) as response:
+    async with client.stream(
+        "POST", url, json=payload, headers=headers, extensions=extensions
+    ) as response:
         if response.status_code in {401, 403}:
             raise McpError("auth_failed", f"status={response.status_code}")
         if response.status_code >= 400:
@@ -289,18 +339,25 @@ async def _http_rpc(
 
 
 async def _http_notify(
-    client: httpx.AsyncClient, url: str, headers: dict[str, str], method: str
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    method: str,
+    extensions: dict[str, Any] | None = None,
 ) -> None:
     """发送一条 JSON-RPC 通知（无 id、无响应体）。
 
     Args:
         client: HTTP 客户端。
-        url: 地址。
+        url: 地址（可能是钉扎后的 IP 形式）。
         headers: 请求头。
         method: 通知方法名。
+        extensions: httpcore 扩展（TLS SNI 等）。
     """
     payload = {"jsonrpc": "2.0", "method": method}
-    async with client.stream("POST", url, json=payload, headers=headers) as response:
+    async with client.stream(
+        "POST", url, json=payload, headers=headers, extensions=extensions
+    ) as response:
         if response.status_code in {401, 403}:
             raise McpError("auth_failed", f"status={response.status_code}")
         if response.status_code >= 400:
