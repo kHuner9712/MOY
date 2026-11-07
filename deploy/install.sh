@@ -133,6 +133,11 @@ usage() {
   --ready-timeout <秒>     /readyz 就绪窗口（默认 180）
   -h, --help               显示本帮助
 
+开发/验证开关（环境变量，**不得用于生产交付**）：
+  OA_ALLOW_SELF_SIGNED_TLS=1   缺真实证书时允许生成自签证书，并放行 http 基址
+                               默认不设：缺真证书 / http 基址一律拒绝起栈
+                               且已存在的证书仍须 CN/SAN 覆盖对外基址主机名
+
 退出码：
   0 成功 / 1 通用失败 / 2 前置检查未过 / 3 镜像不可用 / 5 迁移需 DBA
   （4 缺 vector、6 基线变更 预留给 3b-2 的 upgrade.sh）
@@ -393,19 +398,32 @@ generate_env_file() {
 #: 为什么对外基址必须跟着端口改：Dify 用它生成文件/回调链接，端口不一致时
 #: 客户点开下载链接会打到 80 端口 → 404。
 apply_proxy_port_on_new_file() {
-  local port url scheme host base_url realm
+  local port tls_port url scheme host base_url realm
   port="${PROXY_PORT_OVERRIDE:-$(env_get OA_LITE_PROXY_PORT 80)}"
   port="${port:-80}"
-  url="$(env_get OA_LITE_PUBLIC_URL http://localhost)"
+  # A-03：edge.conf 的 80 只做探活与 301 跳转，443 才承载全部业务路由。
+  # 对外基址的端口后缀必须跟着 **TLS** 端口走，不能再拿 HTTP 端口去拼。
+  tls_port="$(env_get OA_LITE_PROXY_TLS_PORT 443)"
+  tls_port="${tls_port:-443}"
+  # A-03：默认改 https。基址的 scheme 同时决定会话 Cookie 的 Secure 属性，
+  # 而 80 已被无条件 301 到 443 —— http 基址会让"登录成功但Cookie不加密"。
+  url="$(env_get OA_LITE_PUBLIC_URL https://localhost)"
   scheme="$(url_scheme "${url}")"
   host="$(url_host "${url}")"
-  [[ -n "${scheme}" ]] || scheme="http"
+  [[ -n "${scheme}" ]] || scheme="https"
   [[ -n "${host}" ]] || host="localhost"
   env_set OA_LITE_PROXY_PORT "${port}"
-  if [[ "${port}" == "80" ]]; then
-    base_url="${scheme}://${host}"
+  env_set OA_LITE_PROXY_TLS_PORT "${tls_port}"
+  if [[ "${scheme}" == "https" ]]; then
+    if [[ "${tls_port}" == "443" ]]; then
+      base_url="https://${host}"
+    else
+      base_url="https://${host}:${tls_port}"
+    fi
+  elif [[ "${port}" == "80" ]]; then
+    base_url="http://${host}"
   else
-    base_url="${scheme}://${host}:${port}"
+    base_url="http://${host}:${port}"
   fi
   env_set OA_LITE_PUBLIC_URL "${base_url}"
 
@@ -463,11 +481,28 @@ backfill_derived_env() {
 
   # 基址唯一来源是 OA_LITE_PUBLIC_URL（编排把它插值给 OA_PUBLIC_BASE_URL）。
   # 这里**只读不写** OA_PUBLIC_BASE_URL，理由见 apply_proxy_port_on_new_file。
-  base_url="$(env_get OA_LITE_PUBLIC_URL http://localhost)"
+  # A-03：缺省口径改 https；既有 .env.lite 里的人工值一律原样读出、绝不覆盖。
+  base_url="$(env_get OA_LITE_PUBLIC_URL https://localhost)"
   base_url="${base_url%/}"
 
   realm="$(env_get OA_KEYCLOAK_REALM officeai)"
   realm="${realm:-officeai}"
+
+  # A-03：OA_LITE_PROXY_TLS_PORT 是 G1 之后新增的键，老现场没有。
+  # 只补缺失（缺失/空才写），已有人工值不动 —— 与其余派生键同一条兼容口径。
+  if [[ -z "$(env_get OA_LITE_PROXY_TLS_PORT "")" ]]; then
+    env_set OA_LITE_PROXY_TLS_PORT "443"
+    # 不计入 added：端口不是构建期常量，不该触发"前端必须重建"的提示。
+    info "既有环境文件已补 OA_LITE_PROXY_TLS_PORT=443（G1 新增键，不覆盖人工值）"
+  fi
+
+  # A-03：http 基址在 TLS 终止形态下丢 Cookie Secure、且 80 已被 301 到 443。
+  # 这里只告警不改写（人工值可能是刻意的本地验证）；真正的阻断在起栈前的
+  # ensure_edge_cert()，避免让老现场"升级一次 install 就直接失败"。
+  if [[ "$(url_scheme "${base_url}")" == "http" ]]; then
+    warn "OA_LITE_PUBLIC_URL 仍是 http 基址：${base_url}（边缘 80 只做 301 跳转，会话 Cookie 会丢 Secure）"
+    warn "  请改为 https://<主机名>；TLS 端口由 OA_LITE_PROXY_TLS_PORT 决定。仅本地验证可设 OA_ALLOW_SELF_SIGNED_TLS=1"
+  fi
 
   # `iss` 校验值：空值或**仍是历史占位值**（`officeai`）时才改。
   # 历史占位值下 OIDC 登录本来就不可用（R4：没有 realm、issuer 不可达），
@@ -824,16 +859,106 @@ step_up_full() {
 
 #: G1（审计 2026-11-02 P0-4）：边缘已升级为 TLS 终止（80 只做探活与 301 跳转，
 #: 443 承载全部路由），nginx 启动时**必须**能读到证书，否则 proxy/edge 容器起不来。
-#: 现场已有证书（真实证书或早前生成的自签）则原样保留；没有才生成自签。
-ensure_edge_cert() {
-  local dir="${SCRIPT_DIR}/nginx/tls"
-  if [[ -s "${dir}/fullchain.pem" && -s "${dir}/privkey.pem" ]]; then
-    ok "边缘 TLS 证书已就位（${dir}，不覆盖既有证书）"
+#:
+#: A-03：此前缺证书就**自动生成自签**且只 warn 不阻断，是主交付路径的双重降级
+#: （自签证书 + http 基址）。现在：生产路径缺真证书一律 die；自签只允许在显式
+#: 开发/验证开关 OA_ALLOW_SELF_SIGNED_TLS=1 下生成；无论证书来源都校验其
+#: CN/SAN 是否覆盖对外基址主机名，不匹配也 die。
+#:
+#: 校验证书 CN / SAN 是否覆盖对外基址主机名（A-03）。
+#: 返回 0 = 匹配；非 0 = 不匹配，调用方负责 die 与醒目告警。
+verify_edge_cert_matches_host() {
+  local cert="$1" host="$2" subject san compact parent item
+  command -v openssl >/dev/null 2>&1 || { err "缺少 openssl，无法校验边缘证书"; return 1; }
+  subject="$(openssl x509 -in "${cert}" -noout -subject -nameopt RFC2253 2>/dev/null || true)"
+  san="$(openssl x509 -in "${cert}" -noout -ext subjectAltName 2>/dev/null || true)"
+  compact="${san//[[:space:]]/}"
+  # `-ext subjectAltName` 输出带标题行，去空格后形如
+  # `X509v3SubjectAlternativeName:DNS:...`：不剥掉标题，首个 SAN 条目会永远
+  # 带前缀、精确匹配必漏（单条目证书尤其明显，如通配符 *.example.com）。
+  compact="${compact##*Name:}"
+  parent="${host#*.}"
+  local IFS=','
+  for item in ${compact}; do
+    case "${item}" in
+      "DNS:${host}"|"IP:${host}"|"IPAddress:${host}") return 0 ;;
+      "DNS:*.${parent}") if [[ "${parent}" != "${host}" ]]; then return 0; fi ;;
+    esac
+  done
+  # 无 SAN 的老式证书：退回 CN 匹配，但明确提示现代客户端只认 SAN。
+  if [[ -z "${compact}" && "${subject//[[:space:]]/}" == *"CN=${host}"* ]]; then
+    warn "证书没有 subjectAltName，仅按 CN 匹配；现代浏览器/客户端可能仍判不信任"
     return 0
   fi
-  warn "未发现边缘 TLS 证书，生成自签一对（**仅限验证**）"
-  sh "${SCRIPT_DIR}/gen-selfsigned-cert.sh" || die 1 "生成自签证书失败（需要 openssl）"
-  warn "当前是自签证书：浏览器告警属预期；上线前请以真实证书覆盖 ${dir} 下同名两件（chmod 600 私钥）"
+  printf '  [证书校验] CN/SAN 未覆盖对外基址主机名：%s\n' "${host}" >&2
+  printf '       subject: %s\n' "${subject:-<无法读取>}" >&2
+  printf '       SAN    : %s\n' "${san:-<无 subjectAltName 扩展>}" >&2
+  printf '       后果：浏览器证书告警 / 统一登录 issuer 不匹配 / 回调域名校验失败\n' >&2
+  return 1
+}
+
+ensure_edge_cert() {
+  local dir="${SCRIPT_DIR}/nginx/tls"
+  local base_url host scheme allow_self_signed
+  base_url="$(env_get OA_LITE_PUBLIC_URL https://localhost)"
+  base_url="${base_url%/}"
+  scheme="$(url_scheme "${base_url}")"
+  host="$(url_host "${base_url}")"
+  host="${host:-localhost}"
+  allow_self_signed="${OA_ALLOW_SELF_SIGNED_TLS:-0}"
+
+  # 主机名会作为自签证书的 CN 传入 gen-selfsigned-cert.sh，先收敛字符集，
+  # 避免把任意串拼进 -subj / SAN（CN 里的 '/' 会被 openssl 解析成额外 RDN）。
+  [[ "${host}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] \
+    || die 1 "对外基址主机名非法：${host}（只允许字母/数字/点/连字符）" \
+             "改 ${ENV_FILE} 的 OA_LITE_PUBLIC_URL，例如 https://localhost"
+
+  # http 基址本身就是降级：80 已被无条件 301 到 443，Cookie 的 Secure 由 scheme 决定。
+  # 开发/验证开关下才放行，生产路径直接拒绝。
+  if [[ "${scheme}" == "http" && "${allow_self_signed}" != "1" ]]; then
+    die 1 "对外基址是 http，但边缘已强制 TLS 终止（80 → 301 → 443）" \
+          "OA_LITE_PUBLIC_URL=${base_url}；会话 Cookie 的 Secure 只由基址 scheme 决定" \
+          "把该键改为 https://<主机名>（端口按 OA_LITE_PROXY_TLS_PORT 拼接）后重跑" \
+          "仅本地验证可显式设 OA_ALLOW_SELF_SIGNED_TLS=1 放行"
+  fi
+
+  if [[ -s "${dir}/fullchain.pem" && -s "${dir}/privkey.pem" ]]; then
+    verify_edge_cert_matches_host "${dir}/fullchain.pem" "${host}" \
+      || die 1 "边缘 TLS 证书与对外基址不匹配，拒绝起栈" \
+               "证书：${dir}/fullchain.pem（现有证书原样保留，不覆盖）" \
+               "对外基址：${base_url}（主机名 ${host}）" \
+               "换成覆盖该主机名的真实证书，或把 OA_LITE_PUBLIC_URL 改到与证书一致"
+    ok "边缘 TLS 证书已就位且与对外基址主机名一致（${host}，不覆盖既有证书）"
+    return 0
+  fi
+
+  # 缺证书：生产路径一律拒绝，不再自动生成自签。
+  if [[ "${allow_self_signed}" != "1" ]]; then
+    die 1 "缺少边缘 TLS 真实证书，拒绝以自签证书起栈" \
+          "期望：${dir}/fullchain.pem 与 ${dir}/privkey.pem（私钥 chmod 600）" \
+          "三套 compose 无条件挂载这两件证书，缺任一件 edge 容器都起不来" \
+          "自签证书 CN/SAN 只覆盖 localhost/127.0.0.1：浏览器告警、统一登录 issuer 不匹配" \
+          "把私有 CA / ACME 签发的真证书放到上述路径后重跑" \
+          "仅本地验证：OA_ALLOW_SELF_SIGNED_TLS=1 bash deploy/install.sh ..."
+  fi
+
+  # 以下只在显式开发/验证开关下到达。用独立醒目块而不是 warn/err：
+  # err 的前缀是 [FAIL]，用在"安装继续"的分支会让人误判成安装失败。
+  info "[DEV-ONLY] 已显式设置 OA_ALLOW_SELF_SIGNED_TLS=1：生成自签证书，仅用于本地验证"
+  sh "${SCRIPT_DIR}/gen-selfsigned-cert.sh" "${host}" || die 1 "生成自签证书失败（需要 openssl）"
+  verify_edge_cert_matches_host "${dir}/fullchain.pem" "${host}" \
+    || die 1 "自签证书的 CN/SAN 未覆盖对外基址主机名 ${host}，拒绝起栈" \
+             "检查 deploy/gen-selfsigned-cert.sh 的 -subj / -addext 输出" \
+             "生产路径必须改用真实证书（本开关不得用于交付）"
+  cat >&2 <<'DEVWARN'
+==================================================================
+ ⚠ ⚠ ⚠  [DEV-ONLY] 自签 TLS 证书已生效 —— **禁止用于生产交付** ⚠ ⚠ ⚠
+   这是 30 天自签证书：浏览器会告警，统一登录 issuer 只在本机可达。
+   上线前必须以私有 CA / ACME 真证书覆盖 nginx/tls 下同名两件（私钥 chmod 600）。
+   未显式设置 OA_ALLOW_SELF_SIGNED_TLS=1 时，安装器会因缺真证书直接拒绝起栈；
+   证书即使已存在，CN/SAN 不覆盖对外基址主机名也会被拒绝起栈。
+==================================================================
+DEVWARN
 }
 
 #: 等全部常驻容器 healthy。

@@ -512,12 +512,12 @@ def test_bypassrls_check_sql_targets_current_user() -> None:
 # 7. 连接串规范化与 SQL 标识符校验
 # ===========================================================================
 def test_normalize_database_url_adds_async_driver() -> None:
-    """同步连接串被改写为 asyncpg 驱动形式。"""
-    assert normalize_database_url("postgresql://officeai:pw@db:5432/officeai") == (
-        "postgresql+asyncpg://officeai:pw@db:5432/officeai"
+    """同步连接串被改写为 asyncpg 驱动形式（样例用应用角色，不暗示属主可用）。"""
+    assert normalize_database_url("postgresql://officeai_app:pw@db:5432/officeai") == (
+        "postgresql+asyncpg://officeai_app:pw@db:5432/officeai"
     )
-    assert normalize_database_url("postgres://officeai:pw@db:5432/officeai") == (
-        "postgresql+asyncpg://officeai:pw@db:5432/officeai"
+    assert normalize_database_url("postgres://officeai_app:pw@db:5432/officeai") == (
+        "postgresql+asyncpg://officeai_app:pw@db:5432/officeai"
     )
 
 
@@ -526,6 +526,43 @@ def test_normalize_database_url_rejects_superuser() -> None:
     with pytest.raises(ApiError) as excinfo:
         normalize_database_url("postgresql://postgres:pw@db:5432/officeai")
     assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+
+
+@pytest.mark.parametrize("user", ["postgres", "superuser", "root"])
+def test_normalize_database_url_rejects_generic_superusers(user: str) -> None:
+    """通用超级用户名一律拒绝；`superuser` 是历史拼写错误 `supersuer` 的回归哨兵。"""
+    with pytest.raises(ApiError) as excinfo:
+        normalize_database_url(f"postgresql://{user}:pw@db:5432/officeai")
+    assert excinfo.value.code == ErrorCode.CONFIG_ERROR
+
+
+def test_normalize_database_url_allows_app_role() -> None:
+    """应用角色 DSN 必须放行；部署专用属主名由编排门禁 R1 与 rolbypassrls 自检兜底。"""
+    assert normalize_database_url("postgresql://officeai_app:pw@db:5432/officeai") == (
+        "postgresql+asyncpg://officeai_app:pw@db:5432/officeai"
+    )
+
+
+def test_normalize_database_url_allows_deployment_owner_by_design() -> None:
+    """部署专用属主名刻意**不**进通用黑名单：由编排门禁与运行期自检负责。
+
+    这是设计边界，不是遗漏：`FORBIDDEN_DB_USERS` 只放与部署无关的通用名
+    （`postgres` / `superuser` / `root`）。`officeai` 是 `.env.example` 里
+    `OA_POSTGRES_USER` 的默认值（initdb 属主、带 BYPASSRLS），项目自定义的
+    属主名由 `deploy/validate_deploy.py` 的 R1 在编排层拦截，运行期再由
+    `check_engine_privilege()` 的 `rolbypassrls` 自检兜底。
+
+    若后续维护者把 `officeai` 塞进 `FORBIDDEN_DB_USERS`，会打断
+    `tests/integration/pg_fixture.py::b01_superuser_engine` 的反向验证夹具
+    （它用超级用户 DSN 做清理与反向验证），PG 隔离用例随之失去对照；
+    本用例即为该回归的哨兵。
+    """
+    # 「不抛 ApiError」是本用例的契约：属主名不归通用黑名单管。
+    try:
+        normalized = normalize_database_url("postgresql://officeai:pw@db:5432/officeai")
+    except ApiError as exc:  # pragma: no cover - 契约被破坏时才走到
+        pytest.fail(f"部署专用属主名不得被通用黑名单拒绝：{exc}")
+    assert normalized == "postgresql+asyncpg://officeai:pw@db:5432/officeai"
 
 
 def test_normalize_database_url_rejects_empty() -> None:

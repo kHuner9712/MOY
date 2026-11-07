@@ -13,10 +13,14 @@
 
 判据（三条，全部是「配置事实」而非「代码意图」）：
 
-- R1：adapter 的 `OA_DATABASE_URL` 不得引用 `${OA_POSTGRES_USER`；
+- R1：adapter 的 `OA_DATABASE_URL` 不得引用 `${OA_POSTGRES_USER`，也不得内联
+  字面超级用户 DSN；判据覆盖 full / lite / saas **三套**编排；
 - R2：adapter 的 `environment` 必须显式声明 `OA_ENV` 与 `OA_AUTH_MODE`
   （依赖代码默认值 = 不配就是 stub = 不验签，S1）；
 - R3：各编排的 initdb 挂载目标文件名集合必须一致（避免库结构分叉）。
+
+R1/R2/R3 的扫描集合见 `COMPOSE_FILES`。**新增编排形态必须同步该集合**，
+否则门禁会像 A-01 那样对新形态恒绿；自检会显式验证 lite 的 R1 负样本被拦截。
 
 用法::
 
@@ -49,9 +53,15 @@ REPO_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
 #: 部署目录
 DEPLOY_DIR: Final[Path] = REPO_ROOT / "deploy"
 
-#: 参与比对的编排文件（顺序稳定，便于报告）
+#: 参与 R1/R2/R3 比对的编排文件（顺序稳定，便于报告）。
+#:
+#: **三套交付形态必须全覆盖**：2026-11-06 全仓审计 A-01 的根因不是"没有门禁"，
+#: 而是本集合只列了 full / saas，把真正的轻量版主交付形态 lite 排除在外——
+#: 门禁对 lite 恒绿，而 lite 的 adapter 内联了 initdb 超级用户 DSN，
+#: 导致 /readyz 恒 not_ready、proxy 永不启动。新增编排形态时必须同步本集合。
 COMPOSE_FILES: Final[tuple[str, ...]] = (
     "docker-compose.yml",
+    "docker-compose.lite.yml",
     "docker-compose.saas.yml",
 )
 
@@ -66,6 +76,16 @@ INITDB_DIR: Final[str] = "/docker-entrypoint-initdb.d/"
 
 #: 超级用户变量（出现即违规）
 SUPERUSER_VAR: Final[str] = "${OA_POSTGRES_USER"
+
+#: 内联的**字面**超级用户 DSN（`://<name>:` 后跟口令），同样违规。
+#:
+#: 只查变量名不够：把 `${OA_POSTGRES_USER}` 写成字面 `officeai` 一样能绕过门禁。
+#: `officeai` 是 `.env.example` / `.env.lite.example` 里 `OA_POSTGRES_USER` 的默认值
+#: （initdb 属主、BYPASSRLS）；`officeai_app` 因要求冒号紧跟用户名而不会被误伤。
+#: 部署自定义了别的属主名时，仍由 R1 的变量判据与 /readyz 的 rolbypassrls 自检兜住。
+LITERAL_SUPERUSER_DSN: Final[re.Pattern[str]] = re.compile(
+    r"://(?:postgres|superuser|root|officeai):", re.IGNORECASE
+)
 
 #: 必须在 adapter environment 中显式声明的键
 REQUIRED_ADAPTER_KEYS: Final[tuple[str, ...]] = ("OA_ENV", "OA_AUTH_MODE")
@@ -282,7 +302,8 @@ def check_dir(target: Path) -> list[dict[str, str]]:
             continue
         env = _env_map(adapter)
 
-        # R1：业务库 DSN 不得回落库属主（超级用户绕过 RLS）
+        # R1：业务库 DSN 不得回落库属主（超级用户绕过 RLS）。
+        # 两种写法都要拦：变量插值 `${OA_POSTGRES_USER}` 与内联字面量 `officeai:`。
         dsn = env.get("OA_DATABASE_URL", "")
         if SUPERUSER_VAR in dsn:
             violations.append(
@@ -292,6 +313,17 @@ def check_dir(target: Path) -> list[dict[str, str]]:
                     "detail": (
                         "OA_DATABASE_URL 引用了 ${OA_POSTGRES_USER}（库属主/超级用户），"
                         "RLS 会对其失效；必须使用 officeai_app 应用角色"
+                    ),
+                }
+            )
+        elif LITERAL_SUPERUSER_DSN.search(dsn):
+            violations.append(
+                {
+                    "rule": "R1",
+                    "file": name,
+                    "detail": (
+                        "OA_DATABASE_URL 内联了字面超级用户 DSN（库属主/超级用户），"
+                        "RLS 会对其失效；请改为引用 ${OA_DATABASE_URL} 应用角色 DSN"
                     ),
                 }
             )
@@ -524,6 +556,26 @@ def run_self_test() -> int:
             ),
             encoding="utf-8",
         )
+        # lite 是**合规**夹具：证明新增到 COMPOSE_FILES 后不会误报。
+        # 它同时是第二段的载体——第二段会把它改成内联超级用户 DSN，
+        # 验证 R1 确实扫到了轻量版（A-01 的回归哨兵，不允许再退化成恒绿）。
+        (root / "docker-compose.lite.yml").write_text(
+            "\n".join(
+                [
+                    "services:",
+                    "  adapter:",
+                    "    environment:",
+                    "      OA_ENV: production",
+                    "      OA_AUTH_MODE: oidc",
+                    "      OA_DATABASE_URL: ${OA_DATABASE_URL:?must-set}",
+                    "  postgres:",
+                    "    volumes:",
+                    "      - ./init-databases.sql:"
+                    "/docker-entrypoint-initdb.d/00-init-databases.sql:ro",
+                ]
+            ),
+            encoding="utf-8",
+        )
         # R4 负样本：Dockerfile 引用命名上下文 `lockroot`，但编排**未**声明
         # `build.additional_contexts` —— 这正是 R2-ARC-01 的形态（lite/saas 漏配），
         # 真实后果是镜像在解析 Dockerfile 阶段直接构建失败。
@@ -544,11 +596,29 @@ def run_self_test() -> int:
 
         found = {item["rule"] for item in check_dir(root)}
         expected = {"R1", "R2", "R3", "R4", "R5", "R6"}
-        if found == expected:
-            print("[OK] 自检通过：R1-R6 六类负样本均被拦截")
-            return 1
-        print(f"[FAIL] 自检未命中预期负样本：期望 {sorted(expected)}，实际 {sorted(found)}")
-        return 0
+        if found != expected:
+            print(f"[FAIL] 自检未命中预期负样本：期望 {sorted(expected)}，实际 {sorted(found)}")
+            return 0
+
+        # 第二段：A-01 回归哨兵。把 lite 的合规 DSN 换成内联属主 DSN，
+        # 断言 R1 在 **lite 这份文件**上被命中；否则说明新交付形态又漏扫了。
+        lite_path = root / "docker-compose.lite.yml"
+        lite_path.write_text(
+            lite_path.read_text(encoding="utf-8").replace(
+                "OA_DATABASE_URL: ${OA_DATABASE_URL:?must-set}",
+                "OA_DATABASE_URL: postgresql://officeai:secret@postgres:5432/officeai",
+            ),
+            encoding="utf-8",
+        )
+        lite_rules = {
+            item["rule"] for item in check_dir(root) if item["file"] == "docker-compose.lite.yml"
+        }
+        if "R1" not in lite_rules:
+            print("[FAIL] 自检未拦截 lite 的内联超级用户 DSN：门禁对新交付形态仍有盲区")
+            return 0
+
+        print("[OK] 自检通过：R1-R6 六类负样本均被拦截，且 lite 形态的 R1 负样本被拦截")
+        return 1
 
 
 def main(argv: list[str] | None = None) -> int:

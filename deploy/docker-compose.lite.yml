@@ -497,17 +497,18 @@ services:
       OA_AUTH_COOKIE_ENABLED: ${OA_AUTH_COOKIE_ENABLED:-true}
       OA_KEYCLOAK_BASE_URL: http://keycloak:8080
       OA_REDIS_URL: redis://:${OA_VALKEY_PASSWORD}@valkey:6379/0
-      # 业务库必须用**应用角色**（NOSUPERUSER + NOBYPASSRLS）：
-      # 用库属主会绕过行级安全，/readyz 的 db_privilege 自检随即判 not_ready，
-      # 容器永远不 healthy——而 RLS 对超级用户根本不生效。
-      # **迁移用属主/迁移角色 DSN，不是应用角色**（2026-11-04 修正）：
-      # `CREATE TABLE` 需要 `public` 上的 CREATE 权限，而应用角色 officeai_app 是
-      # NOSUPERUSER + NOBYPASSRLS 且无该权限（这是 RLS 隔离的前提）。用它跑 DDL
-      # 只在"全新库"上侥幸通过（表已由 initdb 建好），一遇到"已装版本升级"就报
-      # `permission denied for schema public` —— CI 路径 B（模拟真实升级）实测命中。
-      # 运行期（adapter）仍用应用角色 DSN，两个角色分离是硬要求：
-      # 不能靠"给应用角色授 CREATE"让迁移跑通，那会把 DDL 权限永久留给运行角色。
-      OA_DATABASE_URL: postgresql://${OA_POSTGRES_USER:-officeai}:${OA_POSTGRES_PASSWORD:?必须在 .env.lite 中设置}@postgres:5432/${OA_POSTGRES_DB:-officeai}
+      # 业务库必须用**应用角色**（NOSUPERUSER + NOBYPASSRLS）：用库属主会绕过
+      # 行级安全，/readyz 的 db_privilege 自检随即判 not_ready、容器永远不 healthy。
+      # install.sh 生成 .env.lite 中的 OA_DATABASE_URL（应用角色 + 随机口令，
+      # align_app_role_password 对齐库内角色）；compose 用 ${OA_DATABASE_URL:?...}
+      # 插值到本服务（来自 --env-file / shell 环境，不是 env_file 注入），
+      # 与 full / saas 同口径。
+      # 这里**不得**内联属主 DSN：environment 优先级高于 env_file，内联会把正确的
+      # 应用角色 DSN 静默覆盖（2026-11-06 全仓审计 A-01：lite 全栈因此不可达）。
+      # 迁移 Job（本文件 migrate 服务）仍显式用 OA_POSTGRES_USER 属主 DSN 跑 DDL：
+      # CREATE TABLE 需要 public 上的 CREATE 权限，应用角色刻意没有该权限；
+      # 两个角色分离是硬要求，不能靠给应用角色授 CREATE 来"省事"。
+      OA_DATABASE_URL: ${OA_DATABASE_URL:?必须在 .env.lite 中设置应用角色 DSN（officeai_app）}
       # 私有化部署面向本机 Dify，必须真实联调
       OA_DOWNSTREAM_ENABLED: "true"
       OA_DIFY_DEFAULT_APP_KEY: ${OA_DIFY_DEFAULT_APP_KEY:-}

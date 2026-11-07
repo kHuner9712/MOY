@@ -10,8 +10,11 @@
    `pool_recycle=1800`（规避中间件/云负载均衡的空闲连接回收）。
 3. 生产/预发环境把 `business_store` 置为 `memory` 属**配置错误**，启动即失败（30004），
    但 development/test 允许（离线单测与 T01 演示需要）。
-4. 连接串只允许使用**非超级用户**（`officeai`）：PostgreSQL 超级用户带 `BYPASSRLS`，
-   用超级用户会让 RLS 双保险彻底失效（架构文档 3.5「连接串」行）。
+4. 运行期连接串只允许使用**应用角色**（`officeai_app`，NOSUPERUSER + NOBYPASSRLS）：
+   超级用户带 `BYPASSRLS`，用属主账号会让 RLS 双保险彻底失效（架构文档 3.5「连接串」行）。
+   `officeai` 是 initdb 属主、带 BYPASSRLS，**禁止用于运行期业务库**（只供初始化与 DBA 直连）；
+   项目自定义属主名由 `deploy/validate_deploy.py` 的 R1 在编排层拦截，
+   运行期再由 `check_engine_privilege()` 的 `rolbypassrls` 自检兜底。
 """
 
 from __future__ import annotations
@@ -36,8 +39,13 @@ SYNC_DRIVER_PREFIXES: Final[tuple[str, ...]] = ("postgresql://", "postgres://")
 #: 连接回收秒数（架构文档 2.1 结论第 3 条）
 POOL_RECYCLE_SECONDS: Final[int] = 1800
 
-#: 连接串中禁止出现的超级用户名（超级用户 BYPASSRLS，双保险失效）
-FORBIDDEN_DB_USERS: Final[tuple[str, ...]] = ("postgres", "supersuer", "root")
+#: 连接串中禁止出现的**通用**超级用户名（超级用户 BYPASSRLS，双保险失效）。
+#:
+#: 这里只放与部署无关的通用名：项目自定义的 initdb 属主（如 `officeai`）由
+#: `deploy/validate_deploy.py` 的 R1 在编排层拦截，运行期再由
+#: `check_engine_privilege()` 的 `rolbypassrls` 自检兜底。把部署专用用户名硬编码
+#: 进本函数会误伤测试夹具中「故意用超级用户 DSN 做反向验证」的合法路径。
+FORBIDDEN_DB_USERS: Final[tuple[str, ...]] = ("postgres", "superuser", "root")
 
 #: 探活语句
 HEALTHCHECK_SQL: Final[str] = "SELECT 1"
@@ -73,7 +81,7 @@ def normalize_database_url(url: str) -> str:
             ErrorCode.CONFIG_ERROR,
             internal_detail=(
                 "OA_DATABASE_URL is empty while OA_BUSINESS_STORE=postgres; "
-                "set it to postgresql+asyncpg://officeai:<pw>@postgres:5432/officeai"
+                "set it to postgresql+asyncpg://officeai_app:<pw>@postgres:5432/officeai"
             ),
         )
     for prefix in SYNC_DRIVER_PREFIXES:
@@ -226,8 +234,10 @@ async def check_engine(engine: AsyncEngine | None) -> bool:
 async def check_engine_privilege(engine: AsyncEngine | None) -> bool:
     """自检当前数据库连接是否**不带** `BYPASSRLS`（RLS 双保险的前置条件）。
 
-    RLS 隔离依赖运维使用非超级用户 DSN（如 `officeai`）；代码侧无法约束 DSN，
-    因此这里主动查一次 `pg_roles.rolbypassrls`：
+    RLS 隔离依赖运维使用**应用角色** DSN（`officeai_app`，NOSUPERUSER + NOBYPASSRLS）；
+    `officeai` 是 initdb 属主、带 BYPASSRLS，**禁止用于运行期业务库**。
+    项目自定义属主名由 `deploy/validate_deploy.py` 的 R1 在编排层拦截；
+    代码侧无法约束 DSN，因此本函数主动查一次 `pg_roles.rolbypassrls` 兜底：
 
     - `false` → 正常（受策略约束）；
     - `true` → 超级用户会**绕过全部行级策略**，必须整体 `not_ready`，禁止带病上线；
