@@ -823,7 +823,7 @@ jobs:
               -e ALERTMANAGER_OUT=/tmp/alertmanager.yml \
               -v "$PWD/deploy:/etc/alertmanager:ro" \
               --entrypoint /bin/sh "$AM_IMAGE" \
-              -c "/etc/alertmanager/alertmanager-entrypoint.sh --render-only && \
+              -c "sh /etc/alertmanager/alertmanager-entrypoint.sh --render-only && \
                   /bin/amtool check-config /tmp/alertmanager.yml"
           done
 

@@ -377,6 +377,10 @@ jobs:
         env:
           OA_E2E_ADAPTER_BASE_URL: http://127.0.0.1:8000
           OA_E2E_ALLOW_SKIP: '1'
+          # B-5 硬化（提交 6cb89cb）：stub 鉴权只允许回环监听。uvicorn 已绑
+          # 127.0.0.1，但 Settings 需同口径，否则启动期以 30004 拒绝起栈
+          # （2026-11-07 CI Web 42321597212 实测）。
+          OA_HOST: 127.0.0.1
           PLAYWRIGHT_CHANNEL: chromium
           NEXT_TELEMETRY_DISABLED: '1'
         run: |
