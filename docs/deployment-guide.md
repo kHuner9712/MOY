@@ -614,12 +614,12 @@ OA_MAINTENANCE=1 bash deploy/restore.sh --from <dir> --stop-apps   # 抢不到�
 
 | 维度 | 轻量版 `deploy/docker-compose.lite.yml` | 全量版 `deploy/docker-compose.yml` |
 | --- | --- | --- |
-| 常驻服务数 | **9** | 17（含独立检索服务三件套、对象存储、两个探针 exporter、监控） |
+| 常驻服务数 | **9** | 23（检索三件套、对象存储、3 个 exporter、Prometheus + Alertmanager + blackbox、SSRF 代理、Dify 四件套） |
 | 数据库 | 单个数据库实例，业务/身份/插件分库 | 同一实例 + 独立检索服务集群 + 对象存储 |
 | 内存门槛 | 8 GiB（实测空载 1.93 GiB） | 建议 16 GiB 起 |
 | 磁盘 | 60 GiB 起 | 200 GiB 起（检索服务与对象存储另计） |
 | 适用规模 | 单机、中小团队、单租户（私有化） | 多租户（SaaS）、较大并发、需要独立扩缩容 |
-| 监控 | 不内置 | 内置指标采集 + 5 条告警规则（`deploy/prometheus.yml`、`deploy/alert.rules.yml`） |
+| 监控 | 不内置 | 内置指标采集 + **10 条告警规则** + **Alertmanager 投递**（`deploy/prometheus.yml`、`deploy/alert.rules.yml`、`deploy/alertmanager.yml`）+ 边缘证书探针（`blackbox-exporter`） |
 | 入口端口 | 只暴露 1 个 | 业务与前端 2 个；基础设施一律绑回环 |
 | 证书 | 默认由客户前置网关终止（形态 A）；可选平台自建 TLS 终止（形态 B，轮 2 交付） | 同左 |
 
@@ -632,6 +632,30 @@ OA_MAINTENANCE=1 bash deploy/restore.sh --from <dir> --stop-apps   # 抢不到�
 5. 不含周期清理任务：历史数据清理需按第 13 章"季度手工清理"执行。
 
 选择建议：单机私有化交付一律用轻量版；只有客户明确要求多租户 SaaS 或需要独立扩缩容时才上全量版。**两种形态的性能数字不可互相引用**（见《性能披露》）。
+
+### 10.1 告警投递（全量版；H-01）
+
+全量版的三件套各司其职，缺一不可：
+
+| 组件 | 作用 | 地址 |
+| --- | --- | --- |
+| Prometheus | 抓取指标、评估规则，产生 `ALERTS` | `127.0.0.1:${OA_PROMETHEUS_PORT:-9090}` |
+| **Alertmanager** | 接收 `ALERTS`、分组去重、按 severity 路由并外发通知 | `127.0.0.1:${OA_ALERTMANAGER_PORT:-9093}` |
+| blackbox-exporter | 对 `https://edge/healthz` 做一次真实 TLS 握手，产出证书到期时间 | 仅内网，不暴露端口 |
+
+**必须显式配置 `OA_ALERT_WEBHOOK_URL`**：留空时告警只进入 Alertmanager UI/API，**不会外发**——这等于仍然"靠人盯"。推荐接飞书/钉钉/Slack 的 incoming webhook 或客户自建接收端。
+
+> 为什么由启动脚本渲染：Alertmanager **不展开环境变量**，配置里写 `${OA_ALERT_WEBHOOK_URL}` 会被当成字面量 URL。`deploy/alertmanager-entrypoint.sh` 在容器启动时替换占位符；未配置时把 critical 路由回落到 `officeai-null`，保证缺 URL 也能起栈。
+
+验证清单（升级后逐条执行）：
+
+1. `docker compose -f deploy/docker-compose.yml ps alertmanager blackbox-exporter`：两者均为 running；
+2. Prometheus `Status → Configuration` 显示 `alerting` 指向 `alertmanager:9093`；
+3. `curl -s http://127.0.0.1:9093/api/v2/status | head`：返回 cluster status；
+4. Prometheus `Alerts` 页能看到规则（状态 `inactive` 即已加载）；
+5. 触发一条 `TargetDown`（临时停掉 `valkey-exporter`）后，Alertmanager UI 的 Alerts 页应出现该告警，且 webhook 接收端收到 POST。
+
+模版文件与 CI 门禁：`deploy/alertmanager.yml`、`deploy/blackbox.yml`；`promtool check rules`、`promtool check config`、`amtool check-config`（含渲染两态）都在 `CI Adapter` 里，改规则不跑门禁会红。
 
 ---
 

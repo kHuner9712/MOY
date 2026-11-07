@@ -812,9 +812,14 @@ services:
     image: prom/prometheus:v3.15.0
     container_name: oa-prometheus
     restart: unless-stopped
+    environment:
+      # U-01（审计 2026-11-07）：`prometheus.yml` 的 external_labels 用
+      # `${OA_DEPLOY_MODE}`，但此前 compose 没注入该变量——Prometheus 会把它
+      # 展开成空串（若环境无值），`deploy_mode` 标签形同虚设。显式注入并给默认值。
+      OA_DEPLOY_MODE: ${OA_DEPLOY_MODE:-private}
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      # 阶段四 T4-05.2：5 条告警规则（§8.4 表达式原样）
+      # H-01：10 条告警规则（前 5 条 §8.4 表达式原样 + 5 条缺口补齐）
       - ./alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
       - prometheus-data:/prometheus
     ports:
@@ -822,6 +827,9 @@ services:
       - "127.0.0.1:${OA_PROMETHEUS_PORT:-9090}:9090"
     networks: [officeai-backend]
     logging: *default-logging
+    depends_on:
+      alertmanager:
+        condition: service_started
     # ARC-03：镜像内实测有 wget（无 curl）
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy || exit 1"]
@@ -829,6 +837,39 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+
+  # H-01（审计 2026-11-07）：告警的**投递通道**。
+  # 没有这个服务时，Prometheus 只把 ALERTS 写进自己的 TSDB，5 条规则"存在但不可达"，
+  # 故障不会通知到任何人。webhook 由 entrypoint 按 OA_ALERT_WEBHOOK_URL 渲染；
+  # 未配置时仍可在 127.0.0.1:9093 的 UI/API 查看告警（不会因缺 URL 起不来）。
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: oa-alertmanager
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/etc/alertmanager/entrypoint.sh"]
+    environment:
+      OA_ALERT_WEBHOOK_URL: ${OA_ALERT_WEBHOOK_URL:-}
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager-entrypoint.sh:/etc/alertmanager/entrypoint.sh:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      # 与 Prometheus 同口径：无鉴权，只绑回环（保留本机 UI/API 排障能力）
+      - "127.0.0.1:${OA_ALERTMANAGER_PORT:-9093}:9093"
+    networks: [officeai-backend]
+    logging: *default-logging
+
+  # H-01：边缘证书到期探测。blackbox 需要同时挂 frontend（探测 `edge`）与
+  # backend（被 Prometheus 抓取）；证书是否"真的生效"只能靠一次真实 TLS 握手证明。
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.27.0
+    container_name: oa-blackbox-exporter
+    restart: unless-stopped
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    networks: [officeai-backend, officeai-frontend]
+    logging: *default-logging
 
 volumes:
   postgres-data:
@@ -838,6 +879,7 @@ volumes:
   milvus-data:
   object-store-data:
   prometheus-data:
+  alertmanager-data:
   plugin-daemon-data:
 
 networks:

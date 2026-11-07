@@ -1,0 +1,44 @@
+# ===========================================================================
+# Alertmanager 配置（H-01，2026-11-07）
+#
+# 这是**静态基线**：未配置 `OA_ALERT_WEBHOOK_URL` 时，所有告警进入
+# `officeai-null`（无外部通知），但仍可在 http://127.0.0.1:9093 的 UI / API 查看；
+# 设置该环境变量后，`deploy/alertmanager-entrypoint.sh` 启动时把 critical 路由
+# 指向 `officeai-webhook` 并替换占位 URL。
+#
+# 为什么不在本文件里写 ${OA_ALERT_WEBHOOK_URL}：
+#   Alertmanager **不展开环境变量**（与 Prometheus 不同）。直接写 `$VAR` 会被当成
+#   字面量 URL，启动时才报错；因此由 entrypoint 渲染到 /tmp 后再加载。
+#
+# 分组口径：
+#   - 按 alertname + severity 聚合，避免同一故障的多个实例刷屏；
+#   - critical 1 小时重复提醒（可容忍漏看）；warning 4 小时；
+#   - `send_resolved: true` 让恢复通知也能到达。
+# ===========================================================================
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: officeai-null
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - 'severity="critical"'
+      receiver: officeai-webhook
+      repeat_interval: 1h
+
+receivers:
+  # 未配置 webhook 时的落点：不向外发，但告警不会丢（UI/API 可查）。
+  - name: officeai-null
+
+  # 外部通知通道（webhook）。入口脚本在 `OA_ALERT_WEBHOOK_URL` 非空时启用；
+  # 未启用时 critical 路由会被改回 officeai-null，占位 URL 永远不会被请求。
+  - name: officeai-webhook
+    webhook_configs:
+      - url: 'http://127.0.0.1:9/alertmanager-webhook-not-configured'
+        send_resolved: true
+        max_alerts: 0

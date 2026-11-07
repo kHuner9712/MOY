@@ -907,7 +907,9 @@ scrape_configs:
 >
 > 硬规则：`/metrics` 抓取路径**不得**执行数据库查询——Prometheus 每 15s 抓一次，若每次查 DB 会变成自伤（这条写进代码注释与 review checklist）。
 
-### 8.4 告警规则（`deploy/alert.rules.yml`，5 条）
+### 8.4 告警规则（`deploy/alert.rules.yml`，10 条）
+
+前 5 条为 T4-05.2 基线；后 5 条由 2026-11-07 审计 H-01 补齐（投递通道见 8.5）。
 
 | 告警 | 表达式 | `for` | 严重度 |
 | --- | --- | --- | --- |
@@ -916,8 +918,30 @@ scrape_configs:
 | `TaskQueueBacklog` | `task_queue_depth > 50` | 5m | warning |
 | `TenantBudgetNearLimit` | `tenant_budget_used_ratio > 0.8` | 10m | warning |
 | `TargetDown` | `up == 0` | 2m | critical |
+| `ArtifactAccessFailureHigh` | 产物导出/预览路由的 5xx 占比 > 5% | 5m | warning |
+| `PgConnectionSaturation` | `sum by (instance)(pg_stat_database_numbackends) / max by (instance)(pg_settings_max_connections) > 0.8` | 5m | warning |
+| `EdgeProbeFailing` | `probe_success == 0`（blackbox 探针失败，证书指标随之不可信） | 2m | critical |
+| `EdgeCertificateExpiringSoon` | `probe_ssl_earliest_cert_expiry - time() < 30 * 24 * 3600` | 1h | warning |
+| `EdgeCertificateExpiringCritical` | `probe_ssl_earliest_cert_expiry - time() < 7 * 24 * 3600` | 1h | critical |
 
 > 判据"注入 10 次 5xx 后 2 分钟内 firing"：`ApiErrorRateHigh` 的窗口 2m + `for 2m` 实际要 ~4 分钟 → **把判据窗口改为"4 分钟内 firing"，或把注入量提到 30 次**。写进 QA 计划时以此为准（PRD 的"2 分钟"与 `for 2m` 自相矛盾，此处以表达式正确性优先）。
+
+### 8.5 告警投递链路（H-01）
+
+`Prometheus` 仅**评估**规则；没有接收端时 `ALERTS` 只写进自己的 TSDB，故障不会通知到人。完整链路：
+
+```
+adapter / exporters / edge-tls  →  Prometheus（rule_files）
+        →  alerting.alertmanagers: alertmanager:9093
+        →  Alertmanager（分组/去重/路由）
+        →  OA_ALERT_WEBHOOK_URL（可选；留空则仅在 127.0.0.1:9093 UI/API 可见）
+```
+
+- **证书探针**：`blackbox-exporter` 对 `https://edge/healthz` 做真实 TLS 握手，产出 `probe_ssl_earliest_cert_expiry`；`insecure_skip_verify: true` 是刻意的（私有化允许自签，本节只看到期时间）。
+- **渲染**：Alertmanager 不展开环境变量，`deploy/alertmanager-entrypoint.sh` 启动时替换占位 URL；未配置时 critical 路由回落 null receiver。
+- **门禁**：`promtool check rules`、`promtool test rules`（11 组确定性用例）、`promtool check config`、`amtool check-config`（含渲染两态）全部在 `CI Adapter`。
+- **没有内置通道时的口径**：`OA_ALERT_WEBHOOK_URL` 留空 = 告警仅进 UI/API。README/部署手册必须显式写"应配置"，不得表述为"已投递"。
+
 
 ---
 

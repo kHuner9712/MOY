@@ -4,8 +4,9 @@
 # 为什么要有这个文件：`ApiErrorRateHigh` 的判据是"2m 窗口 + for 2m ≈ 4 分钟 firing"，
 # 靠"打 30 次 5xx 再等 4 分钟"既慢又不可复现（真实 5xx 只能来自未捕获异常，
 # 硬造要么加测试端点破端点预算、要么 pause 数据库污染环境）。
-# `promtool test rules` 用**合成序列**把 5 条规则的时间语义钉死：
+# `promtool test rules` 用**合成序列**把 10 条规则的时间语义钉死：
 # 输入什么序列、在第几分钟、应该 firing 还是 inactive，全部可离线复跑。
+# （前 5 条为阶段四 T4-05.2 原有覆盖；后 5 条为 H-01 补齐的连接/证书/产物失败率。）
 #
 # 跑法（不需要起任何服务）：
 #   docker run --rm --entrypoint promtool \
@@ -218,3 +219,168 @@ tests:
       - eval_time: 8m
         alertname: ApiLatencyP95High
         exp_alerts: []
+
+  # -------------------------------------------------------------------------
+  # 6. PgConnectionSaturation（H-01）：连接数 / max_connections > 0.8 持续 5m
+  #    —— 90/100 = 0.9，并在同一实例上比较（`sum by` / `max by`）
+  # -------------------------------------------------------------------------
+  - name: PG 连接用超 80% 持续 5 分钟 firing
+    interval: 1m
+    input_series:
+      - series: 'pg_stat_database_numbackends{instance="postgres-exporter:9187"}'
+        values: '90x10'
+      - series: 'pg_settings_max_connections{instance="postgres-exporter:9187"}'
+        values: '100x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PgConnectionSaturation
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: PgConnectionSaturation
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              instance: postgres-exporter:9187
+            exp_annotations:
+              summary: "PostgreSQL 连接数已用超过 80%"
+              description: "`pg_stat_database_numbackends` 已达到 `max_connections` 的 80%（实例见 `instance` 标签）：检查连接池配置与是否有连接泄漏。"
+
+  - name: PG 连接 80% 不告警（阈值是严格大于）
+    interval: 1m
+    input_series:
+      - series: 'pg_stat_database_numbackends{instance="postgres-exporter:9187"}'
+        values: '80x10'
+      - series: 'pg_settings_max_connections{instance="postgres-exporter:9187"}'
+        values: '100x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: PgConnectionSaturation
+        exp_alerts: []
+
+  # -------------------------------------------------------------------------
+  # 7. ArtifactAccessFailureHigh（H-01）：导出/预览路由 5xx 占比 > 5% 持续 5m
+  #    —— 只统计这两条路由
+  # -------------------------------------------------------------------------
+  - name: 导出路由 5xx 占比 10% 持续 5 分钟 firing
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{method="GET",route="/files/artifacts/{token}/export",status="500"}'
+        values: '0 0 100+100x8'
+      - series: 'http_requests_total{method="GET",route="/files/artifacts/{token}/export",status="200"}'
+        values: '0 0 900+900x8'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ArtifactAccessFailureHigh
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: ArtifactAccessFailureHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "产物导出/预览失败率超过 5%"
+              description: "近 5 分钟 `/files/artifacts/{token}/export|preview` 的 5xx 占比 > 5%：检查 LibreOffice 转换、产物存储与磁盘水位。"
+
+  - name: 其他路由的 5xx 不计入产物失败率
+    interval: 1m
+    input_series:
+      # 只喂普通路由：若正则写成全站，这条会误触发
+      - series: 'http_requests_total{method="GET",route="/api/v1/knowledge-bases",status="500"}'
+        values: '100+100x8'
+      - series: 'http_requests_total{method="GET",route="/api/v1/knowledge-bases",status="200"}'
+        values: '900+900x8'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ArtifactAccessFailureHigh
+        exp_alerts: []
+
+  # -------------------------------------------------------------------------
+  # 8. EdgeProbeFailing（H-01）：probe_success == 0 持续 2 分钟
+  # -------------------------------------------------------------------------
+  - name: 边缘 TLS 探针失败 2 分钟后 firing
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="edge-tls",instance="https://edge/healthz"}'
+        values: '0x8'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: EdgeProbeFailing
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: EdgeProbeFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: edge-tls
+              instance: https://edge/healthz
+            exp_annotations:
+              summary: "边缘 TLS 探针失败"
+              description: "`blackbox-exporter` 无法完成对 `https://edge/healthz` 的探测（证书指标随之不可信）：检查 edge 容器与 443 端口。"
+
+  # -------------------------------------------------------------------------
+  # 9/10. EdgeCertificateExpiringSoon / Critical（H-01）
+  #
+  # promtool 的 `time()` 以 **epoch 0** 为基准（t=0 即 1970-01-01），
+  # 因此"到期时间"用距 0 的秒数表达：
+  #   20 天 = 1_728_000；5 天 = 432_000；60 天 = 5_184_000。
+  # `and probe_success == 1` 要求两条序列带相同标签，否则向量匹配为空。
+  # -------------------------------------------------------------------------
+  - name: 证书 20 天后到期：warning after 1h
+    interval: 1m
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="edge-tls",instance="https://edge/healthz"}'
+        values: '1728000x130'
+      - series: 'probe_success{job="edge-tls",instance="https://edge/healthz"}'
+        values: '1x130'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: EdgeCertificateExpiringSoon
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: EdgeCertificateExpiringSoon
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: edge-tls
+              instance: https://edge/healthz
+            exp_annotations:
+              summary: "边缘 TLS 证书将在 30 天内到期"
+              description: "`probe_ssl_earliest_cert_expiry` 距当前不足 30 天：请换发并覆盖 `deploy/nginx/tls/{fullchain,privkey}.pem`。"
+
+  - name: 证书 60 天后到期：不告警
+    interval: 1m
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="edge-tls",instance="https://edge/healthz"}'
+        values: '5184000x130'
+      - series: 'probe_success{job="edge-tls",instance="https://edge/healthz"}'
+        values: '1x130'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: EdgeCertificateExpiringSoon
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: EdgeCertificateExpiringCritical
+        exp_alerts: []
+
+  - name: 证书 5 天后到期：critical firing
+    interval: 1m
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="edge-tls",instance="https://edge/healthz"}'
+        values: '432000x130'
+      - series: 'probe_success{job="edge-tls",instance="https://edge/healthz"}'
+        values: '1x130'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: EdgeCertificateExpiringCritical
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: EdgeCertificateExpiringCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: edge-tls
+              instance: https://edge/healthz
+            exp_annotations:
+              summary: "边缘 TLS 证书将在 7 天内到期"
+              description: "距证书到期不足 7 天：立即换证；过期后统一登录与全部 HTTPS 入口会不可用。"
+

@@ -1,16 +1,20 @@
 # ===========================================================================
-# Prometheus 抓取配置（阶段四 T4-05.2，架构 §8.2）
+# Prometheus 抓取配置（阶段四 T4-05.2，架构 §8.2；H-01 补齐告警投递 2026-11-07）
 #
-# 4 个 job，与 P4-13 的判据一一对应：
+# 5 个 job：
 #   adapter    —— 自研层：`/metrics`（**不再抓 /healthz**：探针不是指标端点）
 #   postgres   —— 关系库：连接数 / 慢查询 / 事务率（postgres-exporter）
 #   valkey     —— 缓存：内存 / 命中率 / 连接（redis_exporter，Valkey 协议兼容）
+#   edge-tls   —— 边缘证书到期时间（blackbox-exporter 的 https_2xx 探针）
 #   prometheus —— 自监控：抓取自身健康度（否则"监控挂了没人知道"）
 #
-# 三条口径：
+# 四条口径：
 #   1. 抓取间隔 15s；`/metrics` **只读内存**，不会因为抓取把库打醒；
 #   2. exporter 一律走 compose 内网，**不暴露宿主机端口**（它们无鉴权）；
-#   3. `deploy_mode` 作为 external_label 注入，便于同一套看板区分交付形态。
+#   3. `deploy_mode` 作为 external_label 注入，便于同一套看板区分交付形态；
+#   4. **告警必须投递出去**：`alerting` 指向 compose 内的 Alertmanager，没有它时
+#      规则只会把 ALERTS 写进 Prometheus 自己的 TSDB，故障不会通知到任何人
+#      （H-01：此前 `alerting` 段缺失，规则"存在但不可达"）。
 # ===========================================================================
 
 global:
@@ -20,9 +24,18 @@ global:
     cluster: officeai
     deploy_mode: ${OA_DEPLOY_MODE}
 
-# 告警规则（5 条，表达式逐字取自架构 §8.4）
+# 告警规则（H-01 起 10 条；覆盖 5xx / 延迟 / 队列 / 预算 / 目标失联 /
+# PG 连接耗尽 / 证书到期 / 产物导出与预览失败率 / 边缘探针失败）
 rule_files:
   - /etc/prometheus/alert.rules.yml
+
+# 告警投递通道：compose 的 `alertmanager` 服务（H-01）。
+# 阈值与分组在 `deploy/alertmanager.yml`；webhook 地址由 `OA_ALERT_WEBHOOK_URL`
+# 在容器启动时渲染（Alertmanager 本身不展开环境变量）。
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
 
 scrape_configs:
   # ---------------------------------------------------------------------
@@ -54,7 +67,28 @@ scrape_configs:
           service: cache
 
   # ---------------------------------------------------------------------
-  # 4. Prometheus 自监控
+  # 4. 边缘证书（H-01）：blackbox-exporter 探测 TLS 握手，产出
+  #    `probe_ssl_earliest_cert_expiry`（Unix 时间戳）；证书到期告警据此计算。
+  #    目标写 compose 内网名 `edge`，证书链即使自签也只看到期时间（skip verify）。
+  # ---------------------------------------------------------------------
+  - job_name: edge-tls
+    metrics_path: /probe
+    params:
+      module: [https_2xx]
+    static_configs:
+      - targets: ['https://edge/healthz']
+        labels:
+          service: edge-tls
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # ---------------------------------------------------------------------
+  # 5. Prometheus 自监控
   # ---------------------------------------------------------------------
   - job_name: prometheus
     static_configs:

@@ -184,7 +184,7 @@
 | S6.6 | 端点基线五套 + 阶段四/W1/W2/B3/B4 增量严格相等，不允许「删端点让 CI 变绿」 | `deploy/validate_openapi.py --strict`，CI `ci-adapter.yml:842`；8 份 `docs/api/baseline-*.json`；`apps/adapter/tests/integration/test_endpoint_baseline.py:40-47,108-114` |
 | S6.7 | 每个门禁必须挂进 workflow，且 `--self-test` 能证明「可红」；**例外：会写业务库的对账工具不进 PR CI** | `deploy/validate_gate_wiring.py:1-14`（C-1 反向遍历 `deploy/validate_*.py`），CI `ci-adapter.yml:479` + `--self-test :484`。**【2026-11-07 附录 B-8 最终裁决】** `apps/adapter/scripts/reconcile_usage.py` 偏差超限时**会写** `audit_log(billing.reconcile_mismatch)`（`:18,42`）、需真实 PG（`OA_BUSINESS_STORE=postgres`，否则退出码 2 / `[SKIP]`，`:41`）、CI 空账期三项计量全 0 会「恒等假绿」且污染审计表（`:43-44`），故**不挂 PR CI**，改**部署侧每日 02:00 定时调度**（`docs/architecture-phase2.md:417`）；正确性由 `tests/integration/test_usage_endpoints.py` 与 `tests/integration/test_qa_b07_b08_verification.py` 覆盖（`reconcile_usage.py:38-40`）。**不得**把该脚本「未挂 workflow」判为门禁缺失（S6.7 / `validate_gate_wiring.py` 的 C-1 不适用） |
 | S6.8 | 金标集 20 个 yaml 合法 + 可复跑 | `qa/phase4-verify.sh:354-374,405`（`run_goldset_yaml` / `run_goldset_validate`）、`qa/goldset/run.py`；**【规范待固化】** 金标集未挂 4 条 workflow（只在 `qa/phase4-verify.sh` 手工终验），建议 `deploy/validate_goldset.py` 或加 CI step |
-| S6.9 | 告警规则时间语义可离线复跑 | `deploy/alert.rules.test.yml:1-28`（`promtool test rules` 用法）。**【规范待固化】** 该文件在 `.github/workflows/`、`qa/`、`deploy/validate_*.py` 中**零引用**；建议 `ci-adapter.yml` 增加 promtool 步骤，或纳入 `validate_gate_wiring.py` 挂载清单 |
+| S6.9 | 告警规则时间语义可离线复跑 | `deploy/alert.rules.test.yml`（`promtool test rules`，11 组含负样本）**已挂 CI**：`.github/workflows/ci-adapter.yml`「告警规则与投递链路自证（H-01）」同一步还跑 `promtool check rules` / `check config` / `amtool check-config`（含渲染两态）。2026-11-07 审计 H-01 闭环 |
 | S6.10 | **saas 形态交付前安全基线验收**：ADR-0007 §4 升格落地 + 3 条条件性越权路径均有负样本用例 | **【2026-11-07 附录 B-5 最终裁决 · 定级 P1 高，V1.0 交付前必须闭环】** 三条条件性越权路径：① `OA_TENANT_MEMBERSHIP_CHECK=off`；② `auth_mode=stub` 跳过成员校验且不验签；③ 配置漏注入时 `config.py` 默认 `development+saas+stub` 使 `validate_auth_startup` 判据整体失效。硬化已交工程师执行，工作区可见 `security.py:772-790`（stub 不得获平台作用域）、`:847-859`（「B-5 起不再排除 stub」，stub 也走 AR-017）、`:1288-1289`（stub + 非回环启动期拒绝）、`deploy/.env.example:45-52` 订正、负样本用例补全。**【规范待固化】** 建议 `deploy/validate_tenant_context.py` 断言 saas 预设与成员校验开关；交付前须有负样本证明三条路径均被拦截。不阻断本轮提交（见附录 B-5） |
 
 > **【2026-11-07 附录 B-2 已裁决并订正】** `docs/architecture-v1.0.md` §9.6 原写
@@ -292,7 +292,7 @@
 | S5.6 Dockerfile 必须消费锁文件 | 靠 `validate_packaging.py` 间接 | 并入 `deploy/validate_packaging.py` |
 | S5.8 漏洞适用性评估留痕 | `docs/architecture-v1.0.md:1615-1624` | `deploy/validate_risk_evidence.py` |
 | S6.8 金标集挂 CI | 仅 `qa/phase4-verify.sh:354-374` | `deploy/validate_goldset.py` 或加 CI step |
-| S6.9 `alert.rules.test.yml` 挂 CI | 文件存在、零引用 | 加 `promtool test rules` step |
+| S6.9 `alert.rules.test.yml` 挂 CI | 已挂 `ci-adapter.yml`（H-01，2026-11-07） | 无需新脚本 |
 | S7.4 备份快照表清单随 schema 演进 | `backup.sh:68-77` 硬编码 8 表 | `deploy/validate_snapshot_tables.py` |
 | S7.6 交付证据 SHA ≠ `待补` | `docs/phase4-delivery-manifest.md:14-16` 人工 | `deploy/validate_delivery_evidence.py` |
 | S7.7 `qa/phase4-verify.sh` 挂 CI | 人工终验 | 加 `workflow_dispatch` step |

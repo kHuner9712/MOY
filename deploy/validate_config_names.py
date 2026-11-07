@@ -125,6 +125,9 @@ CONSUMED_BY_BASE_CONTAINERS: Final[dict[str, str]] = {
     "OA_OBJECT_STORE_REGION": "对象存储容器区域名",
     "OA_SSRF_PROXY_URL": "出网代理容器自身的地址（适配层用的是 OA_HTTP_PROXY 一类字段）",
     "OA_PROMETHEUS_PORT": "监控容器监听端口",
+    # H-01（2026-11-07）：告警投递。webhook 由
+    # `deploy/alertmanager-entrypoint.sh` 渲染进 Alertmanager 配置，不进适配层进程。
+    "OA_ALERT_WEBHOOK_URL": "Alertmanager 容器入口脚本消费（渲染成 receiver webhook）",
     # 前端与接入口
     "OA_WEB_PORT": "前端容器监听端口",
     "OA_WEB_ADAPTER_BASE_URL": "前端浏览器侧可见的适配层地址（NEXT_PUBLIC_*，构建期注入）",
@@ -151,6 +154,7 @@ CONSUMED_BY_HOST_SIDE: Final[dict[str, str]] = {
     "OA_EDGE_HTTP_PORT": ("K4-min：边缘服务的宿主机端口映射（仅左侧取值），不进容器环境"),
     "OA_EDGE_HTTPS_PORT": ("G1：边缘 TLS(443) 的宿主机端口映射（仅左侧取值），不进容器环境"),
     "OA_LITE_PROXY_TLS_PORT": ("G1：简版边缘 TLS(443) 的宿主机端口映射（仅左侧取值）"),
+    "OA_ALERTMANAGER_PORT": ("H-01：Alertmanager 的宿主机端口映射（仅左侧取值），不进容器环境"),
     "OA_DB_APP_USER": "初始化 SQL（init-app-role.sql）建应用角色用，由 DBA/initdb 执行",
     "OA_DB_APP_PASSWORD": "同上，应用角色的口令",
 }

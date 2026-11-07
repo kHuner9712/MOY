@@ -1,0 +1,26 @@
+# ===========================================================================
+# blackbox-exporter 探针配置（H-01，2026-11-07）
+#
+# 唯一用途：对边缘入口做一次 HTTPS 探测，产出
+#   probe_success                        —— 1 成功 / 0 失败
+#   probe_ssl_earliest_cert_expiry       —— 证书链中最早的到期时间（Unix 秒）
+#   probe_duration_seconds               —— 握手耗时
+#
+# 为什么用 blackbox 而不是自建证书解析：
+#   证书在 `deploy/nginx/tls/` 里，但"文件存在"不等于"边缘真的加载了它"。
+#   走一次真实 TLS 握手才能同时证明：证书已生效、链路可达、到期时间可读。
+#
+# insecure_skip_verify 是**刻意**的：私有化现场可能是内网自签/私有 CA，
+#   本节只关心"到期时间"，不把信任链校验做成告警前提（信任问题由浏览器侧暴露）。
+#   目标写 compose 内网名（`https://edge/healthz`），不探测客户域名，避免依赖 DNS。
+# ===========================================================================
+
+modules:
+  https_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+      tls_config:
+        insecure_skip_verify: true

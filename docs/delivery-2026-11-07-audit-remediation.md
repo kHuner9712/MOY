@@ -80,5 +80,49 @@
 
 ## 阶段 1：P0 高危整改（进行中）
 
-待完成：H-01 告警投递、H-02 SSRF 阻断、H-03 零测试端点、H-04 主旅程 E2E、H-05 CI paths 覆盖。
-（每项结论在本节追加）
+### H-01 告警投递：规则从「存在但不可达」变为「可达且可自证」
+
+**变更**
+
+- `deploy/docker-compose.yml`：新增 `alertmanager`（`prom/alertmanager:v0.28.1`）与
+  `blackbox-exporter`（`prom/blackbox-exporter:v0.27.0`）；Prometheus 注入
+  `OA_DEPLOY_MODE`（顺带关闭审计 U-01 的 external_label 空值疑点），并依赖 Alertmanager。
+- `deploy/prometheus.yml`：新增 `alerting.alertmanagers → alertmanager:9093`；
+  新增 `edge-tls` 抓取 job（blackbox 探测 `https://edge/healthz`，产出
+  `probe_ssl_earliest_cert_expiry`）。
+- `deploy/alert.rules.yml`：5 条 → **10 条**。新增 `ArtifactAccessFailureHigh`
+  （导出/预览路由 5xx 占比）、`PgConnectionSaturation`、`EdgeProbeFailing`、
+  `EdgeCertificateExpiringSoon`（30 天）、`EdgeCertificateExpiringCritical`（7 天）。
+- `deploy/alertmanager.yml` + `deploy/alertmanager-entrypoint.sh`：静态基线与启动渲染。
+  Alertmanager 不展开环境变量，脚本在启动时把 `OA_ALERT_WEBHOOK_URL` 替换进 critical
+  路由；未配置时回落 `officeai-null`（告警仍进 UI/API，缺 URL 也能起栈）。
+- `deploy/blackbox.yml`、`deploy/images.lock`（2 个新镜像 digest 已核验）、
+  `deploy/.env.example`（`OA_ALERTMANAGER_PORT` / `OA_ALERT_WEBHOOK_URL`）。
+- `deploy/validate_config_names.py`：两个新键按「谁在消费」登记白名单。
+- `.github/workflows/ci-adapter.yml`：新增 4 道自证 —— `promtool check rules`、
+  `promtool test rules`（11 组含负样本）、`promtool check config`（含 alerting 接线）、
+  `amtool check-config`（基线 + 脚本渲染的空/非空两态，URL 含 `&` 也验证）。
+- 文档：`docs/deployment-guide.md` 修正「5 条告警规则」表述并新增 §10.1 投递与验证清单；
+  `docs/architecture-phase4.md` §8.4 更新为 10 条并新增 §8.5 链路说明；
+  `docs/engineering-standards.md` S6.9 从「零引用待固化」改为「已挂 CI」。
+
+**对质量的影响**
+
+- 告警首次具备**真实投递路径**（Prometheus → Alertmanager → 可选 webhook）；
+  证书到期从「无人知道」变为 30 天预警 + 7 天 critical。
+- 规则不再只靠 review：11 组 `promtool test rules` 把阈值边界、`for`、标签保留、
+  负样本（80% 不告警 / 非产物路由不计入）全部钉死；规则写错在 CI 直接红灯。
+- 假绿被堵：`alert.rules.yml` 与 `prometheus.yml` 此前在 CI **零引用**（M-05），
+  现在任何规则/接线改动都必须通过 promtool/amtool，否则 CI Adapter 红。
+- 未配置 webhook 时明确标注「仅 UI/API 可见」，不再宣称「已投递」。
+
+**仍未闭环**：无内置 Loki/Tempo/Grafana（M-06，属可观测性纵深，不在 P0 范围）。
+
+### H-02 SSRF 阻断（待做）
+
+### H-03 零测试端点（待做）
+
+### H-04 主旅程 E2E（待做）
+
+### H-05 CI paths 覆盖（待做）
+

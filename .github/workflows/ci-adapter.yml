@@ -778,6 +778,55 @@ jobs:
           fi
           echo "部署形态门禁自检通过：负样本行为符合预期"
 
+      # ------------------------------------------------------------------
+      # 门禁 4f：告警规则与投递链路自证（H-01，审计 2026-11-07）
+      #
+      # 此前 `alert.rules.yml` 与 `prometheus.yml` 在 CI **零引用**（M-05）：
+      # 规则表达式写错、`alerting.alertmanagers` 没接线，都能一路绿到交付。
+      # 三道都必须过：
+      #   1) promtool check rules  —— 规则语法/持续时间/标签；
+      #   2) promtool check config —— `rule_files` 可达 + `alerting` 接线合法；
+      #   3) amtool check-config   —— Alertmanager 基线 + 入口脚本渲染后的两态
+      #      （无 webhook → critical 回落 null；有 webhook → URL 含 `&` 不被写坏）。
+      # 镜像 tag 与 compose / images.lock 一致：门禁证明的就是交付物本身。
+      # ------------------------------------------------------------------
+      - name: 告警规则与投递链路自证（H-01）
+        working-directory: .
+        run: |
+          set -euo pipefail
+          PROM_IMAGE=prom/prometheus:v3.15.0
+          AM_IMAGE=prom/alertmanager:v0.28.1
+
+          docker run --rm --entrypoint /bin/promtool \
+            -v "$PWD/deploy:/deploy:ro" "$PROM_IMAGE" \
+            check rules /deploy/alert.rules.yml
+
+          # 11 组确定性回归（含负样本）：规则的时间语义/阈值边界/标签保留，
+          # 改表达式或 `for` 时这里会先红，而不是等故障时才发现。
+          docker run --rm --entrypoint /bin/promtool \
+            -v "$PWD/deploy:/etc/prometheus:ro" "$PROM_IMAGE" \
+            test rules /etc/prometheus/alert.rules.test.yml
+
+          docker run --rm --entrypoint /bin/promtool -e OA_DEPLOY_MODE=private \
+            -v "$PWD/deploy/prometheus.yml:/deploy/prometheus.yml:ro" \
+            -v "$PWD/deploy/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro" \
+            "$PROM_IMAGE" check config /deploy/prometheus.yml
+
+          docker run --rm --entrypoint /bin/amtool \
+            -v "$PWD/deploy:/etc/alertmanager:ro" "$AM_IMAGE" \
+            check-config /etc/alertmanager/alertmanager.yml
+
+          for url in "" "https://example.com/hook?a=1&b=2"; do
+            echo "== Alertmanager 渲染态：OA_ALERT_WEBHOOK_URL=[${url}]"
+            docker run --rm \
+              -e OA_ALERT_WEBHOOK_URL="$url" \
+              -e ALERTMANAGER_OUT=/tmp/alertmanager.yml \
+              -v "$PWD/deploy:/etc/alertmanager:ro" \
+              --entrypoint /bin/sh "$AM_IMAGE" \
+              -c "/etc/alertmanager/alertmanager-entrypoint.sh --render-only && \
+                  /bin/amtool check-config /tmp/alertmanager.yml"
+          done
+
       - name: 依赖漏洞扫描（pip-audit，独立 venv）
         working-directory: .
         run: |
