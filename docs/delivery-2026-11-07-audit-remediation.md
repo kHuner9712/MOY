@@ -213,7 +213,58 @@ TL1 在 `test_tool_executions.py`；下载链路的集成用例覆盖 `fetch_art
 **仍未闭环**：`ops_mcp` 的 PostgreSQL 存储路径（`PostgresMcpServerStore`）只有内存
 实现被这些用例驱动；SQL 侧由 `--run-pg` 的仓储用例覆盖，本条不再扩。
 
-### H-04 主旅程 E2E（待做）
+### H-04 主旅程 E2E（已完成，**CI 真跑通**，不是 API 级降级）
+
+**结论先行**：主旅程在**浏览器里真跑**——`统一登录 → Keycloak 授权页 → 回调兑换
+→ /chat 主应用 → /plugins 安装抽屉`，删除了 `OA_E2E_ALLOW_SKIP` 且不保留任何
+等价的永久跳过开关。本地与 CI 使用**同一套**夹具与断言；本地同构复跑
+`3 passed`（贯穿段 6.7s、两段匿名前置 1.2/1.3s）。
+
+**已完成的变更**
+
+- `.github/e2e/keycloak-realm-ci.json`（新建）：CI 专用 realm `officeai`。
+  public client `officeai-adapter`（PKCE S256、`redirectUris=[http://localhost:3100/auth/callback]`、
+  audience + `tenant_id` mapper）、测试用户 `e2e.user` / `e2e-pass-2026`，
+  角色 `member` + `org_admin`（前者给对话/知识库基线权限，后者给插件安装）。
+  **不含任何生产密钥**，仅 CI 账号。
+- `.github/workflows/ci-web.yml` 的 `e2e-gate`：
+  - 新增「启动 Keycloak 测试 realm」步骤（`quay.io/keycloak/keycloak:26.8.1`，
+    `start-dev --import-realm`，轮询 `.well-known/openid-configuration` 90×2s），
+    以及 `if: always()` 的清理步骤。
+  - 适配层由 `auth_mode=stub` 改为 **`oidc`**：`OA_PUBLIC_BASE_URL=http://localhost:3100`、
+    `OA_KEYCLOAK_BASE_URL=http://127.0.0.1:8080`、realm/client、
+    `OA_JWT_ALGORITHM=RS256`、`OA_JWT_ISSUER=http://127.0.0.1:8080/realms/officeai`。
+  - 注入真实账号 `OA_E2E_USERNAME/PASSWORD`；**删除 `OA_E2E_ALLOW_SKIP`**；
+    浏览器侧 `NEXT_PUBLIC_ADAPTER_BASE_URL=http://localhost:8000`（与页面同站，
+    Cookie/CSRF 判定成立），探活用 `127.0.0.1` 规避 Node 优先解析 `::1`。
+- `apps/adapter/app/main.py`：development 环境的 CORS 白名单补
+  `localhost:3100` / `127.0.0.1:3100`（Playwright webServer 端口；生产同源部署不受影响）。
+- `apps/web/e2e/workflow.spec.ts`：
+  - 删除 `ALLOW_E2E_SKIP` 分支——缺凭据只保留**必然失败**的一条；
+  - 前置探活由 `test.skip` 改为**抛错**（栈不可达即红，错误文案写明怎么起栈）；
+  - 主应用落点断言由已下线的首页大标题改为 `navigation[name=主导航]` 地标，
+    语义仍是"真的进了主应用"，不是放宽。
+- 文档：`apps/web/README.md`（本地/CI 跑法、账号与 OIDC 变量）、
+  `docs/remediation-plan-2026-10-29.md`（S-5 标记闭环、删开关）。
+
+**对质量的影响（数据）**
+
+- 假绿被堵：此前 CI 主旅程从未执行（`OA_E2E_ALLOW_SKIP=1` + 静默 skip），
+  报告里"绿"的只是匿名段；现在**贯穿段是必跑门禁**。
+- 新发现的真实缺陷（本地首跑暴露，均已修）：适配层 OIDC 默认 `HS256` 与
+  Keycloak `RS256` 不匹配（`InvalidAlgorithmError`）；`OA_JWT_ISSUER` 必须逐字符
+  等于 Keycloak `iss`（`InvalidIssuerError`）；测试用户无角色导致 `/chat` 权限
+  提示（`20003`）；`/chat` 文案断言已过期。这些只会在**真跑**里出现——
+  这正是删除跳过开关的价值。
+- 兼容性：只改了 development CORS 白名单与 CI 夹具，未改任何对外 API 契约。
+
+**仍未闭环 / 口径说明**
+
+- `/workbench` 裸路径本就是 404（动态 `[pluginId]` 路由），工作台落点断言用
+  `/chat`；安装抽屉打开即视为安装入口可达，真实安装提交留给插件域用例
+  （与既有 `grant-drawer` 单测的分工不变）。
+- CI 侧结论以**同 SHA 的 `CI Web` 绿**为准（本文件在推送后回填结果）；不再存在
+  "本地绿、CI 跳过"的中间态。
 
 ### H-05 CI paths 覆盖（待做）
 

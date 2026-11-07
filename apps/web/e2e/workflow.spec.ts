@@ -10,7 +10,7 @@ import { expect, test, type Page } from '@playwright/test';
  * - 兑换成功但会话没落库 → 进工作台又被弹回登录页（死循环）；
  * - 工作台进得去但安装链路断 → 插件页点「查看并安装」无响应或报技术错误。
  *
- * 运行前置（缺一自动 skip，理由写在 skip 信息里——不让它假装通过）：
+ * 运行前置（缺任一项都**红**，没有豁免开关）：
  * 1. 本地全量栈 healthy：`docker compose -f deploy/docker-compose.yml up -d`
  *    （QA-04 依赖批次 C 的 compose 修复成果，先修拓扑再跑 e2e）；
  * 2. web dev server：`npm run dev --workspace apps/web`（playwright.config 的
@@ -19,9 +19,11 @@ import { expect, test, type Page } from '@playwright/test';
  *    `OA_E2E_USERNAME` / `OA_E2E_PASSWORD`（统一登录侧的测试用户）。
  *
  * 本地跑法：`npx playwright test e2e/workflow.spec.ts`（详见 apps/web/README.md）。
+ * CI 跑法：`.github/workflows/ci-web.yml` 的 `e2e-gate` 用 `quay.io/keycloak/keycloak:26.8.1`
+ * 起 `.github/e2e/keycloak-realm-ci.json` 声明的测试 realm，账号就来自该文件。
  */
 
-/** 统一登录测试账号（不设则跳过贯穿旅程——账号属现场资产，不入库） */
+/** 统一登录测试账号。CI 由 `.github/e2e/keycloak-realm-ci.json` 提供，本地由开发者显式注入 */
 const E2E_USERNAME = process.env.OA_E2E_USERNAME ?? '';
 const E2E_PASSWORD = process.env.OA_E2E_PASSWORD ?? '';
 
@@ -29,39 +31,36 @@ const E2E_PASSWORD = process.env.OA_E2E_PASSWORD ?? '';
 const ADAPTER_BASE = process.env.OA_E2E_ADAPTER_BASE_URL ?? 'http://localhost:8000';
 
 test.beforeEach(async ({ request }) => {
-  // 前置探测：全量栈没起时 skip 而不是红——e2e 的价值在链路，不在报连接错误。
+  // 前置探测失败即红：早期这里用 test.skip，结果"全量栈没起"和"链路真的通了"
+  // 在报告里都是绿的。现在失败信息写清怎么起栈，避免用 skip 掩盖主旅程。
   const health = await request.get(`${ADAPTER_BASE}/healthz`).catch(() => null);
   if (health === null || !health.ok()) {
-    test.skip(true, `本地全量栈未运行（${ADAPTER_BASE}/healthz 不可达），先起 deploy 栈再跑`);
+    throw new Error(
+      `适配层不可达（${ADAPTER_BASE}/healthz）。贯穿旅程的前置不成立，` +
+        '先起栈（deploy/docker-compose.yml 或 CI 的 e2e-gate 步骤）再跑。',
+    );
   }
 });
 
 const HAS_E2E_CREDS = Boolean(E2E_USERNAME && E2E_PASSWORD);
 
 /**
- * 显式豁免开关（R2-QA-02，审计 2026-10-29）。
+ * 缺凭据 → 一条**必然失败**的用例（R2-QA-02 的结论保留，豁免开关已删除）。
  *
- * 背景：原实现用 describe 级 `test.skip(!USER || !PASS)` —— 缺凭据时**静默跳过**，
- * 本机与 CI 看到的都是"绿"，而「登录 → 兑换 → 工作台 → 插件」这条主链路的
- * 唯一浏览器级回归防线等于不存在（实测 5 passed / 1 skipped，skip 的正是它）。
- * 「缺凭据自动 skip」正是"等于没测"的成因。
- *
- * 现在：缺凭据 → 注册一条**必然失败**的用例，把"没测"变成看得见的红；
- * 只有显式设置 `OA_E2E_ALLOW_SKIP=1`（本地确实没有测试账号时）才允许跳过。
- * CI 不设该变量 → 缺凭据即失败。
+ * 2026-11-07（H-04）：`OA_E2E_ALLOW_SKIP` 让主旅程可以被永久跳过——这不是"本地便利"，
+ * 而是把唯一一条浏览器级主链路回归防线变成可选项。CI 现在起 Keycloak 测试 realm
+ * 并注入真实账号；本地缺账号时请自己起栈注入，不再提供静默豁免。
  */
-const ALLOW_E2E_SKIP = process.env.OA_E2E_ALLOW_SKIP === '1';
-
 test.describe('贯穿旅程（需真实测试账号）', () => {
-  if (!HAS_E2E_CREDS && !ALLOW_E2E_SKIP) {
+  if (!HAS_E2E_CREDS) {
     test('缺少 OA_E2E_USERNAME / OA_E2E_PASSWORD（缺失即失败，见 R2-QA-02）', () => {
       throw new Error(
         '未设置 OA_E2E_USERNAME / OA_E2E_PASSWORD，「登录 → 兑换 → 工作台 → 插件」主链路无法验证。' +
           '这不是环境噪音：跳过它等于让主链路没有回归防线。' +
-          '若本次运行确实不需要该旅程（例如只跑匿名冒烟），请显式设置 OA_E2E_ALLOW_SKIP=1。',
+          'CI 由 .github/e2e/keycloak-realm-ci.json + ci-web.yml 的 keycloak 步骤提供账号。',
       );
     });
-  } else if (HAS_E2E_CREDS) {
+  } else {
     test('统一登录 → 兑换会话 → 进入工作台 → 安装插件', async ({ page }) => {
       // ① 登录页：统一登录入口存在且诚实展示
       await page.goto('/login');
@@ -84,7 +83,9 @@ test.describe('贯穿旅程（需真实测试账号）', () => {
       // 故主链路落点断言用 /chat（工作台经插件安装完成后进入，见 ⑥ 之后）。
       await page.goto('/chat');
       await expect(page).not.toHaveURL(/\/login/);
-      await expect(page.getByText('企业级办公 AI 平台').first()).toBeVisible();
+      // 主应用外壳就位（侧栏 + 主导航）；旧断言找的是首页大标题，工作台改版后
+      // 该文案不再出现在 /chat，改用导航地标，语义仍是"真的进了主应用"。
+      await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
 
       // ⑥ 插件旅程：进入插件页，安装第一个可安装插件
       await page.goto('/plugins');

@@ -334,19 +334,18 @@ jobs:
   # describe 级 skip —— 主链路「登录 → 兑换 → 工作台 → 插件」零浏览器级回归防线，
   # 而所有地方看到的都是"绿"。
   #
-  # 修复后：
-  # 1. `workflow.spec.ts` 缺凭据**改为必红**（除非显式 OA_E2E_ALLOW_SKIP=1），
-  #    杜绝"静默跳过冒充通过"；
-  # 2. 本 job 起一个真实适配层（stub 鉴权 + 内存存储 = config 默认值），
-  #    让匿名前置段（未登录被带回登录页）在 CI 里真跑；
-  # 3. 贯穿旅程仍需真实统一登录测试账号（现场资产，不入库），故本 job 显式
-  #    设 OA_E2E_ALLOW_SKIP=1 —— **这是已知缺口，不是已闭环**：账号就绪后
-  #    删掉该变量，job 即会强制跑贯穿段。
+  # 修复后（H-04，2026-11-07 再收口）：
+  # 1. `workflow.spec.ts` 缺凭据**必红**，且豁免开关 `OA_E2E_ALLOW_SKIP` 已删除
+  #    —— 不存在"能永久跳过主旅程"的配置；
+  # 2. 本 job 起 Keycloak（`.github/e2e/keycloak-realm-ci.json`）与适配层
+  #    （`auth_mode=oidc`、内存存储），由浏览器真跑「统一登录 → 回调兑换 →
+  #    工作台 → 安装插件」；
+  # 3. 适配层探活失败即 job 失败，不再用 skip 包住前置条件。
   # ------------------------------------------------------------------
   e2e-gate:
-    name: E2E 浏览器冒烟（匿名段必跑 / 贯穿段待测试账号）
+    name: E2E 主旅程（真跑 SSO→兑换→工作台→插件安装，无跳过开关）
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: 检出代码
@@ -373,21 +372,61 @@ jobs:
       - name: 安装 Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      # H-04：主旅程不再允许跳过。CI 起一个 Keycloak 测试 realm（账号与重定向
+      # 地址都来自 .github/e2e/keycloak-realm-ci.json），适配层切到 auth_mode=oidc，
+      # 浏览器里真跑「统一点登录 → Keycloak 登录 → 回调兑换 → 工作台 → 安装插件」。
+      - name: 启动 Keycloak 测试 realm（H-04）
+        run: |
+          set -euo pipefail
+          docker run -d --name keycloak-e2e \
+            -p 8080:8080 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+            -e KC_BOOTSTRAP_ADMIN_PASSWORD=e2e-admin-pass \
+            -v "$PWD/.github/e2e:/opt/keycloak/data/import:ro" \
+            quay.io/keycloak/keycloak:26.8.1 start-dev --import-realm
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/realms/officeai/.well-known/openid-configuration >/dev/null 2>&1; then
+              echo "[PASS] Keycloak 测试 realm 就绪（第 ${i} 次探测）"
+              break
+            fi
+            if [ "$i" -eq 90 ]; then
+              echo "[FAIL] Keycloak 180s 内未就绪" >&2
+              docker logs keycloak-e2e >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
       - name: 跑 e2e（含适配层生命周期管理）
         env:
+          # 适配层健康探测走 IPv4 字面量（Node 的 DNS 解析可能优先 ::1）。
           OA_E2E_ADAPTER_BASE_URL: http://127.0.0.1:8000
-          OA_E2E_ALLOW_SKIP: '1'
-          # B-5 硬化（提交 6cb89cb）：stub 鉴权只允许回环监听。uvicorn 已绑
-          # 127.0.0.1，但 Settings 需同口径，否则启动期以 30004 拒绝起栈
-          # （2026-11-07 CI Web 42321597212 实测）。
+          # 真实测试账号：来自 .github/e2e/keycloak-realm-ci.json
+          OA_E2E_USERNAME: e2e.user
+          OA_E2E_PASSWORD: e2e-pass-2026
+          # 适配层切 OIDC：回调地址必须与 realm 里 redirectUris 逐字符一致。
+          OA_AUTH_MODE: oidc
+          OA_PUBLIC_BASE_URL: http://localhost:3100
+          OA_KEYCLOAK_BASE_URL: http://127.0.0.1:8080
+          OA_KEYCLOAK_REALM: officeai
+          OA_KEYCLOAK_CLIENT_ID: officeai-adapter
+          # Keycloak 签 RS256；默认 HS256 会在 token 校验处报 InvalidAlgorithmError
+          # （H-04 本地实测：sso_complete 成功但 /sso/session 判无效）。
+          OA_JWT_ALGORITHM: RS256
+          # 令牌里的 `iss` 必须逐字符相等（deploy/keycloak/README.md 的口径）。
+          OA_JWT_ISSUER: http://127.0.0.1:8080/realms/officeai
+          # development：允许 http 基址，且 CORS 白名单含 localhost:3100。
+          OA_ENV: development
+          # B-5 硬化（提交 6cb89cb）：监听地址必须与实际绑定一致。
           OA_HOST: 127.0.0.1
+          # 浏览器侧适配层地址用 localhost（与页面同站，Cookie/CSRF 判定通过）。
+          NEXT_PUBLIC_ADAPTER_BASE_URL: http://localhost:8000
           PLAYWRIGHT_CHANNEL: chromium
           NEXT_TELEMETRY_DISABLED: '1'
         run: |
           set -euo pipefail
 
-          # 适配层：config 默认即 auth_mode=stub / business_store=memory，
-          # 不连数据库也能起，足以回答 /healthz 与匿名跳转断言。
+          # 适配层：business_store=memory，不连数据库也能起真实 OIDC 链路。
           cd apps/adapter
           .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/adapter.log 2>&1 &
           ADAPTER_PID=$!
@@ -408,3 +447,7 @@ jobs:
           done
 
           npm run test:e2e --workspace apps/web
+
+      - name: 停止 Keycloak（H-04）
+        if: always()
+        run: docker rm -f keycloak-e2e || true

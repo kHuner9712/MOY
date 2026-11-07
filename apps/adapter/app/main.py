@@ -504,7 +504,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 是浏览器规范明令禁止/告警的组合（带凭据时通配符被拒），还误导排障。
         # dev 白名单只开本机前端联调端口；非 development 一律为空（同源部署无跨域需求）。
         allow_origins=(
-            ["http://localhost:3000", "http://127.0.0.1:3000"] if conf.env == "development" else []
+            [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                # 3100 是 Playwright 的 webServer 端口（H-04 主旅程要在浏览器里
+                # 真跑 SSO→兑换→工作台→插件安装）；只开 development，生产同源部署
+                # 不需要跨域。
+                "http://localhost:3100",
+                "http://127.0.0.1:3100",
+            ]
+            if conf.env == "development"
+            else []
         ),
         allow_credentials=True,
         allow_methods=["*"],

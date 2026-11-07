@@ -241,7 +241,7 @@
 | 部署门禁（13 个脚本） | 12 个 PASS；`validate_batch_clock` 按设计需 `OA_BATCH`（未设即 exit 2） |
 | `validate_deploy --self-test` | **exit 1**（R1/R2/R3/R4 四类负样本全部拦截） |
 | 前端 lint / tsc / vitest | 全部 exit 0（vitest 新阈值 5/2 下通过） |
-| 前端 e2e | 无凭据 = **1 failed + 2 passed**（缺凭据必红）；`OA_E2E_ALLOW_SKIP=1` = 2 passed |
+| 前端 e2e | 无凭据 = **1 failed + 2 passed**（缺凭据必红）；~~`OA_E2E_ALLOW_SKIP=1` = 2 passed~~（该开关 2026-11-07 已删除）；H-04 起 = **3 passed**（Keycloak 测试 realm 真跑主旅程） |
 | web 镜像构建 | **exit 0**（2m32s），镜像内无 LGPL |
 | adapter 镜像构建 | **exit 0**（2m12s），镜像内 43 包与 `uv.lock` 逐包一致、0 dev 依赖 |
 | 三套 compose config | 全部 exit 0，`additional_contexts.lockroot` 三套均正确解析 |
@@ -249,7 +249,7 @@
 ### 5.6 剩余风险（按影响排序）
 
 1. **S-4 与 G-6 的 CI 改动未经远端验证**（最高）。`uv run`/PATH/`uv lock --check` 在 GitHub runner 上的实际行为只能等 CI 恢复后确认。若 PATH 导出位置不对，第一次实跑仍会红——**但那是有价值的红**（暴露问题而非静默）。
-2. **S-5 的贯穿旅程仍未真跑**。CI `e2e-gate` job 目前用 `OA_E2E_ALLOW_SKIP=1` 只跑匿名段；`登录→兑换→工作台→插件` 仍需真实测试账号。**这是已知缺口，不是已闭环**——账号就绪后删掉该变量，job 即会强制跑。
+2. ~~**S-5 的贯穿旅程仍未真跑**~~ → **已闭环（2026-11-07，H-04）**：`OA_E2E_ALLOW_SKIP` 已删除；CI `e2e-gate` 起 Keycloak 测试 realm（`.github/e2e/keycloak-realm-ci.json`），适配层切 `auth_mode=oidc`（`RS256` + Keycloak `iss`），浏览器真跑「统一登录 → 兑换 → 工作台 → 安装插件」。本地同构复跑 3 passed（贯穿段 6.7s）。**遗留口径**：`/workbench` 动态路由的裸路径仍为 404，工作台落点断言用 `/chat` + 主导航地标。
 3. **S-6 重设阈值后前端覆盖率"看起来很低"**（5%）。这是**真实值**，不是退步。整改需要补 page/layout 级测试，属长期工作；当前门禁作用是"防继续下滑"，不是"质量达标"。
 4. **G-1 修复了装配，但没有多副本实测**。幂等/限流切 Redis 后的跨副本行为（限流共享计数、幂等键跨进程可见）未在 2 副本环境验证过；建议扩容前先在 staging 用 `--scale adapter=2` 压一次。
 5. **Valkey `volatile-lru` 的 OOM 风险**。`volatile-lru` 只淘汰带 TTL 的键；若 lite 栈（256MB）出现大量无 TTL 键，会退化为"不淘汰直接 OOM"。上线后需监控 `used_memory` 与 keyspace TTL 覆盖。

@@ -38,12 +38,16 @@ npx playwright test e2e/workflow.spec.ts          # 只跑贯穿旅程
    export OA_E2E_USERNAME=<测试用户名>
    export OA_E2E_PASSWORD=<测试口令>
    export OA_E2E_ADAPTER_BASE_URL=http://localhost:8000   # 可选，默认即此值
-   export OA_E2E_ALLOW_SKIP=1                             # 可选：确无测试账号时豁免贯穿段
    ```
 
-全量栈不可达时对应用例**自动 skip**（带原因）；但缺 `OA_E2E_USERNAME` /
-`OA_E2E_PASSWORD` **默认必红**（注册一条必然失败的用例——缺凭据静默 skip
-等于主链路没有回归防线），只有显式设置 `OA_E2E_ALLOW_SKIP=1` 才允许跳过。
-同文件的匿名前置段（未登录访问工作台/插件页被带回登录页）零夹具、随时可跑。
-e2e 已进 CI（`ci-web.yml` 门禁 5：安装 Playwright Chromium 跑 `npm run test:e2e`；
-CI 暂设 `OA_E2E_ALLOW_SKIP=1`，贯穿段待真实测试账号就绪后强制执行）。
+缺 `OA_E2E_USERNAME` / `OA_E2E_PASSWORD` **必红**；全量栈不可达也**必红**（报错
+里写明怎么起栈）。`OA_E2E_ALLOW_SKIP` 已于 2026-11-07（H-04）删除——不存在能
+永久跳过主旅程的开关。同文件的匿名前置段（未登录访问对话/插件页被带回登录页）
+零夹具、随时可跑。
+
+e2e 已进 CI（`ci-web.yml` 门禁 5）：CI 用
+`.github/e2e/keycloak-realm-ci.json` 起一个 Keycloak 测试 realm（账号
+`e2e.user` / `e2e-pass-2026`、角色 `member`+`org_admin`、回调
+`http://localhost:3100/auth/callback`），适配层切 `auth_mode=oidc`，浏览器里
+**真跑**「统一登录 → 兑换会话 → 工作台 → 安装插件」。本地复跑同一链路时，
+把上表的账号与适配层 OIDC 变量（见 `ci-web.yml` 的 e2e 步骤）对齐即可。
