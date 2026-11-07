@@ -1,27 +1,26 @@
-# 离线镜像打包脚本（阶段四验收范围外，待排期）
+# 离线介质包（3A 构建侧已实现）
 
-> **状态：阶段四验收范围外，待排期**（占位目录，打包脚本均未实现）。
+> **状态：3A 已落地**（2026-11-07）：构建与校验由
+> `deploy/validate_offline_media.py` 提供；介质内容、生成/校验步骤、体积预期与
+> 已知限制见 [`docs/offline-package.md`](../../docs/offline-package.md)。
+> 目标机加载/升级/回滚（3B）尚未实现。
 >
-> 目标（总方案 3.6）：私有化交付需提供**完整离线镜像包**，
-> 支持无外网环境纯本地运行。**注意**：`OA_OFFLINE_MODE` 已于 2026-11-04 审计确认为
-> 无消费方的死配置并从 `.env.example` / `install.sh` 删除；离线开关须随打包脚本一起实现，
-> 不要先加环境变量。
+> 说明：`OA_OFFLINE_MODE` 已于 2026-11-04 审计确认为无消费方的死配置并删除；
+> 本轮不新增环境变量（版本/架构/垂直均为命令行参数）。
 
-## 待交付内容（未建，待排期）
+## 已交付内容（3A）
 
-> 以下均为规划占位，**当前一个都不存在**：
-
+```text
+deploy/
+├── validate_offline_media.py   # 构建（build）/ 校验（verify）/ 自检（self-test）/ 就绪检查
+└── offline/
+    ├── plugins/                # 离线插件包（.difypkg，当前含 deepseek-0.0.25）
+    └── README.md               # 本文件（内容清单与合规登记）
 ```
-deploy/offline/
-├── build-images.sh          # 在有网机器上构建并导出全部镜像
-├── load-images.sh           # 在离线机器上导入镜像并重启服务
-├── verify-images.sh         # 校验离线包完整性（sha256 清单）
-├── images/                  # 镜像 tar 包（.gitignore 排除）
-├── manifests/
-│   ├── images.lock          # 镜像清单（名称 + tag + digest）
-│   └── checksums.sha256     # 完整性校验清单
-└── LICENSE.third-party      # 第三方组件与协议声明（总方案 5.3.4）
-```
+
+介质包产出在仓库外的 `dist/offline/moy-offline-v<version>-x86_64/`（`dist/` 已忽略），
+包含 OCI 镜像归档、Python wheels、前端 npm 缓存、迁移/初始化/回滚 SQL、插件、
+SBOM、NOTICE、`MANIFEST.json`、`SHA256SUMS` 与 cosign 签名。
 
 ## 镜像清单（以 `deploy/images.lock` 为唯一事实来源）
 

@@ -6,9 +6,9 @@
 | 阶段 | 范围 | 状态 |
 | --- | --- | --- |
 | 0 | 工作区整理（28 项未提交改动逐项判定） | 已完成 |
-| 1 | 5 条高危（H-01…H-05） | 进行中 |
-| 2 | 规范强制化（`engineering-standards` + 门禁） | 待开始 |
-| 3 | 气隙离线包（矩阵 B5） | 待开始 |
+| 1 | 5 条高危（H-01…H-05） | 已完成 5/5 |
+| 2 | 规范强制化（`engineering-standards` + 门禁） | 已完成 |
+| 3 | 气隙离线包（矩阵 B5） | 3A 已完成（构建+校验）；3B/3C 待开始 |
 
 ---
 
@@ -355,7 +355,7 @@ Keycloak 并跑了登录链路（只跑匿名段约 10 秒即可结束）。
 
 - `--self-test`：**15/15 通过**（正样本 2、负样本 13；覆盖六类判据 + fail-closed）；
   真实仓库 `exit 0`，`--checks STD-3` 子集 `exit 0`。
-- 门禁总数：`deploy/validate_*` **19 个**（18 `.py` + 1 `.sh`），
+- 门禁总数（阶段 2 交付时）：`deploy/validate_*` **19 个**（18 `.py` + 1 `.sh`），
   `validate_gate_wiring.py` 实测 **18 个 `.py` 全部被 workflow 引用**。
 - 登记面：基础设施 env 白名单 **37** 条（每条带理由）、代码默认值字段 **11** 条
   （带理由 + 到期批次 B30）、安全敏感模板键 **12** 项（`.env.example` 8 + lite 4）。
@@ -371,5 +371,61 @@ Keycloak 并跑了登录链路（只跑匿名段约 10 秒即可结束）。
   上调必须改代码并评审，不能只往基线文件加行。
 - `--checks STD-3` 在 ci-web 只跑测试纪律子集；配置/文档类判据仍在 adapter 全量跑
   （它们的真源都在后端与 `deploy/`，web 侧无输入）。
+
+---
+
+## 阶段 3A：离线介质包构建与校验（已完成）
+
+范围：**只做构建侧**（介质生成 + 校验 + 文档），目标机加载/升级/回滚属 3B。
+
+### 交付物
+
+| 文件 | 作用 |
+| --- | --- |
+| `deploy/validate_offline_media.py`（新建） | 一条命令产出介质包（skopeo 搬镜像 / syft 出 SBOM / cosign 签名 / uv+wheels / npm 缓存）；`verify` 逐条校验并指出坏条目；缺工具 exit 2 |
+| `apps/adapter/tests/unit/test_offline_media.py`（新建） | 18 个单测：布局计划、镜像锁/编排解析、MANIFEST、SHA256SUMS、缺失/未登记/1 字节篡改、签名、CLI 退出码、缺工具 fail-closed |
+| `.github/workflows/ci-adapter.yml` | 新增「离线介质包门禁自检（纯逻辑 + 篡改检测）」；真实搬运不进 CI（无 Docker/网络/私钥），且**不设 allow-skip** |
+| `docs/offline-package.md`（新建） | 介质内容、生成步骤、校验步骤、目标架构、体积预期、已知限制、3B 输入契约 |
+| `docs/deployment-guide.md` | §2.3 / §3.1 / §3.2 的「打包脚本待排期」订正为 3A 已落地；`--offline` 安装仍属 3B |
+| `deploy/offline/README.md` | 占位状态改为 3A 已实现，内容与合规表指向新文档 |
+| `docs/engineering-standards.md` | A.1/A.5 增第 20 行（20 个：19 `.py` + 1 `.sh`），S8 计数同步 |
+| `qa/phase4-verify.sh` | 18→19 个 `.py`；新门禁进 FAMILY_B（自检成功 = exit 0） |
+| `docs/delivery-2026-11-07-audit-remediation.md` | 本节 |
+
+### 介质包结构（固定，3B 读取契约）
+
+```text
+moy-offline-v<version>-x86_64/
+├── MANIFEST.json  SHA256SUMS  SHA256SUMS.sig
+├── images/        # *.oci.tar（compose 运行时镜像）+ images.lock 快照
+├── wheels/        # requirements.txt + *.whl
+├── web/           # package.json / package-lock.json + npm-cache.tar.gz
+├── sql/           # migrations/*.sql、init/*.sql、rollback/*.sql
+├── plugins/       # *.difypkg（默认垂直 plg_content_ops，可 --vertical 覆盖）
+├── sbom/          # 产品 SBOM + 逐镜像 syft SBOM
+└── metadata/      # version.json + NOTICE.third-party.md
+```
+
+### 校验与篡改检测
+
+- `self-test`：**1 条正样本 + 8 条红灯用例**（1 字节篡改、删除已登记文件、新增未登记
+  文件、架构不符、空 SHA256SUMS、签名拒绝、签名缺失），全部指向**具体坏条目**。
+- 单测：**18 passed**。`verify` 失败逐条输出 `[FAIL] <路径>：<原因>` 并 exit 1；
+  缺 cosign / `COSIGN_PUBLIC_KEY` 同样非零退出（无法判定 ≠ 通过）。
+- CLI：`build --out dist/offline --arch x86_64 --vertical plg_content_ops`、
+  `verify <包目录>`、`self-test`、默认 `check`（仓库就绪检查，纯逻辑）。
+
+### 未验证项（必须在构建机验证）
+
+真实镜像搬运、wheels 下载、npm 缓存、syft/cosign 调用：CI runner 无 Docker daemon、
+无 registry/PyPI/npm 凭据、无私钥。验证条件：本地 daemon 有 `officeai/*` 镜像、
+可访问 registry/PyPI/npm、提供 cosign 密钥、Node 22；完成后跑 `verify` 并抽查
+`skopeo inspect oci-archive:...`。
+
+### 体积预期
+
+估算 **9–13 GB**：镜像 8–12 GB（19 个运行时镜像）+ wheels 120–250 MB +
+npm 缓存 80–200 MB + SQL/插件/SBOM <100 MB；实测以 `MANIFEST.json` 的
+`totals.bytes` 为准（本轮未在构建机实测）。
 
 

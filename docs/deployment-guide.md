@@ -91,7 +91,8 @@
   bash deploy/install.sh --online --proxy-port 8080
   ```
 - 私有化环境默认**不出网**：出站控制由客户网络策略/代理执行（V1.0 无 `OA_OFFLINE_MODE`
-  运行时开关，该键已于 2026-11-04 审计删除；离线包构建脚本仍待排期，见 `deploy/offline/README.md`）。
+  运行时开关，该键已于 2026-11-04 审计删除；离线介质包的**构建与校验**已落地（阶段 3A），
+  见 [`docs/offline-package.md`](offline-package.md)；目标机加载仍属 3B，尚未实现）。
   若客户允许出站，仅需放通模型服务与客户已连接的工具平台域名。
 
 ### 2.4 系统与时钟
@@ -118,9 +119,9 @@
 │   ├── images.lock                # 镜像清单：名称 + 标签 + 指纹（digest）
 │   ├── nginx/                     # 入口网关配置
 │   ├── migrations/                # 增量变更脚本（含 rollback/ 下的回退脚本）
-│   ├── offline/                   # [待排期] 打包脚本未实现，V1.0 仓库内仅 README + plugins
-│   │   ├── images/                # [待排期，仓库内不存在] 镜像归档 *.tar + checksums.sha256
+│   ├── offline/                   # 3A：构建/校验由 validate_offline_media.py 提供
 │   │   └── plugins/               # 模型服务插件离线包（当前 1 个 .difypkg）
+│   │   （介质包产出在仓库外 dist/offline/moy-offline-v<version>-x86_64/）
 │   ├── backup.sh / restore.sh     # 备份 / 恢复
 │   └── validate_*.py              # 交付自检脚本
 ├── docs/                          # 本手册与合规文档
@@ -128,35 +129,30 @@
 └── (可选) sbom.cdx.json           # 组件清单（供客户安全评审）
 ```
 
-> **状态标注（离线包待排期，2026-11-06 复核）**：以上 `deploy/offline/images/` 与 `checksums.sha256` 是**交付包**应有结构，**不是当前仓库内容**。`deploy/offline/README.md:1,3,12` 明示「阶段四验收范围外、待排期」「占位目录，打包脚本均未实现」「当前一个都不存在」；仓库内 `deploy/offline/` 实测只有 `README.md` 与 `plugins/deepseek-0.0.25.difypkg`，`.gitignore:87` 排除 `deploy/offline/images/`。**V1.0 不提供 `--offline` 安装能力**；对应命令见 §4.1 已降级为「待排期」。
+> **状态（2026-11-07）**：交付介质包不落在仓库 `deploy/offline/images/`，而是由
+> `python deploy/validate_offline_media.py build` 产出到 `dist/offline/moy-offline-v<version>-x86_64/`
+> （`dist/` 已忽略）。仓库内 `deploy/offline/` 只有 `README.md` 与 `plugins/`。
+> 3A 只提供**构建 + 校验**；**V1.0 仍不提供 `--offline` 安装能力**（3B 待实现）。
 
 ### 3.2 完整性校验（**装之前必须做**）
 
-> **状态标注（离线包待排期）**：本节命令只适用于**交付侧已生成离线镜像包**的现场。当前仓库内 `deploy/offline/images/` 不存在（依据见 §3.1 状态标注与 `deploy/offline/README.md:1,3,12`），直接执行下面的 `cd deploy/offline/images` 会因目录不存在而失败。V1.0 请走 §4.1 的在线安装 `--online`；离线校验能力待交付侧排期完成后启用。
+> **状态（2026-11-07）**：离线介质包的**构建与校验**已落地（阶段 3A），内容与步骤见
+> [`docs/offline-package.md`](offline-package.md)。目标机**加载/升级/回滚**属 3B，
+> 尚未实现；因此 §4.1 的 `--offline` 安装分支仍不可用。
 
-镜像归档目录内应同时存在 `checksums.sha256`（或 `checksums.txt`）与若干 `*.tar`。校验必须在该目录内执行——清单里写的是相对文件名：
-
-```bash
-cd deploy/offline/images
-sha256sum -c checksums.sha256
-```
-
-期望输出：每一行都是 `xxx.tar: OK`，且**没有 `FAILED`**。
-
-若清单缺失，用归档自身重新生成（**只能在受信任的介质上做**）：
+交付侧生成的介质包形如 `moy-offline-v<version>-x86_64/`，校验用同一脚本完成
+（逐条比对 `SHA256SUMS`，并指出具体坏掉的条目）：
 
 ```bash
-cd deploy/offline/images
-sha256sum *.tar > checksums.sha256
+python deploy/validate_offline_media.py verify /path/to/moy-offline-v1.0.0-x86_64
 ```
 
-然后逐项核对镜像指纹与清单是否一致：
+期望输出 `[OK] 校验通过：N 个条目 / X MiB`；出现任一 `[FAIL] <路径>：<原因>`
+都必须先排查，不得继续安装。签名校验还需提供 `COSIGN_PUBLIC_KEY`。
 
-```bash
-grep -c "digest:" deploy/images.lock    # 应等于镜像条目数，为 0 说明清单被改坏
-```
-
-> 判据：`sha256sum -c` 通过 ≠ 镜像与 `images.lock` 同批次。安装脚本还会逐个核对镜像指纹（第 4.3 节），两者都过才算"包是对的"。离线包与 `images.lock` **必须成对交付**，混批次会在核对阶段以退出码 `3` 明确失败，不会装到一半。（离线包构建脚本仍待排期，见 §3.1 / §3.2 状态标注；`deploy/install.sh:25` 定义退出码 `3` = 镜像不可用。）
+> 判据：脚本校验通过 ≠ 镜像与 `images.lock` 同批次。安装脚本还会逐个核对镜像指纹
+> （第 4.3 节），两者都过才算"包是对的"；介质包内已带 `images/images.lock` 快照，
+> 必须与部署侧 `deploy/images.lock` 一致。混批次会在核对阶段以退出码 `3` 明确失败。
 
 ---
 
